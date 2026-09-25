@@ -282,7 +282,7 @@ pub(super) async fn load_installer_bundle(
     } else {
         return Err(ChannelError::InstallerBundleUnavailable);
     }
-    .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    .map_err(|error| redact_tuf_error(&error))?;
     handoff_datastore_files(datastore, datastore_owner)?;
     load_verified_repository(repository, accepted, datastore_lease, host, clock.now()).await
 }
@@ -294,18 +294,15 @@ async fn load_verified_repository(
     host: System,
     now: Timestamp,
 ) -> Result<VerifiedRuntimeBundle, ChannelError> {
-    let descriptor = read_descriptor_target(&repository)
-        .await
-        .map_err(redact_repository_error)?;
+    let descriptor = read_descriptor_target(&repository).await?;
     let previous = accepted.load()?;
     let outcome =
         verify_authenticated_descriptor(&descriptor, &repository, host, previous.as_ref(), now)?;
     let channel = match outcome {
         RefreshOutcome::Updated(channel) | RefreshOutcome::Unchanged(channel) => channel,
     };
-    let index = read_required_index_target(&repository, channel.descriptor().index().target())
-        .await
-        .map_err(redact_repository_error)?;
+    let index =
+        read_required_index_target(&repository, channel.descriptor().index().target()).await?;
     let base_nix = match host {
         System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin => {
             let (target, length, sha256) = determinate_installer_identity(host)?;
@@ -409,11 +406,11 @@ async fn read_descriptor_target(repository: &tough::Repository) -> Result<Vec<u8
     let stream = repository
         .read_target(&name)
         .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))?
+        .map_err(|error| redact_tuf_error(&error))?
         .ok_or(ChannelError::MissingDescriptor)?;
     IntoVec::into_vec(stream)
         .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))
+        .map_err(|error| redact_tuf_error(&error))
 }
 
 async fn read_required_index_target(
@@ -431,11 +428,11 @@ async fn read_required_index_target(
     let stream = repository
         .read_target(&name)
         .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))?
+        .map_err(|error| redact_tuf_error(&error))?
         .ok_or(ChannelError::MissingIndexTarget)?;
     IntoVec::into_vec(stream)
         .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))
+        .map_err(|error| redact_tuf_error(&error))
 }
 
 async fn snapshot_exact_target(
@@ -456,14 +453,14 @@ async fn snapshot_exact_target(
     let mut stream = repository
         .read_target(&name)
         .await
-        .map_err(|_| ChannelError::InstallerBundleUnavailable)?
+        .map_err(|error| redact_tuf_error(&error))?
         .ok_or_else(|| ChannelError::MissingTufTarget(target.into()))?;
     let mut snapshot =
         tempfile::tempfile().map_err(|_| ChannelError::InstallerBundleUnavailable)?;
     let mut digest = Sha256::new();
     let mut copied = 0_u64;
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+        let chunk = chunk.map_err(|error| redact_tuf_error(&error))?;
         copied = copied
             .checked_add(chunk.len() as u64)
             .ok_or(ChannelError::InstallerBundleUnavailable)?;
@@ -507,10 +504,18 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, ChannelError> {
         .map_err(|_| ChannelError::InstallerBundleUnavailable)
 }
 
-fn redact_repository_error(error: ChannelError) -> ChannelError {
+fn redact_tuf_error(error: &tough::error::Error) -> ChannelError {
     match error {
-        ChannelError::TufVerification(_) => ChannelError::InstallerBundleUnavailable,
-        error => error,
+        tough::error::Error::DatastoreInit { .. }
+        | tough::error::Error::DatastoreCreate { .. }
+        | tough::error::Error::DatastoreOpen { .. }
+        | tough::error::Error::DatastoreRemove { .. }
+        | tough::error::Error::DatastoreSerialize { .. } => ChannelError::DatastoreUnavailable,
+        // Tough wraps target hash and length failures in transport errors too.
+        tough::error::Error::Transport { source, .. } => std::error::Error::source(source)
+            .and_then(|cause| cause.downcast_ref::<tough::error::Error>())
+            .map_or(ChannelError::TransportUnavailable, redact_tuf_error),
+        _ => ChannelError::InstallerBundleUnavailable,
     }
 }
 
@@ -931,6 +936,31 @@ mod tests {
     use tempfile::TempDir;
 
     const ROOT: &[u8] = include_bytes!("../../../../fixtures/channel-v1/root.json");
+
+    #[tokio::test]
+    async fn repository_datastore_write_failure_is_redacted_as_state_failure() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/channel-v1")
+            .canonicalize()
+            .unwrap();
+        let temporary = TempDir::new().unwrap();
+        let missing_state = temporary.path().join("missing-private-state");
+        let error = RepositoryLoader::new(
+            &ROOT,
+            Url::from_directory_path(fixture.join("metadata")).unwrap(),
+            Url::from_directory_path(fixture.join("targets")).unwrap(),
+        )
+        .transport(FilesystemTransport)
+        .expiration_enforcement(ExpirationEnforcement::Safe)
+        .datastore(&missing_state)
+        .load()
+        .await
+        .unwrap_err();
+        assert!(matches!(error, tough::error::Error::DatastoreCreate { .. }));
+        let redacted = redact_tuf_error(&error);
+        assert!(matches!(redacted, ChannelError::DatastoreUnavailable));
+        assert!(!format!("{redacted:?}").contains("missing-private-state"));
+    }
 
     #[test]
     fn platform_route_selects_only_supported_determinate_targets() {

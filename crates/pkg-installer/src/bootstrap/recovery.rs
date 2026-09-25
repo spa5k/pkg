@@ -99,8 +99,12 @@ pub(super) fn load_linux_bundle_for_recovery(
         system: request.system,
         groups: request.groups,
     };
-    let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request)
-        .map_err(|_| InstallError::backend_failure());
+    let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request).map_err(
+        |error| {
+            report_release_authentication_error(error);
+            InstallError::backend_failure()
+        },
+    );
     remove_linux_auth_datastore(&auth_datastore)?;
     result
 }
@@ -524,12 +528,28 @@ pub(super) fn load_macos_bundle_for_recovery(
     };
     let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request).map_err(
         |error| {
-            eprintln!("macos release authentication failed: {error:?}");
+            report_release_authentication_error(error);
             MacOsError::backend_failure()
         },
     );
     remove_linux_auth_datastore(&auth_datastore).map_err(|_| MacOsError::backend_failure())?;
     result
+}
+
+pub(super) fn report_release_authentication_error(error: pkg_nix::ProvisionError) {
+    use pkg_nix::ProvisionErrorCode;
+
+    eprintln!("Release check failed: {:?}", error.code());
+    let message = match error.code() {
+        ProvisionErrorCode::FetchFailed => {
+            "The release download could not finish. Check your connection, then run the installer again."
+        }
+        ProvisionErrorCode::ChannelStateFailed => {
+            "The release verification files could not be used. Keep this log for support."
+        }
+        _ => "The release could not be verified. Keep this log for support.",
+    };
+    eprintln!("{message}");
 }
 
 pub(super) fn prepare_macos_auth_datastore() -> Result<PathBuf, MacOsError> {

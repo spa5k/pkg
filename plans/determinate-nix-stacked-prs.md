@@ -154,6 +154,21 @@ completion of the production trust ceremony.
 - **Rollback:** restore the previous entry script only with a compatible higher
   channel sequence. Retain Nix records and package generations.
 
+### PUBLIC-16: installer authentication failure diagnostics
+
+- **Status:** implementation in progress after an alpha.52 installation retry
+  succeeded. The original failure log does not establish the transport cause.
+- **Purpose:** distinguish release download failures from rejected signatures
+  and unsafe verification state.
+- **Owns:** redacted installer failure categories and clear retry instructions
+  on Linux and macOS. Download policy and verification rules stay unchanged.
+- **Depends:** PUBLIC-14 and PUBLIC-15 (merged).
+- **Tests & gates:** missing metadata and target downloads, modified signatures
+  and target bytes, unsafe state, redaction, local G-LINT, workspace tests,
+  G-QUALITY, docs links, and hosted checks; F primary and A security review.
+- **Rollback:** revert the diagnostics. No stored-state migration or release
+  metadata change is required.
+
 ## Alpha.49: reliable installation and daily commands
 
 - **Identifier:** PUBLIC-08.
