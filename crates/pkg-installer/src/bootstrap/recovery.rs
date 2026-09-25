@@ -536,7 +536,7 @@ pub(super) fn load_macos_bundle_for_recovery(
     result
 }
 
-fn report_release_authentication_error(error: pkg_nix::ProvisionError) {
+pub(super) fn report_release_authentication_error(error: pkg_nix::ProvisionError) {
     use pkg_nix::ProvisionErrorCode;
 
     eprintln!("Release check failed: {:?}", error.code());

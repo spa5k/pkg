@@ -114,6 +114,14 @@ fn raw_channel_sha256_uses_the_product_digest_prefix() {
     );
 }
 
+struct AuthenticationTestClock;
+
+impl pkg_core::Clock for AuthenticationTestClock {
+    fn now(&self) -> jiff::Timestamp {
+        "2026-08-19T00:00:00Z".parse().unwrap()
+    }
+}
+
 #[tokio::test]
 async fn installer_authentication_distinguishes_download_state_and_signature_failures() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/channel-v1");
@@ -183,21 +191,23 @@ async fn installer_authentication_distinguishes_download_state_and_signature_fai
             }
             _ => unreachable!(),
         }
-        let request = InstallerProvisionRequest {
-            repository: InstallerRepository::Bundle(&bundle),
-            datastore: &datastore,
-            installation_root: temporary.path(),
-            scratch_parent: temporary.path(),
-            system: System::Aarch64Darwin,
-            groups: ManagedGroupBindings::new(333, 350).unwrap(),
-        };
         let root = TrustedRoot::from_embedded(include_bytes!(
             "../../../../../fixtures/channel-v1/root.json"
         ))
         .unwrap();
-        let error = load_authenticated_installer_bundle(root, &request)
-            .await
-            .unwrap_err();
+        let error = load_installer_bundle(
+            root,
+            InstallerRepository::Bundle(&bundle),
+            &datastore,
+            BundleEnvironment {
+                host: System::Aarch64Darwin,
+                datastore_owner: Some(DatastoreOwner::current()),
+                clock: Arc::new(AuthenticationTestClock),
+            },
+        )
+        .await
+        .map_err(|error| installer_authentication_error(&error))
+        .unwrap_err();
         assert_eq!(error.code(), expected, "{failure}");
         assert!(!format!("{error:?}").contains(&temporary.path().display().to_string()));
         assert!(!datastore.join("accepted-channel.json").exists());

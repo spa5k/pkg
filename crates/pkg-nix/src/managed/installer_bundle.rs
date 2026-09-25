@@ -506,6 +506,11 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, ChannelError> {
 
 fn redact_tuf_error(error: &tough::error::Error) -> ChannelError {
     match error {
+        tough::error::Error::DatastoreInit { .. }
+        | tough::error::Error::DatastoreCreate { .. }
+        | tough::error::Error::DatastoreOpen { .. }
+        | tough::error::Error::DatastoreRemove { .. }
+        | tough::error::Error::DatastoreSerialize { .. } => ChannelError::DatastoreUnavailable,
         // Tough wraps target hash and length failures in transport errors too.
         tough::error::Error::Transport { source, .. } => std::error::Error::source(source)
             .and_then(|cause| cause.downcast_ref::<tough::error::Error>())
@@ -931,6 +936,31 @@ mod tests {
     use tempfile::TempDir;
 
     const ROOT: &[u8] = include_bytes!("../../../../fixtures/channel-v1/root.json");
+
+    #[tokio::test]
+    async fn repository_datastore_write_failure_is_redacted_as_state_failure() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/channel-v1")
+            .canonicalize()
+            .unwrap();
+        let temporary = TempDir::new().unwrap();
+        let missing_state = temporary.path().join("missing-private-state");
+        let error = RepositoryLoader::new(
+            &ROOT,
+            Url::from_directory_path(fixture.join("metadata")).unwrap(),
+            Url::from_directory_path(fixture.join("targets")).unwrap(),
+        )
+        .transport(FilesystemTransport)
+        .expiration_enforcement(ExpirationEnforcement::Safe)
+        .datastore(&missing_state)
+        .load()
+        .await
+        .unwrap_err();
+        assert!(matches!(error, tough::error::Error::DatastoreCreate { .. }));
+        let redacted = redact_tuf_error(&error);
+        assert!(matches!(redacted, ChannelError::DatastoreUnavailable));
+        assert!(!format!("{redacted:?}").contains("missing-private-state"));
+    }
 
     #[test]
     fn platform_route_selects_only_supported_determinate_targets() {

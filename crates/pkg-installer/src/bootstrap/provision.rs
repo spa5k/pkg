@@ -7,7 +7,10 @@
 use super::*;
 use super::{
     backend::{determinate_succeeded, run_with_new_determinate_handoff},
-    recovery::{prepare_private_directory_at, prepare_vendor_tmp_directory_at},
+    recovery::{
+        prepare_private_directory_at, prepare_vendor_tmp_directory_at,
+        report_release_authentication_error,
+    },
 };
 pub(super) enum BootstrapOutcome {
     DeterminatePending {
@@ -201,7 +204,10 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             .map_err(|_| BundleProvisionError::Failed)?;
         self.bundle = Some(
             reauthenticate_installer_bundle_blocking(trusted_root, request, bundle, broker_uid)
-                .map_err(|_| BundleProvisionError::Failed)?,
+                .map_err(|error| {
+                    report_release_authentication_error(error);
+                    BundleProvisionError::Failed
+                })?,
         );
         Ok(())
     }
@@ -221,7 +227,10 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             .map_err(|_| BundleProvisionError::Failed)?;
         self.bundle = Some(
             reauthenticate_installer_bundle_blocking(trusted_root, request, bundle, broker_uid)
-                .map_err(|_| BundleProvisionError::Failed)?,
+                .map_err(|error| {
+                    report_release_authentication_error(error);
+                    BundleProvisionError::Failed
+                })?,
         );
         Ok(())
     }
