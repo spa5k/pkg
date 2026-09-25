@@ -113,6 +113,17 @@ impl CommandResult {
         Self::new(summary, self.fields, self.records)?.with_package_labels(self.package_labels)
     }
 
+    pub(super) fn with_packages(mut self, packages: Value) -> Result<Self, PublicResultError> {
+        self.fields.insert("packages".into(), packages);
+        Self::new(self.summary, self.fields, self.records)?.with_package_labels(self.package_labels)
+    }
+
+    /// Add the generation that was committed, retaining validated package labels.
+    pub(super) fn with_generation(mut self, generation: &str) -> Result<Self, PublicResultError> {
+        self.fields.insert("generation".into(), json!(generation));
+        Self::new(self.summary, self.fields, self.records)?.with_package_labels(self.package_labels)
+    }
+
     /// Keep readable selectors for human output while preserving machine IDs.
     pub(super) fn with_package_labels(
         mut self,
@@ -347,7 +358,7 @@ impl<C: CoreOperations> CommandEngine for CoreEngine<C> {
             Command::Gc(args) => self.operations.gc(args, policy),
             Command::Repair(args) => self.operations.repair(args, policy),
             Command::Doctor(_)
-            | Command::Uninstall
+            | Command::System(crate::cli::SystemCommand::Uninstall)
             | Command::Completion(_)
             | Command::Shellenv => Err(CommandError::new(
                 ExitCode::Config,

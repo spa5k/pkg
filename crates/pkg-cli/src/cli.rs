@@ -279,7 +279,8 @@ pub enum Command {
     Install(InstallArgs),
     /// Remove packages from your active environment.
     #[command(
-        after_help = "Examples:\n  pkg remove ripgrep --dry-run\n  pkg remove ripgrep\n\nUse pkg list to find installed names. Use pkg rollback to restore an environment."
+        visible_alias = "uninstall",
+        after_help = "Examples:\n  pkg remove ripgrep --dry-run\n  pkg remove ripgrep\n\nUse an installed name or full selector. A short name must match one package. Use pkg rollback to restore an environment."
     )]
     Remove(RemoveArgs),
     /// List your installed packages.
@@ -314,12 +315,12 @@ pub enum Command {
     Unpin(PackageArgs),
     /// Show or prune saved package environments.
     #[command(
-        after_help = "Examples:\n  pkg history\n  pkg history --diff gen-0001 gen-0002\n  pkg history --delete gen-0001 --dry-run\n\nEach saved environment is a generation. Use an ID from pkg history. The active generation cannot be deleted."
+        after_help = "Examples:\n  pkg history\n  pkg history gen-0001\n  pkg history --diff gen-0001 gen-0002\n  pkg history --delete gen-0001 --dry-run\n\nEach saved environment is a generation. Use an ID from pkg history. The active generation cannot be deleted."
     )]
     History(HistoryArgs),
     /// Restore a previous package environment.
     #[command(
-        after_help = "Examples:\n  pkg history\n  pkg rollback\n\nRollback restores the previous saved package environment."
+        after_help = "Examples:\n  pkg history\n  pkg rollback\n\nRollback shows the package changes before approval. Use --dry-run to inspect the plan."
     )]
     Rollback(RollbackArgs),
     /// Free disk space used by old package environments.
@@ -347,9 +348,20 @@ pub enum Command {
         after_help = "Examples:\n  pkg completion bash > pkg.bash\n  pkg completion zsh > _pkg\n  pkg completion fish > pkg.fish\n  pkg completion powershell > pkg.ps1\n\nThis prints a completion script. Load it with your shell completion setup."
     )]
     Completion(CompletionArgs),
-    /// Uninstall pkg and its managed Nix installation.
+    /// Manage the pkg installation on this computer.
     #[command(
-        after_help = "Examples:\n  sudo pkg uninstall --dry-run\n  sudo pkg uninstall\n\nThis removes pkg and its managed Nix installation. Use pkg remove <package> to remove individual packages."
+        subcommand,
+        after_help = "Examples:\n  sudo pkg system uninstall --dry-run\n\nUse pkg remove <package> to remove individual packages."
+    )]
+    System(SystemCommand),
+}
+
+/// Commands that affect the product installation rather than user packages.
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum SystemCommand {
+    /// Remove pkg and its managed Nix installation.
+    #[command(
+        after_help = "Examples:\n  sudo pkg system uninstall --dry-run\n  sudo pkg system uninstall\n\nThis removes pkg and its managed Nix installation. Use pkg uninstall <package> to remove a package."
     )]
     Uninstall,
 }
@@ -362,7 +374,7 @@ impl Command {
             Self::Info(_) => "info",
             Self::Install(_) => "install",
             Self::Remove(_) => "remove",
-            Self::Uninstall => "uninstall",
+            Self::System(SystemCommand::Uninstall) => "system uninstall",
             Self::List(_) => "list",
             Self::Outdated => "outdated",
             Self::Update(_) => "update",
@@ -555,13 +567,13 @@ pub struct ListArgs {
     /// Include selected output names.
     #[arg(long)]
     with_outputs: bool,
-    /// Include realized closure bytes.
+    /// Include the primary output closure size (with shared dependencies).
     #[arg(long)]
     size: bool,
     /// Show only pinned packages.
     #[arg(long)]
     pinned: bool,
-    /// Include accepted-channel outdated status.
+    /// Show only catalog packages with available updates.
     #[arg(long)]
     outdated: bool,
 }
@@ -718,6 +730,9 @@ impl PackageArgs {
 /// History command arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct HistoryArgs {
+    /// Show the packages and versions saved in one generation.
+    #[arg(value_name = "ID", conflicts_with_all = ["diff", "delete"])]
+    generation: Option<String>,
     /// Compare two generation identifiers.
     #[arg(long, value_names = ["A", "B"], num_args = 2, conflicts_with = "delete")]
     diff: Vec<String>,
@@ -727,6 +742,11 @@ pub struct HistoryArgs {
 }
 
 impl HistoryArgs {
+    /// Saved environment to inspect.
+    #[must_use]
+    pub fn generation(&self) -> Option<&str> {
+        self.generation.as_deref()
+    }
     /// Optional pair of generation ids to compare.
     #[must_use]
     pub fn diff(&self) -> &[String] {
@@ -909,7 +929,8 @@ mod tests {
             vec!["pkg", "info", "ripgrep"],
             vec!["pkg", "install", "ripgrep"],
             vec!["pkg", "remove", "ripgrep"],
-            vec!["pkg", "uninstall"],
+            vec!["pkg", "uninstall", "ripgrep"],
+            vec!["pkg", "system", "uninstall"],
             vec!["pkg", "list"],
             vec!["pkg", "outdated"],
             vec!["pkg", "update"],

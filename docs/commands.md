@@ -4,6 +4,10 @@ title: Everyday pkg commands
 
 # Everyday commands
 
+This page describes current source. The public installer still selects alpha.52.
+The command changes below will ship in the next release. In alpha.52, use
+`pkg remove <package>` for packages and `sudo pkg uninstall` for product removal.
+
 ```console
 pkg search ripgrep
 pkg info ripgrep
@@ -28,11 +32,17 @@ Run `pkg` or `pkg -h` for a short command guide. Use `pkg install --help` for in
 examples. `-y` accepts confirmation prompts. `-v` shows more detail. `-q`
 hides progress. Use the long options in scripts when that improves clarity.
 
-`pkg list` shows installed selectors, versions, and pin status.
+`pkg list` shows package names and versions in name order. It shows pin status
+when a package is pinned. A different source selector appears below the table.
 `pkg list --name-only` prints one package name per line for scripts.
-`pkg list --size --with-outputs` also shows readable disk sizes and selected outputs.
+`pkg list --size --with-outputs` also shows selected outputs and the recorded size of
+the primary output closure. This includes shared dependencies. It is not the
+space that removal will free. Other selected output closures can use more space.
 `pkg info` shows the package description, homepage, license, and availability.
-`pkg history` shows saved generation IDs and marks the active generation.
+`pkg history` shows saved generation IDs, package changes, versions, and the
+active generation. `pkg history <ID>` shows all packages in that saved environment.
+If its parent was deleted, history shows the saved inventory and states that the
+previous generation is not retained. It does not invent a change list.
 
 There is no separate build command. `pkg install` first checks trusted cached
 downloads. If a local build is needed, it shows the plan and asks for approval.
@@ -78,8 +88,15 @@ flake sources as unchecked. Use `pkg upgrade` to check and install their updates
 ## Remove and upgrade packages
 
 `pkg remove fzf` removes a package from your active environment.
-`pkg uninstall` removes **pkg and its managed Nix installation**.
-Use `remove` for individual packages.
+`pkg uninstall fzf` is the same command as `pkg remove fzf`.
+`sudo pkg system uninstall` removes **pkg and its managed Nix installation**.
+Use `sudo pkg system uninstall --dry-run` to inspect that operation first.
+
+Remove, uninstall, pin, unpin, and upgrade accept a unique installed package name.
+For example, `pkg remove just` finds `github:casey/just#default` when its installed
+name is `just`. Exact selectors take priority. If a name matches several
+packages, the command gives valid installed IDs. Use `pkg list` to choose a full selector. No approval is requested for
+an invalid removal. Removal approval shows the resolved names, versions, and sources.
 
 `pkg update` refreshes the signed catalog. It does not change installed packages.
 `pkg outdated` shows available package updates.
@@ -89,7 +106,9 @@ The available versions come from the Nixpkgs revision in the signed channel.
 An upgrade can report no change when that revision has not changed.
 
 `pkg pin fzf` keeps the installed version. `pkg unpin fzf` permits updates again.
-`pkg history` lists saved generations. `pkg rollback` restores the previous one.
+`pkg history` lists saved generations. `pkg rollback` shows changes and asks
+for approval before it restores the previous environment. Use `pkg rollback <ID>`
+for another saved environment. Use `--dry-run` for a preview or `--yes` in scripts.
 Removed files can remain in the store while a saved generation needs them.
 Use `pkg gc --dry-run` to preview cleanup. Use `pkg gc` to perform it.
 
@@ -125,7 +144,7 @@ Nix commands, paths, flags, substituters, and trust keys are not part of the pub
 ## Terminal output and scripts
 
 Terminal output uses compact tables, status marks, and one live build line.
-The line shows actual reported progress and elapsed time. A percentage does not
+The line shows reported progress and known download byte counts. It has no elapsed timer. A percentage does not
 mean the package is active. Setup still saves and activates the new environment
 after the build finishes. Long pauses show that no new update has arrived.
 The progress line clears before an approval prompt or error.
@@ -135,7 +154,7 @@ select a plain transcript. `--quiet` removes progress and keeps the final result
 `--json` and `--jsonl` keep their existing machine formats. `pkg list --name-only`
 prints names only, including on a terminal.
 
-Alpha.52 uses this layout across all 18 commands. Wide terminals show tables;
+The same layout applies across the command tree. Wide terminals show tables;
 small terminals show labeled cards. Long values wrap within the terminal width.
 Previews show the planned targets and state that no changes were applied.
 Install and rollback results identify the saved environment. History includes

@@ -48,7 +48,7 @@ fn main() -> ProcessExitCode {
             );
         }
         Command::Doctor(args) => return run_doctor(&cli, args),
-        Command::Uninstall => return run_uninstall(&cli),
+        Command::System(pkg_cli::cli::SystemCommand::Uninstall) => return run_uninstall(&cli),
         _ => {}
     }
 
@@ -82,11 +82,11 @@ struct UninstallEngine;
 
 impl CommandEngine for UninstallEngine {
     fn execute(&mut self, request: &CommandRequest) -> Result<CommandResult, CommandError> {
-        if request.command() != &Command::Uninstall {
+        if request.command() != &Command::System(pkg_cli::cli::SystemCommand::Uninstall) {
             return Err(CommandError::new(
                 ExitCode::Config,
                 "the uninstall command is invalid",
-                "run `pkg uninstall`",
+                "run `pkg system uninstall`",
             ));
         }
         if !cfg!(any(target_os = "linux", target_os = "macos")) {
@@ -101,18 +101,22 @@ impl CommandEngine for UninstallEngine {
                 UninstallErrorCode::PrivilegeRequired,
             ));
         }
-        if !request.dry_run() {
-            confirm_destructive(
-                request.yes(),
-                "Uninstall pkg and its managed Nix installation?",
-            )?;
-        }
-        let result = if cfg!(target_os = "macos") {
-            uninstall_macos_production(request.dry_run())
+        let uninstall: fn(bool) -> _ = if cfg!(target_os = "macos") {
+            uninstall_macos_production
         } else {
-            uninstall_linux_production(request.dry_run())
+            uninstall_linux_production
         };
-        let actions = result.map_err(|error| uninstall_command_error(error.code()))?;
+        // Ownership and absence checks precede approval. The live path checks
+        // them again before it can remove product-owned state.
+        let actions = uninstall(true).map_err(|error| uninstall_command_error(error.code()))?;
+        if request.dry_run() || actions == 0 {
+            return uninstall_result(actions, request.dry_run());
+        }
+        confirm_destructive(
+            request.yes(),
+            "Uninstall pkg and its managed Nix installation?",
+        )?;
+        let actions = uninstall(false).map_err(|error| uninstall_command_error(error.code()))?;
         uninstall_result(actions, request.dry_run())
     }
 }
@@ -178,7 +182,7 @@ fn uninstall_command_error(code: UninstallErrorCode) -> CommandError {
         UninstallErrorCode::PrivilegeRequired => (
             ExitCode::Permission,
             "administrator access is required",
-            "run `sudo pkg uninstall`",
+            "run `sudo pkg system uninstall`",
         ),
         UninstallErrorCode::UnmanagedNix => (
             ExitCode::UnmanagedNix,
@@ -193,12 +197,12 @@ fn uninstall_command_error(code: UninstallErrorCode) -> CommandError {
         UninstallErrorCode::ServiceStopFailed => (
             ExitCode::EngineUnavailable,
             "pkg could not stop its services",
-            "run `pkg uninstall` again",
+            "run `pkg system uninstall` again",
         ),
         UninstallErrorCode::CleanupIncomplete | UninstallErrorCode::ResidueRemaining => (
             ExitCode::EngineUnavailable,
-            "pkg uninstall did not complete",
-            "run `pkg uninstall` again",
+            "pkg system uninstall did not complete",
+            "run `pkg system uninstall` again",
         ),
     };
     CommandError::new(exit, message, hint)
@@ -362,11 +366,11 @@ mod tests {
 
     #[test]
     fn live_uninstall_accepts_only_plain_output() {
-        let plain = Cli::try_parse(["pkg", "uninstall", "--yes"]).unwrap();
+        let plain = Cli::try_parse(["pkg", "system", "uninstall", "--yes"]).unwrap();
         assert!(validate_live_uninstall_output(&plain).is_ok());
 
         for flag in ["--json", "--jsonl"] {
-            let live = Cli::try_parse(["pkg", flag, "uninstall", "--yes"]).unwrap();
+            let live = Cli::try_parse(["pkg", flag, "system", "uninstall", "--yes"]).unwrap();
             assert_eq!(
                 validate_live_uninstall_output(&live).is_err(),
                 cfg!(any(
@@ -375,7 +379,8 @@ mod tests {
                 ))
             );
 
-            let dry_run = Cli::try_parse(["pkg", flag, "--dry-run", "uninstall"]).unwrap();
+            let dry_run =
+                Cli::try_parse(["pkg", flag, "--dry-run", "system", "uninstall"]).unwrap();
             assert!(validate_live_uninstall_output(&dry_run).is_ok());
         }
     }

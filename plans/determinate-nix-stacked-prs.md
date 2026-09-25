@@ -169,6 +169,15 @@ completion of the production trust ceremony.
 - **Rollback:** revert the diagnostics. No stored-state migration or release
   metadata change is required.
 
+### PUBLIC-17: installed package identity and useful daily command output
+
+- **Status:** implementation in progress. These commands are not in published alpha.52.
+- **Purpose:** resolve installed package names before approval and show the package changes users need to assess.
+- **Owns:** unique installed-name matching for remove, pin, unpin and upgrade; package uninstall alias; explicit system uninstall command; package names and source selectors in lists; generation inventories and change details; rollback approval; quiet progress without elapsed timers; command help and lifecycle harness updates.
+- **Depends:** PUBLIC-12, PUBLIC-13 and PUBLIC-16 (merged).
+- **Tests & gates:** missing/ambiguous/duplicate package selectors, exact selector precedence, validation before approval, history and rollback versions/pins/sources, package versus system uninstall dispatch, all help pages, TTY/plain/JSON/quiet output, native macOS lifecycle commands, G-LINT, G-QUALITY, workspace tests, docs links, hosted Linux/macOS checks; E primary, F cross-area, and A security review.
+- **Rollback:** revert the command and presentation changes. Stored generations remain in the existing format. Restore harness command names with the CLI; no Nix or package data deletion is needed.
+
 ## Alpha.49: reliable installation and daily commands
 
 - **Identifier:** PUBLIC-08.

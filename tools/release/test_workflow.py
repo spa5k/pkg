@@ -100,7 +100,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(
             LINUX_HARNESS.count(
                 'docker exec "$container" env PKG_INSTALL_DEBUG=1 '
-                '/usr/local/bin/pkg --yes uninstall'
+                '/usr/local/bin/pkg --yes system uninstall'
             ),
             1,
         )
@@ -110,7 +110,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("flag=--jsonl", LINUX_HARNESS)
         self.assertEqual(
             LINUX_HARNESS.count(
-                'docker exec "$container" /usr/local/bin/pkg "$flag" --yes uninstall'
+                'docker exec "$container" /usr/local/bin/pkg "$flag" --yes system uninstall'
             ),
             1,
         )

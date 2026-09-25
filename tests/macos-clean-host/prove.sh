@@ -1259,7 +1259,7 @@ done
 # resume contract is update, upgrade, rollback, repair, and garbage collection.
 capture package-update "$pkg" --json update
 capture package-upgrade "$pkg" --yes --json upgrade ripgrep --no-build
-capture package-rollback "$pkg" --json rollback
+capture package-rollback "$pkg" --json --yes rollback
 hello_path=$(/usr/bin/python3 -I -c 'import os; print(os.path.realpath(os.path.expanduser("~/Library/Application Support/pkg/current/bin/hello")))')
 case "$hello_path" in /nix/store/*/bin/hello) ;; *) fail "hello escaped the Nix store" ;; esac
 /usr/bin/sudo /bin/chmod u+w "$hello_path"
@@ -1293,7 +1293,7 @@ echo "+ structured live uninstall refuses before mutation"
 snapshot_uninstall_boundary "$work/uninstall-before"
 for flag in --json --jsonl; do
     set +e
-    "$pkg" "$flag" --yes uninstall >"$work/uninstall-$flag.log" 2>&1
+    "$pkg" "$flag" --yes system uninstall >"$work/uninstall-$flag.log" 2>&1
     status=$?
     set -e
     [ "$status" -eq 78 ] || fail "$flag live uninstall did not return EX_CONFIG"
@@ -1308,7 +1308,7 @@ pass native structured-uninstall-refusal
 echo "+ run plain terminal uninstall"
 /bin/cp "$pkg" "$work/pkg-after-removal"
 /bin/chmod 0755 "$work/pkg-after-removal"
-capture terminal-uninstall /usr/bin/sudo "$work/pkg-after-removal" --yes uninstall
+capture terminal-uninstall /usr/bin/sudo "$work/pkg-after-removal" --yes system uninstall
 /usr/bin/grep -F 'Nix was uninstalled successfully' "$evidence/terminal-uninstall.log" >/dev/null \
     || fail "the terminal vendor uninstall did not report completion"
 pass native terminal-uninstall-completion

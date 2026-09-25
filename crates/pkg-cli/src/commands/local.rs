@@ -23,7 +23,8 @@ use crate::commands::query::{
     search_catalog_report,
 };
 use crate::commands::state::{
-    LifecycleEdit, edit_pin_state, list_state, read_history, remove_state, rollback_state,
+    LifecycleEdit, edit_pin_state, list_state, read_history, remove_state, resolve_targets,
+    rollback_state,
 };
 use crate::exit::ExitCode;
 use crate::path::StateLocation;
@@ -257,19 +258,19 @@ impl CoreOperations for LocalStateOperations {
                 .into_parts()
                 .1);
         }
-        confirm_destructive(
-            policy.yes(),
-            &format!(
-                "Remove {} {}?",
-                args.packages().len(),
-                if args.packages().len() == 1 {
-                    "package"
-                } else {
-                    "packages"
-                }
-            ),
-        )?;
-        self.commit_state_edit(StateEditKind::Remove, |state| remove_state(state, args))
+        // Validate before opening a broker operation. Re-plan under the exclusive
+        // lease so approval is bound to the exact state that will be committed.
+        remove_state(self.active()?.state().clone(), args)?;
+        self.commit_state_edit(StateEditKind::Remove, |state| {
+            let edit = remove_state(state, args)?;
+            confirm_edit(
+                policy.yes(),
+                "remove",
+                edit.result(),
+                "Remove these packages?",
+            )?;
+            Ok(edit)
+        })
     }
 
     fn list(&mut self, args: &ListArgs) -> Result<CommandResult, CommandError> {
@@ -284,6 +285,14 @@ impl CoreOperations for LocalStateOperations {
             )
             .map_err(|_| mutation_failed());
         };
+        if args.outdated() {
+            let outdated = self.outdated()?;
+            let attributes = outdated_attributes(&outdated)?;
+            return report_unchecked_flakes(
+                list_state(active.state(), args, Some(&attributes))?,
+                active.state(),
+            );
+        }
         list_state(active.state(), args, None)
     }
 
@@ -409,7 +418,7 @@ impl CoreOperations for LocalStateOperations {
             let history = load_retained_history(layout, &lease).map_err(state_read_error)?;
             return Ok(rollback_state(&active, &history, args)?.into_parts().1);
         }
-        self.commit_rollback(args)
+        self.commit_rollback(args, policy)
     }
 
     fn gc(
@@ -679,6 +688,7 @@ impl LocalStateOperations {
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let packages = super::state::installed_packages(upgraded.state(), upgraded.upgraded())?;
             let next = upgraded.into_state();
             let nonce = secure_nonce()?;
             let identity = LeaseIdentity::new(&public_operation_id, &nonce, &created_at)
@@ -690,6 +700,16 @@ impl LocalStateOperations {
                 .first()
                 .ok_or_else(no_active_generation)?;
             let generation_id = next_generation_id(newest.generation().id())?;
+            let command_result = upgrade_result(
+                &public_operation_id,
+                &generation_id,
+                &upgraded_names,
+                &skipped_pinned,
+                build_approval,
+            )?
+            .with_packages(packages)
+            .and_then(|result| result.with_package_labels(labels))
+            .map_err(|_| mutation_failed())?;
             let prepared = prepare_state_edit(
                 layout.clone(),
                 lease,
@@ -726,15 +746,7 @@ impl LocalStateOperations {
                 .map_err(|_| install_commit_failed())?;
             local_committed = true;
             let _ = broker.complete(handle.clone());
-            upgrade_result(
-                &public_operation_id,
-                &generation_id,
-                &upgraded_names,
-                &skipped_pinned,
-                build_approval,
-            )?
-            .with_package_labels(labels)
-            .map_err(|_| mutation_failed())
+            Ok(command_result)
         })();
         if result.is_err() && !local_committed {
             let _ = broker.cancel(handle);
@@ -1085,7 +1097,11 @@ impl LocalStateOperations {
         Ok((lease, operation_id))
     }
 
-    fn commit_rollback(&self, args: &RollbackArgs) -> Result<CommandResult, CommandError> {
+    fn commit_rollback(
+        &self,
+        args: &RollbackArgs,
+        policy: OperationPolicy,
+    ) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
         let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
@@ -1112,7 +1128,15 @@ impl LocalStateOperations {
                 .ok_or_else(no_active_generation)?;
             let generation_id = next_generation_id(newest.generation().id())?;
             let (plan, command_result) = rollback_state(&source, &history, args)?.into_parts();
+            confirm_edit(
+                policy.yes(),
+                "rollback",
+                &command_result,
+                "Restore this package environment?",
+            )?;
             let command_result = command_result
+                .with_generation(&generation_id)
+                .map_err(|_| mutation_failed())?
                 .with_summary(format!(
                     "Restored the package environment from {}.",
                     plan.target().generation().id()
@@ -1210,6 +1234,13 @@ impl LocalStateOperations {
                 .map_err(|_| mutation_failed())?;
             let generation_id = next_generation_id(newest.generation().id())?;
             let (next, command_result) = edit(source.state().clone())?.into_parts();
+            if &next == source.state() {
+                let _ = broker.complete(handle.clone());
+                return Ok(command_result);
+            }
+            let command_result = command_result
+                .with_generation(&generation_id)
+                .map_err(|_| mutation_failed())?;
             let command_result = if kind == StateEditKind::Remove {
                 command_result
                     .with_summary("Packages removed. Your package environment is ready.")
@@ -2108,32 +2139,7 @@ fn upgrade_scope(
     if args.all() {
         return Ok(UpgradeScope::All);
     }
-    let ids = args
-        .packages()
-        .iter()
-        .map(|name| {
-            let matches = state
-                .manifest()
-                .entries()
-                .iter()
-                .filter(|entry| entry.id().as_str() == name || entry.selector().as_str() == name)
-                .map(|entry| entry.id().clone())
-                .collect::<Vec<_>>();
-            match matches.as_slice() {
-                [id] => Ok(id.clone()),
-                [] => Err(CommandError::new(
-                    ExitCode::ResolveFailed,
-                    "package is not installed",
-                    "run `pkg list` and use an installed selector",
-                )),
-                _ => Err(CommandError::new(
-                    ExitCode::ResolveFailed,
-                    "installed selector is ambiguous",
-                    "use the stable selector id from machine output",
-                )),
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let ids = resolve_targets(state, args.packages())?;
     Ok(UpgradeScope::Named(ids))
 }
 
@@ -2458,6 +2464,19 @@ fn ensure_generation_deletable(
         ));
     }
     Ok(())
+}
+
+fn confirm_edit(
+    yes: bool,
+    command: &str,
+    result: &CommandResult,
+    prompt: &str,
+) -> Result<(), CommandError> {
+    if !yes && io::stdin().is_terminal() && io::stderr().is_terminal() {
+        super::human::write_confirmation(io::stderr(), command, result)
+            .map_err(|_| confirmation_required())?;
+    }
+    confirm_destructive(yes, prompt)
 }
 
 /// Requests one terminal confirmation unless the caller supplied `--yes`.
