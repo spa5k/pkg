@@ -214,6 +214,16 @@ completion of the production trust ceremony.
 - **Tests & gates:** signatures, installer byte comparison and verification mode, shell syntax, renderer/documentation tests, docs links and hosted release checks; A primary/security and E cross-area review.
 - **Rollback:** restore the previous entry script only with a compatible higher channel sequence. Retain Nix records and package generations.
 
+### PUBLIC-23: startup checks and lock-test reliability
+
+- **Status:** source implemented; local gates and E/A source reviews pass. Native and hosted CI evidence is required before merge. No new release is included.
+- **Purpose:** let `pkg doctor` observe services that are still starting after boot, and remove an immediate lock-release assumption from the terminal-uninstall test.
+- **Owns:** one bounded broker health-check deadline; retry only for transient connection or transport failure; one human startup notice; exact ownership and protocol refusal tests; a bounded lock-release test with a retained file handle.
+- **Depends:** PUBLIC-20 and PUBLIC-21 (merged).
+- **Tests & gates:** delayed, missing and stalled broker tests; refusal, correlation, ownership and cleanup checks; lock exclusion and eventual acquisition; native read-only doctor checks; local G-LINT, hermetic workspace tests, G-QUALITY, docs links and hosted Linux/macOS checks; E primary and A cross-area/security review.
+- **Rollback:** revert the source change. No state migration or installed-product change is required. Keep all Nix records and package generations.
+- **Not included:** a new alpha release, release policy, backward compatibility policy, signing changes, or trust metadata renewal.
+
 ## Alpha.49: reliable installation and daily commands
 
 - **Identifier:** PUBLIC-08.

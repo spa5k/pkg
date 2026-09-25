@@ -44,6 +44,8 @@ pub enum BrokerClientErrorCode {
     UnsupportedPlatform,
     /// The installed broker endpoint could not be connected.
     Unavailable,
+    /// The operating system refused access to the broker endpoint.
+    AccessDenied,
     /// Bounded stream I/O failed or ended unexpectedly.
     TransportFailure,
     /// The peer returned an invalid product frame.
@@ -266,6 +268,7 @@ pub struct BrokerLifecycleClient {
     stream: UnixStream,
     next_request_id: u64,
     healthy: bool,
+    deadline: Option<Instant>,
 }
 
 impl BrokerLifecycleClient {
@@ -292,15 +295,48 @@ impl BrokerLifecycleClient {
         ))
     }
 
+    /// Connects for a read-only health check with one deadline for the entire session.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn connect_default_until(deadline: Instant) -> Result<Self, BrokerClientError> {
+        Self::connect_until(Path::new(DEFAULT_BROKER_SOCKET), deadline)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    pub(crate) fn connect_default_until(_deadline: Instant) -> Result<Self, BrokerClientError> {
+        Self::connect_default()
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn connect_until(path: &Path, deadline: Instant) -> Result<Self, BrokerClientError> {
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        if timeout.is_zero() {
+            return Err(BrokerClientError::new(
+                BrokerClientErrorCode::TransportFailure,
+            ));
+        }
+        let mut client = Self::connect_with_timeout(path, timeout.min(CONNECT_TIMEOUT))?;
+        client.deadline = Some(deadline);
+        Ok(client)
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn connect(path: &Path) -> Result<Self, BrokerClientError> {
+        Self::connect_with_timeout(path, CONNECT_TIMEOUT)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn connect_with_timeout(path: &Path, timeout: Duration) -> Result<Self, BrokerClientError> {
         let socket = Socket::new(Domain::UNIX, Type::STREAM, None)
             .map_err(|_| BrokerClientError::new(BrokerClientErrorCode::Unavailable))?;
         let address = SockAddr::unix(path)
             .map_err(|_| BrokerClientError::new(BrokerClientErrorCode::Unavailable))?;
-        socket
-            .connect_timeout(&address, CONNECT_TIMEOUT)
-            .map_err(|_| BrokerClientError::new(BrokerClientErrorCode::Unavailable))?;
+        socket.connect_timeout(&address, timeout).map_err(|error| {
+            BrokerClientError::new(if error.kind() == io::ErrorKind::PermissionDenied {
+                BrokerClientErrorCode::AccessDenied
+            } else {
+                BrokerClientErrorCode::Unavailable
+            })
+        })?;
         let stream: UnixStream = socket.into();
         Ok(Self::from_stream(stream))
     }
@@ -310,6 +346,7 @@ impl BrokerLifecycleClient {
             stream,
             next_request_id: 1,
             healthy: true,
+            deadline: None,
         }
     }
 
@@ -984,6 +1021,7 @@ impl BrokerLifecycleClient {
         let deadline = Instant::now()
             .checked_add(timeout)
             .ok_or_else(|| BrokerClientError::new(BrokerClientErrorCode::TransportFailure))?;
+        let deadline = self.deadline.map_or(deadline, |limit| limit.min(deadline));
         write_all_until(&mut self.stream, &frame, deadline)?;
         let response = read_frame(&mut self.stream, deadline)?;
         let (response_id, response) = ProductFrameCodec::decode_cli_response(&response)
@@ -1167,6 +1205,7 @@ const fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         return NixAdapterError::remote(code);
     }
     match error.code() {
+        BrokerClientErrorCode::AccessDenied => NixAdapterError::PermissionDenied,
         BrokerClientErrorCode::UnsupportedPlatform
         | BrokerClientErrorCode::Unavailable
         | BrokerClientErrorCode::ConnectionFailed => NixAdapterError::Unavailable,
