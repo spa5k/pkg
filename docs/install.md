@@ -5,7 +5,7 @@ title: Install pkg
 # Install pkg
 
 The current public release is
-[`v0.1.0-alpha.52`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.52).
+[`v0.1.0-alpha.54`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.54).
 It supports **Apple silicon macOS** and **Linux x86-64 with systemd**.
 Intel macOS and Linux arm64 are not release targets yet.
 
@@ -45,10 +45,10 @@ Use the terminal installer. It keeps the macOS permission prompt in your
 terminal session, shows the real result, and saves a private log.
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.52/pkg-0.1.0-alpha.52-preview.pkg && \
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.52/install-preview.sh && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.54/pkg-0.1.0-alpha.54-preview.pkg && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.54/install-preview.sh && \
 printf '%s  %s\n' '64ff6f29a287ce4b4759096b3a862b58a8bca681b05dcf3ea46d8a94793de4b4' 'install-preview.sh' | shasum -a 256 --check && \
-/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.52-preview.pkg 9155ef4eec9df83c0b45a19280c12846a7699a6eef714112344b384ea0c69b80
+/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.54-preview.pkg 8c601088e68deb63da9010673292dbf0dbfc496fee4e8ff892cc040b96a370ba
 ```
 
 Allow the macOS system configuration prompt if it appears. Keep the terminal
@@ -83,8 +83,8 @@ sessions as an upgrade method.
 Download and verify the installer before you run it:
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.52/pkg-install-x86_64-linux && \
-printf '%s  %s\n' '713a823f3b3427754f9941f5907b36911a6e1c08f04ace94266b928e03c44ef4' 'pkg-install-x86_64-linux' | sha256sum --check && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.54/pkg-install-x86_64-linux && \
+printf '%s  %s\n' 'd78aa382373fb591a58e280f6385eff345b2ac99f4c34e3df847bdaa102fb0a5' 'pkg-install-x86_64-linux' | sha256sum --check && \
 chmod 700 ./pkg-install-x86_64-linux && \
 sudo ./pkg-install-x86_64-linux
 ```
@@ -166,13 +166,13 @@ They are not public release assets. The [active plan](../plans/determinate-nix-s
 records the platform proof gates and their scope. The public release notes
 record what was tested for each release.
 
-## Uninstall
+## Remove pkg itself
 
 Preview the operation first:
 
 ```sh
-pkg uninstall --dry-run
-sudo pkg uninstall
+sudo pkg system uninstall --dry-run
+sudo pkg system uninstall
 ```
 
 Use plain terminal output for live uninstall. It removes verified pkg-owned
