@@ -126,6 +126,6 @@ fi
 pkg_ok 'pkg is ready.'
 # Shell setup is printed for the invoking shell, not evaluated by the installer.
 # shellcheck disable=SC2016
-printf '\n%s\n' 'Open a new terminal, or run:' '  eval "$(/usr/local/bin/pkg shellenv)"' \
+printf '%s\n' '' 'Open a new terminal, or run:' '  eval "$(/usr/local/bin/pkg shellenv)"' \
     '' 'Start here:' '  pkg search ripgrep' '  pkg install ripgrep' '  pkg list' \
     '' 'Run this same installer command when you want to update pkg.'
