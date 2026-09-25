@@ -5,7 +5,7 @@ from pathlib import Path
 import stat
 import subprocess
 
-PREFIXES = (Path("/usr/local"), Path("/usr/local/bin"))
+PREFIXES = (Path("/opt"), Path("/usr/local"), Path("/usr/local/bin"))
 
 
 def prepare():

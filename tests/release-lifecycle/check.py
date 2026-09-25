@@ -141,6 +141,8 @@ def upgrade(checks, args):
     checks.package("fzf", "Retained package")
     checks.run("Repeat installer", ["/bin/sh", str(after / "install.sh")])
     if platform.system() == "Darwin":
+        checks.run("Record build disk space", ["/bin/df", "-k", "/nix"])
+        checks.run("Record build system load", ["/usr/sbin/sysctl", "-n", "vm.loadavg", "hw.logicalcpu"])
         checks.run("Build public flake", [CLI, "install", "github:casey/just#default", "-y"], timeout=1800)
         checks.package("just", "Run built package")
     checks.run("Remove package", [CLI, "remove", "fzf", "-y"])

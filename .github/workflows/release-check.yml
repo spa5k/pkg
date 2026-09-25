@@ -50,24 +50,6 @@ jobs:
             cat "$RUNNER_TEMP/pkg-release-proof/summary.md" >> "$GITHUB_STEP_SUMMARY"
           fi
           printf '\nNative reboot is not performed on these hosted runners. Run the resume phase in the same disposable VM for reboot evidence.\n' >> "$GITHUB_STEP_SUMMARY"
-      - name: Diagnose the failed Linux installer on this disposable runner
-        if: failure() && runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          proof="$RUNNER_TEMP/pkg-release-proof"
-          # The normal runner user must own each redirected log.
-          # shellcheck disable=SC2024
-          sudo stat -c '%n uid=%u gid=%g mode=%a type=%F' / /usr /usr/local /usr/local/bin /opt /var /var/lib /run /etc > "$proof/host-paths.log"
-          binary="$proof/$TO_RELEASE/pkg-install-x86_64-linux"
-          cosign verify-blob --bundle "$binary.sigstore.json" \
-            --certificate-identity "https://github.com/spa5k/pkg/.github/workflows/alpha-release.yml@refs/tags/$TO_RELEASE" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$binary"
-          chmod 700 "$binary"
-          # shellcheck disable=SC2024
-          sudo timeout 120 strace -f -e trace=%file,process -s 160 -o "$proof/diagnostic-retry.log" "$binary" > "$proof/diagnostic-result.log" 2>&1 || true
-          sudo chown "$(id -u):$(id -g)" "$proof/diagnostic-retry.log" "$proof/diagnostic-result.log"
-          printf '\nA traced Linux retry is diagnostic only. It is not installation proof.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Keep checks and logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
