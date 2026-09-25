@@ -477,6 +477,41 @@ fn macos_removes_receipt_and_directories_before_broker_account() -> Result<(), U
 }
 
 #[test]
+fn temporary_directories_are_removed_with_their_owned_private_homes() -> Result<(), UninstallError>
+{
+    for system in [
+        System::Aarch64Darwin,
+        System::Aarch64Linux,
+        System::X8664Linux,
+    ] {
+        let receipt = manifest(system, RecordedAssetState::Created)?;
+        let plan = plan_uninstall(&receipt)?;
+        let has_action = |plan: &UninstallPlan, id| {
+            plan.actions().iter().any(|action| {
+                matches!(action, UninstallAction::RemoveAsset { id: actual, .. } if *actual == id)
+            })
+        };
+        for (child, parent) in [("broker-tmp", "broker-home"), ("helper-tmp", "helper-home")] {
+            assert!(!has_action(&plan, child));
+            assert!(has_action(&plan, parent));
+            let mut records = receipt.assets().to_vec();
+            let record = records
+                .iter_mut()
+                .find(|record| record.id() == parent)
+                .ok_or_else(UninstallError::backend_failure)?;
+            *record = RecordedAsset::new(parent, RecordedAssetState::PreExisting)?;
+            let preserved =
+                UninstallManifest::new(system, receipt.ownership_manifest_digest(), records)?;
+            let preserved_plan = plan_uninstall(&preserved)?;
+            assert!(has_action(&preserved_plan, child));
+            assert!(!has_action(&preserved_plan, parent));
+        }
+        assert!(has_action(&plan, "broker-channel-state"));
+    }
+    Ok(())
+}
+
+#[test]
 fn every_preflight_refusal_happens_before_mutation() -> Result<(), UninstallError> {
     let manifest = manifest(System::X8664Linux, RecordedAssetState::Created)?;
     let plan = plan_uninstall(&manifest)?;

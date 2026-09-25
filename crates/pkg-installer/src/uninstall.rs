@@ -505,6 +505,15 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
         .filter(|asset| states.get(asset.id) == Some(&RecordedAssetState::Created))
         .filter(|asset| !receipt_last || asset.id != "uninstall-manifest")
         .collect::<Vec<_>>();
+    // These private homes remove their owned trees. Removing a populated tmp
+    // child first would report a failure even when its home is removed safely.
+    if determinate_system {
+        for (child, parent) in [("broker-tmp", "broker-home"), ("helper-tmp", "helper-home")] {
+            if removable.iter().any(|asset| asset.id == parent) {
+                removable.retain(|asset| asset.id != child);
+            }
+        }
+    }
     removable.sort_by(|left, right| removal_key(right).cmp(&removal_key(left)));
     let manifest_asset = platform
         .into_iter()
@@ -693,7 +702,9 @@ pub fn execute_uninstall(
         {
             continue;
         }
-        match backend.execute(*action) {
+        match backend.execute(*action).inspect_err(|error| {
+            eprintln!("uninstall action failed: {action:?}: {error:?}");
+        }) {
             Ok(()) => completed += 1,
             Err(_) if *action == UninstallAction::VerifyNoPrivilegedResidue => {
                 residue_failed = true;

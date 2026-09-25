@@ -95,12 +95,6 @@ impl ProductionMacOsUninstallBackend {
     /// Returns a redacted error for changed, unsafe, or non-Accepted state.
     pub fn installed_manifest(&mut self) -> Result<Option<UninstallManifest>, UninstallError> {
         self.require_accepted_handoff()?;
-        if !path_is_absent(Path::new(UNINSTALL_RECEIPT))? {
-            return self
-                .assets
-                .installed_uninstall_manifest()
-                .map_err(|_| UninstallError::backend_failure());
-        }
         match crate::macos_accounts::broker_account_presence(self.groups)
             .map_err(|_| UninstallError::backend_failure())?
         {
@@ -109,6 +103,12 @@ impl ProductionMacOsUninstallBackend {
                 .assets
                 .bind_filesystem_after_broker_removal()
                 .map_err(|_| UninstallError::backend_failure())?,
+        }
+        if !path_is_absent(Path::new(UNINSTALL_RECEIPT))? {
+            return self
+                .assets
+                .installed_uninstall_manifest()
+                .map_err(|_| UninstallError::backend_failure());
         }
         let manifest = self
             .assets

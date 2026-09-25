@@ -211,8 +211,7 @@ pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError
             .map_err(|_| UninstallError::backend_failure())?;
         match handoff {
             DeterminateHandoffState::Accepted => {}
-            DeterminateHandoffState::NotStarted if matches!(Path::new("/nix").symlink_metadata(), Err(error) if error.kind() == std::io::ErrorKind::NotFound) =>
-            {
+            DeterminateHandoffState::NotStarted if macos_nix_absent_at(Path::new("/"))? => {
                 return Ok(0);
             }
             DeterminateHandoffState::NotStarted | DeterminateHandoffState::Started => {
@@ -258,6 +257,41 @@ pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError
         execute_uninstall(&manifest, &plan, &mut backend)
             .map(crate::UninstallReport::completed_actions)
     }
+}
+
+fn macos_nix_absent_at(root: &Path) -> Result<bool, UninstallError> {
+    use rustix::fs::{Dir, Mode, OFlags, open};
+
+    let root_metadata = fs::metadata(root).map_err(|_| UninstallError::backend_failure())?;
+    let directory = match open(
+        root.join("nix"),
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(directory) => fs::File::from(directory),
+        Err(rustix::io::Errno::NOENT) => return Ok(true),
+        Err(_) => return Err(UninstallError::backend_failure()),
+    };
+    let metadata = directory
+        .metadata()
+        .map_err(|_| UninstallError::backend_failure())?;
+    // macOS can retain the empty synthetic mount point until the next reboot.
+    // A mounted filesystem or a changed node is not evidence of absence.
+    if metadata.dev() != root_metadata.dev()
+        || metadata.uid() != root_metadata.uid()
+        || metadata.gid() != root_metadata.gid()
+        || metadata.mode() & 0o7777 != 0o755
+    {
+        return Ok(false);
+    }
+    let mut entries = Dir::read_from(&directory).map_err(|_| UninstallError::backend_failure())?;
+    for entry in &mut entries {
+        let entry = entry.map_err(|_| UninstallError::backend_failure())?;
+        if !matches!(entry.file_name().to_bytes(), b"." | b"..") {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Authenticates the bundle before the first macOS platform mutation, then installs it.
