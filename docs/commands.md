@@ -121,3 +121,19 @@ Add this line to `~/.zshrc` or your Bash startup file for future sessions.
 See the [install guide](install.md) for download and upgrade commands.
 
 Nix commands, paths, flags, substituters, and trust keys are not part of the public interface.
+
+## Terminal output and scripts
+
+Terminal output uses compact tables, status marks, and one live build line.
+The line shows actual reported progress and elapsed time. A percentage does not
+mean the package is active. Setup still saves and activates the new environment
+after the build finishes. Long pauses show that no new update has arrived.
+The progress line clears before an approval prompt or error.
+
+Use `--no-color` or `NO_COLOR=1` for static output. `CI` and `TERM=dumb` also
+select a plain transcript. `--quiet` removes progress and keeps the final result.
+`--json` and `--jsonl` keep their existing machine formats. `pkg list --name-only`
+prints names only, including on a terminal.
+
+These terminal changes are source changes after alpha.49. They require the next
+CLI release. The public installer currently selects alpha.49.

@@ -12,6 +12,7 @@ use crate::cli::{
 };
 use crate::exit::ExitCode;
 use crate::log::PublicOperationLog;
+use crate::presentation::Style;
 use crate::progress::PublicEvent;
 use crate::ux::{
     CommandError, OutputMode, PUBLIC_SCHEMA_VERSION, json_line_bytes, terminal_error_ndjson_line,
@@ -184,6 +185,18 @@ pub trait CoreOperations {
         args: &UpgradeArgs,
         policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError>;
+    /// Upgrade while reporting the same acquisition and build progress as install.
+    ///
+    /// # Errors
+    /// Returns the operation or progress-stream failure without changing its code.
+    fn upgrade_with_progress(
+        &mut self,
+        args: &UpgradeArgs,
+        policy: OperationPolicy,
+        _progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
+    ) -> Result<CommandResult, CommandError> {
+        self.upgrade(args, policy)
+    }
     /// Change exact pin intent through a byte-equivalent fresh activation.
     fn pin(
         &mut self,
@@ -292,7 +305,9 @@ impl<C: CoreOperations> CommandEngine for CoreEngine<C> {
             Command::List(args) => self.operations.list(args),
             Command::Outdated => self.operations.outdated(),
             Command::Update(args) => self.operations.update(args, policy),
-            Command::Upgrade(args) => self.operations.upgrade(args, policy),
+            Command::Upgrade(args) => self
+                .operations
+                .upgrade_with_progress(args, policy, progress),
             Command::Pin(args) => self.operations.pin(args, policy),
             Command::Unpin(args) => self.operations.unpin(args, policy),
             Command::History(args) => self.operations.history(args, policy),
@@ -376,7 +391,12 @@ fn execute_command_inner(
 ) -> io::Result<ExitCode> {
     let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
     let mut journal = operation_log.map(PublicOperationJournal::new);
-    let mut human_progress = crate::progress::HumanProgress::default();
+    let progress_style = if mode == OutputMode::Human && !cli.quiet() {
+        Style::stderr(cli.no_color())
+    } else {
+        Style::default()
+    };
+    let mut human_progress = crate::progress::HumanProgress::new(progress_style)?;
     let result = {
         let mut progress = |event: PublicEvent| -> Result<(), CommandError> {
             let bytes = event.to_ndjson_line().map_err(public_stream_unavailable)?;
@@ -394,6 +414,7 @@ fn execute_command_inner(
         };
         engine.execute_with_progress(&CommandRequest::from_cli(cli), &mut progress)
     };
+    human_progress.finish();
     let operation_id = journal
         .as_ref()
         .and_then(PublicOperationJournal::operation_id)
@@ -411,6 +432,7 @@ fn execute_command_inner(
                 &result,
                 operation_id.as_deref(),
                 &lines,
+                Style::stdout(cli.no_color()),
             )?;
             Ok(ExitCode::Ok)
         }
@@ -502,7 +524,15 @@ pub(crate) fn write_success(
     result: &CommandResult,
 ) -> io::Result<()> {
     let lines = success_jsonl_lines(command, result, None)?;
-    write_success_lines(&mut writer, mode, command, result, None, &lines)
+    write_success_lines(
+        &mut writer,
+        mode,
+        command,
+        result,
+        None,
+        &lines,
+        Style::default(),
+    )
 }
 
 fn write_success_lines(
@@ -512,10 +542,11 @@ fn write_success_lines(
     result: &CommandResult,
     operation_id: Option<&str>,
     jsonl_lines: &[Vec<u8>],
+    style: Style,
 ) -> io::Result<()> {
     match mode {
-        OutputMode::Human if command == "search" => write_search_result(&mut writer, result),
-        OutputMode::Human => super::human::write_result(&mut writer, command, result),
+        OutputMode::Human if command == "search" => write_search_result(&mut writer, result, style),
+        OutputMode::Human => super::human::write_result(&mut writer, command, result, style),
         OutputMode::Json => {
             let mut value = result.fields().clone();
             bind_operation_id(&mut value, operation_id)?;
@@ -533,7 +564,15 @@ fn write_success_lines(
     }
 }
 
-fn write_search_result(mut writer: impl Write, result: &CommandResult) -> io::Result<()> {
+fn write_search_result(
+    mut writer: impl Write,
+    result: &CommandResult,
+    style: Style,
+) -> io::Result<()> {
+    if style.is_terminal() {
+        super::human::write_result(&mut writer, "search", result, style)?;
+        return write_catalog_notes(writer, result);
+    }
     if !result.records().is_empty() {
         let package_width = result
             .records()
@@ -583,7 +622,11 @@ fn write_search_result(mut writer: impl Write, result: &CommandResult) -> io::Re
         }
         writeln!(writer)?;
     }
-    writeln!(writer, "{}", result.summary())?;
+    style.success(&mut writer, result.summary())?;
+    write_catalog_notes(writer, result)
+}
+
+fn write_catalog_notes(mut writer: impl Write, result: &CommandResult) -> io::Result<()> {
     if let Some(generated_at) = result
         .fields()
         .get("catalogGeneratedAt")

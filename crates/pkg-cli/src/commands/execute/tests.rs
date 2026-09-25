@@ -573,3 +573,21 @@ fn public_flake_intent_can_be_shown_without_allowing_raw_source_diagnostics() {
     assert!(validate_public_string("source github:example/tools/secret").is_err());
     assert!(validate_public_string("github:example/tools?token=secret#tool").is_err());
 }
+
+#[test]
+fn terminal_search_preserves_broken_status_and_stale_catalog_notes() {
+    let result = CommandResult::new("Found 1 package.",
+        Map::from_iter([("catalogGeneratedAt".into(), json!("2026-09-01")), ("stale".into(), json!(true))]),
+        vec![json!({"type":"search_result", "package":"tool", "version":"1", "description":"Example", "available":true, "broken":true}).as_object().unwrap().clone()]).unwrap();
+    let mut bytes = Vec::new();
+    write_search_result(
+        &mut bytes,
+        &result,
+        crate::presentation::Style::new(true, false),
+    )
+    .unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("broken"));
+    assert!(text.contains("Catalog updated: 2026-09-01"));
+    assert!(text.contains("Catalog data is stale."));
+}

@@ -1,6 +1,10 @@
 //! Sanitized public progress-event schema used by JSONL and user-owned logs.
 
+mod live;
+
 use std::collections::BTreeSet;
+
+use crate::presentation::Style;
 use std::fmt;
 use std::io::{self, Write};
 
@@ -57,10 +61,45 @@ pub struct PublicEvent(EventKind);
 #[derive(Default)]
 pub(crate) struct HumanProgress {
     previous: Vec<u8>,
+    percent_bucket: Option<u64>,
+    live: Option<live::LiveProgress>,
 }
 
 impl HumanProgress {
+    pub(crate) fn new(style: Style) -> io::Result<Self> {
+        Ok(Self {
+            previous: Vec::new(),
+            percent_bucket: None,
+            live: if style.animated() {
+                Some(live::LiveProgress::start(style)?)
+            } else {
+                None
+            },
+        })
+    }
+
+    pub(crate) fn finish(&mut self) {
+        self.live = None;
+    }
+
     pub(crate) fn write(&mut self, event: &PublicEvent, mut writer: impl Write) -> io::Result<()> {
+        if let Some(live) = &self.live {
+            return live.update(event.live_update());
+        }
+        let bucket = match &event.0 {
+            EventKind::BuildProgress(event) => Some(
+                format!("{:.0}", event.pct * 100.0)
+                    .parse::<u64>()
+                    .unwrap_or(0)
+                    / 10,
+            ),
+            EventKind::DownloadProgress(event) => Some(percent(event.done, event.total) / 10),
+            _ => None,
+        };
+        if bucket.is_some() && bucket == self.percent_bucket {
+            return Ok(());
+        }
+        self.percent_bucket = bucket;
         let mut line = Vec::new();
         event.write_human(&mut line)?;
         if line != self.previous {
@@ -289,6 +328,40 @@ impl PublicEvent {
         }
     }
 
+    fn live_update(&self) -> live::Update {
+        match &self.0 {
+            EventKind::Phase(event)
+                if event.status == "completed" || event.status == "approval" =>
+            {
+                live::Update::Complete(human_phase(event).into())
+            }
+            EventKind::Phase(event) if event.status == "started" => {
+                live::Update::Activity(human_phase(event).trim_end_matches('.').into())
+            }
+            EventKind::BuildProgress(event) => {
+                live::Update::Percent(format!("{:.0}", event.pct * 100.0).parse().unwrap_or(0))
+            }
+            EventKind::DownloadProgress(event) => {
+                live::Update::Percent(percent(event.done, event.total))
+            }
+            EventKind::BuildStarted(event) => live::Update::Activity(format!(
+                "Building {} {}",
+                event.package_name,
+                event.version.as_deref().unwrap_or("")
+            )),
+            EventKind::DownloadStarted(event) => {
+                live::Update::Activity(format!("Downloading {}", event.selector))
+            }
+            EventKind::Phase(event) => live::Update::Notice(human_phase(event).into()),
+            EventKind::Collision(event) => live::Update::Notice(format!(
+                "Collision at {}: {}",
+                event.file,
+                event.selectors.join(", ")
+            )),
+            EventKind::Committed(_) => live::Update::Pause,
+        }
+    }
+
     /// Render one stable line for the human progress stream.
     pub fn write_human(&self, mut writer: impl Write) -> io::Result<()> {
         match &self.0 {
@@ -339,6 +412,7 @@ fn human_phase(event: &PhaseEvent) -> &'static str {
         ("build", "started") => {
             "Preparing a local build. Checking dependencies and cached downloads..."
         }
+        ("build", "approval") => "Build plan ready.",
         ("build", "completed") => "Local build complete.",
         ("build_execute", "started") => "Preparing the approved build...",
         ("stage", "started") => "Saving the new package environment...",
@@ -413,13 +487,36 @@ mod tests {
         let mut progress = HumanProgress::default();
         let mut human = Vec::new();
         let mut machine = Vec::new();
-        for fraction in [0.101, 0.102, 0.11] {
+        for fraction in [0.101, 0.102, 0.11, 0.21, 1.0] {
             let event = PublicEvent::build_progress("op_1", "just", fraction).unwrap();
             progress.write(&event, &mut human).unwrap();
             event.write_ndjson(&mut machine).unwrap();
         }
-        assert_eq!(human, b"Building: 10%\nBuilding: 11%\n");
-        assert_eq!(machine.iter().filter(|byte| **byte == b'\n').count(), 3);
+        assert_eq!(human, b"Building: 10%\nBuilding: 21%\nBuilding: 100%\n");
+        assert_eq!(machine.iter().filter(|byte| **byte == b'\n').count(), 5);
+    }
+
+    #[test]
+    fn live_output_preserves_refusals_and_collisions_without_success_marks() {
+        for status in [
+            "host_refused",
+            "intent_refused",
+            "planning_refused",
+            "broker_refused",
+        ] {
+            let event = PublicEvent::phase("op_1", "build_prepare", status).unwrap();
+            let live::Update::Notice(message) = event.live_update() else {
+                panic!("diagnostic was hidden");
+            };
+            let mut plain = Vec::new();
+            event.write_human(&mut plain).unwrap();
+            assert_eq!(message, String::from_utf8(plain).unwrap().trim());
+        }
+        let event = PublicEvent::collision("op_1", "bin/tool", ["first", "second"]).unwrap();
+        let live::Update::Notice(message) = event.live_update() else {
+            panic!("collision was hidden");
+        };
+        assert!(message.contains("bin/tool: first, second"));
     }
 
     #[test]

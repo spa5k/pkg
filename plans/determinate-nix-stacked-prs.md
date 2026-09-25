@@ -46,6 +46,54 @@ It is not in alpha.7. Its production code is not merged, and its native proof
 has not run. DN-20 completes the release documents after final proof.
 
 
+## Public installation, terminal output, and release checks
+
+The user requested this follow-up after alpha.49. These entries supersede the
+older OpenSpec UX proposals where they describe behavior already shipped, a
+rename, new exit codes, unrestricted channel flags, or plain-only terminals.
+The product name remains `pkg`. Existing command and JSON contracts remain.
+
+### PUBLIC-09: clear terminal output
+
+- **Purpose:** make daily output readable and make long builds visibly active.
+- **Owns:** stream-specific terminal styles, tables, doctor checks, one live
+  progress line with elapsed time, build preview, and upgrade progress.
+- **Depends:** PUBLIC-08 (merged).
+- **Tests & gates:** plain/JSON/quiet/color policy; live progress and prompt
+  boundaries; failed operations cannot report success; CLI tests; G-LINT,
+  G-QUALITY, workspace tests, docs links; E primary and A cross-area review.
+- **Rollback:** revert CLI changes. No stored-state or broker protocol migration.
+
+### PUBLIC-10: one verified public installer
+
+- **Purpose:** install or upgrade from one stable public script on both targets.
+- **Owns:** a self-contained POSIX entry script, fixed release digests, platform
+  selection, verified macOS foreground wrapper, post-install checks, release
+  rendering, and public instructions. TLS distributes the bootstrap; the script
+  pins the artifacts. It must not claim shell checksum checks implement TUF.
+- **Depends:** PUBLIC-08 (merged).
+- **Tests & gates:** unsupported platform, checksum and download refusal, exact
+  status propagation, private logs, no privilege use during verification,
+  Linux/macOS staged scripts; docs links; E primary and A security review.
+- **Rollback:** restore the previous script. Retain Nix and package state.
+
+### PUBLIC-11: readable CI and production release preparation
+
+- **Purpose:** make check results easy to find and prepare production signing.
+- **Owns:** GitHub summaries and artifacts, reusable exact-release lifecycle
+  checks, production-signing preflight and packaging, and release runbooks.
+- **Depends:** PUBLIC-09 and PUBLIC-10 before a combined public release.
+- **Tests & gates:** workflow syntax and refusal tests, Linux/macOS lifecycle
+  evidence, signing input validation, G-LINT and docs links; A primary and F
+  security review. A missing credential or native reboot proof is reported as
+  incomplete, never as a passing production release.
+- **Rollback:** revert workflow and tooling changes. No production root, key,
+  DNS record, or live channel changes without verified operator inputs.
+
+Production keys, key custody, Apple certificates, domain access, and a native
+production Gatekeeper proof remain external inputs. Tooling readiness is not
+completion of the production trust ceremony.
+
 ## Alpha.49: reliable installation and daily commands
 
 - **Identifier:** PUBLIC-08.
