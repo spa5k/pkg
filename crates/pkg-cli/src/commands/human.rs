@@ -5,16 +5,51 @@ use std::io::{self, Write};
 use serde_json::{Map, Value};
 
 use super::execute::CommandResult;
-use crate::presentation::{Style, Tone};
+use crate::presentation::table::write_table;
+use crate::presentation::{Style, Tone, format_bytes};
+
+mod details;
 
 type Column = (&'static str, &'static str);
+
+#[derive(Clone, Copy, Default)]
+pub(super) struct View {
+    pub(super) style: Style,
+    pub(super) preview: bool,
+}
+
+impl View {
+    pub(super) fn from_cli(cli: &crate::cli::Cli) -> Self {
+        use crate::cli::Command;
+        let changes = match cli.parsed_command() {
+            Command::Install(_)
+            | Command::Remove(_)
+            | Command::Upgrade(_)
+            | Command::Pin(_)
+            | Command::Unpin(_)
+            | Command::Rollback(_)
+            | Command::Gc(_)
+            | Command::Repair(_)
+            | Command::Uninstall
+            | Command::Update(_) => true,
+            Command::History(args) => args.delete().is_some(),
+            _ => false,
+        };
+        Self {
+            style: Style::stdout(cli.no_color()),
+            preview: cli.dry_run() && changes,
+        }
+    }
+}
 
 pub(super) fn write_result(
     mut writer: impl Write,
     command: &str,
     result: &CommandResult,
-    style: Style,
+    view: View,
 ) -> io::Result<()> {
+    let style = view.style;
+    let preview = view.preview || result.fields().get("dryRun") == Some(&Value::Bool(true));
     let records = result.records();
     if command == "list" && result.fields().get("nameOnly") == Some(&Value::Bool(true)) {
         for record in records {
@@ -22,16 +57,56 @@ pub(super) fn write_result(
         }
         return Ok(());
     }
+    let title = if preview {
+        format!("pkg · {command} preview")
+    } else {
+        format!("pkg · {command}")
+    };
+    style.heading(&mut writer, &title)?;
     if command == "info" {
         write_info(&mut writer, records, style)?;
     } else if let Some(first) = records.first() {
         let columns = columns(command, first);
         if !columns.is_empty() {
-            write_table(&mut writer, records, &columns, style)?;
+            let rows = records
+                .iter()
+                .map(|record| columns.iter().map(|(_, key)| cell(record, key)).collect())
+                .collect::<Vec<_>>();
+            let headings = columns.iter().map(|(title, _)| *title).collect::<Vec<_>>();
+            write_table(&mut writer, &headings, &rows, style)?;
             writeln!(writer)?;
         }
     }
-    style.success(&mut writer, result.summary())
+    details::write_details(&mut writer, command, &result.human_fields(), style)?;
+    if preview {
+        style.text(&mut writer, "Preview: ", "No changes were applied.")?;
+    } else {
+        style.success(&mut writer, &summary_text(result.summary()))?;
+    }
+    details::write_next(writer, command, result, view, preview)
+}
+
+fn summary_text(summary: &str) -> String {
+    let mut count = None;
+    let mut text = summary
+        .split_whitespace()
+        .map(|word| {
+            if let Ok(number) = word.parse::<u64>() {
+                count = Some(number);
+            }
+            word.replace("(s)", if count == Some(1) { "" } else { "s" })
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !text.starts_with("pkg ")
+        && let Some(first) = text.get_mut(..1)
+    {
+        first.make_ascii_uppercase();
+    }
+    if !text.ends_with(['.', '!', '?']) {
+        text.push('.');
+    }
+    text
 }
 
 fn columns(command: &str, first: &Map<String, Value>) -> Vec<Column> {
@@ -50,7 +125,7 @@ fn columns(command: &str, first: &Map<String, Value>) -> Vec<Column> {
             ];
             for column in [
                 ("Outputs", "outputsToInstall"),
-                ("Size (bytes)", "closureBytes"),
+                ("Size", "closureBytes"),
                 ("Outdated", "outdated"),
             ] {
                 if first.contains_key(column.1) {
@@ -84,119 +159,20 @@ fn columns(command: &str, first: &Map<String, Value>) -> Vec<Column> {
     }
 }
 
-fn write_table(
-    mut writer: impl Write,
-    records: &[Map<String, Value>],
-    columns: &[Column],
-    style: Style,
-) -> io::Result<()> {
-    let rows = records
-        .iter()
-        .map(|record| {
-            columns
-                .iter()
-                .map(|(_, key)| cell(record, key))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    let widths = column_widths(columns, &rows);
-    let available = std::env::var("COLUMNS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(80)
-        .clamp(40, 160);
-    if style.is_terminal() && widths.iter().sum::<usize>() + 2 * (widths.len() - 1) > available {
-        write_stacked(&mut writer, &rows, columns, available, style)?;
-        return Ok(());
-    }
-    let mut header = Vec::new();
-    write_row(
-        &mut header,
-        columns.iter().map(|(title, _)| *title),
-        &widths,
-    )?;
-    let header = String::from_utf8(header).map_err(io::Error::other)?;
-    write!(writer, "{}", style.paint(&header, Tone::Heading))?;
-    if style.is_terminal() {
-        writeln!(
-            writer,
-            "{}",
-            style.paint(
-                &"─".repeat(widths.iter().sum::<usize>() + 2 * (widths.len() - 1)),
-                Tone::Muted
-            )
-        )?;
-    }
-    for row in &rows {
-        write_row(&mut writer, row.iter().map(String::as_str), &widths)?;
-    }
-    Ok(())
-}
-
-fn column_widths(columns: &[Column], rows: &[Vec<String>]) -> Vec<usize> {
-    columns
-        .iter()
-        .enumerate()
-        .map(|(index, (title, _))| {
-            rows.iter()
-                .map(|row| row[index].chars().count())
-                .max()
-                .unwrap_or(0)
-                .max(title.len())
-        })
-        .collect::<Vec<_>>()
-}
-
-fn write_stacked(
-    mut writer: impl Write,
-    rows: &[Vec<String>],
-    columns: &[Column],
-    available: usize,
-    style: Style,
-) -> io::Result<()> {
-    for row in rows {
-        for ((title, _), value) in columns.iter().zip(row) {
-            writeln!(writer, "{}", style.paint(title, Tone::Heading))?;
-            let chars = value.chars().collect::<Vec<_>>();
-            for chunk in chars.chunks(available.saturating_sub(2)) {
-                writeln!(writer, "  {}", chunk.iter().collect::<String>())?;
-            }
-        }
-        writeln!(writer)?;
-    }
-    Ok(())
-}
-
-fn write_row<'a>(
-    mut writer: impl Write,
-    cells: impl Iterator<Item = &'a str>,
-    widths: &[usize],
-) -> io::Result<()> {
-    for (index, value) in cells.enumerate() {
-        if index > 0 {
-            write!(writer, "  ")?;
-        }
-        if index + 1 == widths.len() {
-            write!(writer, "{value}")?;
-        } else {
-            write!(writer, "{value:<width$}", width = widths[index])?;
-        }
-    }
-    writeln!(writer)
-}
-
 fn write_info(
     mut writer: impl Write,
     records: &[Map<String, Value>],
     style: Style,
 ) -> io::Result<()> {
     for record in records {
-        writeln!(
-            writer,
-            "{} {}",
-            style.paint(&cell(record, "package"), Tone::Heading),
-            cell(record, "version")
-        )?;
+        let title = format!("{} {}", cell(record, "package"), cell(record, "version"));
+        if style.is_terminal() {
+            for line in crate::presentation::wrap(&title, crate::presentation::terminal_width()) {
+                writeln!(writer, "{}", style.paint(&line, Tone::Heading))?;
+            }
+        } else {
+            writeln!(writer, "{title}")?;
+        }
         for (title, key) in [
             ("Description", "description"),
             ("Homepage", "homepage"),
@@ -205,7 +181,7 @@ fn write_info(
             ("Available", "available"),
             ("Broken", "broken"),
         ] {
-            writeln!(writer, "  {title}: {}", cell(record, key))?;
+            style.text(&mut writer, &format!("  {title}: "), &cell(record, key))?;
         }
         writeln!(writer)?;
     }
@@ -223,6 +199,12 @@ fn cell(record: &Map<String, Value>, key: &str) -> String {
             _ => "unsupported",
         }
         .to_owned();
+    }
+    if key == "closureBytes" {
+        return record
+            .get(key)
+            .and_then(Value::as_u64)
+            .map_or_else(|| "unknown".into(), format_bytes);
     }
     record.get(key).map_or_else(|| "-".into(), value_text)
 }
@@ -254,7 +236,7 @@ mod tests {
             .collect();
         let result = CommandResult::new("Complete.", Map::new(), records).unwrap();
         let mut output = Vec::new();
-        write_result(&mut output, command, &result, Style::default()).unwrap();
+        write_result(&mut output, command, &result, View::default()).unwrap();
         String::from_utf8(output).unwrap()
     }
 
@@ -269,12 +251,12 @@ mod tests {
             "Version",
             "Pinned",
             "Outputs",
-            "Size (bytes)",
+            "Size",
             "github:casey/just#default",
             "1.58.0",
             "yes",
             "out",
-            "1234",
+            "1.2 KiB",
         ] {
             assert!(output.contains(expected), "missing {expected}: {output}");
         }
@@ -288,7 +270,7 @@ mod tests {
         ] {
             let result = CommandResult::new("Installed packages", Map::from_iter([("nameOnly".into(), json!(true))]), records).unwrap();
             let mut output = Vec::new();
-            write_result(&mut output, "list", &result, Style::default()).unwrap();
+            write_result(&mut output, "list", &result, View::default()).unwrap();
             assert_eq!(String::from_utf8(output).unwrap(), expected);
         }
     }
@@ -316,5 +298,172 @@ mod tests {
                 && info.contains("Command runner")
                 && info.contains("CC0-1.0")
         );
+    }
+}
+
+#[cfg(test)]
+mod command_views {
+    use super::*;
+    use crate::cli::Cli;
+    use serde_json::json;
+
+    fn output(command: &str, fields: &Value, preview: bool) -> String {
+        let result = CommandResult::new(
+            "Operation complete.",
+            fields.as_object().unwrap().clone(),
+            vec![],
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        write_result(
+            &mut out,
+            command,
+            &result,
+            View {
+                style: Style::new(true, false),
+                preview,
+            },
+        )
+        .unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn results_show_the_packages_environments_and_disk_values() {
+        for (command, fields, expected) in [
+            (
+                "install",
+                json!({"added":[{"package":"just","version":"1.58.0","outputs":["out"]}], "generation":{"id":"gen-0002"}}),
+                vec!["just", "1.58.0", "out", "gen-0002"],
+            ),
+            (
+                "upgrade",
+                json!({"upgraded":["just"], "skippedPinned":["fzf"]}),
+                vec!["Packages: just", "Kept pinned: fzf"],
+            ),
+            (
+                "remove",
+                json!({"removed":["just"]}),
+                vec!["Packages: just"],
+            ),
+            (
+                "pin",
+                json!({"changed":["just"],"unchanged":["fzf"]}),
+                vec!["Packages: just", "Already in this state: fzf"],
+            ),
+            ("unpin", json!({"changed":["just"]}), vec!["Packages: just"]),
+            (
+                "rollback",
+                json!({"sourceGeneration":"gen-0002","targetGeneration":"gen-0001","packageCount":2}),
+                vec![
+                    "From: gen-0002",
+                    "Target environment: gen-0001",
+                    "Packages: 2",
+                ],
+            ),
+            (
+                "gc",
+                json!({"prunedGenerations":["gen-0001"],"freedBytes":1024}),
+                vec!["Deleted generations: gen-0001", "Space freed: 1.0 KiB"],
+            ),
+            (
+                "repair",
+                json!({"generation":"gen-0002", "damagedPathCount":0}),
+                vec!["Generation: gen-0002", "Damaged paths: 0"],
+            ),
+        ] {
+            let text = output(command, &fields, false);
+            for value in expected {
+                assert!(text.contains(value), "{command}: {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn labels_survive_summary_changes_without_changing_machine_ids() {
+        let labels = Map::from_iter([("sel_example".into(), json!("fzf"))]);
+        let result = CommandResult::new(
+            "1 package(s) pinned",
+            Map::from_iter([("changed".into(), json!(["sel_example"]))]),
+            vec![],
+        )
+        .unwrap()
+        .with_package_labels(labels)
+        .unwrap()
+        .with_summary("1 package(s) pinned")
+        .unwrap();
+        assert_eq!(result.fields()["changed"], json!(["sel_example"]));
+        assert_eq!(result.human_fields()["changed"], json!(["fzf"]));
+        assert_eq!(summary_text(result.summary()), "1 package pinned.");
+        assert_eq!(
+            summary_text("pruned 1 generation(s); collected 2 store path(s)"),
+            "Pruned 1 generation; collected 2 store paths."
+        );
+        assert!(
+            CommandResult::new("Done", Map::new(), vec![])
+                .unwrap()
+                .with_package_labels(Map::from_iter([(
+                    "id".into(),
+                    json!("\u{001b}[31mprivate")
+                )]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn mutation_previews_never_claim_a_completed_action() {
+        for command in [
+            "install",
+            "remove",
+            "upgrade",
+            "pin",
+            "unpin",
+            "rollback",
+            "gc",
+            "repair",
+            "uninstall",
+        ] {
+            let text = output(command, &json!({"dryRun":true}), false);
+            assert!(
+                text.contains("Preview: No changes were applied."),
+                "{command}: {text}"
+            );
+            assert!(!text.contains('✓'));
+            assert!(!text.contains("Operation complete"));
+        }
+        for args in [
+            vec!["pkg", "--dry-run", "remove", "just"],
+            vec!["pkg", "--dry-run", "history", "--delete", "gen-0001"],
+        ] {
+            assert!(View::from_cli(&Cli::try_parse(args).unwrap()).preview);
+        }
+        for command in ["list", "history", "outdated"] {
+            assert!(
+                !View::from_cli(&Cli::try_parse(["pkg", "--dry-run", command]).unwrap()).preview
+            );
+        }
+    }
+
+    #[test]
+    fn build_previews_show_targets_and_do_not_invent_unknown_estimates() {
+        let text = output(
+            "install",
+            &json!({"dryRun":true, "preflight":{
+                "targets":[{"packageName":"just", "version":"1.58.0", "localBuildRequired":true}],
+                "estimates":{"approxNewDiskBytes":null, "minimumFreeDiskBytes":8589934592_u64}
+            }}),
+            true,
+        );
+        for value in [
+            "just",
+            "1.58.0",
+            "Local build",
+            "unknown",
+            "8.0 GiB",
+            "No changes were applied.",
+        ] {
+            assert!(text.contains(value), "{text}");
+        }
+        assert!(!text.contains('✓'));
     }
 }

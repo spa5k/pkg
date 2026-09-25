@@ -19,7 +19,7 @@ use pkg_cli::path::{
     observe_raw_nix_visibility,
 };
 use pkg_cli::support::SupportBundle;
-use pkg_cli::ux::{CommandError, OutputMode, write_error};
+use pkg_cli::ux::{CommandError, OutputMode, write_styled_error};
 use pkg_installer::{UninstallErrorCode, uninstall_linux_production, uninstall_macos_production};
 use pkg_nix::{DetectionDisposition, detect_unmanaged_nix};
 
@@ -224,16 +224,7 @@ fn write_state_location_error(cli: &Cli, error: StateLocationError) -> ProcessEx
 }
 
 fn write_command_error(cli: &Cli, error: &CommandError) -> ProcessExitCode {
-    let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
-    if write_error(
-        std::io::stdout(),
-        std::io::stderr(),
-        mode,
-        cli.command_name(),
-        error,
-    )
-    .is_err()
-    {
+    if write_styled_error(std::io::stdout(), std::io::stderr(), cli, error).is_err() {
         return ProcessExitCode::FAILURE;
     }
     error.exit_code().into()

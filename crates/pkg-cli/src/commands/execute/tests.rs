@@ -290,7 +290,7 @@ fn install_progress_stream_and_human_lines_match_v1_goldens() {
     execute_command(&human, &mut ProgressEngine, &mut stdout, &mut stderr).unwrap();
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Installed 1 package(s) as gen-0001.\n"
+        "Generation: gen-0001\nInstalled 1 package as gen-0001.\n"
     );
     assert_eq!(
         String::from_utf8(stderr).unwrap(),
@@ -303,7 +303,7 @@ fn install_progress_stream_and_human_lines_match_v1_goldens() {
     execute_command(&quiet, &mut ProgressEngine, &mut stdout, &mut stderr).unwrap();
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Installed 1 package(s) as gen-0001.\n"
+        "Generation: gen-0001\nInstalled 1 package as gen-0001.\n"
     );
     assert!(stderr.is_empty());
 

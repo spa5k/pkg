@@ -132,6 +132,7 @@ pub fn remove_state(
     state: LifecycleState,
     args: &RemoveArgs,
 ) -> Result<LifecycleEdit, CommandError> {
+    let labels = package_labels(&state);
     let targets = resolve_targets(&state, args.packages())?;
     let removed = remove_selectors(state, &targets).map_err(|_| {
         CommandError::new(
@@ -155,7 +156,9 @@ pub fn remove_state(
     )?;
     Ok(LifecycleEdit {
         state: removed.into_state(),
-        result: command_result,
+        result: command_result
+            .with_package_labels(labels)
+            .map_err(|_| state_error())?,
     })
 }
 
@@ -165,6 +168,7 @@ pub fn edit_pin_state(
     args: &PackageArgs,
     action: PinAction,
 ) -> Result<LifecycleEdit, CommandError> {
+    let labels = package_labels(&state);
     let targets = resolve_targets(&state, args.packages())?;
     let edited = edit_pins(state, &targets, action).map_err(|_| {
         CommandError::new(
@@ -197,7 +201,9 @@ pub fn edit_pin_state(
     )?;
     Ok(LifecycleEdit {
         state: edited.into_state(),
-        result: command_result,
+        result: command_result
+            .with_package_labels(labels)
+            .map_err(|_| state_error())?,
     })
 }
 
@@ -291,6 +297,20 @@ pub fn rollback_state(
         vec![],
     )?;
     Ok(RollbackEdit { plan, result })
+}
+
+pub(super) fn package_labels(state: &LifecycleState) -> Map<String, Value> {
+    state
+        .manifest()
+        .entries()
+        .iter()
+        .map(|entry| {
+            (
+                entry.id().as_str().to_owned(),
+                json!(entry.selector().as_str()),
+            )
+        })
+        .collect()
 }
 
 fn resolve_targets(
