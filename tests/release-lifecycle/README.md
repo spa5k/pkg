@@ -17,6 +17,12 @@ rollback, verification, and doctor on Linux and macOS. macOS also installs and
 runs the public `just` flake. Linux public flakes remain unsupported.
 Select the release currently served by the live alpha channel.
 
+Hosted CI tool images can give the runner ownership of `/usr/local` or
+`/usr/local/bin`. The workflow records those directory permissions, then sets
+only those two directories to root:0 mode 0755 before installation. It does not
+change child files. This fixture step refuses local hosts, symlinks, and existing
+pkg or Nix installations. Product ownership checks remain enabled.
+
 The workflow retains a result table, individual logs, exact-byte checks, and a
 checkpoint. It does not reboot a hosted runner and does not claim reboot proof.
 
