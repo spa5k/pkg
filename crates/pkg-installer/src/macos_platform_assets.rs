@@ -636,6 +636,55 @@ mod tests {
     }
 
     #[test]
+    fn private_home_removal_handles_populated_tmp_without_following_links()
+    -> Result<(), Box<dyn Error>> {
+        for id in ["broker-home", "helper-home"] {
+            let temporary = tempfile::tempdir()?;
+            for path in ["Library", "Library/Application Support"] {
+                let path = temporary.path().join(path);
+                fs::create_dir(&path)?;
+                fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+            }
+            let mut manager = manager(
+                temporary.path(),
+                ManagedGroupBindings::new(333, 350)?,
+                Digest::from_bytes([0x31; 32]),
+            )?;
+            let asset = |name| {
+                macos_product_install_assets()
+                    .find(|asset| asset.id() == name)
+                    .ok_or_else(|| std::io::Error::other("missing private home asset"))
+            };
+            manager.ensure_asset(asset("service-root")?)?;
+            let home = asset(id)?;
+            manager.ensure_asset(home)?;
+            let home_path = temporary
+                .path()
+                .join(home.path_or_name().trim_start_matches('/'));
+            let nested = home_path.join("tmp/nested");
+            fs::create_dir_all(&nested)?;
+            fs::set_permissions(home_path.join("tmp"), fs::Permissions::from_mode(0o700))?;
+            fs::set_permissions(&nested, fs::Permissions::from_mode(0o700))?;
+            fs::write(nested.join("build-file"), b"build output")?;
+            let sentinel = temporary.path().join("outside");
+            fs::write(&sentinel, b"keep")?;
+            std::os::unix::fs::symlink(&sentinel, nested.join("link"))?;
+
+            // A writable descendant must still stop the recursive cleanup.
+            fs::set_permissions(&nested, fs::Permissions::from_mode(0o777))?;
+            assert!(manager.remove_uninstall_asset(home).is_err());
+            assert!(home_path.exists());
+            assert_eq!(fs::read(&sentinel)?, b"keep");
+            fs::set_permissions(&nested, fs::Permissions::from_mode(0o700))?;
+
+            manager.remove_uninstall_asset(home)?;
+            assert!(!home_path.exists());
+            assert_eq!(fs::read(sentinel)?, b"keep");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn uninstall_removes_the_populated_private_source_workspace() -> Result<(), Box<dyn Error>> {
         let temporary = tempfile::tempdir()?;
         for path in ["private", "private/var", "private/var/db"] {

@@ -181,12 +181,21 @@ completion of the production trust ceremony.
 
 ### PUBLIC-18: alpha.53 release
 
-- **Status:** release preparation in progress. Alpha.52 remains the published release.
+- **Status:** preparation merged in [PR #56](https://github.com/spa5k/pkg/pull/56). The alpha.53 candidate failed native system removal and remains unpublished. Alpha.52 remains the published release.
 - **Purpose:** publish installed package name resolution, useful history and rollback details, clear package/system removal commands, quieter progress, and installer authentication diagnostics.
 - **Owns:** alpha.53 version and candidate names, signed native assets, sequence 53 catalogs and channel, exact upgrade/reboot/product-removal evidence, installer instructions, and publication.
 - **Depends:** PUBLIC-16 and PUBLIC-17 (merged).
 - **Tests & gates:** local G-LINT, workspace tests, G-QUALITY, docs links, hosted Linux/macOS checks, exact asset signatures, public channel byte verification, alpha.52-to-alpha.53 macOS upgrade and reboot, native system uninstall and reinstall, and public installer checks on both platforms; A primary/security and E cross-area review.
 - **Rollback:** publish a higher channel sequence with the previous approved content. Keep Nix records and package generations. Never replay old metadata.
+
+### PUBLIC-20: system removal and recovery
+
+- **Status:** implementation and native regression proof in progress.
+- **Purpose:** complete system removal when private temporary folders contain files, and recover a macOS removal after its broker account is gone.
+- **Owns:** exact temporary-child removal planning under recursively removed private homes; retained-receipt recovery after verified broker absence; safe empty synthetic `/nix` absence detection; closed-action error diagnostics and regression evidence.
+- **Depends:** PUBLIC-17 and PUBLIC-18 source preparation (merged).
+- **Tests & gates:** owned and retained private-home plan cases on macOS/Linux; nested temporary files, outside symlink preservation and unsafe-tree refusal; absent/mismatched recovery marker refusal; native partial removal recovery, populated-temp removal, absence preview and reinstall; G-LINT, workspace tests, G-QUALITY, docs links and hosted checks; E primary and A cross-area/security review.
+- **Rollback:** revert the code change before release. Preserve receipts and recovery markers. Do not delete Nix or restore removed accounts by hand. Published channels require a higher sequence for rollback.
 
 ## Alpha.49: reliable installation and daily commands
 

@@ -21,6 +21,31 @@ const SUPERVISOR_LOSS_ROOT_ENV: &str = "PKG_TEST_DN15_SUPERVISOR_LOSS_ROOT";
 const SUPERVISOR_LOSS_EXECUTABLE_ENV: &str = "PKG_TEST_DN15_SUPERVISOR_LOSS_EXECUTABLE";
 
 #[test]
+fn macos_absence_accepts_only_a_missing_or_empty_safe_mountpoint()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let nix = root.path().join("nix");
+    assert!(macos_nix_absent_at(root.path())?);
+    fs::create_dir(&nix)?;
+    fs::set_permissions(&nix, fs::Permissions::from_mode(0o755))?;
+    assert!(macos_nix_absent_at(root.path())?);
+    fs::write(nix.join("receipt.json"), b"foreign")?;
+    assert!(!macos_nix_absent_at(root.path())?);
+    fs::remove_file(nix.join("receipt.json"))?;
+    for mode in [0o700, 0o775, 0o1755] {
+        fs::set_permissions(&nix, fs::Permissions::from_mode(mode))?;
+        assert!(!macos_nix_absent_at(root.path())?);
+    }
+    fs::remove_dir(&nix)?;
+    symlink(root.path(), &nix)?;
+    assert!(macos_nix_absent_at(root.path()).is_err());
+    fs::remove_file(&nix)?;
+    fs::write(&nix, b"not a directory")?;
+    assert!(macos_nix_absent_at(root.path()).is_err());
+    Ok(())
+}
+
+#[test]
 fn installer_nix_home_creates_private_tmp_and_rejects_unsafe_reuse()
 -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
