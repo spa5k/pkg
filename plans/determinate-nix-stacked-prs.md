@@ -190,12 +190,21 @@ completion of the production trust ceremony.
 
 ### PUBLIC-20: system removal and recovery
 
-- **Status:** implementation and native regression proof in progress.
+- **Status:** implemented in [PR #58](https://github.com/spa5k/pkg/pull/58). Local gates and native regression proof pass; both required reviews approve the exact source. CI evidence is attached to that PR.
 - **Purpose:** complete system removal when private temporary folders contain files, and recover a macOS removal after its broker account is gone.
 - **Owns:** exact temporary-child removal planning under recursively removed private homes; retained-receipt recovery after verified broker absence; safe empty synthetic `/nix` absence detection; closed-action error diagnostics and regression evidence.
 - **Depends:** PUBLIC-17 and PUBLIC-18 source preparation (merged).
 - **Tests & gates:** owned and retained private-home plan cases on macOS/Linux; nested temporary files, outside symlink preservation and unsafe-tree refusal; absent/mismatched recovery marker refusal; native partial removal recovery, populated-temp removal, absence preview and reinstall; G-LINT, workspace tests, G-QUALITY, docs links and hosted checks; E primary and A cross-area/security review.
 - **Rollback:** revert the code change before release. Preserve receipts and recovery markers. Do not delete Nix or restore removed accounts by hand. Published channels require a higher sequence for rollback.
+
+### PUBLIC-21: alpha.54 release
+
+- **Status:** release preparation in progress. Alpha.53 remains an unpublished candidate; alpha.52 remains the published release.
+- **Purpose:** publish the package identity and CLI improvements with the verified system-removal correction.
+- **Owns:** alpha.54 version and candidate names, signed native assets, sequence 54 catalogs and channel, exact native lifecycle evidence, installation instructions and publication.
+- **Depends:** PUBLIC-16, PUBLIC-17 and PUBLIC-20 (must merge before this release PR).
+- **Tests & gates:** full local G-LINT, hermetic workspace tests, G-QUALITY, docs links, hosted Linux/macOS checks, payload signatures and public byte comparison, exact native product upgrade and reboot, populated temporary-tree system removal and reinstall, and fresh public installer checks; A primary/security and E cross-area review.
+- **Rollback:** publish a higher channel sequence with the previous approved content. Preserve Nix records and package generations. Never replay old metadata.
 
 ## Alpha.49: reliable installation and daily commands
 
