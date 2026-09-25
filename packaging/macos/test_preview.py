@@ -12,6 +12,17 @@ import unittest
 ROOT = Path(__file__).resolve().parent
 
 
+def fixture_binary(path, status):
+    # A copied Apple system binary can retain launch constraints that prevent
+    # execution after relocation. Compile our own inert Mach-O fixture instead.
+    source = path.with_suffix(".c")
+    source.write_text(f"int main(void) {{ return {status}; }}\n")
+    subprocess.run(["/usr/bin/cc", str(source), "-o", str(path)],
+                   check=True, capture_output=True)
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(path)],
+                   check=True, capture_output=True)
+
+
 @unittest.skipUnless(sys.platform == "darwin", "requires macOS packaging tools")
 class PreviewTests(unittest.TestCase):
     def test_foreground_runner_verifies_package_and_preserves_failure(self):
@@ -31,9 +42,11 @@ class PreviewTests(unittest.TestCase):
             for name, status in [("true", 0), ("false", 1)]:
                 with self.subTest(name=name):
                     package = work / f"{name}.pkg"
+                    payload = work / name
+                    fixture_binary(payload, status)
                     subprocess.run(
                         ["/bin/sh", str(ROOT / "build-preview.sh"),
-                         f"/usr/bin/{name}", str(package), "0.0.0-test"],
+                         str(payload), str(package), "0.0.0-test"],
                         check=True, capture_output=True,
                     )
                     digest = hashlib.sha256(package.read_bytes()).hexdigest()
@@ -62,11 +75,7 @@ class PreviewTests(unittest.TestCase):
             for name, status in [("true", 0), ("false", 1)]:
                 with self.subTest(name=name):
                     (scripts / "pkg-install").unlink(missing_ok=True)
-                    shutil.copy(f"/usr/bin/{name}", scripts / "pkg-install")
-                    subprocess.run(
-                        ["/usr/bin/codesign", "--force", "--sign", "-",
-                         str(scripts / "pkg-install")], check=True, capture_output=True,
-                    )
+                    fixture_binary(scripts / "pkg-install", status)
                     result = subprocess.run(
                         ["/bin/sh", str(postinstall)], capture_output=True, text=True,
                     )
