@@ -115,7 +115,7 @@ completion of the production trust ceremony.
 
 ### PUBLIC-13: complete command results and previews
 
-- **Status:** implemented in [PR #51](https://github.com/spa5k/pkg/pull/51).
+- **Status:** merged in [PR #51](https://github.com/spa5k/pkg/pull/51).
   E/F and A/Spec reviews pass. Public release pending.
 - **Purpose:** show the useful result and next action for every daily command.
 - **Owns:** package changes, environment IDs, disk values, explicit previews,
@@ -125,6 +125,32 @@ completion of the production trust ceremony.
   machine/quiet/name-only contracts, disposable macOS lifecycle smoke test,
   G-LINT, G-QUALITY, workspace tests, docs links; E primary and A cross-area review.
 - **Rollback:** revert human views. No stored-state or broker changes.
+
+### PUBLIC-14: alpha.52 release
+
+- **Status:** preparing the release. Alpha.51 remains the public version.
+- **Purpose:** publish the reviewed command guide, terminal layouts, and results.
+- **Owns:** alpha.52 version and candidate names, signed native assets, sequence
+  52 catalogs and channel, exact upgrade and reboot evidence, and publication.
+- **Depends:** PUBLIC-12 and PUBLIC-13 (merged).
+- **Tests & gates:** local G-LINT, workspace tests, G-QUALITY, docs links, hosted
+  Linux/macOS checks, exact asset signatures, public channel byte verification,
+  alpha.51-to-alpha.52 macOS upgrade and reboot, and public installer checks on
+  both platforms; A primary/security and E cross-area review.
+- **Rollback:** publish a higher channel sequence with the previous approved
+  content. Keep Nix records and package generations. Never replay old metadata.
+
+### PUBLIC-15: alpha.52 installation instructions
+
+- **Status:** pending the verified alpha.52 assets and publication.
+- **Purpose:** give users the exact installer and current command instructions.
+- **Owns:** public version links, the rendered installer with verified digests,
+  installation examples, release notes, and published plan status.
+- **Depends:** PUBLIC-14.
+- **Tests & gates:** installer verification mode, shell syntax, renderer and
+  documentation tests, docs links; A primary/security and E cross-area review.
+- **Rollback:** restore the previous entry script only with a compatible higher
+  channel sequence. Retain Nix records and package generations.
 
 ## Alpha.49: reliable installation and daily commands
 
