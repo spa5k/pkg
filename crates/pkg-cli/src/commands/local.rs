@@ -2477,7 +2477,7 @@ pub fn confirm_destructive(yes: bool, prompt: &str) -> Result<(), CommandError> 
     writeln!(stderr).map_err(|_| confirmation_required())?;
     let lines = crate::presentation::wrap(
         prompt,
-        crate::presentation::terminal_width().saturating_sub(6),
+        crate::presentation::terminal_width().saturating_sub(" [y/N] ".len()),
     );
     let (last, earlier) = lines.split_last().ok_or_else(confirmation_required)?;
     for line in earlier {

@@ -22,9 +22,14 @@ pub(super) fn write_details(
     }
     write_fields(&mut writer, fields, style)?;
     if command == "update" {
+        let updated_label = if fields.get("checkedOnly") == Some(&Value::Bool(true)) {
+            "Update available"
+        } else {
+            "Catalog updated"
+        };
         for (key, title) in [
             ("channelSequence", "Catalog sequence"),
-            ("updated", "Update available"),
+            ("updated", updated_label),
         ] {
             if let Some(value) = fields.get(key) {
                 style.text(&mut writer, &format!("{title}: "), &value_text(value))?;

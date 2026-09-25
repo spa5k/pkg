@@ -512,6 +512,17 @@ mod command_views {
     }
 
     #[test]
+    fn applied_catalog_refresh_is_not_reported_as_an_available_update() {
+        let text = output(
+            "update",
+            &json!({"channelSequence":52,"checkedOnly":false,"updated":true}),
+            false,
+        );
+        assert!(text.contains("Catalog updated: yes"));
+        assert!(!text.contains("Update available"));
+    }
+
+    #[test]
     fn build_previews_show_targets_and_do_not_invent_unknown_estimates() {
         let text = output(
             "install",
