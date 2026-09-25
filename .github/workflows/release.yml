@@ -68,7 +68,8 @@ jobs:
           printf '%s  %s\n' \
             52523a9bf76dee8e364efc302b733140f850fe377c1cc73a7675b842d28b94e2 \
             root.json | sha256sum --check --strict
-          export PKG_RELEASE_TUF_ROOT_JSON="$(cat root.json)"
+          PKG_RELEASE_TUF_ROOT_JSON="$(cat root.json)"
+          export PKG_RELEASE_TUF_ROOT_JSON
           export PKG_RELEASE_CHANNEL_METADATA_URL=https://releases.happytoolin.com/metadata/
           export PKG_RELEASE_CHANNEL_TARGETS_URL=https://releases.happytoolin.com/targets/
           cargo build --locked --release \
@@ -194,3 +195,19 @@ jobs:
           path: proof-artifacts/evidence/
           if-no-files-found: error
           retention-days: 7
+
+  results:
+    name: Release check results
+    if: always()
+    needs: [production-linux, dry-run-sign, linux-alpha-proof]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Show release evidence
+        env:
+          RESULTS_JSON: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/ci_summary.py --title 'pkg · Release evidence'
