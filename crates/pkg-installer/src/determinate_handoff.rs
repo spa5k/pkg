@@ -1187,7 +1187,7 @@ mod tests {
         os::unix::{fs::symlink, process::ExitStatusExt as _},
         process::Command,
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
     use tempfile::TempDir;
 
@@ -1525,7 +1525,8 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
     }
 
     #[test]
-    fn terminal_uninstall_consumes_handoff_only_after_identity_revalidation() {
+    fn terminal_uninstall_consumes_handoff_only_after_identity_revalidation()
+    -> Result<(), fs::TryLockError> {
         let fixture = fixture(0o600);
         fixture.handoff.record_started().unwrap();
         fixture
@@ -1553,9 +1554,34 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
             .write(true)
             .open(&fixture.handoff.lock)
             .unwrap();
-        assert!(contender.try_lock().is_err());
+        assert!(matches!(
+            contender.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        // A forked child can retain the same open-file description until exec.
+        // Keep an explicit duplicate to exercise that lifetime without fork.
+        let inherited = consumed.lock.try_clone().unwrap();
         drop(consumed);
-        contender.try_lock().unwrap();
+        assert!(matches!(
+            contender.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        let child = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            drop(inherited);
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match contender.try_lock() {
+                Ok(()) => break,
+                Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        child.join().unwrap();
+        Ok(())
     }
 
     #[test]

@@ -1,15 +1,15 @@
 //! Read-only health-report framework for `pkg doctor`.
 
+mod probe;
+
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use pkg_core::System;
 use pkg_installer::{DeterminateHandoffError, DeterminateHandoffState};
-use pkg_nix::BrokerOperationKind;
 use serde::Serialize;
 
-use crate::broker::BrokerLifecycleClient;
 use crate::exit::ExitCode;
 use crate::path::{PathObservation, RawNixVisibility};
 use crate::presentation::{Style, Tone};
@@ -235,41 +235,23 @@ impl DoctorInputs {
 /// before it accepts client work. A complete version operation therefore
 /// proves that the broker is reachable, its startup trust bootstrap succeeded,
 /// and the pinned managed Nix adapter answered through the private boundary.
+/// Transient startup failures may retry within one thirty-second budget. `on_wait`
+/// is called once before retrying. Ownership refusals and invalid replies are final.
 ///
 /// # Errors
 ///
 /// Failures are returned as closed subsystem observations. Transport, frame,
 /// adapter, and host details never cross into the public doctor report.
 #[must_use]
-pub fn observe_production_subsystems() -> (SubsystemObservation, SubsystemObservation, bool) {
-    let health = probe_production_broker();
-    let ownership = health.as_ref().is_some_and(|(_, ownership)| *ownership);
-    let (runtime, channel) = production_subsystems_from_health(health.map(|(version, _)| version));
+pub fn observe_production_subsystems(
+    on_wait: impl FnMut(),
+) -> (SubsystemObservation, SubsystemObservation, bool) {
+    let health = probe::observe(on_wait);
+    let ownership = health
+        .as_ref()
+        .is_some_and(|health| health.managed_ownership);
+    let (runtime, channel) = production_subsystems_from_health(health.map(|health| health.version));
     (runtime, channel, ownership)
-}
-
-fn probe_production_broker() -> Option<(String, bool)> {
-    let mut broker = BrokerLifecycleClient::connect_default().ok()?;
-    let handle = broker.begin(BrokerOperationKind::Doctor).ok()?;
-    let version = broker.version(handle.clone());
-    match version {
-        Ok(version) => match broker.verify_managed_ownership(handle.clone()) {
-            Ok(ownership) => {
-                if broker.complete(handle).is_err() {
-                    return None;
-                }
-                Some((version.nix_version().as_str().to_owned(), ownership))
-            }
-            Err(_) => {
-                let _ = broker.cancel(handle);
-                None
-            }
-        },
-        Err(_) => {
-            let _ = broker.cancel(handle);
-            None
-        }
-    }
 }
 
 fn production_subsystems_from_health(
@@ -288,7 +270,7 @@ fn production_subsystems_from_health(
         None => {
             let detail = "the private broker health check did not complete".to_owned();
             let hint =
-                "run `pkg doctor` again; restart the managed runtime if the failure persists"
+                "run `pkg doctor --support` to collect the system checks; do not remove Nix files"
                     .to_owned();
             (
                 SubsystemObservation::Failed {
@@ -976,7 +958,8 @@ mod tests {
                 panic!("an incomplete production probe must fail closed")
             };
             assert_eq!(detail, "the private broker health check did not complete");
-            assert!(hint.contains("restart the managed runtime"));
+            assert!(hint.contains("pkg doctor --support"));
+            assert!(hint.contains("do not remove Nix files"));
             assert!(!detail.contains("socket"));
         }
     }
