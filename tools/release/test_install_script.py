@@ -104,6 +104,38 @@ class InstallScriptTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(self.marker.exists())
 
+    def test_doctor_receives_idempotent_path_through_the_complete_bootstrap(self):
+        observed = self.work / "doctor-path"
+        home = self.work / "home with spaces"
+        (self.bin / "pkg").write_text(
+            '#!/bin/sh\n'
+            'if [ "$1" = --version ]; then echo "pkg 0.1.0-alpha.49"; exit 0; fi\n'
+            'printf "%s" "$PATH" > "$PKG_TEST_DOCTOR_PATH"\n'
+        )
+        base = self.env["PATH"]
+        for system, arch, suffix in [
+            ("Darwin", "arm64", "Library/Application Support/pkg/current/bin"),
+            ("Linux", "x86_64", ".local/share/pkg/current/bin"),
+        ]:
+            managed = str(home / suffix)
+            for initial in [base, f"{managed}:/usr/local/bin:{base}", f"/usr/local/bin:{base}"]:
+                with self.subTest(system=system, initial=initial):
+                    previous = None
+                    for _ in range(2):
+                        observed.unlink(missing_ok=True)
+                        result = self.run_script(
+                            PATH=initial, HOME=str(home), PKG_TEST_OS=system,
+                            PKG_TEST_ARCH=arch, PKG_TEST_DOCTOR_PATH=str(observed),
+                        )
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertTrue(observed.is_file(), "doctor did not capture its PATH")
+                        actual = observed.read_text()
+                        self.assertEqual(actual.split(":").count(managed), 1)
+                        self.assertEqual(actual.split(":").count("/usr/local/bin"), 1)
+                        if previous is not None:
+                            self.assertEqual(actual, previous)
+                        previous = initial = actual
+
     def test_saved_log_retains_failures_after_the_installer_returns(self):
         cli = self.bin / "pkg"
         original = cli.read_bytes()

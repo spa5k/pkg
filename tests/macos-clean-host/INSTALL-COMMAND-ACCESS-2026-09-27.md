@@ -61,9 +61,16 @@ successful `tee` output alone cannot establish a healthy installation.
   password prompt refused, and approval through a terminal completed setup.
   A final healthy run with restored directory permissions also passed. The
   installed release remains alpha.56.
-- All seven bootstrap process tests and three docs tests pass. Pre-fix controls
+- All eight bootstrap process tests and three docs tests pass. Pre-fix controls
   catch omitted final diagnostics and a health-status write failure that could
   otherwise print `pkg is ready`. The fault uses a real conflicting directory.
+- The full release-tool suite passes (51 tests), as do the four renderer tests.
+  The old `RenderTests.test_doctor_path_is_idempotent` extracted a shell fragment
+  by a literal source marker. The new bootstrap test
+  `test_doctor_receives_idempotent_path_through_the_complete_bootstrap` preserves
+  single PATH entries and repeat stability through a fresh doctor child capture
+  on each run, for both platforms. Removing either PATH addition is detected.
+  `docs/install.sh` still owns this contract; the installer CI jobs run the keeper.
 - E and A source reviews have no open findings. This proof covers repeated setup
   on macOS 15.7.7. It does not prove fresh installation with absent shared command
   directories, Darwin 27 behavior, reboot, SIP, or TCC. No new release is claimed.

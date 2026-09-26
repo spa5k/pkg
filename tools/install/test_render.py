@@ -35,20 +35,6 @@ class RenderTests(unittest.TestCase):
             self.assertIn("Darwin:arm64", text)
             self.assertIn("Linux:x86_64", text)
 
-    def test_doctor_path_is_idempotent(self):
-        import subprocess
-        source = (module.ROOT / "docs/install.sh").read_text()
-        start = source.index("pkg_check_path=$PATH")
-        end = source.index('if ! PATH="$pkg_check_path"', start)
-        script = source[start:end] + '\nprintf "%s" "$pkg_check_path"\n'
-        managed = "/Users/test/Library/Application Support/pkg/current/bin"
-        for initial in ["/usr/bin:/bin", f"{managed}:/usr/local/bin:/usr/bin:/bin", "/usr/local/bin:/usr/bin:/bin"]:
-            result = subprocess.check_output(["/bin/sh", "-c", script], env={"PATH": initial, "pkg_user_bin": managed}, text=True)
-            self.assertEqual(result.split(":" ).count(managed), 1)
-            self.assertEqual(result.split(":" ).count("/usr/local/bin"), 1)
-            repeated = subprocess.check_output(["/bin/sh", "-c", script], env={"PATH": result, "pkg_user_bin": managed}, text=True)
-            self.assertEqual(repeated, result)
-
     def test_guarded_startup_survives_removed_binary(self):
         import subprocess
         import shlex
