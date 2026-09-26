@@ -1,0 +1,7 @@
+test_foreground_runner_verifies_package_and_preserves_failure (test_preview.PreviewTests.test_foreground_runner_verifies_package_and_preserves_failure) ... skipped 'requires macOS packaging tools'
+test_postinstall_returns_real_setup_status (test_preview.PreviewTests.test_postinstall_returns_real_setup_status) ... skipped 'requires macOS packaging tools'
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.000s
+
+OK (skipped=2)

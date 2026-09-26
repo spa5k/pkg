@@ -1,0 +1,22 @@
+   Compiling pkg-cli v0.1.0-alpha.56 (/tmp/pkg-cleanup/final-mutations/workspace/crates/pkg-cli)
+    Finished `test` profile [unoptimized] target(s) in 1.96s
+     Running tests/cli.rs (/home/user/workspace/target/debug/deps/cli-bd02fbee5409d5b6)
+
+running 1 test
+test history_uses_the_system_home_boundary_despite_spoofed_or_absent_home ... FAILED
+
+failures:
+
+---- history_uses_the_system_home_boundary_despite_spoofed_or_absent_home stdout ----
+
+thread 'history_uses_the_system_home_boundary_despite_spoofed_or_absent_home' (27069) panicked at crates/pkg-cli/tests/cli.rs:83:9:
+spoofed: Output { status: ExitStatus(unix_wait_status(18688)), stdout: "{\"schemaVersion\":1,\"ok\":false,\"command\":\"history\",\"error\":{\"symbol\":\"STATE_CORRUPT\",\"code\":73,\"message\":\"the per-user package state is missing or unsafe\",\"hint\":\"run `pkg doctor` before managing packages\"}}\n", stderr: "" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    history_uses_the_system_home_boundary_despite_spoofed_or_absent_home
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p pkg-cli --test cli`

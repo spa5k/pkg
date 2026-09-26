@@ -1,0 +1,535 @@
+[
+  {
+    "id": "renderer-wrong-sha256",
+    "file": "tools/install/render.py",
+    "before": "hashlib.file_digest(stream, \"sha256\").hexdigest()",
+    "after": "(\"0\" * 64)",
+    "mutant": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/release",
+        "-p",
+        "test_install_script.py",
+        "-v"
+      ],
+      "exit_code": 1,
+      "seconds": 0.43,
+      "summary": [
+        "Ran 5 tests in 0.378s",
+        "FAILED (failures=6)"
+      ],
+      "log": "renderer-wrong-sha256-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/release",
+        "-p",
+        "test_install_script.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "seconds": 0.54,
+      "summary": [
+        "Ran 5 tests in 0.488s",
+        "OK"
+      ],
+      "log": "renderer-wrong-sha256-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "10ccc99b930676de12482c8856f50e395c3f54fa606860bf25cf2581a11edca7"
+  },
+  {
+    "id": "renderer-symlink-accepted",
+    "file": "tools/install/render.py",
+    "before": "path.is_symlink() or ",
+    "after": "",
+    "mutant": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/install",
+        "-p",
+        "test_render.py",
+        "-v"
+      ],
+      "exit_code": 1,
+      "seconds": 0.63,
+      "summary": [
+        "Ran 4 tests in 0.575s",
+        "FAILED (failures=3)"
+      ],
+      "log": "renderer-symlink-accepted-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/install",
+        "-p",
+        "test_render.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "seconds": 0.61,
+      "summary": [
+        "Ran 4 tests in 0.559s",
+        "OK"
+      ],
+      "log": "renderer-symlink-accepted-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "10ccc99b930676de12482c8856f50e395c3f54fa606860bf25cf2581a11edca7"
+  },
+  {
+    "id": "renderer-invalid-tag-accepted",
+    "file": "tools/install/render.py",
+    "before": "if re.fullmatch(",
+    "after": "if False and re.fullmatch(",
+    "mutant": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/install",
+        "-p",
+        "test_render.py",
+        "-v"
+      ],
+      "exit_code": 1,
+      "seconds": 0.61,
+      "summary": [
+        "Ran 4 tests in 0.560s",
+        "FAILED (failures=7)"
+      ],
+      "log": "renderer-invalid-tag-accepted-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/install",
+        "-p",
+        "test_render.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "seconds": 0.6,
+      "summary": [
+        "Ran 4 tests in 0.555s",
+        "OK"
+      ],
+      "log": "renderer-invalid-tag-accepted-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "10ccc99b930676de12482c8856f50e395c3f54fa606860bf25cf2581a11edca7"
+  },
+  {
+    "id": "skipped-linux-proof",
+    "file": "tests/linux-clean-host/run.sh",
+    "before": "#!/bin/sh\n",
+    "after": "#!/bin/sh\nexit 0 # controlled audit mutation\n",
+    "mutant": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/release",
+        "-p",
+        "test_workflow.py",
+        "-v"
+      ],
+      "exit_code": 1,
+      "seconds": 0.06,
+      "summary": [
+        "Ran 10 tests in 0.010s",
+        "FAILED (failures=4)"
+      ],
+      "log": "skipped-linux-proof-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/release",
+        "-p",
+        "test_workflow.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "seconds": 0.06,
+      "summary": [
+        "Ran 10 tests in 0.011s",
+        "OK"
+      ],
+      "log": "skipped-linux-proof-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "98def9c082223b3e55ba91bda17ebd115db5b6c84392b187851a4604d6062a31"
+  },
+  {
+    "id": "production-manual-gate-removed",
+    "file": ".github/workflows/release.yml",
+    "before": "if: ${{ github.event_name == 'workflow_dispatch' && inputs.production-linux }}",
+    "after": "if: ${{ true }}",
+    "mutant": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/release",
+        "-p",
+        "test_workflow.py",
+        "-v"
+      ],
+      "exit_code": 1,
+      "seconds": 0.06,
+      "summary": [
+        "Ran 10 tests in 0.011s",
+        "FAILED (failures=1)"
+      ],
+      "log": "production-manual-gate-removed-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/release",
+        "-p",
+        "test_workflow.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "seconds": 0.07,
+      "summary": [
+        "Ran 10 tests in 0.012s",
+        "OK"
+      ],
+      "log": "production-manual-gate-removed-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "ec06d4c804229c2b5fe2dd91b8ca190e409685f550306af5e39fc63656da36d2"
+  },
+  {
+    "id": "private-result-leak",
+    "file": "crates/pkg-cli/src/commands/execute.rs",
+    "before": "        || value.contains(\"/nix/\")\n",
+    "after": "",
+    "mutant": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--lib",
+        "commands::execute::tests::public_result_rejects_private_runtime_material_and_reserved_fields",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 101,
+      "seconds": 8.03,
+      "summary": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.00s"
+      ],
+      "log": "private-result-leak-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--lib",
+        "commands::execute::tests::public_result_rejects_private_runtime_material_and_reserved_fields",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 0,
+      "seconds": 1.63,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.00s"
+      ],
+      "log": "private-result-leak-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "3af6fd05024f4f81dd36929161abe985fcc98d69d3cad01df29cd3ddbc3d77dc"
+  },
+  {
+    "id": "doctor-missing-checks",
+    "file": "crates/pkg-cli/src/commands/doctor.rs",
+    "before": "            subsystem_check(\"runtime.managed\", &inputs.managed_runtime),\n            subsystem_check(\"channel.signed\", &inputs.channel),\n",
+    "after": "",
+    "mutant": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--test",
+        "cli",
+        "completion_is_real_static_source_and_doctor_reports_verified_host_state",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 101,
+      "seconds": 36.39,
+      "summary": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 30.03s"
+      ],
+      "log": "doctor-missing-checks-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--test",
+        "cli",
+        "completion_is_real_static_source_and_doctor_reports_verified_host_state",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 0,
+      "seconds": 32.68,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 30.04s"
+      ],
+      "log": "doctor-missing-checks-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "38abe454ca14035e0a30b3fb8d7e0fa2f7d4c807180f592a47bf9ee7fc6982c5"
+  },
+  {
+    "id": "state-boundary-trusts-home",
+    "file": "crates/pkg-cli/src/path.rs",
+    "before": ".map(|user| user.dir);",
+    "after": ".and_then(|_| std::env::var_os(\"HOME\").map(PathBuf::from));",
+    "mutant": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--test",
+        "cli",
+        "history_uses_the_system_home_boundary_despite_spoofed_or_absent_home",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 101,
+      "seconds": 2.0,
+      "summary": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.01s"
+      ],
+      "log": "state-boundary-trusts-home-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--test",
+        "cli",
+        "history_uses_the_system_home_boundary_despite_spoofed_or_absent_home",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 0,
+      "seconds": 2.03,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.04s"
+      ],
+      "log": "state-boundary-trusts-home-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "96698a3fd4931a082d25098b7cfc0a2cb7d32651cc4c3b44ab9b1c7b15de5527"
+  },
+  {
+    "id": "renderer-swapped-artifact-digests",
+    "file": "tools/install/render.py",
+    "before": "    source = (ROOT / \"docs/install.sh\").read_text()",
+    "after": "    replacements[\"PKG_SHA256_X86_64_LINUX\"], replacements[\"PKG_SHA256_MACOS_PACKAGE\"] = replacements[\"PKG_SHA256_MACOS_PACKAGE\"], replacements[\"PKG_SHA256_X86_64_LINUX\"]\n    source = (ROOT / \"docs/install.sh\").read_text()",
+    "mutant": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/release",
+        "-p",
+        "test_install_script.py",
+        "-v"
+      ],
+      "exit_code": 1,
+      "seconds": 0.44,
+      "summary": [
+        "Ran 5 tests in 0.392s",
+        "FAILED (failures=6)"
+      ],
+      "log": "renderer-swapped-artifact-digests-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/release",
+        "-p",
+        "test_install_script.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "seconds": 0.58,
+      "summary": [
+        "Ran 5 tests in 0.528s",
+        "OK"
+      ],
+      "log": "renderer-swapped-artifact-digests-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "10ccc99b930676de12482c8856f50e395c3f54fa606860bf25cf2581a11edca7"
+  },
+  {
+    "id": "gc-dry-run-policy-lost",
+    "file": "crates/pkg-cli/src/commands/execute.rs",
+    "before": "Command::Gc(args) => self.operations.gc(args, policy),",
+    "after": "Command::Gc(args) => self.operations.gc(args, OperationPolicy { dry_run: false, ..policy }),",
+    "mutant": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--lib",
+        "commands::execute::tests::core_engine_routes_every_variant_and_preserves_global_policy",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 101,
+      "seconds": 1.91,
+      "summary": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.01s"
+      ],
+      "log": "gc-dry-run-policy-lost-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--lib",
+        "commands::execute::tests::core_engine_routes_every_variant_and_preserves_global_policy",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 0,
+      "seconds": 1.65,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.01s"
+      ],
+      "log": "gc-dry-run-policy-lost-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "3af6fd05024f4f81dd36929161abe985fcc98d69d3cad01df29cd3ddbc3d77dc"
+  },
+  {
+    "id": "duplicate-remove-dispatch",
+    "file": "crates/pkg-cli/src/commands/execute.rs",
+    "before": "Command::Remove(args) => self.operations.remove(args, policy),",
+    "after": "Command::Remove(args) => { self.operations.remove(args, policy)?; self.operations.remove(args, policy) },",
+    "mutant": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--lib",
+        "commands::execute::tests::core_engine_routes_every_variant_and_preserves_global_policy",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 101,
+      "seconds": 1.61,
+      "summary": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.00s"
+      ],
+      "log": "duplicate-remove-dispatch-mutant.log"
+    },
+    "restored": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--lib",
+        "commands::execute::tests::core_engine_routes_every_variant_and_preserves_global_policy",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 0,
+      "seconds": 1.71,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.01s"
+      ],
+      "log": "duplicate-remove-dispatch-restored.log"
+    },
+    "assertion_caught_mutation": true,
+    "restored_passed": true,
+    "source_restored_sha256": "3af6fd05024f4f81dd36929161abe985fcc98d69d3cad01df29cd3ddbc3d77dc"
+  }
+]

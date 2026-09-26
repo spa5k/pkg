@@ -1,0 +1,9 @@
+test_doctor_path_is_idempotent (test_render.RealShellBoundaryTests.test_doctor_path_is_idempotent) ... ok
+test_guarded_startup_survives_removed_binary (test_render.RealShellBoundaryTests.test_guarded_startup_survives_removed_binary) ... ok
+test_each_unsafe_artifact_refuses_at_the_cli (test_render.RenderedReleaseProof.test_each_unsafe_artifact_refuses_at_the_cli) ... ok
+test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.854s
+
+OK

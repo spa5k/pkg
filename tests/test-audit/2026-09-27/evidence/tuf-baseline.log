@@ -1,0 +1,87 @@
+ Downloading crates ...
+  Downloaded thiserror-impl v2.0.19
+  Downloaded thiserror v2.0.19
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded async-trait v0.1.91
+  Downloaded rustls-webpki v0.103.13
+  Downloaded cc v1.4.0
+  Downloaded aws-lc-rs v1.17.3
+  Downloaded rustls v0.23.43
+  Downloaded aws-lc-sys v0.43.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling cc v1.4.0
+   Compiling cmake v0.1.58
+   Compiling aws-lc-sys v0.43.0
+   Compiling aws-lc-rs v1.17.3
+   Compiling smallvec v1.15.2
+   Compiling libc v0.2.189
+   Compiling serde_json v1.0.151
+   Compiling icu_normalizer v2.2.0
+   Compiling futures-channel v0.3.33
+   Compiling rustix v1.1.4
+   Compiling getrandom v0.4.3
+   Compiling futures-util v0.3.33
+   Compiling idna_adapter v1.2.2
+   Compiling rustls v0.23.43
+   Compiling once_cell v1.21.4
+   Compiling linux-raw-sys v0.12.1
+   Compiling rustls-webpki v0.103.13
+   Compiling tokio v1.53.1
+   Compiling idna v1.1.0
+   Compiling futures-executor v0.3.33
+   Compiling base64 v0.22.1
+   Compiling pem v3.0.6
+   Compiling tempfile v3.27.0
+   Compiling futures v0.3.33
+   Compiling olpc-cjson v0.1.4
+   Compiling url v2.5.8
+   Compiling tokio-util v0.7.19
+   Compiling async-trait v0.1.91
+   Compiling tough v0.24.0
+   Compiling serde_json_canonicalizer v0.3.2
+   Compiling pkg-spike-s2-tough v0.0.0 (/home/user/workspace/spikes/s2-tough)
+    Finished `test` profile [unoptimized] target(s) in 1m 40s
+     Running unittests src/lib.rs (target/debug/deps/pkg_spike_s2_tough-b9267aca9dbf468a)
+
+running 5 tests
+test descriptor::tests::build_policy_native_local_builds_covers_preview_systems ... ok
+test descriptor::tests::camel_case_required_paths_exist ... ok
+test descriptor::tests::no_snake_case_drift_in_serialized_bytes ... ok
+test descriptor::tests::round_trip_sample_is_equal ... ok
+test descriptor::tests::top_level_keys_are_exactly_canonical_and_ordered ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/adversarial.rs (target/debug/deps/adversarial-ab9124d0cbc4b2fa)
+
+running 9 tests
+test cross_run_rollback_refuses_older_timestamp_via_persisted_datastore ... ok
+test differing_per_role_thresholds_load_when_met ... ok
+test expiration_safe_refuses_expired_targets_against_real_clock ... ok
+test insufficient_valid_signatures_rejected_by_tough_client_role_local ... ok
+test mix_and_match_spliced_older_snapshot_refused_for_hash_mismatch ... ok
+test one_byte_target_tamper_refused_after_drain_no_bytes_returned ... ok
+test conservative_limits_refuse_oversized_timestamp_metadata ... ok
+test root_rotation_dual_authorization_threshold_checks ... ok
+test root_rotation_revocation_rejects_signed_by_revoked_key ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/load_and_targets.rs (target/debug/deps/load_and_targets-bef0c6a650b97241)
+
+running 6 tests
+test missing_target_is_none ... ok
+test descriptor_per_system_maps_have_preview_systems_and_match_fixture_bytes ... ok
+test pinned_root_loads_happy_path ... ok
+test persistent_timestamp_and_snapshot_after_load ... ok
+test read_top_level_targets_after_drain ... ok
+test read_delegated_index_target ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+   Doc-tests pkg_spike_s2_tough
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

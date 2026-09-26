@@ -1,0 +1,8 @@
+test_gatekeeper_failure_never_publishes (test_notarize.SigningTests.test_gatekeeper_failure_never_publishes) ... ok
+test_incorrect_certificate_kind_refuses_before_commands (test_notarize.SigningTests.test_incorrect_certificate_kind_refuses_before_commands) ... ok
+test_rejected_notarization_does_not_publish_or_mutate_inputs (test_notarize.SigningTests.test_rejected_notarization_does_not_publish_or_mutate_inputs) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.004s
+
+OK

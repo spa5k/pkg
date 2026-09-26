@@ -1,0 +1,9 @@
+test_refuses_foreign_architecture_before_output (test_stage_linux_alpha.StageLinuxAlphaTests.test_refuses_foreign_architecture_before_output) ... ok
+test_refuses_mutable_or_insecure_release_locations (test_stage_linux_alpha.StageLinuxAlphaTests.test_refuses_mutable_or_insecure_release_locations) ... ok
+test_release_is_an_explicit_exact_alpha_tag (test_stage_linux_alpha.StageLinuxAlphaTests.test_release_is_an_explicit_exact_alpha_tag) ... ok
+test_stages_exact_versioned_artifact_and_bootstrap (test_stage_linux_alpha.StageLinuxAlphaTests.test_stages_exact_versioned_artifact_and_bootstrap) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.003s
+
+OK

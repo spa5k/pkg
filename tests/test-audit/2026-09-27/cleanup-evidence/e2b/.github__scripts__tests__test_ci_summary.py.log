@@ -1,0 +1,8 @@
+test_cells_cannot_inject_table_rows_or_html (test_ci_summary.SummaryTests.test_cells_cannot_inject_table_rows_or_html) ... ok
+test_failed_cancelled_and_skipped_are_never_passes (test_ci_summary.SummaryTests.test_failed_cancelled_and_skipped_are_never_passes) ... ok
+test_outcome_wins_over_continue_on_error_conclusion (test_ci_summary.SummaryTests.test_outcome_wins_over_continue_on_error_conclusion) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK

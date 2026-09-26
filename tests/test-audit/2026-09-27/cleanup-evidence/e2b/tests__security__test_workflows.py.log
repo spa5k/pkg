@@ -1,0 +1,10 @@
+test_external_actions_are_immutable_commit_pins (test_workflows.WorkflowContractTests.test_external_actions_are_immutable_commit_pins) ... ok
+test_nightly_calls_security_and_runs_fault_harness_on_linux_and_macos (test_workflows.WorkflowContractTests.test_nightly_calls_security_and_runs_fault_harness_on_linux_and_macos) ... ok
+test_real_nix_matrix_diffs_platform_goldens_and_replays_fake (test_workflows.WorkflowContractTests.test_real_nix_matrix_diffs_platform_goldens_and_replays_fake) ... ok
+test_security_lane_blocks_both_egress_families_before_offline_tests (test_workflows.WorkflowContractTests.test_security_lane_blocks_both_egress_families_before_offline_tests) ... ok
+test_security_lane_is_reusable_and_owns_dependency_gates (test_workflows.WorkflowContractTests.test_security_lane_is_reusable_and_owns_dependency_gates) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.000s
+
+OK

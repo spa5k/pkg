@@ -1,0 +1,10 @@
+test_both_platforms_keep_real_failure_status_and_private_log (test_install_script.InstallScriptTests.test_both_platforms_keep_real_failure_status_and_private_log) ... ok
+test_both_platforms_verify_without_elevation (test_install_script.InstallScriptTests.test_both_platforms_verify_without_elevation) ... ok
+test_setup_success_requires_healthy_installed_version (test_install_script.InstallScriptTests.test_setup_success_requires_healthy_installed_version) ... ok
+test_tampered_package_and_wrapper_never_execute (test_install_script.InstallScriptTests.test_tampered_package_and_wrapper_never_execute) ... ok
+test_unsupported_host_and_network_failure_never_execute (test_install_script.InstallScriptTests.test_unsupported_host_and_network_failure_never_execute) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.488s
+
+OK

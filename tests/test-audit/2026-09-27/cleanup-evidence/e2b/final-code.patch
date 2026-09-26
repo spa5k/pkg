@@ -1,0 +1,895 @@
+diff --git a/crates/pkg-cli/src/commands/execute.rs b/crates/pkg-cli/src/commands/execute.rs
+index 9308f9a..d86acdf 100644
+--- a/crates/pkg-cli/src/commands/execute.rs
++++ b/crates/pkg-cli/src/commands/execute.rs
+@@ -312,16 +312,6 @@ impl<C> CoreEngine<C> {
+     pub const fn new(operations: C) -> Self {
+         Self { operations }
+     }
+-    /// Returns shared access to the wrapped implementation, primarily for assertions.
+-    #[must_use]
+-    pub const fn operations(&self) -> &C {
+-        &self.operations
+-    }
+-    /// Consumes the engine and returns the wrapped implementation.
+-    #[must_use]
+-    pub fn into_operations(self) -> C {
+-        self.operations
+-    }
+ }
+ 
+ impl<C: CoreOperations> CommandEngine for CoreEngine<C> {
+diff --git a/crates/pkg-cli/src/commands/execute/tests.rs b/crates/pkg-cli/src/commands/execute/tests.rs
+index d55cbdf..11fee47 100644
+--- a/crates/pkg-cli/src/commands/execute/tests.rs
++++ b/crates/pkg-cli/src/commands/execute/tests.rs
+@@ -544,14 +544,15 @@ fn core_engine_routes_every_variant_and_preserves_global_policy() {
+         (vec!["pkg", "unpin", "ripgrep"], "unpin", true),
+         (vec!["pkg", "history"], "history", true),
+         (vec!["pkg", "rollback"], "rollback", true),
+-        (vec!["pkg", "gc"], "gc", true),
++        (vec!["pkg", "gc", "--dry-run"], "gc", true),
+         (vec!["pkg", "repair"], "repair", true),
+     ];
+     let mut engine = CoreEngine::new(RecordingOperations::default());
+-    for (argv, expected, has_policy) in cases {
++    for (index, (argv, expected, has_policy)) in cases.into_iter().enumerate() {
+         let cli = Cli::try_parse(argv).unwrap();
+         engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
+-        let (called, policy) = engine.operations().calls.last().unwrap();
++        assert_eq!(engine.operations.calls.len(), index + 1, "{expected}");
++        let (called, policy) = engine.operations.calls.last().unwrap();
+         assert_eq!(*called, expected);
+         assert_eq!(policy.is_some(), has_policy);
+         if expected == "install" {
+@@ -563,6 +564,15 @@ fn core_engine_routes_every_variant_and_preserves_global_policy() {
+                 })
+             );
+         }
++        if expected == "gc" {
++            assert_eq!(
++                *policy,
++                Some(OperationPolicy {
++                    yes: false,
++                    dry_run: true
++                })
++            );
++        }
+     }
+ }
+ 
+diff --git a/crates/pkg-cli/tests/cli.rs b/crates/pkg-cli/tests/cli.rs
+index 0f1eb34..c3af4ab 100644
+--- a/crates/pkg-cli/tests/cli.rs
++++ b/crates/pkg-cli/tests/cli.rs
+@@ -6,23 +6,6 @@ fn pkg() -> Command {
+     Command::new(env!("CARGO_BIN_EXE_pkg"))
+ }
+ 
+-#[test]
+-fn help_exits_success_and_lists_the_product_commands() {
+-    let output = pkg().arg("--help").output().unwrap();
+-    assert!(output.status.success());
+-    let stdout = String::from_utf8(output.stdout).unwrap();
+-    for verb in [
+-        "doctor",
+-        "install",
+-        "upgrade",
+-        "rollback",
+-        "repair",
+-        "uninstall",
+-    ] {
+-        assert!(stdout.contains(verb));
+-    }
+-}
+-
+ #[test]
+ fn help_guides_common_tasks_and_short_flags_match_long_flags() {
+     let short = pkg().arg("-h").output().unwrap();
+@@ -79,25 +62,32 @@ fn configuration_failure_obeys_json_and_jsonl_terminal_contracts() {
+ }
+ 
+ #[test]
+-fn home_environment_is_not_a_state_identity_input() {
+-    for home in [Some("/spoofed-home"), None] {
++fn history_uses_the_system_home_boundary_despite_spoofed_or_absent_home() {
++    let user = nix::unistd::User::from_uid(nix::unistd::Uid::effective())
++        .unwrap()
++        .unwrap();
++    let temporary = tempfile::tempdir_in(user.dir).unwrap();
++    let spoofed = tempfile::tempdir().unwrap();
++    for (label, home) in [("spoofed", Some(spoofed.path())), ("absent", None)] {
++        let state = temporary.path().join(label);
+         let mut command = pkg();
+-        command.args(["--json", "--state", "relative", "history"]);
+-        match home {
+-            Some(home) => {
+-                command.env("HOME", home);
+-            }
+-            None => {
+-                command.env_remove("HOME");
+-            }
++        command
++            .args(["--json", "--state", state.to_str().unwrap(), "history"])
++            .env_remove("PKG_STATE_DIR");
++        if let Some(home) = home {
++            command.env("HOME", home);
++        } else {
++            command.env_remove("HOME");
+         }
+         let output = command.output().unwrap();
+-        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+-        assert_eq!(output.status.code(), Some(78));
+-        assert_eq!(
+-            value["error"]["message"],
+-            "the alternate state root must be an absolute path"
+-        );
++        assert!(output.status.success(), "{label}: {output:?}");
++        assert!(output.stderr.is_empty());
++        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
++        assert_eq!(result["command"], "history");
++        assert_eq!(result["ok"], true);
++        assert_eq!(result["entries"], serde_json::json!([]));
++        assert!(state.join("logs/pkg.log").is_file());
++        assert_eq!(std::fs::read_dir(spoofed.path()).unwrap().count(), 0);
+     }
+ }
+ 
+@@ -119,17 +109,22 @@ fn completion_is_real_static_source_and_doctor_reports_verified_host_state() {
+         .output()
+         .unwrap();
+     let value: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
++    // Both required production rows must exist exactly once before any status
++    // or exit decision is read; a missing report row is a report defect.
++    let checks = value["checks"].as_array().unwrap();
++    let required_row = |id: &str| {
++        let matches: Vec<&serde_json::Value> =
++            checks.iter().filter(|check| check["id"] == id).collect();
++        assert_eq!(matches.len(), 1, "{id} must appear exactly once");
++        matches[0]
++    };
++    let managed = required_row("runtime.managed");
++    let channel = required_row("channel.signed");
+     // The developer machine can have a working authenticated broker. An
+     // alternate user-state directory does not isolate the system service.
+     if doctor.status.success() {
+         assert_eq!(value["overall"], "healthy");
+-        for id in ["runtime.managed", "channel.signed"] {
+-            let check = value["checks"]
+-                .as_array()
+-                .unwrap()
+-                .iter()
+-                .find(|check| check["id"] == id)
+-                .unwrap();
++        for check in [managed, channel] {
+             assert_eq!(check["status"], "pass");
+         }
+         return;
+@@ -144,19 +139,9 @@ fn completion_is_real_static_source_and_doctor_reports_verified_host_state() {
+         value["overall"].as_str(),
+         Some("needs_attention" | "nix_ownership_unknown")
+     ));
+-    assert!(
+-        value["checks"]
+-            .as_array()
+-            .unwrap()
+-            .iter()
+-            .filter(|check| {
+-                matches!(
+-                    check["id"].as_str(),
+-                    Some("runtime.managed" | "channel.signed")
+-                )
+-            })
+-            .all(|check| check["status"] == "fail")
+-    );
++    for check in [managed, channel] {
++        assert_eq!(check["status"], "fail");
++    }
+ }
+ 
+ #[test]
+@@ -305,6 +290,19 @@ fn every_command_has_examples_and_remains_discoverable() {
+         !home.contains("--state"),
+         "the home guide keeps advanced options in full help"
+     );
++    let help = pkg().arg("--help").output().unwrap();
++    assert!(help.status.success());
++    let help = String::from_utf8(help.stdout).unwrap();
++    for verb in [
++        "doctor",
++        "install",
++        "upgrade",
++        "rollback",
++        "repair",
++        "uninstall",
++    ] {
++        assert!(help.contains(verb), "missing {verb} from --help");
++    }
+     for command in grammar.get_subcommands() {
+         let name = command.get_name();
+         assert!(
+diff --git a/crates/pkg-cli/tests/e2e_fake.rs b/crates/pkg-cli/tests/e2e_fake.rs
+deleted file mode 100644
+index f8b5a8c..0000000
+--- a/crates/pkg-cli/tests/e2e_fake.rs
++++ /dev/null
+@@ -1,192 +0,0 @@
+-//! End-to-end CLI tests against the fake Nix and broker harness.
+-
+-use std::sync::Arc;
+-
+-use pkg_cli::cli::{
+-    Cli, GcArgs, HistoryArgs, InfoArgs, InstallArgs, ListArgs, PackageArgs, RemoveArgs, RepairArgs,
+-    RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
+-};
+-use pkg_cli::commands::execute::{
+-    CommandEngine, CommandRequest, CommandResult, CoreEngine, CoreOperations, OperationPolicy,
+-};
+-use pkg_cli::exit::ExitCode;
+-use pkg_cli::ux::CommandError;
+-use pkg_nix::{
+-    AcceptedFormats, FormatVersion, GcReport, GcStatus, NixAdapter, NixVersion, VersionInfo,
+-};
+-use pkg_testkit::FakeNix;
+-use serde_json::{Map, json};
+-
+-struct FakeOperations {
+-    nix: Arc<FakeNix>,
+-    calls: Vec<&'static str>,
+-}
+-
+-impl FakeOperations {
+-    fn ok(&mut self, command: &'static str) -> Result<CommandResult, CommandError> {
+-        self.calls.push(command);
+-        CommandResult::new(
+-            format!("{command} completed"),
+-            Map::from_iter([("handled".into(), json!(command))]),
+-            vec![],
+-        )
+-        .map_err(|_| CommandError::new(ExitCode::Config, "invalid fake result", "report a bug"))
+-    }
+-}
+-
+-impl CoreOperations for FakeOperations {
+-    fn search(&mut self, _: &SearchArgs) -> Result<CommandResult, CommandError> {
+-        self.ok("search")
+-    }
+-    fn info(&mut self, _: &InfoArgs) -> Result<CommandResult, CommandError> {
+-        self.ok("info")
+-    }
+-    fn install(
+-        &mut self,
+-        _: &InstallArgs,
+-        policy: OperationPolicy,
+-    ) -> Result<CommandResult, CommandError> {
+-        assert!(policy.yes());
+-        self.nix.version().map_err(|_| {
+-            CommandError::new(
+-                ExitCode::EngineUnavailable,
+-                "engine unavailable",
+-                "run `pkg doctor`",
+-            )
+-        })?;
+-        self.ok("install")
+-    }
+-    fn remove(
+-        &mut self,
+-        _: &RemoveArgs,
+-        _: OperationPolicy,
+-    ) -> Result<CommandResult, CommandError> {
+-        self.ok("remove")
+-    }
+-    fn list(&mut self, _: &ListArgs) -> Result<CommandResult, CommandError> {
+-        self.ok("list")
+-    }
+-    fn outdated(&mut self) -> Result<CommandResult, CommandError> {
+-        self.ok("outdated")
+-    }
+-    fn update(
+-        &mut self,
+-        _: &UpdateArgs,
+-        _: OperationPolicy,
+-    ) -> Result<CommandResult, CommandError> {
+-        self.ok("update")
+-    }
+-    fn upgrade(
+-        &mut self,
+-        _: &UpgradeArgs,
+-        _: OperationPolicy,
+-    ) -> Result<CommandResult, CommandError> {
+-        self.ok("upgrade")
+-    }
+-    fn pin(&mut self, _: &PackageArgs, _: OperationPolicy) -> Result<CommandResult, CommandError> {
+-        self.ok("pin")
+-    }
+-    fn unpin(
+-        &mut self,
+-        _: &PackageArgs,
+-        _: OperationPolicy,
+-    ) -> Result<CommandResult, CommandError> {
+-        self.ok("unpin")
+-    }
+-    fn history(
+-        &mut self,
+-        _: &HistoryArgs,
+-        _: OperationPolicy,
+-    ) -> Result<CommandResult, CommandError> {
+-        self.ok("history")
+-    }
+-    fn rollback(
+-        &mut self,
+-        _: &RollbackArgs,
+-        _: OperationPolicy,
+-    ) -> Result<CommandResult, CommandError> {
+-        self.ok("rollback")
+-    }
+-    fn gc(&mut self, _: &GcArgs, policy: OperationPolicy) -> Result<CommandResult, CommandError> {
+-        assert!(policy.dry_run());
+-        let report = self.nix.gc().map_err(|_| {
+-            CommandError::new(
+-                ExitCode::EngineUnavailable,
+-                "collector unavailable",
+-                "run `pkg doctor`",
+-            )
+-        })?;
+-        self.calls.push("gc");
+-        CommandResult::new(
+-            "gc completed",
+-            Map::from_iter([("freedBytes".into(), json!(report.freed_bytes()))]),
+-            vec![],
+-        )
+-        .map_err(|_| CommandError::new(ExitCode::Config, "invalid fake result", "report a bug"))
+-    }
+-    fn repair(
+-        &mut self,
+-        _: &RepairArgs,
+-        _: OperationPolicy,
+-    ) -> Result<CommandResult, CommandError> {
+-        self.nix.version().map_err(|_| {
+-            CommandError::new(
+-                ExitCode::EngineUnavailable,
+-                "engine unavailable",
+-                "run `pkg doctor`",
+-            )
+-        })?;
+-        self.ok("repair")
+-    }
+-}
+-
+-fn version() -> VersionInfo {
+-    VersionInfo::new(
+-        NixVersion::new("2.34.8").unwrap(),
+-        AcceptedFormats::new(FormatVersion::new(1).unwrap()),
+-    )
+-}
+-
+-#[test]
+-fn every_command_routes_through_typed_fake_core_and_engine_calls_are_exact() {
+-    let nix = Arc::new(FakeNix::new());
+-    nix.expect_version(Ok(version()))
+-        .expect_gc(Ok(GcReport::new(GcStatus::Collected, vec![], 4096).unwrap()))
+-        .expect_version(Ok(version()));
+-    let operations = FakeOperations {
+-        nix: nix.clone(),
+-        calls: Vec::new(),
+-    };
+-    let mut engine = CoreEngine::new(operations);
+-    let commands = [
+-        vec!["pkg", "search", "ripgrep"],
+-        vec!["pkg", "info", "ripgrep"],
+-        vec!["pkg", "install", "ripgrep", "--yes"],
+-        vec!["pkg", "remove", "ripgrep"],
+-        vec!["pkg", "list"],
+-        vec!["pkg", "outdated"],
+-        vec!["pkg", "update"],
+-        vec!["pkg", "upgrade", "ripgrep"],
+-        vec!["pkg", "pin", "ripgrep"],
+-        vec!["pkg", "unpin", "ripgrep"],
+-        vec!["pkg", "history"],
+-        vec!["pkg", "rollback"],
+-        vec!["pkg", "gc", "--dry-run"],
+-        vec!["pkg", "repair"],
+-    ];
+-    for argv in commands {
+-        let cli = Cli::try_parse(argv).unwrap();
+-        let result = engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
+-        let bytes = serde_json::to_vec(result.fields()).unwrap();
+-        assert!(!bytes.windows(11).any(|window| window == b"/nix/store/"));
+-    }
+-    let operations = engine.into_operations();
+-    assert_eq!(
+-        operations.calls,
+-        [
+-            "search", "info", "install", "remove", "list", "outdated", "update", "upgrade", "pin",
+-            "unpin", "history", "rollback", "gc", "repair"
+-        ]
+-    );
+-    nix.assert_exhausted().unwrap();
+-}
+diff --git a/tools/install/test_render.py b/tools/install/test_render.py
+index d52a80a..a6def7b 100644
+--- a/tools/install/test_render.py
++++ b/tools/install/test_render.py
+@@ -1,60 +1,111 @@
+-import importlib.util
++"""Real renderer refusals and shell setup. Bootstrap execution owns digest proof."""
+ from pathlib import Path
++import shlex
++import subprocess
++import sys
+ import tempfile
+ import unittest
+ 
+-spec = importlib.util.spec_from_file_location("render", Path(__file__).with_name("render.py"))
+-module = importlib.util.module_from_spec(spec)
+-spec.loader.exec_module(module)
++ROOT = Path(__file__).resolve().parents[2]
++TAG = "v0.1.0-alpha.49"
++LINUX_ARTIFACT = b"#!/bin/sh\npkg x86-64 linux artifact fixture bytes\n"
++MACOS_PACKAGE = b"pkg macOS preview package fixture bytes for 0.1.0-alpha.49\n"
++MACOS_WRAPPER = b"#!/bin/sh\npkg macOS preview wrapper fixture bytes\n"
++ARTIFACTS = {
++    "pkg-install-x86_64-linux": LINUX_ARTIFACT,
++    f"pkg-{TAG[1:]}-preview.pkg": MACOS_PACKAGE,
++    "install-preview.sh": MACOS_WRAPPER,
++}
+ 
+ 
+-class RenderTests(unittest.TestCase):
+-    def test_missing_or_linked_asset_refuses(self):
+-        with tempfile.TemporaryDirectory() as directory:
+-            root = Path(directory)
+-            with self.assertRaises(ValueError):
+-                module.render("v0.1.0-alpha.49", root)
+-            payload = root / "payload"
+-            payload.write_bytes(b"bytes")
+-            (root / "pkg-install-x86_64-linux").symlink_to(payload)
+-            with self.assertRaises(ValueError):
+-                module.render("v0.1.0-alpha.49", root)
++def write_assets(root: Path) -> None:
++    """Write a complete fixture whose three artifact payloads are pairwise distinct."""
++    for name, data in ARTIFACTS.items():
++        (root / name).write_bytes(data)
+ 
+-    def test_invalid_tag_cannot_inject_shell(self):
+-        for tag in ["$(id)", "v1.0.0'; echo injected", "../v1.0.0", "v1.0.0\n"]:
+-            with self.assertRaises(ValueError):
+-                module.render(tag, Path("."))
+ 
+-    def test_render_contains_exact_bytes_for_both_platforms(self):
+-        with tempfile.TemporaryDirectory() as directory:
+-            root = Path(directory)
+-            for name in ["pkg-install-x86_64-linux", "pkg-0.1.0-alpha.49-preview.pkg", "install-preview.sh"]:
+-                (root / name).write_bytes(b"bytes")
+-            text = module.render("v0.1.0-alpha.49", root)
+-            self.assertNotRegex(text, r"@PKG_[A-Z0-9_]+@")
+-            self.assertIn("Darwin:arm64", text)
+-            self.assertIn("Linux:x86_64", text)
++def run_render_cli(tag: str, assets: Path, output: Path) -> subprocess.CompletedProcess:
++    """Invoke the real render.py CLI the release flow uses."""
++    return subprocess.run(
++        [sys.executable, str(Path(__file__).with_name("render.py")), "--", tag, str(assets), str(output)],
++        capture_output=True, text=True, timeout=10,
++    )
++
++
++class RenderedReleaseProof(unittest.TestCase):
++    def test_each_unsafe_artifact_refuses_at_the_cli(self):
++        for name in ARTIFACTS:
++            for label in ["missing", "symlink", "empty", "directory"]:
++                with self.subTest(artifact=name, case=label):
++                    with tempfile.TemporaryDirectory() as directory:
++                        root = Path(directory)
++                        write_assets(root)
++                        target = root / name
++                        if label == "missing":
++                            target.unlink()
++                        elif label == "symlink":
++                            decoy = root / "decoy-payload"
++                            decoy.write_bytes(b"nonempty decoy bytes\n")
++                            target.unlink()
++                            target.symlink_to(decoy)
++                        elif label == "empty":
++                            target.write_bytes(b"")
++                        else:
++                            target.unlink()
++                            target.mkdir()
++                        output = root / "rendered-install.sh"
++                        result = run_render_cli(TAG, root, output)
++                        self.assertNotEqual(result.returncode, 0)
++                        self.assertIn(f"missing or unsafe release artifact: {name}", result.stderr)
++                        self.assertFalse(output.exists())
+ 
++    def test_invalid_tags_fail_at_the_tag_guard(self):
++        unsafe_tags = [
++            "v1.0.0'; echo injected",
++            "$(id)",
++            "v1.0.0`id`",
++            "../v1.0.0",
++            "v1.0.0\nrm -rf /",
++            "1.0.0",
++            "v1.0.0-alpha.0",
++        ]
++        for tag in unsafe_tags:
++            with self.subTest(tag=tag):
++                with tempfile.TemporaryDirectory() as directory:
++                    root = Path(directory)
++                    write_assets(root)
++                    # A disabled tag guard would reach this tag-derived artifact
++                    # name; create it safely when it is one plain path component
++                    # so only the tag guard can refuse the run. These fixture
++                    # files are never executed.
++                    derived = f"pkg-{tag[1:]}-preview.pkg"
++                    if "/" not in derived and "\x00" not in derived:
++                        (root / derived).write_bytes(b"fixture for a disabled tag guard\n")
++                    output = root / "rendered-install.sh"
++                    result = run_render_cli(tag, root, output)
++                    self.assertNotEqual(result.returncode, 0)
++                    self.assertIn("invalid release tag", result.stderr)
++                    self.assertFalse(output.exists())
++
++
++class RealShellBoundaryTests(unittest.TestCase):
+     def test_doctor_path_is_idempotent(self):
+-        import subprocess
+-        source = (module.ROOT / "docs/install.sh").read_text()
++        source = (ROOT / "docs/install.sh").read_text()
+         start = source.index("pkg_check_path=$PATH")
+         end = source.index('if ! PATH="$pkg_check_path"', start)
+         script = source[start:end] + '\nprintf "%s" "$pkg_check_path"\n'
+         managed = "/Users/test/Library/Application Support/pkg/current/bin"
+         for initial in ["/usr/bin:/bin", f"{managed}:/usr/local/bin:/usr/bin:/bin", "/usr/local/bin:/usr/bin:/bin"]:
+             result = subprocess.check_output(["/bin/sh", "-c", script], env={"PATH": initial, "pkg_user_bin": managed}, text=True)
+-            self.assertEqual(result.split(":" ).count(managed), 1)
+-            self.assertEqual(result.split(":" ).count("/usr/local/bin"), 1)
++            self.assertEqual(result.split(":").count(managed), 1)
++            self.assertEqual(result.split(":").count("/usr/local/bin"), 1)
+             repeated = subprocess.check_output(["/bin/sh", "-c", script], env={"PATH": result, "pkg_user_bin": managed}, text=True)
+             self.assertEqual(repeated, result)
+ 
+     def test_guarded_startup_survives_removed_binary(self):
+-        import subprocess
+-        import shlex
+-        source = (module.ROOT / "docs/install.sh").read_text()
++        source = (ROOT / "docs/install.sh").read_text()
+         snippet = next(line for line in source.split("'") if line.startswith("  [ ! -x /usr/local/bin/pkg ]"))
+-        wrapper = (module.ROOT / "packaging/macos/install-preview.sh").read_text()
++        wrapper = (ROOT / "packaging/macos/install-preview.sh").read_text()
+         self.assertIn("echo '" + snippet + "'", wrapper)
+         self.assertIn("add " + snippet.strip() + " to ~/.zshrc.", wrapper)
+         with tempfile.TemporaryDirectory() as directory:
+@@ -73,3 +124,7 @@ class RenderTests(unittest.TestCase):
+                     removed = subprocess.run([shell, "-c", snippet], capture_output=True)
+                     self.assertEqual(removed.returncode, 0, removed.stderr)
+                     self.assertEqual(removed.stderr, b"")
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tools/release/test_install_script.py b/tools/release/test_install_script.py
+index 8fffd59..4ae74b7 100644
+--- a/tools/release/test_install_script.py
++++ b/tools/release/test_install_script.py
+@@ -1,12 +1,24 @@
+-"""Exercise bootstrap trust and status boundaries without root or network access."""
+-import hashlib
++"""Exercise bootstrap trust and status boundaries without root or network access.
++
++The script under test is the real render.py CLI output: release tag, base URL,
++artifact name, and the three SHA-256 digests all come from rendering a complete
++distinct fixture at the subprocess boundary. Only host boundaries (systemd
++detection and the installed CLI path) are substituted after rendering, so the
++download, digest, privilege, and health logic stays the real script.
++"""
+ import os
+ from pathlib import Path
+ import subprocess
++import sys
+ import tempfile
+ import unittest
+ 
+ ROOT = Path(__file__).resolve().parents[2]
++TAG = "v0.1.0-alpha.49"
++
++LINUX_ARTIFACT_TEXT = '#!/bin/sh\necho "linux artifact setup reached"; exit "${PKG_TEST_STATUS:-0}"\n'
++MACOS_PACKAGE_BYTES = b"pkg macOS preview package fixture bytes for 0.1.0-alpha.49 (never executed here)\n"
++WRAPPER_TEXT = '#!/bin/sh\ntouch "$PKG_TEST_SUDO"; echo "wrapper reached"; exit "${PKG_TEST_STATUS:-0}"\n'
+ 
+ 
+ class InstallScriptTests(unittest.TestCase):
+@@ -16,14 +28,18 @@ class InstallScriptTests(unittest.TestCase):
+         self.work = Path(self.directory.name)
+         self.bin = self.work / "bin"
+         self.bin.mkdir()
+-        self.payload = self.work / "payload"
+-        self.payload.write_text('#!/bin/sh\necho "setup reached"; exit "${PKG_TEST_STATUS:-0}"\n')
+-        self.wrapper = self.work / "wrapper"
+-        self.wrapper.write_text('#!/bin/sh\ntouch "$PKG_TEST_SUDO"; echo "wrapper reached"; exit "${PKG_TEST_STATUS:-0}"\n')
++        self.assets = self.work / "release-assets"
++        self.assets.mkdir()
++        self.linux_artifact = self.assets / "pkg-install-x86_64-linux"
++        self.linux_artifact.write_text(LINUX_ARTIFACT_TEXT)
++        self.macos_package = self.assets / f"pkg-{TAG[1:]}-preview.pkg"
++        self.macos_package.write_bytes(MACOS_PACKAGE_BYTES)
++        self.wrapper = self.assets / "install-preview.sh"
++        self.wrapper.write_text(WRAPPER_TEXT)
+         self.marker = self.work / "sudo-called"
+         for name, code in {
+             "uname": 'case "$1" in -s) echo "$PKG_TEST_OS";; -m) echo "$PKG_TEST_ARCH";; esac',
+-            "curl": 'test "${PKG_TEST_NETWORK:-ok}" = ok || exit 7; while [ "$1" != --output ]; do shift; done; case "$3" in */install-preview.sh) cp "$PKG_TEST_WRAPPER" "$2";; *) cp "$PKG_TEST_PAYLOAD" "$2";; esac',
++            "curl": 'test "${PKG_TEST_NETWORK:-ok}" = ok || exit 7; while [ "$1" != --output ]; do shift; done; case "$3" in */pkg-install-x86_64-linux) cp "$PKG_TEST_LINUX_ARTIFACT" "$2";; *-preview.pkg) cp "$PKG_TEST_MACOS_PACKAGE" "$2";; */install-preview.sh) cp "$PKG_TEST_WRAPPER" "$2";; *) echo "unexpected download: $3" >&2; exit 7;; esac',
+             "sudo": 'touch "$PKG_TEST_SUDO"; exec "$@"',
+             "systemctl": 'exit 0',
+             "id": 'echo 501',
+@@ -32,29 +48,28 @@ class InstallScriptTests(unittest.TestCase):
+             path = self.bin / name
+             path.write_text("#!/bin/sh\nset -eu\n" + code + "\n")
+             path.chmod(0o700)
+-        source = (ROOT / "docs/install.sh").read_text()
+-        for key, value in {
+-            "PKG_RELEASE": "v0.1.0-alpha.49",
+-            "PKG_ARTIFACT_X86_64_LINUX": "pkg-install-x86_64-linux",
+-            "PKG_RELEASE_BASE_URL": "https://example.test/releases",
+-            "PKG_SHA256_X86_64_LINUX": hashlib.sha256(self.payload.read_bytes()).hexdigest(),
+-            "PKG_SHA256_MACOS_PACKAGE": hashlib.sha256(self.payload.read_bytes()).hexdigest(),
+-            "PKG_SHA256_MACOS_WRAPPER": hashlib.sha256(self.wrapper.read_bytes()).hexdigest(),
+-        }.items():
+-            source = source.replace(f"@{key}@", value)
++        rendered = subprocess.run(
++            [sys.executable, str(ROOT / "tools/install/render.py"), "--", TAG, str(self.assets), str(self.work / "rendered-install.sh")],
++            capture_output=True, text=True, timeout=10,
++        )
++        self.assertEqual(rendered.returncode, 0, rendered.stderr)
++        source = (self.work / "rendered-install.sh").read_text()
++        # Real shasum verification checks each rendered digest against downloaded
++        # bytes. Distinct payloads also detect hashes assigned to the wrong asset.
+         # Substitute only host boundaries. Download validation remains the real script.
+         source = source.replace('[ -d /run/systemd/system ]', '[ -d "$PKG_TEST_SYSTEMD" ]')
+         source = source.replace('pkg_cli=/usr/local/bin/pkg', 'pkg_cli="$PKG_TEST_CLI"')
+         self.script = self.work / "install.sh"
+         self.script.write_text(source)
+         self.env = dict(os.environ, PATH=f"{self.bin}:/usr/bin:/bin", TMPDIR=str(self.work),
+-                        PKG_TEST_PAYLOAD=str(self.payload), PKG_TEST_WRAPPER=str(self.wrapper),
++                        PKG_TEST_LINUX_ARTIFACT=str(self.linux_artifact), PKG_TEST_MACOS_PACKAGE=str(self.macos_package),
++                        PKG_TEST_WRAPPER=str(self.wrapper),
+                         PKG_TEST_SUDO=str(self.marker), PKG_TEST_SYSTEMD=str(self.work),
+                         PKG_TEST_CLI=str(self.bin / 'pkg'), PKG_TEST_OS="Linux", PKG_TEST_ARCH="x86_64")
+ 
+     def run_script(self, *args, **env):
+         return subprocess.run(["sh", str(self.script), *args], env=self.env | env,
+-                              capture_output=True, text=True)
++                              capture_output=True, text=True, timeout=10)
+ 
+     def test_both_platforms_verify_without_elevation(self):
+         for system, arch in [("Linux", "x86_64"), ("Darwin", "arm64")]:
+@@ -79,14 +94,17 @@ class InstallScriptTests(unittest.TestCase):
+         self.assertFalse(list(self.work.glob("pkg-install.*")))
+ 
+     def test_tampered_package_and_wrapper_never_execute(self):
+-        for path in [self.payload, self.wrapper]:
+-            original = path.read_bytes()
+-            path.write_text("changed download")
+-            result = self.run_script(PKG_TEST_OS="Darwin", PKG_TEST_ARCH="arm64")
+-            self.assertNotEqual(result.returncode, 0)
+-            self.assertIn("Checksum mismatch", result.stderr)
+-            self.assertFalse(self.marker.exists())
+-            path.write_bytes(original)
++        cases = [(self.macos_package, "Darwin", "arm64"), (self.wrapper, "Darwin", "arm64"),
++                 (self.linux_artifact, "Linux", "x86_64")]
++        for path, system, arch in cases:
++            with self.subTest(artifact=path.name, system=system):
++                original = path.read_bytes()
++                path.write_bytes(original + b"\nchanged download\n")
++                result = self.run_script(PKG_TEST_OS=system, PKG_TEST_ARCH=arch)
++                self.assertNotEqual(result.returncode, 0)
++                self.assertIn("Checksum mismatch", result.stderr)
++                self.assertFalse(self.marker.exists())
++                path.write_bytes(original)
+ 
+     def test_setup_success_requires_healthy_installed_version(self):
+         result = self.run_script()
+diff --git a/tools/release/test_workflow.py b/tools/release/test_workflow.py
+index 4c4927b..7c685f7 100644
+--- a/tools/release/test_workflow.py
++++ b/tools/release/test_workflow.py
+@@ -1,7 +1,11 @@
+ """Structural release-workflow security contract."""
+ 
+ from pathlib import Path
++import os
+ import re
++import shlex
++import subprocess
++import tempfile
+ import unittest
+ 
+ 
+@@ -21,6 +25,7 @@ PROOF_SERVER = (ROOT / "tools/release/serve_proof_channel.py").read_text(
+ MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
+     encoding="utf-8"
+ )
++LINUX_RUN_SH = ROOT / "tests/linux-clean-host/run.sh"
+ 
+ 
+ class ReleaseWorkflowTests(unittest.TestCase):
+@@ -48,7 +53,6 @@ class ReleaseWorkflowTests(unittest.TestCase):
+         self.assertNotIn("contents: write", WORKFLOW)
+         self.assertNotIn("gh release", WORKFLOW)
+         self.assertNotIn("aws-actions", WORKFLOW)
+-        self.assertIn("in-memory Ed25519 test keys", (ROOT / "tools/release/README.md").read_text())
+ 
+     def test_linux_alpha_artifact_is_retained_but_not_published(self) -> None:
+         self.assertIn('- "crates/**"', WORKFLOW)
+@@ -84,17 +88,70 @@ class ReleaseWorkflowTests(unittest.TestCase):
+             WORKFLOW,
+         )
+ 
++    def _single_block(self, lines: list[str], header: str) -> list[str]:
++        """Return the block opened by exactly one `header` line; fail closed."""
++        matches = [index for index, line in enumerate(lines) if line == header]
++        self.assertEqual(
++            len(matches),
++            1,
++            f"expected exactly one {header!r} block, found {len(matches)}",
++        )
++        indent = " " * (len(header) - len(header.lstrip()) + 1)
++        start = matches[0]
++        end = len(lines)
++        for index in range(start + 1, len(lines)):
++            line = lines[index]
++            if line.strip() and not line.startswith(indent):
++                end = index
++                break
++        return lines[start:end]
++
+     def test_production_linux_input_is_manual_fixed_and_not_published(self) -> None:
+-        self.assertIn("production-linux:", WORKFLOW)
+-        self.assertIn("inputs.production-linux", WORKFLOW)
+-        self.assertIn("runs-on: ubuntu-22.04", WORKFLOW)
+-        self.assertIn("https://releases.happytoolin.com/metadata/1.root.json", WORKFLOW)
++        lines = WORKFLOW.splitlines()
++        permissions = self._single_block(lines, "permissions:")
++        self.assertEqual(
++            [line for line in permissions[1:] if line.strip()], ["  contents: read"]
++        )
++        on_block = self._single_block(lines, "on:")
++        dispatch = self._single_block(on_block, "  workflow_dispatch:")
++        inputs = self._single_block(dispatch, "    inputs:")
++        production_input = self._single_block(inputs, "      production-linux:")
++        for key, value in (("required", "false"), ("type", "boolean"), ("default", "false")):
++            self.assertEqual(
++                [line for line in production_input if line.startswith(f"        {key}:")],
++                [f"        {key}: {value}"],
++            )
++        jobs = self._single_block(lines, "jobs:")
++        production_job = self._single_block(jobs, "  production-linux:")
++        self.assertEqual(
++            [line for line in production_job if line.startswith("    if:")],
++            [
++                "    if: ${{ github.event_name == 'workflow_dispatch' "
++                "&& inputs.production-linux }}"
++            ],
++        )
++        self.assertEqual(
++            [line for line in production_job if line.startswith("    runs-on:")],
++            ["    runs-on: ubuntu-22.04"],
++        )
++        self.assertFalse(any(line.startswith("    permissions:") for line in production_job))
++        for gate_job in ("dry-run-sign", "linux-alpha-proof"):
++            gate = self._single_block(jobs, f"  {gate_job}:")
++            self.assertEqual(
++                [line for line in gate if line.startswith("    if:")],
++                [
++                    "    if: ${{ github.event_name != 'workflow_dispatch' "
++                    "|| !inputs.production-linux }}"
++                ],
++            )
++        production_source = "\n".join(production_job)
++        self.assertIn("https://releases.happytoolin.com/metadata/1.root.json", production_source)
+         self.assertIn(
+             "52523a9bf76dee8e364efc302b733140f850fe377c1cc73a7675b842d28b94e2",
+-            WORKFLOW,
++            production_source,
+         )
+-        self.assertIn("pkg-v0.1.0-alpha.56-production-linux-input", WORKFLOW)
+-        self.assertIn("pkg-release-index", WORKFLOW)
++        self.assertIn("pkg-v0.1.0-alpha.56-production-linux-input", production_source)
++        self.assertIn("pkg-release-index", production_source)
+ 
+     def test_linux_uninstall_uses_plain_terminal_exec_status(self) -> None:
+         self.assertEqual(
+@@ -117,8 +174,6 @@ class ReleaseWorkflowTests(unittest.TestCase):
+         self.assertIn('test "$status" -eq 78', LINUX_HARNESS)
+         self.assertIn('test ! -s "$stderr"', LINUX_HARNESS)
+         self.assertIn('cmp "$before" "$after"', LINUX_HARNESS)
+-        self.assertNotIn("pkg-after-uninstall", LINUX_HARNESS)
+-        self.assertNotIn("idempotent uninstall", LINUX_HARNESS)
+ 
+     def test_linux_proof_binary_is_isolated_and_every_blocker_runs_twice(self) -> None:
+         build = (
+@@ -425,5 +480,85 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
+         self.assertIn('manifest.get("releaseId") != sys.argv[2]', authenticate)
+ 
+ 
++class LinuxCleanHostRefusalTests(unittest.TestCase):
++    """The real harness must refuse bad input before any Docker or git work."""
++
++    HARNESS = LINUX_RUN_SH
++
++    def _sentinel_path(self, root: Path) -> tuple[Path, Path]:
++        """Build a PATH whose docker/git wrappers log one line then fail."""
++        sentinels = root / "sentinels"
++        sentinels.mkdir()
++        log = root / "sentinel.log"
++        for name in ("docker", "git"):
++            sentinel = sentinels / name
++            sentinel.write_text(
++                "#!/bin/sh\n"
++                f"printf '%s\\n' \"{name} $*\" >> {shlex.quote(str(log))}\n"
++                "exit 97\n",
++                encoding="utf-8",
++            )
++            sentinel.chmod(0o700)
++        return sentinels, log
++
++    def _run_harness(
++        self, argv: list[str], sentinels: Path, cwd: Path
++    ) -> subprocess.CompletedProcess[str]:
++        try:
++            return subprocess.run(
++                ["/bin/sh", str(self.HARNESS), *argv],
++                capture_output=True,
++                text=True,
++                timeout=30,
++                cwd=str(cwd),
++                env={**os.environ, "PATH": str(sentinels)},
++            )
++        except subprocess.TimeoutExpired as error:
++            self.fail(f"clean-host harness did not fail fast: {error}")
++
++    def test_invalid_arguments_refuse_with_exact_usage_and_no_side_effects(self) -> None:
++        for argv in (
++            ["--keep-artifacts"],
++            ["--keep-artifacts", "out", "extra"],
++            ["--bogus"],
++        ):
++            with self.subTest(argv=argv):
++                with tempfile.TemporaryDirectory() as tmp:
++                    root = Path(tmp)
++                    sentinels, log = self._sentinel_path(root)
++                    result = self._run_harness(argv, sentinels, root)
++                    self.assertEqual(result.returncode, 2)
++                    self.assertEqual(
++                        result.stderr,
++                        f"usage: {self.HARNESS} [--keep-artifacts DIR]\n",
++                    )
++                    self.assertEqual(result.stdout, "")
++                    self.assertFalse(log.exists())
++                    self.assertEqual(
++                        sorted(path.name for path in root.iterdir()), ["sentinels"]
++                    )
++
++    def test_valid_arguments_stop_at_first_docker_attempt_without_git_or_artifacts(
++        self,
++    ) -> None:
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            sentinels, log = self._sentinel_path(root)
++            artifacts = root / "artifacts"
++            result = self._run_harness(
++                ["--keep-artifacts", str(artifacts)], sentinels, root
++            )
++            self.assertEqual(result.returncode, 97)
++            self.assertEqual(
++                log.read_text(encoding="utf-8").splitlines(),
++                ["docker version --format {{.Server.Arch}}"],
++            )
++            self.assertFalse(artifacts.exists())
++            self.assertEqual(
++                sorted(path.name for path in root.iterdir()),
++                ["sentinel.log", "sentinels"],
++            )
++
++
+ if __name__ == "__main__":
+     unittest.main()

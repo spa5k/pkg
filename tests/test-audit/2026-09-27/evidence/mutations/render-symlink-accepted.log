@@ -1,0 +1,10 @@
+test_doctor_path_is_idempotent (test_render.RenderTests.test_doctor_path_is_idempotent) ... ok
+test_guarded_startup_survives_removed_binary (test_render.RenderTests.test_guarded_startup_survives_removed_binary) ... ok
+test_invalid_tag_cannot_inject_shell (test_render.RenderTests.test_invalid_tag_cannot_inject_shell) ... ok
+test_missing_or_linked_asset_refuses (test_render.RenderTests.test_missing_or_linked_asset_refuses) ... ok
+test_render_contains_exact_bytes_for_both_platforms (test_render.RenderTests.test_render_contains_exact_bytes_for_both_platforms) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.019s
+
+OK

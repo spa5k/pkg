@@ -1,0 +1,72 @@
+test_doctor_path_is_idempotent (test_render.RealShellBoundaryTests.test_doctor_path_is_idempotent) ... ok
+test_guarded_startup_survives_removed_binary (test_render.RealShellBoundaryTests.test_guarded_startup_survives_removed_binary) ... ok
+test_each_unsafe_artifact_refuses_at_the_cli (test_render.RenderedReleaseProof.test_each_unsafe_artifact_refuses_at_the_cli) ... ok
+test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) ... 
+  test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag="v1.0.0'; echo injected") ... FAIL
+  test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='$(id)') ... FAIL
+  test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='v1.0.0`id`') ... FAIL
+  test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='../v1.0.0') ... FAIL
+  test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='v1.0.0\nrm -rf /') ... FAIL
+  test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='1.0.0') ... FAIL
+  test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='v1.0.0-alpha.0') ... FAIL
+
+======================================================================
+FAIL: test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag="v1.0.0'; echo injected")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/test_render.py", line 86, in test_invalid_tags_fail_at_the_tag_guard
+    self.assertNotEqual(result.returncode, 0)
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='$(id)')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/test_render.py", line 86, in test_invalid_tags_fail_at_the_tag_guard
+    self.assertNotEqual(result.returncode, 0)
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='v1.0.0`id`')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/test_render.py", line 86, in test_invalid_tags_fail_at_the_tag_guard
+    self.assertNotEqual(result.returncode, 0)
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='../v1.0.0')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/test_render.py", line 87, in test_invalid_tags_fail_at_the_tag_guard
+    self.assertIn("invalid release tag", result.stderr)
+AssertionError: 'invalid release tag' not found in 'Traceback (most recent call last):\n  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/render.py", line 40, in <module>\n    args.output.write_text(render(args.tag, args.assets))\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/render.py", line 23, in render\n    raise ValueError(f"missing or unsafe release artifact: {name}")\nValueError: missing or unsafe release artifact: pkg-./v1.0.0-preview.pkg\n'
+
+======================================================================
+FAIL: test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='v1.0.0\nrm -rf /')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/test_render.py", line 87, in test_invalid_tags_fail_at_the_tag_guard
+    self.assertIn("invalid release tag", result.stderr)
+AssertionError: 'invalid release tag' not found in 'Traceback (most recent call last):\n  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/render.py", line 40, in <module>\n    args.output.write_text(render(args.tag, args.assets))\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/render.py", line 23, in render\n    raise ValueError(f"missing or unsafe release artifact: {name}")\nValueError: missing or unsafe release artifact: pkg-1.0.0\nrm -rf /-preview.pkg\n'
+
+======================================================================
+FAIL: test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='1.0.0')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/test_render.py", line 86, in test_invalid_tags_fail_at_the_tag_guard
+    self.assertNotEqual(result.returncode, 0)
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_tags_fail_at_the_tag_guard (test_render.RenderedReleaseProof.test_invalid_tags_fail_at_the_tag_guard) (tag='v1.0.0-alpha.0')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/install/test_render.py", line 86, in test_invalid_tags_fail_at_the_tag_guard
+    self.assertNotEqual(result.returncode, 0)
+AssertionError: 0 == 0
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.560s
+
+FAILED (failures=7)

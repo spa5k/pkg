@@ -1,0 +1,185 @@
+[
+  {
+    "id": "renderer-wrong-sha256",
+    "mutation": "Replace actual artifact SHA256 with 64 zeroes",
+    "file": "tools/install/render.py",
+    "test_command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tools/install",
+      "-p",
+      "test_render.py",
+      "-v"
+    ],
+    "mutant_test_exit": 0,
+    "independent_control": {
+      "pkg-0.1.0-alpha.49-preview.pkg": {
+        "expected_sha256": "90d42e0655ec5cdf695607d0b20a18558a646da94bb2743b79fdf0a7492eabad",
+        "correct_digest_in_render": false
+      },
+      "pkg-install-x86_64-linux": {
+        "expected_sha256": "09846af24c03b0d882a5f3d0c4f7d942f331d8aa7b683122f5334d0f2e1607cc",
+        "correct_digest_in_render": false
+      },
+      "install-preview.sh": {
+        "expected_sha256": "b2bd4a7bc38c9635e4ed81f2ae8ce9e7cb331f42813007f8f90afe38a2761698",
+        "correct_digest_in_render": false
+      }
+    },
+    "restored": true,
+    "original_control_all_digests_present": true
+  },
+  {
+    "id": "skipped-linux-proof",
+    "mutation": "Insert a successful early exit before all proof checks",
+    "file": "tests/linux-clean-host/run.sh",
+    "test_command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tools/release",
+      "-p",
+      "test_workflow.py",
+      "-v"
+    ],
+    "mutant_test_exit": 0,
+    "mutant_invalid_input_exit": 0,
+    "original_invalid_input_exit": 2,
+    "restored": true
+  },
+  {
+    "id": "renderer-symlink-accepted",
+    "mutation": "Remove artifact symlink refusal",
+    "file": "tools/install/render.py",
+    "test_command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tools/install",
+      "-p",
+      "test_render.py",
+      "-v"
+    ],
+    "mutant_test_exit": 0,
+    "complete_fixture_mutant_accepts_symlink": true,
+    "complete_fixture_original_refuses_symlink": true,
+    "restored": true
+  },
+  {
+    "id": "private-result-leak",
+    "mutation": "Remove /nix/ rejection from real public result validation",
+    "file": "crates/pkg-cli/src/commands/execute.rs",
+    "fake_suite": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--test",
+        "e2e_fake",
+        "--",
+        "--exact",
+        "every_command_routes_through_typed_fake_core_and_engine_calls_are_exact"
+      ],
+      "exit_code": 0,
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s"
+      ],
+      "log": "privacy-fake-stays-green.log"
+    },
+    "keeper": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--lib",
+        "commands::execute::tests::public_result_rejects_private_runtime_material_and_reserved_fields",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 101,
+      "test_results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.00s"
+      ],
+      "log": "privacy-keeper-catches.log"
+    },
+    "restored": true
+  },
+  {
+    "id": "doctor-missing-checks",
+    "mutation": "Drop runtime.managed and channel.signed rows from the real doctor report",
+    "file": "crates/pkg-cli/src/commands/doctor.rs",
+    "test": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "pkg-cli",
+        "--test",
+        "cli",
+        "completion_is_real_static_source_and_doctor_reports_verified_host_state",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 0,
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 30.03s"
+      ],
+      "log": "doctor-missing-checks.log"
+    },
+    "restored": true
+  },
+  {
+    "id": "renderer-invalid-tag-accepted",
+    "mutation": "Disable release tag validation",
+    "file": "tools/install/render.py",
+    "test_command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tools/install",
+      "-p",
+      "test_render.py",
+      "-v"
+    ],
+    "mutant_test_exit": 0,
+    "complete_fixture_mutant_accepts_invalid_tag": true,
+    "complete_fixture_original_refuses_invalid_tag": true,
+    "rendered_script_executed": false,
+    "restored": true
+  },
+  {
+    "id": "production-manual-gate-removed",
+    "mutation": "Change the production-linux job condition to unconditional true",
+    "file": ".github/workflows/release.yml",
+    "original_job_condition": "if: ${{ github.event_name == 'workflow_dispatch' && inputs.production-linux }}",
+    "mutant_job_condition": "if: ${{ true }}",
+    "test_command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tools/release",
+      "-p",
+      "test_workflow.py",
+      "-v"
+    ],
+    "mutant_test_exit": 0,
+    "workflow_dispatched": false,
+    "restored": true
+  }
+]

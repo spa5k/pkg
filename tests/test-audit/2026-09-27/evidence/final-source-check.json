@@ -1,0 +1,11 @@
+{
+  "tracked_files_checked": 1164,
+  "changes": [],
+  "mutation_owners_restored": [
+    "tools/install/render.py",
+    "tests/linux-clean-host/run.sh",
+    "crates/pkg-cli/src/commands/execute.rs",
+    "crates/pkg-cli/src/commands/doctor.rs",
+    ".github/workflows/release.yml"
+  ]
+}

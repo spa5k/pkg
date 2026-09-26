@@ -1,0 +1,744 @@
+warning[duplicate]: found 2 duplicate entries for crate 'block-buffer'
+   ┌─ /Users/pacific/Developer/pkg/Cargo.lock:18:1
+   │  
+18 │ ╭ block-buffer 0.10.4 registry+https://github.com/rust-lang/crates.io-index
+19 │ │ block-buffer 0.12.1 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰─────────────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ block-buffer v0.10.4
+     └── digest v0.10.7
+         └── sha2 v0.10.9
+             ├── pkg-channel v0.1.0-alpha.56
+             │   ├── pkg-index v0.1.0-alpha.56
+             │   │   ├── pkg-cli v0.1.0-alpha.56
+             │   │   ├── pkg-pipeline v0.1.0-alpha.56
+             │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+             │   │   │   └── pkg-installer v0.1.0-alpha.56
+             │   │   │       └── pkg-cli v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-release v0.1.0-alpha.56
+             │   │   └── pkg-resolver v0.1.0-alpha.56
+             │   │       └── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   ├── pkg-installer v0.1.0-alpha.56 (*)
+             │   ├── pkg-nix v0.1.0-alpha.56
+             │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-store v0.1.0-alpha.56
+             │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+             │   │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+             │   │   │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   │   └── pkg-testkit v0.1.0-alpha.56
+             │   │       ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+             │   │       ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+             │   │       ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+             │   │       └── (dev) pkg-store v0.1.0-alpha.56 (*)
+             │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   └── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+             ├── pkg-core v0.1.0-alpha.56
+             │   ├── pkg-channel v0.1.0-alpha.56 (*)
+             │   ├── pkg-cli v0.1.0-alpha.56 (*)
+             │   ├── pkg-index v0.1.0-alpha.56 (*)
+             │   ├── pkg-installer v0.1.0-alpha.56 (*)
+             │   ├── pkg-nix v0.1.0-alpha.56 (*)
+             │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   ├── pkg-release v0.1.0-alpha.56 (*)
+             │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+             │   ├── pkg-store v0.1.0-alpha.56 (*)
+             │   └── pkg-testkit v0.1.0-alpha.56 (*)
+             ├── pkg-installer v0.1.0-alpha.56 (*)
+             ├── pkg-nix v0.1.0-alpha.56 (*)
+             ├── pkg-release v0.1.0-alpha.56 (*)
+             └── pkg-store v0.1.0-alpha.56 (*)
+   ├ block-buffer v0.12.1
+     └── digest v0.11.3
+         └── sha2 v0.11.0
+             └── lzma-rust2 v0.18.1
+                 └── (dev) pkg-nix v0.1.0-alpha.56
+                     ├── pkg-cli v0.1.0-alpha.56
+                     ├── pkg-installer v0.1.0-alpha.56
+                     │   └── pkg-cli v0.1.0-alpha.56 (*)
+                     ├── pkg-pipeline v0.1.0-alpha.56
+                     │   ├── pkg-cli v0.1.0-alpha.56 (*)
+                     │   └── pkg-installer v0.1.0-alpha.56 (*)
+                     ├── pkg-release v0.1.0-alpha.56
+                     ├── pkg-resolver v0.1.0-alpha.56
+                     │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+                     ├── pkg-store v0.1.0-alpha.56
+                     │   ├── pkg-cli v0.1.0-alpha.56 (*)
+                     │   ├── pkg-installer v0.1.0-alpha.56 (*)
+                     │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+                     └── pkg-testkit v0.1.0-alpha.56
+                         ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+                         ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+                         ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+                         └── (dev) pkg-store v0.1.0-alpha.56 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'cpufeatures'
+   ┌─ /Users/pacific/Developer/pkg/Cargo.lock:41:1
+   │  
+41 │ ╭ cpufeatures 0.2.17 registry+https://github.com/rust-lang/crates.io-index
+42 │ │ cpufeatures 0.3.0 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰───────────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ cpufeatures v0.2.17
+     └── sha2 v0.10.9
+         ├── pkg-channel v0.1.0-alpha.56
+         │   ├── pkg-index v0.1.0-alpha.56
+         │   │   ├── pkg-cli v0.1.0-alpha.56
+         │   │   ├── pkg-pipeline v0.1.0-alpha.56
+         │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+         │   │   │   └── pkg-installer v0.1.0-alpha.56
+         │   │   │       └── pkg-cli v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-release v0.1.0-alpha.56
+         │   │   └── pkg-resolver v0.1.0-alpha.56
+         │   │       └── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   ├── pkg-installer v0.1.0-alpha.56 (*)
+         │   ├── pkg-nix v0.1.0-alpha.56
+         │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-store v0.1.0-alpha.56
+         │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+         │   │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+         │   │   │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   │   └── pkg-testkit v0.1.0-alpha.56
+         │   │       ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+         │   │       ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+         │   │       ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+         │   │       └── (dev) pkg-store v0.1.0-alpha.56 (*)
+         │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   └── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+         ├── pkg-core v0.1.0-alpha.56
+         │   ├── pkg-channel v0.1.0-alpha.56 (*)
+         │   ├── pkg-cli v0.1.0-alpha.56 (*)
+         │   ├── pkg-index v0.1.0-alpha.56 (*)
+         │   ├── pkg-installer v0.1.0-alpha.56 (*)
+         │   ├── pkg-nix v0.1.0-alpha.56 (*)
+         │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   ├── pkg-release v0.1.0-alpha.56 (*)
+         │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+         │   ├── pkg-store v0.1.0-alpha.56 (*)
+         │   └── pkg-testkit v0.1.0-alpha.56 (*)
+         ├── pkg-installer v0.1.0-alpha.56 (*)
+         ├── pkg-nix v0.1.0-alpha.56 (*)
+         ├── pkg-release v0.1.0-alpha.56 (*)
+         └── pkg-store v0.1.0-alpha.56 (*)
+   ├ cpufeatures v0.3.0
+     └── sha2 v0.11.0
+         └── lzma-rust2 v0.18.1
+             └── (dev) pkg-nix v0.1.0-alpha.56
+                 ├── pkg-cli v0.1.0-alpha.56
+                 ├── pkg-installer v0.1.0-alpha.56
+                 │   └── pkg-cli v0.1.0-alpha.56 (*)
+                 ├── pkg-pipeline v0.1.0-alpha.56
+                 │   ├── pkg-cli v0.1.0-alpha.56 (*)
+                 │   └── pkg-installer v0.1.0-alpha.56 (*)
+                 ├── pkg-release v0.1.0-alpha.56
+                 ├── pkg-resolver v0.1.0-alpha.56
+                 │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+                 ├── pkg-store v0.1.0-alpha.56
+                 │   ├── pkg-cli v0.1.0-alpha.56 (*)
+                 │   ├── pkg-installer v0.1.0-alpha.56 (*)
+                 │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+                 └── pkg-testkit v0.1.0-alpha.56
+                     ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+                     ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+                     ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+                     └── (dev) pkg-store v0.1.0-alpha.56 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'crypto-common'
+   ┌─ /Users/pacific/Developer/pkg/Cargo.lock:48:1
+   │  
+48 │ ╭ crypto-common 0.1.7 registry+https://github.com/rust-lang/crates.io-index
+49 │ │ crypto-common 0.2.2 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰─────────────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ crypto-common v0.1.7
+     └── digest v0.10.7
+         └── sha2 v0.10.9
+             ├── pkg-channel v0.1.0-alpha.56
+             │   ├── pkg-index v0.1.0-alpha.56
+             │   │   ├── pkg-cli v0.1.0-alpha.56
+             │   │   ├── pkg-pipeline v0.1.0-alpha.56
+             │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+             │   │   │   └── pkg-installer v0.1.0-alpha.56
+             │   │   │       └── pkg-cli v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-release v0.1.0-alpha.56
+             │   │   └── pkg-resolver v0.1.0-alpha.56
+             │   │       └── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   ├── pkg-installer v0.1.0-alpha.56 (*)
+             │   ├── pkg-nix v0.1.0-alpha.56
+             │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+             │   │   ├── pkg-store v0.1.0-alpha.56
+             │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+             │   │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+             │   │   │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   │   └── pkg-testkit v0.1.0-alpha.56
+             │   │       ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+             │   │       ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+             │   │       ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+             │   │       └── (dev) pkg-store v0.1.0-alpha.56 (*)
+             │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   └── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+             ├── pkg-core v0.1.0-alpha.56
+             │   ├── pkg-channel v0.1.0-alpha.56 (*)
+             │   ├── pkg-cli v0.1.0-alpha.56 (*)
+             │   ├── pkg-index v0.1.0-alpha.56 (*)
+             │   ├── pkg-installer v0.1.0-alpha.56 (*)
+             │   ├── pkg-nix v0.1.0-alpha.56 (*)
+             │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+             │   ├── pkg-release v0.1.0-alpha.56 (*)
+             │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+             │   ├── pkg-store v0.1.0-alpha.56 (*)
+             │   └── pkg-testkit v0.1.0-alpha.56 (*)
+             ├── pkg-installer v0.1.0-alpha.56 (*)
+             ├── pkg-nix v0.1.0-alpha.56 (*)
+             ├── pkg-release v0.1.0-alpha.56 (*)
+             └── pkg-store v0.1.0-alpha.56 (*)
+   ├ crypto-common v0.2.2
+     └── digest v0.11.3
+         └── sha2 v0.11.0
+             └── lzma-rust2 v0.18.1
+                 └── (dev) pkg-nix v0.1.0-alpha.56
+                     ├── pkg-cli v0.1.0-alpha.56
+                     ├── pkg-installer v0.1.0-alpha.56
+                     │   └── pkg-cli v0.1.0-alpha.56 (*)
+                     ├── pkg-pipeline v0.1.0-alpha.56
+                     │   ├── pkg-cli v0.1.0-alpha.56 (*)
+                     │   └── pkg-installer v0.1.0-alpha.56 (*)
+                     ├── pkg-release v0.1.0-alpha.56
+                     ├── pkg-resolver v0.1.0-alpha.56
+                     │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+                     ├── pkg-store v0.1.0-alpha.56
+                     │   ├── pkg-cli v0.1.0-alpha.56 (*)
+                     │   ├── pkg-installer v0.1.0-alpha.56 (*)
+                     │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+                     └── pkg-testkit v0.1.0-alpha.56
+                         ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+                         ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+                         ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+                         └── (dev) pkg-store v0.1.0-alpha.56 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'digest'
+   ┌─ /Users/pacific/Developer/pkg/Cargo.lock:51:1
+   │  
+51 │ ╭ digest 0.10.7 registry+https://github.com/rust-lang/crates.io-index
+52 │ │ digest 0.11.3 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰───────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ digest v0.10.7
+     └── sha2 v0.10.9
+         ├── pkg-channel v0.1.0-alpha.56
+         │   ├── pkg-index v0.1.0-alpha.56
+         │   │   ├── pkg-cli v0.1.0-alpha.56
+         │   │   ├── pkg-pipeline v0.1.0-alpha.56
+         │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+         │   │   │   └── pkg-installer v0.1.0-alpha.56
+         │   │   │       └── pkg-cli v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-release v0.1.0-alpha.56
+         │   │   └── pkg-resolver v0.1.0-alpha.56
+         │   │       └── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   ├── pkg-installer v0.1.0-alpha.56 (*)
+         │   ├── pkg-nix v0.1.0-alpha.56
+         │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+         │   │   ├── pkg-store v0.1.0-alpha.56
+         │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+         │   │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+         │   │   │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   │   └── pkg-testkit v0.1.0-alpha.56
+         │   │       ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+         │   │       ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+         │   │       ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+         │   │       └── (dev) pkg-store v0.1.0-alpha.56 (*)
+         │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   └── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+         ├── pkg-core v0.1.0-alpha.56
+         │   ├── pkg-channel v0.1.0-alpha.56 (*)
+         │   ├── pkg-cli v0.1.0-alpha.56 (*)
+         │   ├── pkg-index v0.1.0-alpha.56 (*)
+         │   ├── pkg-installer v0.1.0-alpha.56 (*)
+         │   ├── pkg-nix v0.1.0-alpha.56 (*)
+         │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+         │   ├── pkg-release v0.1.0-alpha.56 (*)
+         │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+         │   ├── pkg-store v0.1.0-alpha.56 (*)
+         │   └── pkg-testkit v0.1.0-alpha.56 (*)
+         ├── pkg-installer v0.1.0-alpha.56 (*)
+         ├── pkg-nix v0.1.0-alpha.56 (*)
+         ├── pkg-release v0.1.0-alpha.56 (*)
+         └── pkg-store v0.1.0-alpha.56 (*)
+   ├ digest v0.11.3
+     └── sha2 v0.11.0
+         └── lzma-rust2 v0.18.1
+             └── (dev) pkg-nix v0.1.0-alpha.56
+                 ├── pkg-cli v0.1.0-alpha.56
+                 ├── pkg-installer v0.1.0-alpha.56
+                 │   └── pkg-cli v0.1.0-alpha.56 (*)
+                 ├── pkg-pipeline v0.1.0-alpha.56
+                 │   ├── pkg-cli v0.1.0-alpha.56 (*)
+                 │   └── pkg-installer v0.1.0-alpha.56 (*)
+                 ├── pkg-release v0.1.0-alpha.56
+                 ├── pkg-resolver v0.1.0-alpha.56
+                 │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+                 ├── pkg-store v0.1.0-alpha.56
+                 │   ├── pkg-cli v0.1.0-alpha.56 (*)
+                 │   ├── pkg-installer v0.1.0-alpha.56 (*)
+                 │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+                 └── pkg-testkit v0.1.0-alpha.56
+                     ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+                     ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+                     ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+                     └── (dev) pkg-store v0.1.0-alpha.56 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'sha2'
+    ┌─ /Users/pacific/Developer/pkg/Cargo.lock:179:1
+    │  
+179 │ ╭ sha2 0.10.9 registry+https://github.com/rust-lang/crates.io-index
+180 │ │ sha2 0.11.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ sha2 v0.10.9
+      ├── pkg-channel v0.1.0-alpha.56
+      │   ├── pkg-index v0.1.0-alpha.56
+      │   │   ├── pkg-cli v0.1.0-alpha.56
+      │   │   ├── pkg-pipeline v0.1.0-alpha.56
+      │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │   │   │   └── pkg-installer v0.1.0-alpha.56
+      │   │   │       └── pkg-cli v0.1.0-alpha.56 (*)
+      │   │   ├── pkg-release v0.1.0-alpha.56
+      │   │   └── pkg-resolver v0.1.0-alpha.56
+      │   │       └── pkg-pipeline v0.1.0-alpha.56 (*)
+      │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │   ├── pkg-nix v0.1.0-alpha.56
+      │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │   │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+      │   │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+      │   │   ├── pkg-store v0.1.0-alpha.56
+      │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │   │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │   │   │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+      │   │   └── pkg-testkit v0.1.0-alpha.56
+      │   │       ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+      │   │       ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+      │   │       ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+      │   │       └── (dev) pkg-store v0.1.0-alpha.56 (*)
+      │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │   └── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+      ├── pkg-core v0.1.0-alpha.56
+      │   ├── pkg-channel v0.1.0-alpha.56 (*)
+      │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │   ├── pkg-index v0.1.0-alpha.56 (*)
+      │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │   ├── pkg-nix v0.1.0-alpha.56 (*)
+      │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │   ├── pkg-release v0.1.0-alpha.56 (*)
+      │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+      │   ├── pkg-store v0.1.0-alpha.56 (*)
+      │   └── pkg-testkit v0.1.0-alpha.56 (*)
+      ├── pkg-installer v0.1.0-alpha.56 (*)
+      ├── pkg-nix v0.1.0-alpha.56 (*)
+      ├── pkg-release v0.1.0-alpha.56 (*)
+      └── pkg-store v0.1.0-alpha.56 (*)
+    ├ sha2 v0.11.0
+      └── lzma-rust2 v0.18.1
+          └── (dev) pkg-nix v0.1.0-alpha.56
+              ├── pkg-cli v0.1.0-alpha.56
+              ├── pkg-installer v0.1.0-alpha.56
+              │   └── pkg-cli v0.1.0-alpha.56 (*)
+              ├── pkg-pipeline v0.1.0-alpha.56
+              │   ├── pkg-cli v0.1.0-alpha.56 (*)
+              │   └── pkg-installer v0.1.0-alpha.56 (*)
+              ├── pkg-release v0.1.0-alpha.56
+              ├── pkg-resolver v0.1.0-alpha.56
+              │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+              ├── pkg-store v0.1.0-alpha.56
+              │   ├── pkg-cli v0.1.0-alpha.56 (*)
+              │   ├── pkg-installer v0.1.0-alpha.56 (*)
+              │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+              └── pkg-testkit v0.1.0-alpha.56
+                  ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+                  ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+                  ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+                  └── (dev) pkg-store v0.1.0-alpha.56 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'syn'
+    ┌─ /Users/pacific/Developer/pkg/Cargo.lock:190:1
+    │  
+190 │ ╭ syn 2.0.119 registry+https://github.com/rust-lang/crates.io-index
+191 │ │ syn 3.0.3 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰───────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ syn v2.0.119
+      ├── async-recursion v1.1.1
+      │   └── tough v0.24.0
+      │       ├── pkg-channel v0.1.0-alpha.56
+      │       │   ├── pkg-index v0.1.0-alpha.56
+      │       │   │   ├── pkg-cli v0.1.0-alpha.56
+      │       │   │   ├── pkg-pipeline v0.1.0-alpha.56
+      │       │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │   │   └── pkg-installer v0.1.0-alpha.56
+      │       │   │   │       └── pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-release v0.1.0-alpha.56
+      │       │   │   └── pkg-resolver v0.1.0-alpha.56
+      │       │   │       └── pkg-pipeline v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-nix v0.1.0-alpha.56
+      │       │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-store v0.1.0-alpha.56
+      │       │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │       │   │   │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+      │       │   │   └── pkg-testkit v0.1.0-alpha.56
+      │       │   │       ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │       ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+      │       │   │       ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+      │       │   │       └── (dev) pkg-store v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │       │   └── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+      │       ├── pkg-nix v0.1.0-alpha.56 (*)
+      │       └── pkg-release v0.1.0-alpha.56 (*)
+      ├── futures-macro v0.3.33
+      │   └── futures-util v0.3.33
+      │       ├── futures v0.3.33
+      │       │   └── tough v0.24.0 (*)
+      │       ├── futures-executor v0.3.33
+      │       │   └── futures v0.3.33 (*)
+      │       ├── hyper-util v0.1.20
+      │       │   ├── hyper-rustls v0.27.9
+      │       │   │   └── reqwest v0.13.4
+      │       │   │       └── tough v0.24.0 (*)
+      │       │   └── reqwest v0.13.4 (*)
+      │       ├── pkg-nix v0.1.0-alpha.56 (*)
+      │       ├── reqwest v0.13.4 (*)
+      │       ├── tower v0.5.3
+      │       │   ├── reqwest v0.13.4 (*)
+      │       │   └── tower-http v0.6.11
+      │       │       └── reqwest v0.13.4 (*)
+      │       └── tower-http v0.6.11 (*)
+      ├── pin-project-internal v1.1.13
+      │   └── pin-project v1.1.13
+      │       └── snafu v0.8.9
+      │           └── tough v0.24.0 (*)
+      ├── snafu-derive v0.8.9
+      │   └── snafu v0.8.9 (*)
+      ├── synstructure v0.13.2
+      │   ├── yoke-derive v0.8.2
+      │   │   └── yoke v0.8.3
+      │   │       ├── icu_collections v2.2.0
+      │   │       │   ├── icu_normalizer v2.2.0
+      │   │       │   │   └── idna_adapter v1.2.2
+      │   │       │   │       └── idna v1.1.0
+      │   │       │   │           └── url v2.5.8
+      │   │       │   │               ├── pkg-channel v0.1.0-alpha.56 (*)
+      │   │       │   │               ├── pkg-installer v0.1.0-alpha.56 (*)
+      │   │       │   │               ├── pkg-nix v0.1.0-alpha.56 (*)
+      │   │       │   │               ├── pkg-release v0.1.0-alpha.56 (*)
+      │   │       │   │               ├── reqwest v0.13.4 (*)
+      │   │       │   │               ├── tough v0.24.0 (*)
+      │   │       │   │               └── tower-http v0.6.11 (*)
+      │   │       │   └── icu_properties v2.2.0
+      │   │       │       └── idna_adapter v1.2.2 (*)
+      │   │       ├── icu_provider v2.2.0
+      │   │       │   ├── icu_normalizer v2.2.0 (*)
+      │   │       │   └── icu_properties v2.2.0 (*)
+      │   │       ├── zerotrie v0.2.4
+      │   │       │   ├── icu_properties v2.2.0 (*)
+      │   │       │   └── icu_provider v2.2.0 (*)
+      │   │       └── zerovec v0.11.6
+      │   │           ├── icu_collections v2.2.0 (*)
+      │   │           ├── icu_locale_core v2.2.0
+      │   │           │   ├── icu_properties v2.2.0 (*)
+      │   │           │   └── icu_provider v2.2.0 (*)
+      │   │           ├── icu_normalizer v2.2.0 (*)
+      │   │           ├── icu_properties v2.2.0 (*)
+      │   │           ├── icu_provider v2.2.0 (*)
+      │   │           ├── potential_utf v0.1.5
+      │   │           │   └── icu_collections v2.2.0 (*)
+      │   │           └── tinystr v0.8.3
+      │   │               └── icu_locale_core v2.2.0 (*)
+      │   └── zerofrom-derive v0.1.7
+      │       └── zerofrom v0.1.8
+      │           ├── icu_collections v2.2.0 (*)
+      │           ├── icu_provider v2.2.0 (*)
+      │           ├── yoke v0.8.3 (*)
+      │           ├── zerotrie v0.2.4 (*)
+      │           └── zerovec v0.11.6 (*)
+      ├── yoke-derive v0.8.2 (*)
+      ├── zerocopy-derive v0.8.55
+      │   └── zerocopy v0.8.55
+      │       ├── half v2.7.1
+      │       │   └── ciborium-ll v0.2.2
+      │       │       └── ciborium v0.2.2
+      │       │           └── criterion v0.8.2
+      │       │               └── (dev) pkg-index v0.1.0-alpha.56 (*)
+      │       └── ppv-lite86 v0.2.21
+      │           └── rand_chacha v0.9.0
+      │               └── proptest v1.11.0
+      │                   └── (dev) pkg-core v0.1.0-alpha.56
+      │                       ├── pkg-channel v0.1.0-alpha.56 (*)
+      │                       ├── pkg-cli v0.1.0-alpha.56 (*)
+      │                       ├── pkg-index v0.1.0-alpha.56 (*)
+      │                       ├── pkg-installer v0.1.0-alpha.56 (*)
+      │                       ├── pkg-nix v0.1.0-alpha.56 (*)
+      │                       ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │                       ├── pkg-release v0.1.0-alpha.56 (*)
+      │                       ├── pkg-resolver v0.1.0-alpha.56 (*)
+      │                       ├── pkg-store v0.1.0-alpha.56 (*)
+      │                       └── pkg-testkit v0.1.0-alpha.56 (*)
+      ├── zerofrom-derive v0.1.7 (*)
+      └── zerovec-derive v0.11.3
+          └── zerovec v0.11.6 (*)
+    ├ syn v3.0.3
+      ├── async-trait v0.1.92
+      │   ├── pkg-release v0.1.0-alpha.56
+      │   └── tough v0.24.0
+      │       ├── pkg-channel v0.1.0-alpha.56
+      │       │   ├── pkg-index v0.1.0-alpha.56
+      │       │   │   ├── pkg-cli v0.1.0-alpha.56
+      │       │   │   ├── pkg-pipeline v0.1.0-alpha.56
+      │       │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │   │   └── pkg-installer v0.1.0-alpha.56
+      │       │   │   │       └── pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+      │       │   │   └── pkg-resolver v0.1.0-alpha.56
+      │       │   │       └── pkg-pipeline v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-nix v0.1.0-alpha.56
+      │       │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+      │       │   │   ├── pkg-store v0.1.0-alpha.56
+      │       │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │       │   │   │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+      │       │   │   └── pkg-testkit v0.1.0-alpha.56
+      │       │   │       ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+      │       │   │       ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+      │       │   │       ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+      │       │   │       └── (dev) pkg-store v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │       │   └── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+      │       ├── pkg-nix v0.1.0-alpha.56 (*)
+      │       └── pkg-release v0.1.0-alpha.56 (*)
+      ├── clap_derive v4.6.4
+      │   └── clap v4.6.6
+      │       ├── clap_complete v4.6.9
+      │       │   └── pkg-cli v0.1.0-alpha.56 (*)
+      │       ├── criterion v0.8.2
+      │       │   └── (dev) pkg-index v0.1.0-alpha.56 (*)
+      │       └── pkg-cli v0.1.0-alpha.56 (*)
+      ├── displaydoc v0.2.7
+      │   ├── icu_collections v2.2.0
+      │   │   ├── icu_normalizer v2.2.0
+      │   │   │   └── idna_adapter v1.2.2
+      │   │   │       └── idna v1.1.0
+      │   │   │           └── url v2.5.8
+      │   │   │               ├── pkg-channel v0.1.0-alpha.56 (*)
+      │   │   │               ├── pkg-installer v0.1.0-alpha.56 (*)
+      │   │   │               ├── pkg-nix v0.1.0-alpha.56 (*)
+      │   │   │               ├── pkg-release v0.1.0-alpha.56 (*)
+      │   │   │               ├── reqwest v0.13.4
+      │   │   │               │   └── tough v0.24.0 (*)
+      │   │   │               ├── tough v0.24.0 (*)
+      │   │   │               └── tower-http v0.6.11
+      │   │   │                   └── reqwest v0.13.4 (*)
+      │   │   └── icu_properties v2.2.0
+      │   │       └── idna_adapter v1.2.2 (*)
+      │   ├── icu_locale_core v2.2.0
+      │   │   ├── icu_properties v2.2.0 (*)
+      │   │   └── icu_provider v2.2.0
+      │   │       ├── icu_normalizer v2.2.0 (*)
+      │   │       └── icu_properties v2.2.0 (*)
+      │   ├── icu_provider v2.2.0 (*)
+      │   ├── tinystr v0.8.3
+      │   │   └── icu_locale_core v2.2.0 (*)
+      │   └── zerotrie v0.2.4
+      │       ├── icu_properties v2.2.0 (*)
+      │       └── icu_provider v2.2.0 (*)
+      ├── serde_derive v1.0.229
+      │   └── serde v1.0.229
+      │       ├── ciborium v0.2.2
+      │       │   └── criterion v0.8.2 (*)
+      │       ├── criterion v0.8.2 (*)
+      │       ├── olpc-cjson v0.1.4
+      │       │   ├── pkg-release v0.1.0-alpha.56 (*)
+      │       │   └── tough v0.24.0 (*)
+      │       ├── pkg-channel v0.1.0-alpha.56 (*)
+      │       ├── pkg-cli v0.1.0-alpha.56 (*)
+      │       ├── pkg-core v0.1.0-alpha.56
+      │       │   ├── pkg-channel v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-index v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-nix v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-release v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+      │       │   ├── pkg-store v0.1.0-alpha.56 (*)
+      │       │   └── pkg-testkit v0.1.0-alpha.56 (*)
+      │       ├── pkg-index v0.1.0-alpha.56 (*)
+      │       ├── pkg-installer v0.1.0-alpha.56 (*)
+      │       ├── pkg-nix v0.1.0-alpha.56 (*)
+      │       ├── pkg-release v0.1.0-alpha.56 (*)
+      │       ├── pkg-testkit v0.1.0-alpha.56 (*)
+      │       ├── plist v1.10.0
+      │       │   └── pkg-installer v0.1.0-alpha.56 (*)
+      │       ├── serde_json_canonicalizer v0.3.2
+      │       │   ├── pkg-core v0.1.0-alpha.56 (*)
+      │       │   └── pkg-index v0.1.0-alpha.56 (*)
+      │       ├── serde_plain v1.0.2
+      │       │   └── tough v0.24.0 (*)
+      │       ├── tinytemplate v1.2.1
+      │       │   └── criterion v0.8.2 (*)
+      │       └── tough v0.24.0 (*)
+      └── tokio-macros v2.7.2
+          └── tokio v1.53.1
+              ├── hyper v1.11.0
+              │   ├── hyper-rustls v0.27.9
+              │   │   └── reqwest v0.13.4 (*)
+              │   ├── hyper-util v0.1.20
+              │   │   ├── hyper-rustls v0.27.9 (*)
+              │   │   └── reqwest v0.13.4 (*)
+              │   └── reqwest v0.13.4 (*)
+              ├── hyper-rustls v0.27.9 (*)
+              ├── hyper-util v0.1.20 (*)
+              ├── pkg-channel v0.1.0-alpha.56 (*)
+              ├── pkg-installer v0.1.0-alpha.56 (*)
+              ├── pkg-nix v0.1.0-alpha.56 (*)
+              ├── (dev) pkg-release v0.1.0-alpha.56 (*)
+              ├── reqwest v0.13.4 (*)
+              ├── tokio-rustls v0.26.4
+              │   ├── hyper-rustls v0.27.9 (*)
+              │   └── reqwest v0.13.4 (*)
+              ├── tokio-util v0.7.19
+              │   ├── reqwest v0.13.4 (*)
+              │   └── tough v0.24.0 (*)
+              ├── tough v0.24.0 (*)
+              └── tower v0.5.3
+                  ├── reqwest v0.13.4 (*)
+                  └── tower-http v0.6.11 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'untrusted'
+    ┌─ /Users/pacific/Developer/pkg/Cargo.lock:221:1
+    │  
+221 │ ╭ untrusted 0.7.1 registry+https://github.com/rust-lang/crates.io-index
+222 │ │ untrusted 0.9.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ untrusted v0.7.1
+      ├── aws-lc-rs v1.18.0
+      │   ├── pkg-release v0.1.0-alpha.56
+      │   ├── rustls v0.23.45
+      │   │   ├── hyper-rustls v0.27.9
+      │   │   │   └── reqwest v0.13.4
+      │   │   │       └── tough v0.24.0
+      │   │   │           ├── pkg-channel v0.1.0-alpha.56
+      │   │   │           │   ├── pkg-index v0.1.0-alpha.56
+      │   │   │           │   │   ├── pkg-cli v0.1.0-alpha.56
+      │   │   │           │   │   ├── pkg-pipeline v0.1.0-alpha.56
+      │   │   │           │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │   │   │           │   │   │   └── pkg-installer v0.1.0-alpha.56
+      │   │   │           │   │   │       └── pkg-cli v0.1.0-alpha.56 (*)
+      │   │   │           │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+      │   │   │           │   │   └── pkg-resolver v0.1.0-alpha.56
+      │   │   │           │   │       └── pkg-pipeline v0.1.0-alpha.56 (*)
+      │   │   │           │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │   │   │           │   ├── pkg-nix v0.1.0-alpha.56
+      │   │   │           │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │   │   │           │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │   │   │           │   │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │   │   │           │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+      │   │   │           │   │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+      │   │   │           │   │   ├── pkg-store v0.1.0-alpha.56
+      │   │   │           │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+      │   │   │           │   │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+      │   │   │           │   │   │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+      │   │   │           │   │   └── pkg-testkit v0.1.0-alpha.56
+      │   │   │           │   │       ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+      │   │   │           │   │       ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+      │   │   │           │   │       ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+      │   │   │           │   │       └── (dev) pkg-store v0.1.0-alpha.56 (*)
+      │   │   │           │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+      │   │   │           │   └── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+      │   │   │           ├── pkg-nix v0.1.0-alpha.56 (*)
+      │   │   │           └── pkg-release v0.1.0-alpha.56 (*)
+      │   │   ├── reqwest v0.13.4 (*)
+      │   │   ├── rustls-platform-verifier v0.7.0
+      │   │   │   ├── reqwest v0.13.4 (*)
+      │   │   │   └── tough v0.24.0 (*)
+      │   │   ├── tokio-rustls v0.26.4
+      │   │   │   ├── hyper-rustls v0.27.9 (*)
+      │   │   │   └── reqwest v0.13.4 (*)
+      │   │   └── tough v0.24.0 (*)
+      │   ├── rustls-webpki v0.103.15
+      │   │   ├── rustls v0.23.45 (*)
+      │   │   └── rustls-platform-verifier v0.7.0 (*)
+      │   └── tough v0.24.0 (*)
+      └── tough v0.24.0 (*)
+    ├ untrusted v0.9.0
+      └── rustls-webpki v0.103.15
+          ├── rustls v0.23.45
+          │   ├── hyper-rustls v0.27.9
+          │   │   └── reqwest v0.13.4
+          │   │       └── tough v0.24.0
+          │   │           ├── pkg-channel v0.1.0-alpha.56
+          │   │           │   ├── pkg-index v0.1.0-alpha.56
+          │   │           │   │   ├── pkg-cli v0.1.0-alpha.56
+          │   │           │   │   ├── pkg-pipeline v0.1.0-alpha.56
+          │   │           │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+          │   │           │   │   │   └── pkg-installer v0.1.0-alpha.56
+          │   │           │   │   │       └── pkg-cli v0.1.0-alpha.56 (*)
+          │   │           │   │   ├── pkg-release v0.1.0-alpha.56
+          │   │           │   │   └── pkg-resolver v0.1.0-alpha.56
+          │   │           │   │       └── pkg-pipeline v0.1.0-alpha.56 (*)
+          │   │           │   ├── pkg-installer v0.1.0-alpha.56 (*)
+          │   │           │   ├── pkg-nix v0.1.0-alpha.56
+          │   │           │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+          │   │           │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+          │   │           │   │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+          │   │           │   │   ├── pkg-release v0.1.0-alpha.56 (*)
+          │   │           │   │   ├── pkg-resolver v0.1.0-alpha.56 (*)
+          │   │           │   │   ├── pkg-store v0.1.0-alpha.56
+          │   │           │   │   │   ├── pkg-cli v0.1.0-alpha.56 (*)
+          │   │           │   │   │   ├── pkg-installer v0.1.0-alpha.56 (*)
+          │   │           │   │   │   └── pkg-pipeline v0.1.0-alpha.56 (*)
+          │   │           │   │   └── pkg-testkit v0.1.0-alpha.56
+          │   │           │   │       ├── (dev) pkg-cli v0.1.0-alpha.56 (*)
+          │   │           │   │       ├── (dev) pkg-installer v0.1.0-alpha.56 (*)
+          │   │           │   │       ├── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+          │   │           │   │       └── (dev) pkg-store v0.1.0-alpha.56 (*)
+          │   │           │   ├── pkg-pipeline v0.1.0-alpha.56 (*)
+          │   │           │   └── (dev) pkg-resolver v0.1.0-alpha.56 (*)
+          │   │           ├── pkg-nix v0.1.0-alpha.56 (*)
+          │   │           └── pkg-release v0.1.0-alpha.56 (*)
+          │   ├── reqwest v0.13.4 (*)
+          │   ├── rustls-platform-verifier v0.7.0
+          │   │   ├── reqwest v0.13.4 (*)
+          │   │   └── tough v0.24.0 (*)
+          │   ├── tokio-rustls v0.26.4
+          │   │   ├── hyper-rustls v0.27.9 (*)
+          │   │   └── reqwest v0.13.4 (*)
+          │   └── tough v0.24.0 (*)
+          └── rustls-platform-verifier v0.7.0 (*)
+
+advisories ok, bans ok, licenses ok, sources ok

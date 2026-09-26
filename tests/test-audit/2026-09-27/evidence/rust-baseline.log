@@ -1,0 +1,1904 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded alloca v0.4.0
+  Downloaded alloc-stdlib v0.2.4
+  Downloaded anes v0.1.6
+  Downloaded colorchoice v1.0.5
+  Downloaded ciborium-io v0.2.2
+  Downloaded anstyle-parse v1.0.0
+  Downloaded anstyle v1.0.14
+  Downloaded cpufeatures v0.2.17
+  Downloaded pin-project v1.1.13
+  Downloaded hyper-rustls v0.27.9
+  Downloaded stable_deref_trait v1.2.1
+  Downloaded terminal_size v0.4.4
+  Downloaded untrusted v0.7.1
+  Downloaded tower-service v0.3.3
+  Downloaded tokio-macros v2.7.2
+  Downloaded zerofrom-derive v0.1.7
+  Downloaded version_check v0.9.5
+  Downloaded zeroize v1.9.0
+  Downloaded unicode-ident v1.0.24
+  Downloaded tracing-core v0.1.36
+  Downloaded url v2.5.8
+  Downloaded typenum v1.20.1
+  Downloaded unicode-normalization v0.1.25
+  Downloaded zerocopy-derive v0.8.55
+  Downloaded tower-http v0.6.11
+  Downloaded tokio-util v0.7.19
+  Downloaded proptest v1.11.0
+  Downloaded rayon v1.12.0
+  Downloaded tough v0.24.0
+  Downloaded zerotrie v0.2.4
+  Downloaded unicode-width v0.2.2
+  Downloaded zerocopy v0.8.55
+  Downloaded syn v2.0.119
+  Downloaded zerovec-derive v0.11.3
+  Downloaded rustls v0.23.45
+  Downloaded zerovec v0.11.6
+  Downloaded rustix v1.1.4
+  Downloaded syn v3.0.3
+  Downloaded regex-syntax v0.8.11
+  Downloaded brotli v8.0.4
+  Downloaded serde_json v1.0.151
+  Downloaded libc v0.2.189
+  Downloaded tracing v0.1.44
+  Downloaded reqwest v0.13.4
+  Downloaded jiff v0.2.35
+  Downloaded regex v1.13.1
+  Downloaded nix v0.31.3
+  Downloaded zmij v1.0.23
+  Downloaded plotters v0.3.7
+  Downloaded regex-automata v0.4.18
+  Downloaded typed-path v0.9.3
+  Downloaded tower v0.5.3
+  Downloaded lzma-rust2 v0.18.1
+  Downloaded rustls-webpki v0.103.15
+  Downloaded rand v0.9.5
+  Downloaded bstr v1.13.0
+  Downloaded tar v0.4.46
+  Downloaded socket2 v0.6.5
+  Downloaded snafu v0.8.9
+  Downloaded serde v1.0.229
+  Downloaded ryu-js v1.0.3
+  Downloaded rayon-core v1.13.0
+  Downloaded tinyvec v1.12.0
+  Downloaded serde_derive v1.0.229
+  Downloaded tokio v1.53.1
+  Downloaded serde_core v1.0.229
+  Downloaded proc-macro2 v1.0.107
+  Downloaded yoke v0.8.3
+  Downloaded writeable v0.6.3
+  Downloaded walkdir v2.5.0
+  Downloaded utf8parse v0.2.2
+  Downloaded tokio-rustls v0.26.4
+  Downloaded tinystr v0.8.3
+  Downloaded sha2 v0.11.0
+  Downloaded thiserror v2.0.20
+  Downloaded tempfile v3.27.0
+  Downloaded synstructure v0.13.2
+  Downloaded snafu-derive v0.8.9
+  Downloaded rustls-platform-verifier v0.7.0
+  Downloaded jiff-core v0.1.0
+  Downloaded futures-util v0.3.33
+  Downloaded zerofrom v0.1.8
+  Downloaded yoke-derive v0.8.2
+  Downloaded want v0.3.1
+  Downloaded utf8_iter v1.0.4
+  Downloaded untrusted v0.9.0
+  Downloaded try-lock v0.2.5
+  Downloaded tinytemplate v1.2.1
+  Downloaded thiserror-impl v2.0.20
+  Downloaded smallvec v1.15.2
+  Downloaded mio v1.2.2
+  Downloaded icu_locale_core v2.2.0
+  Downloaded hyper-util v0.1.20
+  Downloaded num-traits v0.2.19
+  Downloaded memchr v2.8.3
+  Downloaded idna v1.1.0
+  Downloaded hyper v1.11.0
+  Downloaded tinyvec_macros v0.1.1
+  Downloaded shlex v2.0.1
+  Downloaded ring v0.17.14
+  Downloaded rustls-pki-types v1.15.1
+  Downloaded pin-project-lite v0.2.17
+  Downloaded once_cell v1.21.4
+  Downloaded itertools v0.13.0
+  Downloaded icu_properties_data v2.2.0
+  Downloaded icu_properties v2.2.0
+  Downloaded clap_builder v4.6.6
+  Downloaded brotli-decompressor v5.0.3
+  Downloaded unarray v0.1.4
+  Downloaded tower-layer v0.3.3
+  Downloaded subtle v2.6.1
+  Downloaded strsim v0.11.1
+  Downloaded serde_plain v1.0.2
+  Downloaded pkg-config v0.3.33
+  Downloaded oorandom v11.1.5
+  Downloaded olpc-cjson v0.1.4
+  Downloaded litemap v0.8.2
+  Downloaded icu_collections v2.2.0
+  Downloaded hybrid-array v0.4.14
+  Downloaded getrandom v0.2.17
+  Downloaded criterion v0.8.2
+  Downloaded sync_wrapper v1.0.2
+  Downloaded slab v0.4.12
+  Downloaded sha2 v0.10.9
+  Downloaded serde_json_canonicalizer v0.3.2
+  Downloaded rustls-native-certs v0.8.4
+  Downloaded rand_core v0.9.5
+  Downloaded rand_chacha v0.9.0
+  Downloaded linux-raw-sys v0.12.1
+  Downloaded quote v1.0.47
+  Downloaded ppv-lite86 v0.2.21
+  Downloaded plotters-svg v0.3.7
+  Downloaded memoffset v0.9.1
+  Downloaded log v0.4.33
+  Downloaded jobserver v0.1.35
+  Downloaded jiff-static v0.2.35
+  Downloaded ipnet v2.12.1
+  Downloaded http-body-util v0.1.4
+  Downloaded http-body v1.1.0
+  Downloaded find-msvc-tools v0.1.10
+  Downloaded cc v1.4.2
+  Downloaded same-file v1.0.6
+  Downloaded rand_xorshift v0.4.0
+  Downloaded potential_utf v0.1.5
+  Downloaded plotters-backend v0.3.7
+  Downloaded pin-project-internal v1.1.13
+  Downloaded listenfd v1.0.2
+  Downloaded itoa v1.0.18
+  Downloaded icu_provider v2.2.0
+  Downloaded icu_normalizer_data v2.2.0
+  Downloaded icu_normalizer v2.2.0
+  Downloaded httparse v1.10.1
+  Downloaded http v1.5.0
+  Downloaded half v2.7.1
+  Downloaded globset v0.4.20
+  Downloaded getrandom v0.3.4
+  Downloaded futures-executor v0.3.33
+  Downloaded futures v0.3.33
+  Downloaded crossbeam-utils v0.8.22
+  Downloaded crossbeam-deque v0.8.7
+  Downloaded const-oid v0.10.2
+  Downloaded hex v0.4.3
+  Downloaded generic-array v0.14.7
+  Downloaded futures-task v0.3.33
+  Downloaded futures-macro v0.3.33
+  Downloaded futures-io v0.3.33
+  Downloaded futures-core v0.3.33
+  Downloaded futures-channel v0.3.33
+  Downloaded fs_extra v1.3.0
+  Downloaded filetime v0.2.29
+  Downloaded fastrand v2.5.0
+  Downloaded errno v0.3.14
+  Downloaded either v1.17.0
+  Downloaded dunce v1.0.5
+  Downloaded displaydoc v0.2.7
+  Downloaded digest v0.11.3
+  Downloaded digest v0.10.7
+  Downloaded defmt-parser v1.0.0
+  Downloaded defmt-macros v1.1.1
+  Downloaded defmt v1.1.1
+  Downloaded crypto-common v0.2.2
+  Downloaded crypto-common v0.1.7
+  Downloaded crossbeam-epoch v0.9.20
+  Downloaded criterion-plot v0.8.2
+  Downloaded cpufeatures v0.3.0
+  Downloaded clap_lex v1.1.0
+  Downloaded clap_derive v4.6.4
+  Downloaded ciborium-ll v0.2.2
+  Downloaded ciborium v0.2.2
+  Downloaded cast v0.3.0
+  Downloaded bytes v1.12.1
+  Downloaded bitflags v2.13.1
+  Downloaded aws-lc-rs v1.18.0
+  Downloaded autocfg v1.5.1
+  Downloaded atomic-waker v1.1.2
+  Downloaded async-trait v0.1.92
+  Downloaded async-recursion v1.1.1
+  Downloaded percent-encoding v2.3.2
+  Downloaded pem v3.0.6
+  Downloaded page_size v0.6.0
+  Downloaded openssl-probe v0.2.1
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded idna_adapter v1.2.2
+  Downloaded heck v0.5.0
+  Downloaded futures-sink v0.3.33
+  Downloaded form_urlencoded v1.2.2
+  Downloaded dyn-clone v1.0.20
+  Downloaded clap_complete v4.6.9
+  Downloaded cfg-if v1.0.4
+  Downloaded block-buffer v0.10.4
+  Downloaded anstream v1.0.0
+  Downloaded cmake v0.1.58
+  Downloaded clap v4.6.6
+  Downloaded base64 v0.22.1
+  Downloaded cfg_aliases v0.2.2
+  Downloaded block-buffer v0.12.1
+  Downloaded bitflags v1.3.2
+  Downloaded anstyle-query v1.1.5
+  Downloaded aho-corasick v1.1.5
+  Downloaded alloc-no-stdlib v2.0.4
+  Downloaded aws-lc-sys v0.44.0
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling libc v0.2.189
+   Compiling memchr v2.8.3
+   Compiling cfg-if v1.0.4
+   Compiling jobserver v0.1.35
+   Compiling synstructure v0.13.2
+   Compiling find-msvc-tools v0.1.10
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.2
+   Compiling itoa v1.0.18
+   Compiling zerofrom-derive v0.1.7
+   Compiling zerofrom v0.1.8
+   Compiling yoke-derive v0.8.2
+   Compiling serde_core v1.0.229
+   Compiling stable_deref_trait v1.2.1
+   Compiling yoke v0.8.3
+   Compiling typenum v1.20.1
+   Compiling pin-project-lite v0.2.17
+   Compiling futures-core v0.3.33
+   Compiling bitflags v2.13.1
+   Compiling zerovec-derive v0.11.3
+   Compiling zerovec v0.11.6
+   Compiling cmake v0.1.58
+   Compiling displaydoc v0.2.7
+   Compiling bytes v1.12.1
+   Compiling fs_extra v1.3.0
+   Compiling dunce v1.0.5
+   Compiling serde v1.0.229
+   Compiling pkg-config v0.3.33
+   Compiling aws-lc-sys v0.44.0
+   Compiling serde_derive v1.0.229
+   Compiling futures-sink v0.3.33
+   Compiling zmij v1.0.23
+   Compiling getrandom v0.3.4
+   Compiling version_check v0.9.5
+   Compiling serde_json v1.0.151
+   Compiling generic-array v0.14.7
+   Compiling futures-channel v0.3.33
+   Compiling tinystr v0.8.3
+   Compiling mio v1.2.2
+   Compiling socket2 v0.6.5
+   Compiling tokio-macros v2.7.2
+   Compiling zeroize v1.9.0
+   Compiling aws-lc-rs v1.18.0
+   Compiling once_cell v1.21.4
+   Compiling writeable v0.6.3
+   Compiling litemap v0.8.2
+   Compiling smallvec v1.15.2
+   Compiling icu_locale_core v2.2.0
+   Compiling tokio v1.53.1
+   Compiling zerotrie v0.2.4
+   Compiling potential_utf v0.1.5
+   Compiling futures-macro v0.3.33
+   Compiling slab v0.4.12
+   Compiling rustix v1.1.4
+   Compiling regex-syntax v0.8.11
+   Compiling icu_properties_data v2.2.0
+   Compiling futures-io v0.3.33
+   Compiling icu_normalizer_data v2.2.0
+   Compiling futures-task v0.3.33
+   Compiling utf8_iter v1.0.4
+   Compiling icu_collections v2.2.0
+   Compiling futures-util v0.3.33
+   Compiling icu_provider v2.2.0
+   Compiling rustls-pki-types v1.15.1
+   Compiling http v1.5.0
+   Compiling untrusted v0.7.1
+   Compiling linux-raw-sys v0.12.1
+   Compiling http-body v1.1.0
+   Compiling heck v0.5.0
+   Compiling percent-encoding v2.3.2
+   Compiling untrusted v0.9.0
+   Compiling rustls v0.23.45
+   Compiling log v0.4.33
+   Compiling httparse v1.10.1
+   Compiling rustls-webpki v0.103.15
+   Compiling icu_normalizer v2.2.0
+   Compiling icu_properties v2.2.0
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling try-lock v0.2.5
+   Compiling subtle v2.6.1
+   Compiling tower-service v0.3.3
+   Compiling jiff-core v0.1.0
+   Compiling jiff v0.2.35
+   Compiling want v0.3.1
+   Compiling digest v0.10.7
+   Compiling idna_adapter v1.2.2
+   Compiling tracing-core v0.1.36
+   Compiling aho-corasick v1.1.5
+   Compiling cpufeatures v0.2.17
+   Compiling base64 v0.22.1
+   Compiling ryu-js v1.0.3
+   Compiling atomic-waker v1.1.2
+   Compiling hyper v1.11.0
+   Compiling serde_json_canonicalizer v0.3.2
+   Compiling sha2 v0.10.9
+   Compiling regex-automata v0.4.18
+   Compiling tracing v0.1.44
+   Compiling idna v1.1.0
+   Compiling form_urlencoded v1.2.2
+   Compiling sync_wrapper v1.0.2
+   Compiling tinyvec_macros v0.1.1
+   Compiling tower-layer v0.3.3
+   Compiling openssl-probe v0.2.1
+   Compiling ipnet v2.12.1
+   Compiling hyper-util v0.1.20
+   Compiling rustls-native-certs v0.8.4
+   Compiling tower v0.5.3
+   Compiling tinyvec v1.12.0
+   Compiling url v2.5.8
+   Compiling tokio-rustls v0.26.4
+   Compiling pin-project-internal v1.1.13
+   Compiling same-file v1.0.6
+   Compiling walkdir v2.5.0
+   Compiling pin-project v1.1.13
+   Compiling hyper-rustls v0.27.9
+   Compiling tower-http v0.6.11
+   Compiling unicode-normalization v0.1.25
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling pkg-core v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-core)
+   Compiling snafu-derive v0.8.9
+   Compiling http-body-util v0.1.4
+   Compiling futures-executor v0.3.33
+   Compiling tokio-util v0.7.19
+   Compiling bstr v1.13.0
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.27.0
+   Compiling globset v0.4.20
+   Compiling reqwest v0.13.4
+   Compiling futures v0.3.33
+   Compiling snafu v0.8.9
+   Compiling olpc-cjson v0.1.4
+   Compiling pem v3.0.6
+   Compiling serde_plain v1.0.2
+   Compiling async-trait v0.1.92
+   Compiling async-recursion v1.1.1
+   Compiling hex v0.4.3
+   Compiling dyn-clone v1.0.20
+   Compiling typed-path v0.9.3
+   Compiling tough v0.24.0
+   Compiling pkg-channel v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-channel)
+   Compiling hybrid-array v0.4.14
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling cpufeatures v0.3.0
+   Compiling sha2 v0.11.0
+   Compiling filetime v0.2.29
+   Compiling tar v0.4.46
+   Compiling lzma-rust2 v0.18.1
+   Compiling pkg-nix v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-nix)
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling autocfg v1.5.1
+   Compiling alloc-stdlib v0.2.4
+   Compiling brotli-decompressor v5.0.3
+   Compiling brotli v8.0.4
+   Compiling pkg-index v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-index)
+   Compiling zerocopy v0.8.55
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling zerocopy-derive v0.8.55
+   Compiling anstyle v1.0.14
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling anstyle-query v1.1.5
+   Compiling anstream v1.0.0
+   Compiling memoffset v0.9.1
+   Compiling terminal_size v0.4.4
+   Compiling strsim v0.11.1
+   Compiling clap_lex v1.1.0
+   Compiling cfg_aliases v0.2.2
+   Compiling nix v0.31.3
+   Compiling clap_builder v4.6.6
+   Compiling pkg-resolver v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-resolver)
+   Compiling pkg-testkit v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-testkit)
+   Compiling pkg-store v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-store)
+   Compiling clap_derive v4.6.4
+   Compiling clap v4.6.6
+   Compiling num-traits v0.2.19
+   Compiling pkg-pipeline v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-pipeline)
+   Compiling listenfd v1.0.2
+   Compiling crossbeam-utils v0.8.22
+   Compiling crossbeam-epoch v0.9.20
+   Compiling pkg-installer v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-installer)
+   Compiling crossbeam-deque v0.8.7
+   Compiling rayon-core v1.13.0
+   Compiling either v1.17.0
+   Compiling half v2.7.1
+   Compiling rand_core v0.9.5
+   Compiling alloca v0.4.0
+   Compiling ciborium-io v0.2.2
+   Compiling plotters-backend v0.3.7
+   Compiling plotters-svg v0.3.7
+   Compiling ciborium-ll v0.2.2
+   Compiling itertools v0.13.0
+   Compiling clap_complete v4.6.9
+   Compiling cast v0.3.0
+   Compiling unicode-width v0.2.2
+   Compiling criterion-plot v0.8.2
+   Compiling rayon v1.12.0
+   Compiling ciborium v0.2.2
+   Compiling plotters v0.3.7
+   Compiling ppv-lite86 v0.2.21
+   Compiling regex v1.13.1
+   Compiling tinytemplate v1.2.1
+   Compiling page_size v0.6.0
+   Compiling oorandom v11.1.5
+   Compiling anes v0.1.6
+   Compiling criterion v0.8.2
+   Compiling rand_chacha v0.9.0
+   Compiling pkg-cli v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-cli)
+   Compiling rand v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling unarray v0.1.4
+   Compiling proptest v1.11.0
+   Compiling pkg-release v0.1.0-alpha.56 (/home/user/workspace/tools/release)
+   Compiling pkg-macos-security v0.1.0-alpha.56 (/home/user/workspace/crates/pkg-macos-security)
+    Finished `test` profile [unoptimized] target(s) in 5m 07s
+     Running unittests src/lib.rs (target/debug/deps/pkg_channel-ab2b76f6b4ee3efc)
+
+running 14 tests
+test policy::tests::versions_and_hashes_are_canonical ... ok
+test policy::tests::repository_urls_require_canonical_https ... ok
+test state::tests::interrupted_first_refresh_marker_allows_retry_but_not_state_deletion ... ok
+test state::tests::legacy_seed_is_only_accepted_for_established_markerless_state ... ok
+test state::tests::malformed_permissive_and_symlinked_state_fail_closed ... ok
+test state::tests::exact_state_round_trips_and_replaces_atomically ... ok
+test tuf::tests::datastore_has_exactly_one_cross_process_writer ... ok
+test tuf::tests::established_tuf_datastore_without_rollback_memory_is_not_first_run ... ok
+test tuf::tests::descriptor_freshness_refuses_the_exact_expiry_instant ... ok
+test tuf::tests::host_index_is_returned_only_from_the_authenticated_repository_view ... ok
+test tuf::tests::refresh_reads_time_only_through_the_injected_clock ... ok
+test tuf::tests::refresh_bundle_keeps_descriptor_and_host_index_in_one_tuf_view ... ok
+test tuf::tests::semantic_tampering_fails_closed_after_tuf_authentication ... ok
+test tuf::tests::signed_fixture_loads_and_same_descriptor_is_unchanged ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_cli-feb352cff0de0a24)
+
+running 192 tests
+test broker::tests::build_preparation_refusal_is_typed_and_keeps_the_connection_usable ... ok
+test broker::tests::build_progress_is_streamed_before_a_typed_refusal ... ok
+test broker::tests::build_refusal_is_typed_and_keeps_the_connection_usable ... ok
+test broker::tests::cache_acquisition_refusal_is_typed_and_keeps_the_connection_usable ... ok
+test broker::tests::channel_refresh_refusal_is_typed_and_keeps_the_connection_usable ... ok
+test broker::tests::channel_refresh_round_trips_a_sanitized_report ... ok
+test broker::tests::contradictory_download_progress_poisons_the_connection ... ok
+test broker::tests::explicit_gc_admission_round_trips ... ok
+test broker::tests::broker_nix_adapter_proxies_safe_calls_and_refuses_build ... ok
+test broker::tests::real_transport_round_trips_all_exposed_typed_calls_and_cleanup ... ok
+test broker::tests::regressing_build_progress_poisons_the_connection ... ok
+test broker::tests::repair_generation_round_trips_only_path_free_intent_and_count ... ok
+test broker::tests::root_attestation_refusal_is_typed_and_keeps_the_connection_usable ... ok
+test broker::tests::root_publication_refusal_is_typed_and_keeps_the_connection_usable ... ok
+test broker::tests::root_removal_refusal_is_typed_and_keeps_the_connection_usable ... ok
+test broker::tests::mismatched_response_poisoning_prevents_stream_reuse ... ok
+test cli::tests::clap_contract_is_internally_consistent ... ok
+test cli::tests::gc_accepts_zero_retention_values ... ok
+test cli::tests::collision_and_repair_grammars_fail_closed ... ok
+test cli::tests::global_flags_work_after_the_subcommand ... ok
+test cli::tests::help_lists_every_v1_verb_and_no_internal_surface ... ok
+test cli::tests::output_and_verbosity_modes_are_exclusive_usage_errors ... ok
+test cli::tests::upgrade_requires_explicit_scope_and_forbids_mixed_scope ... ok
+test cli::tests::minimal_invocations_cover_every_command ... ok
+test commands::doctor::probe::tests::adapter_refusal_cancels_without_retrying ... ok
+test commands::doctor::probe::tests::delayed_socket_startup_waits_once_and_recovers ... ok
+test commands::doctor::probe::tests::absent_service_exhausts_one_budget_without_claiming_health ... ok
+test commands::doctor::probe::tests::disconnected_probe_retries_with_a_fresh_session ... ok
+test commands::doctor::probe::tests::failed_completion_discards_successful_ownership ... ok
+test commands::doctor::probe::tests::inaccessible_endpoint_does_not_wait_or_retry ... ok
+test commands::doctor::probe::tests::invalid_or_uncorrelated_reply_is_final ... ok
+test commands::doctor::probe::tests::negative_ownership_is_final ... ok
+test commands::doctor::probe::tests::ownership_refusal_stays_final_when_completion_disconnects ... ok
+test commands::doctor::probe::tests::ready_broker_completes_without_startup_waiting ... ok
+test commands::doctor::probe::tests::elapsed_session_budget_cannot_start_another_call ... ok
+test commands::doctor::tests::completed_broker_probe_proves_runtime_and_startup_trust ... ok
+test commands::doctor::tests::deferred_required_checks_cannot_claim_health ... ok
+test commands::doctor::tests::healthy_report_is_versioned_and_exits_zero ... ok
+test commands::doctor::tests::inactive_classifier_adds_no_row_and_path_warning_does_not_fail_doctor ... ok
+test commands::doctor::tests::incomplete_broker_probe_fails_both_dependent_checks_without_detail ... ok
+test commands::doctor::tests::installed_nix_classifier_is_closed_and_fail_closed ... ok
+test commands::doctor::tests::installed_state_and_raw_nix_are_separate_doctor_rows ... ok
+test commands::doctor::tests::jsonl_has_versioned_rows_and_one_terminal_result ... ok
+test commands::doctor::tests::permissive_state_directory_fails_closed ... ok
+test commands::doctor::tests::shadowed_commands_are_reported_as_a_bounded_warning ... ok
+test commands::doctor::tests::subsystem_details_cross_the_same_public_redaction_boundary ... ok
+test commands::doctor::tests::unauthenticated_ownership_claim_never_advises_removal ... ok
+test commands::doctor::tests::unmanaged_signal_has_priority_and_never_lists_raw_paths ... ok
+test commands::execute::tests::core_engine_routes_every_variant_and_preserves_global_policy ... ok
+test commands::execute::tests::dispatches_every_engine_command_without_reparsing ... ok
+test commands::execute::tests::failed_jsonl_stream_and_operation_log_share_the_exact_terminal_record ... ok
+test commands::execute::tests::human_search_lists_packages_and_catalog_time ... ok
+test commands::execute::tests::install_progress_stream_and_human_lines_match_v1_goldens ... ok
+test commands::execute::tests::jsonl_records_are_versioned_and_end_in_one_terminal_result ... ok
+test commands::execute::tests::operation_log_is_byte_identical_in_every_output_mode ... ok
+test commands::execute::tests::preview_notice_uses_only_human_stderr ... ok
+test commands::execute::tests::public_flake_intent_can_be_shown_without_allowing_raw_source_diagnostics ... ok
+test commands::execute::tests::public_result_rejects_private_runtime_material_and_reserved_fields ... ok
+test commands::execute::tests::public_result_requires_null_for_absent_optional_values ... ok
+test commands::execute::tests::terminal_journal_fault_does_not_report_a_committed_success_as_failure ... ok
+test commands::execute::tests::terminal_search_preserves_broken_status_and_stale_catalog_notes ... ok
+test commands::execute::tests::unsafe_log_directory_returns_a_stable_public_error_before_engine_entry ... ok
+test commands::execute::tests::unsafe_operation_log_stops_the_engine_before_mutation ... ok
+test commands::human::changes::tests::change_labels_preserve_versions_and_nonversion_changes ... ok
+test commands::human::command_views::applied_catalog_refresh_is_not_reported_as_an_available_update ... ok
+test commands::human::command_views::build_previews_show_targets_and_do_not_invent_unknown_estimates ... ok
+test commands::human::command_views::catalog_previews_retain_the_check_result ... ok
+test commands::human::command_views::labels_survive_summary_changes_without_changing_machine_ids ... ok
+test commands::human::command_views::mutation_previews_never_claim_a_completed_action ... ok
+test commands::human::command_views::results_show_the_packages_environments_and_disk_values ... ok
+test commands::human::tests::history_outdated_and_info_show_the_data_needed_for_the_next_command ... ok
+test commands::human::tests::history_shows_pin_and_output_changes_even_when_versions_match ... ok
+test commands::human::tests::installed_packages_show_selectors_versions_and_requested_details ... ok
+test commands::human::tests::names_only_can_be_used_in_a_pipeline ... ok
+test commands::local::tests::activation_error_keeps_the_forward_recovery_decision ... ok
+test commands::local::tests::alternate_state_roots_are_read_only_for_broker_backed_mutations ... ok
+test commands::local::tests::attestation_failure_reconciles_cancelled_activate_then_discards_with_gc ... ok
+test commands::local::tests::build_preview_distinguishes_unknown_disk_use_from_the_start_threshold ... ok
+test commands::local::tests::byte_estimates_use_small_human_units ... ok
+test commands::local::tests::cache_hit_uses_the_closed_acquire_protocol_and_returns_evidence ... ok
+test commands::local::tests::cache_miss_uses_one_digest_bound_build_and_returns_local_evidence ... ok
+test commands::local::tests::cancel_operation_falls_back_to_a_fresh_connection ... ok
+test commands::local::tests::cancel_operation_rejects_running_after_failed_reconciliation ... ok
+test commands::local::tests::cancel_operation_returns_false_when_fresh_poll_transport_fails ... ok
+test commands::local::tests::catalog_info_renders_only_product_metadata ... ok
+test commands::local::tests::catalog_outdated_uses_one_closed_resolve_transaction ... ok
+test commands::local::tests::catalog_search_runs_one_closed_resolve_transaction ... ok
+test commands::local::tests::channel_refresh_failure_classes_keep_stable_exit_codes ... ok
+test commands::local::tests::channel_refresh_runs_one_authenticated_transaction ... ok
+test commands::local::tests::common_recovery_commits_install_then_resumes_an_interrupted_remove ... ok
+test commands::local::tests::complete_operation_preserves_error_when_reconciled_cancelled ... ok
+test commands::local::tests::complete_operation_reconciles_completed_on_fresh_connection ... ok
+test commands::local::tests::complete_operation_retries_complete_after_poll_failure ... ok
+test commands::local::tests::complete_operation_retries_complete_without_cancelling_applied_work ... ok
+test commands::local::tests::doctor_and_verify_only_repair_detect_a_missing_activation_link ... ok
+test commands::local::tests::doctor_defers_activation_verification_while_another_mutation_holds_the_lease ... ok
+test commands::local::tests::empty_catalog_outdated_skips_broker_access ... ok
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+test commands::local::tests::empty_generation_repair_validates_state_without_requesting_helper_roots ... ok
+test commands::local::tests::empty_package_queries_succeed_but_corrupt_active_state_is_not_hidden ... ok
+test commands::local::tests::failed_execution_preserves_real_build_progress ... ok
+test commands::local::tests::gc_result_preserves_unknown_measurement_and_effective_retention ... ok
+test commands::local::tests::gc_wait_does_not_hold_the_local_state_lease ... ok
+test commands::local::tests::generic_resume_failure_preserves_first_error_and_cancels_running_activate ... ok
+test commands::local::tests::human_build_preview_explains_the_decision_without_private_nix_details ... ok
+test commands::local::tests::initialized_empty_state_reports_no_active_generation ... ok
+test commands::local::tests::install_argument_widening_is_refused_before_broker_access ... ok
+test commands::local::tests::install_arguments_become_closed_current_channel_selectors ... ok
+test commands::local::tests::install_collision_policy_reaches_the_state_boundary ... ok
+test commands::local::tests::install_failure_diagnosis_lists_ambiguous_catalog_ids ... ok
+test commands::local::tests::install_failures_name_the_failed_step_and_next_action ... ok
+test commands::local::tests::install_keep_going_is_refused_before_any_broker_request ... ok
+test commands::local::tests::install_preview_refuses_installed_selectors_and_pending_recovery_without_writes ... ok
+test commands::local::tests::install_preview_uses_the_outer_public_schema ... ok
+test commands::local::tests::install_success_names_a_local_build_in_the_human_result ... ok
+test commands::local::tests::install_success_output_matches_the_v1_golden ... ok
+test commands::local::tests::install_success_preserves_an_unknown_version_as_null ... ok
+test commands::local::tests::local_install_reports_each_build_preparation_refusal_and_cancels ... ok
+test commands::local::tests::missing_state_is_initialized_as_empty_history ... ok
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+test commands::local::tests::mutating_repair_keeps_the_exclusive_state_lease ... ok
+test commands::local::tests::mutation_identity_helpers_are_canonical_and_overflow_safe ... ok
+test commands::local::tests::no_build_stops_after_cache_miss_without_opening_build_authority ... ok
+test commands::local::tests::outdated_attributes_are_exact_and_fail_closed ... ok
+test commands::local::tests::post_activation_write_failures_report_applied_state_and_recover_forward ... ok
+test commands::local::tests::public_flake_diagnostic_names_the_linux_limit ... ok
+test commands::local::tests::remove_orphan_check_is_refused_before_recovery_or_target_selection ... ok
+test commands::doctor::probe::tests::stalled_reply_at_any_stage_uses_the_session_deadline ... ok
+test commands::local::tests::repeated_install_is_not_reported_as_state_corruption ... ok
+test commands::local::tests::resource_refusal_does_not_claim_a_build_started ... ok
+test commands::local::tests::upgrade_re_resolves_attributes_inside_the_broker ... ok
+test commands::local::tests::repair_begin_failure_holds_the_lease_through_failure_and_releases_after ... ok
+test commands::query::tests::absent_catalog_text_is_null_and_ambiguity_lists_safe_ids ... ok
+test commands::query::tests::default_info_is_offline_and_exact_remains_engine_bound ... ok
+test commands::query::tests::offline_search_maps_verified_index_to_product_fields ... ok
+test commands::query::tests::outdated_preserves_unknown_versions_as_null ... ok
+test commands::query::tests::outdated_refuses_catalog_identity_or_sequence_drift ... ok
+test commands::query::tests::outdated_reports_all_version_kinds_and_revision_only_changes ... ok
+test commands::state::tests::ambiguous_or_partly_missing_requests_fail_atomically_with_choices ... ok
+test commands::state::tests::empty_history_is_offline_but_delete_stays_engine_bound ... ok
+test commands::state::tests::exact_catalog_selector_wins_over_an_installed_flake_name ... ok
+test commands::state::tests::history_and_rollback_preserve_package_versions_sources_and_pin_changes ... ok
+test commands::state::tests::installed_flake_names_resolve_uniquely_without_changing_saved_intent ... ok
+test commands::state::tests::invalid_installed_names_cannot_emit_terminal_controls ... ok
+test commands::state::tests::list_maps_active_state_without_private_identity ... ok
+test commands::state::tests::list_outdated_uses_catalog_results_and_keeps_name_only_output ... ok
+test commands::state::tests::remove_and_pin_use_core_atomic_lifecycle_editors ... ok
+test commands::uninstall::tests::absent_install_keeps_shell_cleanup_guidance ... ok
+test commands::uninstall::tests::paths_are_redacted_but_product_paths_remain_reviewable ... ok
+test completion::tests::every_supported_shell_receives_nonempty_static_completion_source ... ok
+test crash::tests::crash_record_is_allowlisted_and_excludes_sensitive_runtime_data ... ok
+test crash::tests::operation_id_rejects_path_like_or_unbounded_values ... ok
+test exit::tests::codes_and_symbols_are_unique_and_stable ... ok
+test log::tests::existing_permissive_directory_is_rejected_without_chmod ... ok
+test log::tests::log_is_private_structured_and_rotates_with_allowlisted_fields ... ok
+test log::tests::public_operation_log_is_private_append_only_and_rejects_unsafe_records ... ok
+test log::tests::public_operation_log_refuses_symlink_hardlink_and_permissive_file_without_mutation ... ok
+test log::tests::public_operation_log_refuses_torn_existing_tail ... ok
+test log::tests::redactor_golden_removes_known_and_structural_secrets_and_controls ... ok
+test path::tests::explicit_roots_are_absolute_alternates ... ok
+test path::tests::missing_system_home_fails_without_an_environment_fallback ... ok
+test path::tests::path_observation_counts_managed_commands_shadowed_earlier ... ok
+test path::tests::path_observation_uses_exact_components_only ... ok
+test path::tests::production_uses_system_home_not_a_spoofed_environment_home ... ok
+test path::tests::raw_nix_hidden_without_an_executable_in_absolute_readable_dirs ... ok
+test path::tests::raw_nix_unknown_for_invalid_empty_path ... ok
+test path::tests::raw_nix_unknown_for_relative_path_entries ... ok
+test path::tests::raw_nix_unknown_for_unreadable_directory_entries ... ok
+test path::tests::raw_nix_visible_through_an_absolute_readable_directory ... ok
+test path::tests::repeated_shell_setup_keeps_one_manpath_entry_and_preserves_system_defaults ... ok
+test path::tests::snippets_are_dynamic_idempotent_and_never_expose_managed_nix ... ok
+test presentation::table::tests::narrow_and_wide_layouts_keep_all_data_and_fit_display_cells ... ok
+test presentation::tests::redirected_and_color_disabled_output_never_has_ansi ... ok
+test progress::live::tests::actual_percentage_has_a_bar_but_never_claims_installation_success ... ok
+test progress::live::tests::known_downloads_show_bytes_and_unknown_downloads_have_no_percentage_or_timer ... ok
+test progress::live::tests::progress_replaces_one_line_and_stops_before_the_prompt ... ok
+test progress::live::tests::unknown_work_has_no_invented_percent ... ok
+test progress::tests::build_preparation_failures_explain_the_next_step ... ok
+test progress::tests::build_without_version_has_valid_json_and_plain_text ... ok
+test progress::tests::download_progress_shows_known_byte_counts ... ok
+test progress::tests::human_progress_uses_product_language ... ok
+test progress::tests::invalid_progress_and_private_identities_fail_closed ... ok
+test progress::tests::live_output_preserves_refusals_and_collisions_without_success_marks ... ok
+test progress::tests::records_are_versioned_newline_terminated_and_product_owned ... ok
+test progress::tests::repeated_human_percentages_do_not_hide_machine_progress ... ok
+test support::tests::missing_state_is_reported_without_exposing_its_path ... ok
+test support::tests::preview_is_stable_and_projects_away_private_log_fields ... ok
+test telemetry::tests::enabled_snapshot_contains_only_fixed_aggregate_dimensions ... ok
+test telemetry::tests::telemetry_is_disabled_by_default_and_writes_nothing ... ok
+test ux::tests::human_error_goes_only_to_stderr ... ok
+test ux::tests::json_is_one_versioned_document_and_jsonl_is_one_terminal_record ... ok
+test ux::tests::non_terminal_never_uses_color_or_prompts ... ok
+test ux::tests::raw_managed_runtime_identities_are_redacted_at_the_public_error_boundary ... ok
+test commands::local::tests::verify_only_repair_allows_state_mutation_and_blocks_selected_history_prune_until_finish ... ok
+
+test result: ok. 192 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.30s
+
+     Running unittests src/main.rs (target/debug/deps/pkg-429b5105887d3d0e)
+
+running 3 tests
+test tests::invalid_alternates_create_no_state_or_observability_files ... ok
+test tests::uninstall_errors_are_stable_and_redacted ... ok
+test tests::live_uninstall_accepts_only_plain_output ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/cli.rs (target/debug/deps/cli-9cbd27c4b226ac2b)
+
+running 14 tests
+test clap_usage_failures_exit_two ... ok
+test command_logging_records_only_the_command_not_package_arguments ... ok
+test configuration_failure_obeys_json_and_jsonl_terminal_contracts ... ok
+test completion_is_real_static_source_and_doctor_reports_verified_host_state ... ok
+test doctor_support_is_preview_only_and_available_on_an_unhealthy_host ... ok
+test doctor_support_refuses_competing_machine_output_modes ... ok
+test help_exits_success_and_lists_the_product_commands ... ok
+test help_guides_common_tasks_and_short_flags_match_long_flags ... ok
+test home_environment_is_not_a_state_identity_input ... ok
+test live_structured_uninstall_refuses_before_privilege_or_mutation ... ok
+test package_uninstall_is_a_remove_alias_and_never_reaches_product_uninstall ... ok
+test semantic_usage_failure_uses_the_selected_machine_format ... ok
+test shellenv_is_usable_before_state_exists_and_exports_the_package_path ... ok
+test every_command_has_examples_and_remains_discoverable ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.55s
+
+     Running tests/e2e_fake.rs (target/debug/deps/e2e_fake-be167ee065e29ccb)
+
+running 1 test
+test every_command_routes_through_typed_fake_core_and_engine_calls_are_exact ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_core-461f277cc62b11d5)
+
+running 94 tests
+test channel::tests::channel_sequence_monotonic_no_wrap ... ok
+test channel::tests::channel_sequence_rejects_bad ... ok
+test channel::tests::channel_name_valid_and_invalid ... ok
+test channel::tests::channel_sequence_round_trip_and_accessors ... ok
+test channel::tests::nixpkgs_revision_valid_and_invalid ... ok
+test channel::tests::policy_version_is_distinct_type ... ok
+test channel::tests::source_revision_display_round_trip ... ok
+test channel::tests::source_revision_rejects_bad ... ok
+test clock::tests::tripwire_arms_only_for_a_truthy_hermetic_setting ... ok
+test flake::tests::public_references_and_locks_are_bounded_and_remote ... ok
+test generation::tests::rollback_selects_parent_for_fresh_rematerialization ... ok
+test generation::tests::rollback_refuses_missing_invalid_duplicate_and_incompatible_targets ... ok
+test history::tests::diff_is_sanitized_stable_and_detects_pin_plus_remove ... ok
+test history::tests::history_is_numeric_newest_first_with_parent_change_counts ... ok
+test identity::tests::derivation_path_requires_drv ... ok
+test identity::tests::nar_hash_rejects_url_safe_base64 ... ok
+test identity::tests::nar_hash_valid_and_invalid ... ok
+test identity::tests::output_name_valid_and_invalid ... ok
+test identity::tests::realization_identity_eq_hash_ord_on_store_path ... ok
+test identity::tests::store_name_accepts_equals_sign ... ok
+test identity::tests::store_name_checkname_rules ... ok
+test identity::tests::store_path_invalid ... ok
+test identity::tests::store_path_valid ... ok
+test install::tests::adds_packages_atomically_and_preserves_existing_locks ... ok
+test history::tests::history_requires_exact_active_membership ... ok
+test install::tests::empty_initial_state_is_supported_but_cross_system_is_refused ... ok
+test install::tests::duplicate_and_existing_requests_leave_original_state_untouched ... ok
+test lifecycle::tests::binds_cross_file_identity_and_lists_selected_outputs_deterministically ... ok
+test lifecycle::tests::refuses_manifest_lock_entry_set_mismatch ... ok
+test pin::tests::already_satisfied_and_missing_targets_are_explicit ... ok
+test realization::tests::happy_path_accessors_and_identity ... ok
+test realization::tests::identity_ignores_nonidentity_fields ... ok
+test pin::tests::pin_and_unpin_change_only_manifest_intent ... ok
+test realization::tests::identity_is_store_path_only ... ok
+test realization::tests::multi_output_accessors ... ok
+test realization::tests::rejects_duplicate_outputs_to_install ... ok
+test realization::tests::rejects_empty_outputs ... ok
+test realization::tests::rejects_empty_outputs_to_install ... ok
+test realization::tests::rejects_primary_store_path_not_an_output ... ok
+test realization::tests::rejects_selected_output_not_present ... ok
+test remove::tests::removes_manifest_lock_and_pin_index_as_one_golden_edit ... ok
+test selector::tests::attribute_path_valid_and_invalid ... ok
+test selector::tests::output_selection_default_and_explicit ... ok
+test selector::tests::package_selector_construction_and_accessors ... ok
+test selector::tests::selector_id_valid_and_invalid ... ok
+test selector::tests::selector_input_valid_and_invalid ... ok
+test selector::tests::with_attribute_lifecycle_and_pin_freeze ... ok
+test state::integrity::tests::body_hash_is_byte_sensitive_and_sidecar_fails_closed ... ok
+test state::integrity::tests::canonical_hash_uses_jcs_key_order ... ok
+test remove::tests::validates_every_target_before_editing ... ok
+test state::integrity::tests::merkle_root_is_order_independent ... ok
+test state::integrity::tests::parser_requires_lowercase_exact_length ... ok
+test state::journal::tests::exact_chain_round_trips ... ok
+test state::journal::tests::interior_tamper_reorder_and_delete_fail_closed ... ok
+test state::migrate::tests::future_and_ambiguous_v0_are_refused ... ok
+test state::journal::tests::partial_or_bad_final_row_is_quarantined ... ok
+test state::migrate::tests::v0_lock_migrates_with_the_supplied_owner ... ok
+test state::migrate::tests::v0_manifest_migrates_once_and_v1_is_idempotent ... ok
+test state::schema::tests::committed_v1_fixtures_parse_and_generation_round_trips ... ok
+test state::schema::tests::lock_round_trip_validates_strong_types ... ok
+test state::schema::tests::generation_rejects_ambiguous_outputs_and_collision_resolutions ... ok
+test state::schema::tests::manifest_round_trip_uses_camel_case ... ok
+test state::schema::tests::manifest_rejects_unknown_future_duplicate_and_bad_pins ... ok
+test system::tests::all_contains_exactly_four ... ok
+test system::tests::architecture_and_os_decompose ... ok
+test system::tests::display_and_as_str_match_canonical ... ok
+test system::tests::error_display_is_informative ... ok
+test system::tests::parse_round_trip ... ok
+test system::tests::rejects_rust_target_triples_and_others ... ok
+test update::tests::metadata_update_changes_only_the_top_level_channel_binding ... ok
+test update::tests::metadata_update_refuses_sequence_rollback ... ok
+test upgrade::tests::all_skips_pins_and_removed_upstream_policy_is_atomic ... ok
+test upgrade::tests::authenticated_channel_binding_advances_state_and_refuses_rollback ... ok
+test upgrade::tests::bump_pinned_clears_pin_only_after_a_verified_replacement ... ok
+test upgrade::tests::bump_pinned_is_a_change_when_the_package_is_current ... ok
+test upgrade::tests::exact_outcome_coverage_and_noop_detection_are_closed ... ok
+test upgrade::tests::replacement_is_bound_to_planned_attribute_and_authenticated_revision ... ok
+test upgrade::tests::selective_upgrade_preserves_every_untouched_revision_and_pin ... ok
+test version::tests::empty_versions_are_equal_and_valid ... ok
+test version::tests::exact_vs_nix_version_distinction ... ok
+test version::tests::i32_overflow_behavior ... ok
+test upgrade::tests::flake_lifecycle_keeps_source_intent_exact_locks_and_rollback ... ok
+test version::tests::leading_zero_equivalence ... ok
+test version::tests::lexical_for_words ... ok
+test version::tests::numeric_equal_continues_to_next_component ... ok
+test version::tests::mixed_digit_and_string_runs ... ok
+test version::tests::numeric_ordering ... ok
+test version::tests::pre_sorts_before ... ok
+test version::tests::package_version_literal_eq_and_hash ... ok
+test version::tests::separator_equivalence ... ok
+test version::tests::string_below_numeric ... ok
+test version::tests::unicode_words_compare_as_bytes ... ok
+test version::tests::version_range_rejects_invalid ... ok
+test version::tests::version_range_validation_and_contains ... ok
+
+test result: ok. 94 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/clock_tripwire.rs (target/debug/deps/clock_tripwire-29b3c6df58df343e)
+
+running 1 test
+test hermetic_tripwire_panics_when_armed_and_reads_when_disarmed ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/property.rs (target/debug/deps/property-80fd48c9849117a5)
+
+running 7 tests
+test realization_identity_eq_hash_law ... ok
+test realization_same_path_differing_metadata_equal ... ok
+test version_reflexive ... ok
+test version_reverse_symmetric ... ok
+test version_transitive_equiv ... ok
+test version_transitive_le ... ok
+test version_never_panics_on_arbitrary ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_index-8b21b90aad9ddcaa)
+
+running 14 tests
+test build::tests::channel_hash_is_unprefixed_lowercase_hex ... ok
+test build::tests::committed_signed_fixture_contains_real_canonical_indexes ... ok
+test build::tests::duplicate_attributes_fail_closed ... ok
+test build::tests::malformed_timestamp_is_rejected ... ok
+test build::tests::order_and_duplicates_in_lists_do_not_change_bytes ... ok
+test build::tests::projection_json_is_closed_and_bounded_before_decode ... ok
+test build::tests::record_order_is_canonical_and_skips_failed_or_unsafe_attrs ... ok
+test build::tests::store_material_and_oversized_strings_are_rejected ... ok
+test query::tests::platform_names_are_product_owned ... ok
+test query::tests::text_validation_is_bounded_and_rejects_controls ... ok
+test search::tests::keyword_and_subsequence_matches_are_bounded ... ok
+test search::tests::options_reject_zero_huge_and_control_bearing_filters ... ok
+test search::tests::ranking_prefers_package_then_name_then_alias ... ok
+test build::tests::authenticated_index_verification_binds_digest_source_and_canonical_bytes ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/determinism.rs (target/debug/deps/determinism-da601753b18b4ac0)
+
+running 2 tests
+test tiny_slice_has_cross_host_stable_bytes ... ok
+test reversing_projection_order_produces_identical_bytes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/query.rs (target/debug/deps/query-41ea1232200b373b)
+
+running 6 tests
+test catalog_page_output_matches_golden ... ok
+test display_name_collision_is_ambiguous_not_guessed ... ok
+test exact_search_license_filter_and_not_found_are_stable ... ok
+test info_output_matches_golden_and_is_honest_about_unavailable_data ... ok
+test search_output_matches_golden_and_hides_nix_identity_fields ... ok
+test search_reports_unavailable_and_broken_matches ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running benches/v1.rs (target/debug/deps/v1-d52a0a29b3e564dc)
+Gnuplot not found, using plotters backend
+Testing index_build_tiny
+Success
+
+Testing search_ripgrep
+Success
+
+Testing info_requests
+Success
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_installer-b3079628d76a90e8)
+
+running 368 tests
+test approval_audit::tests::unsafe_directory_file_and_torn_tail_fail_closed ... ok
+test approval_audit::tests::audit_is_hash_chained_private_durable_and_replay_refusing ... ok
+test assets::tests::assets_are_unique_absolute_or_fixed_accounts_and_never_schedule_gc ... ok
+test assets::tests::linux_cutover_keeps_vendor_nix_out_of_product_assets_and_services ... ok
+test assets::tests::systemd_analyze_accepts_exact_units_when_requested ... ok
+test assets::tests::tmpfiles_recreates_private_helper_parent_when_requested ... ok
+test assets::tests::socket_and_service_security_contract_is_exact ... ok
+test bootstrap::tests::accepted_macos_fresh_install_continues_without_a_second_vendor_start ... ok
+test bootstrap::tests::committed_macos_cleanup_failure_retains_a_resumable_journal ... ok
+test bootstrap::tests::crash_after_exit_zero_before_acceptance_preserves_started ... ok
+test bootstrap::tests::crash_before_vendor_start_preserves_started_and_refuses_retry ... ok
+test bootstrap::tests::exact_active_install_returns_without_journal_or_provisioning ... ok
+test bootstrap::tests::exact_linux_runtime_does_not_reacquire_the_broker_channel_lease ... ok
+test bootstrap::tests::existing_handoff_refuses_before_vendor_spawn ... ok
+test bootstrap::tests::exit_zero_plus_installed_state_validation_accepts_handoff_exactly_once ... ok
+test bootstrap::tests::failed_existing_product_update_restores_files_and_stays_offline ... ok
+test bootstrap::tests::failed_installed_state_validation_preserves_started ... ok
+test bootstrap::tests::failed_offline_repair_rolls_forward_files_without_service_mutation ... ok
+test bootstrap::tests::failed_product_receipt_publication_keeps_accepted_handoff ... ok
+test bootstrap::tests::installer_nix_home_creates_private_tmp_and_rejects_unsafe_reuse ... ok
+test bootstrap::tests::journaled_existing_product_update_stays_offline_and_never_starts_determinate ... ok
+test bootstrap::tests::journaled_linux_install_keeps_uncertain_intent_on_mutation_error ... ok
+test bootstrap::tests::journaled_linux_install_persists_each_intent_completion_and_commit ... ok
+test bootstrap::tests::journaled_linux_install_preserves_provision_rollback_failure ... ok
+test bootstrap::tests::journaled_linux_reinstall_records_exact_state_without_created_artifacts ... ok
+test bootstrap::tests::journaled_linux_reinstall_rolls_back_its_temporary_daemon ... ok
+test bootstrap::tests::journaled_macos_install_persists_receipt_last_commit ... ok
+test bootstrap::tests::journaled_offline_repair_changes_product_files_without_service_mutation ... ok
+test bootstrap::tests::journaled_repair_refuses_non_offline_service_state_before_mutation ... ok
+test bootstrap::tests::linux_adapter_rolls_back_through_the_authenticated_owner ... ok
+test bootstrap::tests::linux_adapter_routes_runtime_only_through_authenticated_provisioner ... ok
+test bootstrap::tests::linux_auth_datastore_accepts_only_exact_private_restart_state ... ok
+test bootstrap::tests::linux_recovery_context_binds_installation_and_scratch_paths ... ok
+test bootstrap::tests::macos_absence_accepts_only_a_missing_or_empty_safe_mountpoint ... ok
+test bootstrap::tests::macos_adapter_rolls_back_through_the_authenticated_owner ... ok
+test bootstrap::tests::macos_recovery_returns_uncommitted_fresh_storage_instead_of_deleting_it ... ok
+test bootstrap::tests::nonzero_exit_preserves_started_and_refuses_retry ... ok
+test bootstrap::tests::offline_state_change_blocks_the_next_file_mutation_and_rollback ... ok
+test bootstrap::tests::only_exit_zero_is_vendor_success ... ok
+test bootstrap::tests::post_commit_cleanup_failure_keeps_a_resumable_committed_journal ... ok
+
+running 1 test
+test bootstrap::tests::real_supervisor_loss_preserves_started_and_refuses_second_start ... ok
+test bootstrap::tests::recovery_never_switches_between_upgrade_and_repair_modes ... ok
+test bootstrap::tests::signal_preserves_started_and_refuses_retry ... ok
+test bootstrap::tests::spawn_and_wait_uncertainty_preserves_started_and_refuses_retry ... ok
+test bootstrap::tests::started_handoff_preflight_prevents_product_mutation_and_vendor_start ... ok
+test broker::tests::approval_dispatch_records_authenticated_uid_before_acknowledgement ... ok
+test broker::tests::broker_disconnect_cancels_running_recovery_handle ... ok
+test broker::tests::cache_acquisition_dispatch_is_closed_and_reports_build_required ... ok
+test broker::tests::catalog_queries_require_resolve_authority_and_return_product_metadata ... ok
+test broker::tests::channel_refresh_refusal_is_typed ... ok
+test broker::tests::channel_refresh_requires_refresh_authority_and_returns_only_the_report ... ok
+test broker::tests::closing_another_same_uid_transport_preserves_the_running_operation ... ok
+test broker::tests::explicit_gc_admission_is_retained_until_completion ... ok
+test broker::tests::frame_server_streams_build_estimates_before_the_terminal_response ... ok
+test broker::tests::frame_server_streams_progress_before_the_correlated_terminal_response ... ok
+test broker::tests::generation_root_attestation_dispatch_has_closed_failures ... ok
+test broker::tests::generation_root_removal_injects_uid_and_retains_gc_admission ... ok
+test broker::tests::generation_root_transition_dispatch_is_closed_and_complete_releases_admission ... ok
+test broker::tests::managed_ownership_uses_signed_digest_and_privileged_verifier ... ok
+test broker::tests::partial_authenticated_frame_expires_without_dispatch ... ok
+test broker::tests::peer_authenticated_connection_serves_lifecycle_until_disconnect ... ok
+test broker::tests::preparation_dispatch_returns_every_refusal_without_closing_the_operation ... ok
+test broker::tests::readiness_probe_completes_a_real_broker_lifecycle ... ok
+test broker::tests::readiness_wait_accepts_delayed_start_and_refuses_invalid_frames ... ok
+test broker::tests::repair_dispatch_holds_gc_inhibitor_across_authority_and_releases_after ... ok
+test broker::tests::repair_dispatch_uses_authenticated_uid_and_path_free_intent ... ok
+test broker::tests::response_write_expires_when_authenticated_client_stops_reading ... ok
+test broker::tests::root_publication_dispatch_returns_only_closed_failures_and_remains_usable ... ok
+test broker::tests::root_readiness_has_no_build_approval_journal ... ok
+test channel_source::tests::base_without_trailing_slash_joins_the_same_way ... ok
+test channel_source::tests::embedded_credentials_are_rejected ... ok
+test channel_source::tests::empty_base_is_rejected ... ok
+test channel_source::tests::http_base_is_rejected ... ok
+test channel_source::tests::https_base_yields_both_channel_urls ... ok
+test channel_source::tests::repeated_trailing_slashes_collapse_to_one ... ok
+test bootstrap::tests::accepted_fresh_install_continues_with_the_same_journal_on_the_next_invocation ... ok
+test determinate::tests::diagnostics_never_expose_captured_bytes_or_paths ... ok
+test determinate::tests::executable_authentication_rejects_every_invalid_shape ... ok
+test determinate::tests::both_large_streams_are_drained_and_capped ... ok
+test determinate::tests::exit_nonzero_and_signal_are_distinct ... ok
+test determinate::tests::operation_surface_has_no_update_route ... ok
+test determinate::tests::operations_use_exact_argv_and_cleared_environment ... ok
+test determinate::tests::private_tmpdir_rejects_group_or_other_write ... ok
+test determinate::tests::process_errors_emit_only_fixed_classifications ... ok
+test determinate::tests::spawn_failure_is_reported_without_terminal_outcome ... ok
+test determinate::tests::synchronous_supervisor_reaps_child_before_return ... ok
+test determinate::tests::terminal_uninstall_uses_exact_fixed_argv_and_environment ... ok
+test determinate::tests::trusted_non_writable_chain_is_the_spawn_immutability_boundary ... ok
+test determinate::tests::wait_failure_is_reported_after_one_vendor_start ... ok
+test determinate_handoff::tests::clear_and_restore_failure_is_distinct_and_fail_closed ... ok
+test determinate_handoff::tests::concurrent_record_started_serializes_without_temp_theft ... ok
+test determinate_handoff::tests::crash_after_hard_link_reconciles_to_started ... ok
+test determinate_handoff::tests::diagnostic_snapshot_never_creates_a_lock_or_recovers_pending_state ... ok
+test determinate_handoff::tests::diagnostic_snapshot_rejects_record_replacement_and_in_place_changes ... ok
+test determinate_handoff::tests::diagnostic_snapshot_rejects_temporary_state_created_during_verification ... ok
+test determinate_handoff::tests::diagnostic_snapshot_rejects_unsafe_records_and_links ... ok
+test determinate_handoff::tests::empty_receipt_is_rejected ... ok
+test determinate::tests::late_success_is_not_reclassified_as_failure ... ok
+test determinate_handoff::tests::every_post_unlink_clear_failure_restores_exact_accepted_handoff ... ok
+test determinate_handoff::tests::handoff_record_is_atomic_private_strict_and_contains_no_receipt_data ... ok
+test determinate_handoff::tests::handoff_transitions_require_installed_state_proof_and_fail_closed ... ok
+test determinate_handoff::tests::explicit_macos_resume_requires_complete_receipt_and_live_proof ... ok
+test determinate_handoff::tests::macos_native_run_mode_is_rejected_but_db_lock_is_exact ... ok
+test determinate_handoff::tests::macos_resume_allows_best_effort_unmount_but_rejects_receipt_changes ... ok
+test determinate_handoff::tests::installed_helper_contract_rejects_mode_link_length_digest_and_symlink ... ok
+
+running 1 test
+test determinate_handoff::tests::receipt_contract_rejects_mode_link_size_and_symlink ... ok
+test determinate_handoff::tests::sigkill_after_consume_leaves_unmarked_determinate_state_for_install_refusal ... ok
+test determinate_handoff::tests::state_links_and_unsafe_parent_chains_are_rejected ... ok
+
+running 1 test
+test determinate_handoff::tests::synchronous_exec_and_restore_failure_is_fail_closed ... ok
+test determinate_handoff::tests::synchronous_exec_error_restores_exact_accepted_handoff ... ok
+
+running 1 test
+test determinate_handoff::tests::terminal_uninstall_clears_probe_cache_without_following_links ... ok
+test determinate_handoff::tests::sigkill_after_vendor_exec_keeps_later_outcome_unknown_and_refuses_retry ... ok
+test determinate_handoff::tests::terminal_uninstall_never_infers_success_from_missing_vendor_files ... ok
+test helper::tests::authenticated_frame_publishes_real_atomic_root_set ... ok
+test determinate_handoff::tests::terminal_uninstall_consumes_handoff_only_after_identity_revalidation ... ok
+test helper::tests::concurrent_root_transactions_keep_logical_and_durable_state_consistent ... ok
+test helper::tests::dn09_production_shape_rejects_root_nix ... ok
+test helper::tests::helper_restart_attests_exact_durable_root_without_path_input ... ok
+test helper::tests::helper_restart_reloads_durable_root_before_capability_issue ... ok
+test helper::tests::managed_ownership_requires_an_unchanged_accepted_determinate_handoff ... ok
+test helper::tests::nix_limits_reject_busy_recover_and_do_not_block_root_publication ... ok
+test helper::tests::oversized_header_is_rejected_before_allocation_or_dispatch ... ok
+test helper::tests::repeated_progress_cannot_refresh_the_root_operation_deadline ... ok
+test helper::tests::response_write_expires_when_peer_stops_reading ... ok
+test helper::tests::root_publication_revalidates_retained_targets_from_durable_source ... ok
+test helper::tests::root_transition_derives_targets_only_from_durable_source ... ok
+test helper::tests::stale_logical_session_cannot_delete_the_durable_root ... ok
+test helper::tests::dispatch_time_is_excluded_from_response_write_budget ... ok
+test helper::tests::wrong_peer_is_rejected_before_any_frame_dispatch ... ok
+test installer::tests::direct_install_entry_points_refuse_repair_without_a_durable_journal ... ok
+test installer::tests::failed_service_quiescence_blocks_every_file_and_runtime_rollback ... ok
+test installer::tests::failure_rolls_back_only_this_attempt_in_reverse_order ... ok
+test installer::tests::fresh_recovery_deactivates_only_with_exact_service_assets ... ok
+test installer::tests::fresh_recovery_preserves_absent_intended_asset ... ok
+test installer::tests::fresh_recovery_refuses_service_cleanup_without_exact_assets ... ok
+test installer::tests::fresh_recovery_refuses_unconnected_runtime_cleanup ... ok
+test installer::tests::fresh_recovery_removes_only_revalidated_created_assets ... ok
+test installer::tests::fresh_recovery_saves_progress_before_a_later_failure ... ok
+test installer::tests::install_is_receipt_last_and_idempotent ... ok
+test installer::tests::partial_runtime_provisioning_is_rolled_back_before_directories ... ok
+test installer::tests::partial_service_activation_is_rolled_back_before_dependencies ... ok
+test installer::tests::post_activation_failure_reverts_services_files_runtime_then_directories ... ok
+test installer::tests::privileged_host_scan_refuses_before_any_mutation ... ok
+test installer::tests::repair_journal_drives_offline_roll_forward_without_service_recovery ... ok
+test installer::tests::repair_recovery_converges_even_when_only_preexisting_entries_were_recorded ... ok
+test installer::tests::repair_recovery_preflight_fails_before_service_or_file_mutation ... ok
+test installer::tests::repair_retry_rechecks_offline_state_and_never_uses_service_recovery ... ok
+test installer::tests::runtime_registration_precedes_the_gcroots_assets ... ok
+test linux_accounts::tests::absent_broker_rechecks_the_planned_uid ... ok
+test linux_accounts::tests::broker_uid_refuses_a_post_plan_vendor_range_uid ... ok
+test linux_accounts::tests::conflicts_refuse_without_mutation ... ok
+test linux_accounts::tests::exact_directives_create_locked_primary_and_explicit_members ... ok
+test linux_accounts::tests::exact_existing_accounts_are_idempotent ... ok
+test linux_accounts::tests::foreign_primary_group_members_refuse_without_mutation ... ok
+test linux_accounts::tests::group_planning_keeps_an_exact_broker_group_without_its_user ... ok
+test linux_accounts::tests::group_planning_keeps_existing_broker_bindings_stable ... ok
+test linux_accounts::tests::group_planning_refuses_dangling_broker_privileges ... ok
+test linux_accounts::tests::group_planning_refuses_inexact_existing_broker_group ... ok
+test linux_accounts::tests::group_planning_refuses_inexact_existing_broker_user ... ok
+test linux_accounts::tests::group_planning_refuses_managed_gid_aliases_and_exhaustion ... ok
+test linux_accounts::tests::group_planning_refuses_old_or_incomplete_broker_ids ... ok
+test linux_accounts::tests::group_planning_reserves_determinate_gid_on_a_clean_host ... ok
+test linux_accounts::tests::group_planning_reserves_vendor_ids_across_uid_and_gid_namespaces ... ok
+test linux_accounts::tests::new_broker_user_requires_the_planned_uid ... ok
+test linux_accounts::tests::parse_groups_requires_exact_group_shadow_parity ... ok
+test linux_accounts::tests::parsers_require_locked_exact_directory_records ... ok
+test linux_accounts::tests::production_create_commands_are_fixed_and_non_interactive ... ok
+test linux_accounts::tests::rollback_refuses_to_delete_a_changed_identity ... ok
+test linux_accounts::tests::uncertain_creation_is_never_deleted_and_existing_assets_are_never_deleted ... ok
+test linux_accounts::tests::unexpected_supplementary_memberships_refuse_adoption ... ok
+test linux_accounts::tests::verified_uninstall_refuses_changed_accounts_without_deletion ... ok
+test linux_accounts::tests::verified_uninstall_removes_only_exact_accounts_and_is_retry_safe ... ok
+test linux_backend::tests::active_install_policy_is_fresh_normal_accepted_and_fully_bound ... ok
+test linux_backend::tests::base_nix_readiness_waits_only_for_a_fresh_install ... ok
+test linux_backend::tests::classify_services_failure_writes_exactly_one_line_before_mapping ... ok
+test linux_backend::tests::privilege_preflight_does_not_classify_an_existing_install ... ok
+test linux_backend::tests::product_repair_requires_an_accepted_determinate_handoff ... ok
+test helper::tests::stalled_authenticated_peer_expires_before_dispatch ... ok
+test linux_backend::tests::production_preflight_refuses_persisted_started_without_later_mutation ... ok
+test linux_backend::tests::production_service_transition_is_fresh_install_only ... ok
+test linux_backend::tests::recovery_mode_is_derived_from_the_journal_and_handoff ... ok
+test linux_backend::tests::service_diagnostics_are_one_fixed_line_and_success_is_silent ... ok
+test linux_backend::tests::started_handoff_is_the_only_refused_linux_preflight_state ... ok
+test linux_filesystem::tests::broker_channel_cleanup_removes_private_files_and_refuses_links ... ok
+test linux_filesystem::tests::committed_repair_cleanup_is_exact_and_resumable ... ok
+test linux_filesystem::tests::conflicts_and_symlinked_ancestors_fail_closed ... ok
+test linux_filesystem::tests::creates_verifies_and_rolls_back_nested_directories ... ok
+test linux_filesystem::tests::deterministic_initial_file_staging_recovers_before_and_after_rename ... ok
+test linux_filesystem::tests::deterministic_initial_receipt_staging_recovers_without_residue ... ok
+test linux_backend::tests::production_offline_upgrade_refuses_missing_receipt_owned_non_files_before_mutation ... ok
+test linux_filesystem::tests::external_ancestor_group_is_safe_without_write_bits ... ok
+test linux_filesystem::tests::explicit_repair_restores_candidate_bytes_and_rolls_back_on_later_failure ... ok
+test linux_filesystem::tests::interrupted_upgrade_before_exchange_discards_only_the_candidate_backup ... ok
+test linux_filesystem::tests::interrupted_upgrade_restores_prior_bytes_from_the_fixed_backup ... ok
+test linux_filesystem::tests::macos_managed_ancestors_require_exact_metadata ... ok
+test linux_filesystem::tests::missing_or_conflicting_payloads_are_rejected ... ok
+test linux_filesystem::tests::partial_upgrade_staging_refuses_when_live_prior_identity_is_wrong ... ok
+test linux_filesystem::tests::privileged_writes_refuse_unsafe_external_and_managed_ancestors ... ok
+test linux_filesystem::tests::installs_exact_release_static_and_authenticated_bytes ... ok
+test linux_filesystem::tests::profile_setup_preserves_manpath_and_is_idempotent ... ok
+test linux_filesystem::tests::repair_recovery_keeps_candidate_and_discards_unknown_prior_bytes ... ok
+test linux_filesystem::tests::receipt_transition_requires_the_exact_bound_prior ... ok
+test linux_filesystem::tests::repair_roll_forward_replaces_unknown_binaries_and_changed_or_missing_units ... ok
+test linux_filesystem::tests::rollback_refuses_replaced_attempt_owned_file ... ok
+test linux_filesystem::tests::upgrade_replaces_only_exact_prior_owned_bytes_and_rolls_back ... ok
+test linux_filesystem::tests::runtime_cleanup_accepts_only_exact_socket_and_log_residue ... ok
+test linux_filesystem::tests::verified_uninstall_refuses_changed_files_and_nonempty_directories ... ok
+test linux_install_journal::tests::commit_requires_the_complete_receipt_last_sequence ... ok
+test linux_install_journal::tests::completed_recovery_action_discards_only_the_recovered_suffix ... ok
+test linux_install_journal::tests::decode_rejects_unknown_fields_invalid_bindings_and_impossible_state ... ok
+test linux_filesystem::tests::verified_uninstall_removes_exact_files_and_is_retry_safe ... ok
+test linux_install_journal::tests::recovery_preserves_preexisting_and_flags_uncertain_intent ... ok
+test linux_install_journal::tests::repair_round_trip_has_no_service_mutation_state ... ok
+test linux_install_journal::tests::sequence_contains_each_fixed_asset_once ... ok
+test linux_install_journal::tests::sequence_refuses_skips_repeats_and_incomplete_completion ... ok
+test linux_install_journal::tests::state_lookup_refuses_skips_and_distinguishes_pending_state ... ok
+test linux_install_journal::tests::strict_round_trip_binds_authenticated_identity ... ok
+test linux_install_journal::tests::schema_six_persists_each_distinct_operation_mode ... ok
+test linux_install_journal_file::tests::no_overwrite_hardlink_and_symlink_contracts_fail_closed ... ok
+test linux_install_journal_file::tests::unsafe_directory_and_stale_temporary_are_bounded ... ok
+test linux_install_journal_file::tests::create_replace_load_and_remove_are_private_and_durable ... ok
+test linux_install_journal_file::tests::unsupported_schema_is_refused_without_changing_the_journal ... ok
+test linux_systemd::tests::activation_accepts_merged_usr_unit_fragments ... ok
+test linux_systemd::tests::activation_classification_accepts_only_complete_terminal_states ... ok
+test linux_systemd::tests::activation_classification_refuses_mixed_state ... ok
+test linux_systemd::tests::activation_failures_retain_only_fixed_phase_and_unit_metadata ... ok
+test linux_systemd::tests::activation_orders_reload_tmpfiles_enable_and_start ... ok
+test linux_systemd::tests::authentication_failure_does_not_retain_raw_unit_metadata ... ok
+test linux_systemd::tests::absent_systemd_unit_status_is_false ... ok
+test linux_systemd::tests::failed_start_keeps_write_ahead_intent_for_rollback ... ok
+test linux_systemd::tests::fresh_activation_refuses_a_preexisting_active_service_set ... ok
+test linux_systemd::tests::fresh_activation_refuses_foreign_effective_units_before_start_or_enable ... ok
+test linux_systemd::tests::fresh_recovery_deactivates_only_the_authenticated_loaded_set ... ok
+test linux_systemd::tests::fresh_recovery_never_mutates_a_foreign_loaded_unit ... ok
+test linux_systemd::tests::fresh_rollback_leaves_the_complete_service_set_offline ... ok
+test linux_systemd::tests::fresh_rollback_refuses_foreign_effective_units_before_stop_or_disable ... ok
+test linux_systemd::tests::offline_preflight_is_query_only_and_refuses_every_non_offline_state ... ok
+test linux_systemd::tests::recovery_quiescence_does_not_command_an_absent_inactive_unit ... ok
+test linux_systemd::tests::required_unit_file_state_is_closed ... ok
+test linux_systemd::tests::rollback_attempts_all_units_and_remains_retryable ... ok
+test linux_systemd::tests::same_file_accepts_merged_usr_alias ... ok
+test linux_systemd::tests::same_file_rejects_broken_alias ... ok
+test linux_systemd::tests::command_terminal_metadata_is_fixed_bounded_and_raw_free ... ok
+test linux_systemd::tests::same_file_rejects_different_files ... ok
+test linux_systemd::tests::same_file_rejects_exact_missing_path ... ok
+test linux_systemd::tests::same_file_rejects_relative_path ... ok
+test linux_systemd::tests::uninstall_deactivation_attempts_all_units_after_failure ... ok
+test linux_systemd::tests::uninstall_deactivation_stops_disables_and_verifies_every_unit ... ok
+test linux_systemd::tests::uninstall_refuses_foreign_effective_units_before_stop_or_disable ... ok
+test linux_systemd::tests::verify_active_retains_the_exact_fixed_unit ... ok
+test linux_uninstall::legacy_base_nix::tests::shared_store_preservation_covers_only_the_nix_tree ... ok
+test linux_uninstall::tests::failed_service_shutdown_blocks_every_destructive_action ... ok
+test linux_uninstall::tests::fixed_path_absence_refuses_an_existing_or_symlinked_target ... ok
+test linux_uninstall::tests::preexisting_nix_root_selects_the_no_gc_preservation_policy ... ok
+test linux_uninstall::tests::router_refuses_a_manifest_for_another_system ... ok
+test linux_uninstall::tests::production_router_dispatches_the_exact_validated_plan ... ok
+test linux_uninstall::tests::terminal_residue_inventory_includes_the_install_journal ... ok
+test linux_user_cleanup::owned_tree_contract::absent_target_is_idempotent_success ... ok
+test linux_user_cleanup::tests::refuses_same_filesystem_bind_mount_without_touching_target ... ignored, requires a privileged Linux mount namespace
+test linux_user_cleanup::tests::refuses_symlinked_state_ancestor ... ok
+test linux_user_cleanup::tests::durable_uid_snapshot_refuses_a_new_foreign_root_before_deletion ... ok
+test linux_user_cleanup::tests::rejects_noncanonical_uid_before_mutation ... ok
+test linux_user_cleanup::tests::refuses_unmarked_user_state_without_deleting_it ... ok
+test linux_user_cleanup::tests::rejects_writable_state_tree ... ok
+test linux_user_cleanup::tests::renamed_verified_state_never_redirects_recursive_deletion ... ok
+test linux_user_cleanup::tests::removes_roots_and_user_state_without_following_symlinks ... ok
+test macos_accounts::tests::build_ids_match_nix_2_34_8_on_sequoia ... ok
+test macos_accounts::tests::directory_service_parsers_reject_ambiguous_ids_and_fields ... ok
+test macos_backend::tests::accepted_handoff_allows_the_vendor_created_nix_root ... ok
+test macos_backend::tests::clean_preview_refuses_preexisting_assets ... ok
+test macos_backend::tests::install_mode_requires_an_exact_accepted_handoff_and_receipt ... ok
+test macos_backend::tests::production_backend_refuses_non_darwin_systems ... ok
+test linux_user_cleanup::tests::restores_exact_product_roots_without_overwriting_a_collision ... ok
+test macos_install_journal::tests::sequence_matches_the_outer_install_order ... ok
+test macos_install_journal::tests::replacement_state_is_limited_to_owned_files_and_receipt ... ok
+test macos_install_journal::tests::strict_round_trip_binds_authenticated_identity ... ok
+test macos_install_journal::tests::transitions_refuse_skips_and_recover_in_reverse ... ok
+test macos_install_journal::tests::uninstall_user_snapshot_is_bounded_strict_and_marker_only ... ok
+test macos_install_journal::tests::upgrade_and_repair_record_distinct_replacement_recovery ... ok
+test macos_install_journal_file::tests::foreign_binding_and_unsafe_directory_are_refused ... ok
+test macos_launchd::tests::disabled_parser_accepts_only_one_approved_entry ... ok
+test macos_launchd::tests::launchd_contract_has_unique_fixed_labels_and_absolute_plists ... ok
+test macos_install_journal_file::tests::create_replace_load_and_remove_are_private_and_bound ... ok
+test macos_platform_assets::tests::alpha47_receipt_upgrade_and_rollback_preserve_exact_ownership ... ok
+test macos_platform_assets::tests::private_home_removal_handles_populated_tmp_without_following_links ... ok
+test macos_platform_assets::tests::rebinding_the_same_prior_states_is_idempotent ... ok
+test macos_platform_assets::tests::repeat_install_receipt_records_the_original_installation ... ok
+test macos_platform_assets::tests::service_stop_refuses_changed_files ... ok
+test macos_platform_assets::tests::uninstall_removes_the_populated_private_source_workspace ... ok
+test macos_platform_assets::tests::receipt_recovery_handles_intent_before_and_after_exchange ... ok
+test macos_uninstall::tests::private_state_absence_rejects_files_directories_and_dangling_links ... ok
+test platform::linux::assets::tests::account_read_error_is_not_consumed_by_receipt_discovery ... ok
+test macos_uninstall::tests::persisted_uid_snapshot_recovers_user_state_after_root_removal_crash ... ok
+test platform::linux::assets::tests::failed_offline_upgrade_rollback_restores_the_exact_prior_receipt ... ok
+test platform::linux::assets::tests::fresh_receipt_preflight_does_not_require_the_broker_uid ... ok
+test platform::linux::assets::tests::offline_upgrade_publishes_and_finalizes_the_candidate_receipt ... ok
+test platform::linux::assets::tests::ordinary_upgrade_requires_different_release_and_prior_content_identity ... ok
+test platform::linux::assets::tests::exact_release_classification_accepts_only_same_undrifted_assets ... ok
+test platform::linux::assets::tests::recovery_after_receipt_exchange_restores_the_prior_disk_cache_and_binding ... ok
+test platform::linux::assets::tests::repair_requires_a_receipt_and_non_files_never_gain_implicit_ownership ... ok
+test platform::linux::assets::tests::repair_requires_same_release_and_created_product_ownership ... ok
+test platform::linux::assets::tests::recovery_before_receipt_exchange_restores_the_prior_disk_cache_and_binding ... ok
+test platform::linux::assets::tests::unsafe_pre_broker_receipts_refuse_before_account_mutation ... ok
+test platform::linux::tests::conflicting_or_unsafe_root_state_fails_closed ... ok
+test platform::linux::tests::product_root_open_is_verify_only_and_requires_exact_private_directories ... ok
+test platform::linux::tests::provision_if_absent_is_narrow_idempotent_and_symlink_safe ... ok
+test platform::linux::tests::root_sets_publish_idempotently_then_remove_without_recursive_input ... ok
+test platform::linux::tests::unix_pair_reports_kernel_peer_identity ... ok
+test platform::macos::tests::asset_manifest_is_closed_unique_and_has_exact_build_users ... ok
+test platform::macos::tests::darwin_readiness_requires_every_fail_closed_gate ... ok
+test platform::macos::tests::install_is_receipt_last_and_idempotent ... ok
+test platform::macos::tests::launchd_contract_has_exact_roles_and_no_false_resource_or_gc_claims ... ok
+test platform::macos::tests::nix_root_matches_authenticated_runtime_ownership ... ok
+test platform::macos::tests::partial_file_mutation_rolls_back_in_reverse_order ... ok
+test platform::macos::tests::release_plan_is_product_only_ordered_and_never_accepts_passwords ... ok
+test platform::macos::tests::rollback_attempts_every_older_mutation_after_failures ... ok
+test repair::tests::approval_follow_up_reenters_phase_zero_with_the_same_journal ... ok
+test repair::tests::approved_build_is_single_operation_and_final_verify_gated ... ok
+test repair::tests::cache_miss_stops_before_build_without_approval ... ok
+test repair::tests::cache_repair_is_final_verify_gated_and_releases_admission ... ok
+test repair::tests::clean_phase_zero_reconciles_interrupted_repair_journal ... ok
+test repair::tests::interrupted_build_rejects_the_same_approval_operation ... ok
+test repair::tests::journal_rejects_mode_status_confusion ... ok
+test repair::tests::partial_cache_success_is_terminal_before_approval ... ok
+test repair::tests::recovery_retries_cache_but_never_build ... ok
+test repair::tests::verify_only_clean_never_reconciles_durable_repair_state ... ok
+test repair::tests::verify_only_damage_never_creates_recoverable_mutation_state ... ok
+test repair_journal_file::tests::append_reloads_a_private_hash_chained_journal ... ok
+test repair_journal_file::tests::caller_generation_journals_are_failure_isolated ... ok
+test repair_journal_file::tests::compaction_drops_terminal_history_and_preserves_recovery_state ... ok
+test repair_journal_file::tests::stale_concurrent_view_cannot_append ... ok
+test repair_journal_file::tests::symlink_journal_is_never_followed ... ok
+test repair_journal_file::tests::unsafe_file_or_torn_suffix_fails_closed ... ok
+test root_client::tests::build_callback_failure_disconnects_the_helper_progress_sink ... ok
+test root_client::tests::debug_never_exposes_the_private_endpoint ... ok
+test root_client::tests::fixed_client_authenticates_peer_and_round_trips_only_root_publication ... ok
+test root_client::tests::fixed_client_round_trips_only_path_free_root_attestation ... ok
+test root_client::tests::fixed_client_round_trips_only_path_free_root_removal ... ok
+test root_client::tests::fixed_client_round_trips_only_path_free_root_transition ... ok
+test root_client::tests::non_root_helper_peer_is_rejected_before_request_bytes ... ok
+test root_client::tests::repair_planning_seam_round_trips_exact_closure_and_proof_requests ... ok
+test root_client::tests::response_timeouts_remain_fixed ... ok
+test root_client::tests::sources_use_the_broker_evaluator_without_a_helper_connection ... ok
+test root_client::tests::streaming_build_preserves_order_and_rejects_non_monotonic_progress ... ok
+test root_client::tests::typed_adapter_maps_the_closed_inactive_result_without_fallback ... ok
+test root_client::tests::wrong_response_id_is_rejected_after_exact_request ... ok
+test root_client::tests::wrong_response_kind_is_rejected_after_exact_request ... ok
+test service::release_channel_tests::configuration_accepts_only_channel_validated_origins ... ok
+test service::release_channel_tests::configuration_is_compile_time_complete_or_refused ... ok
+test service::tests::activated_listener_must_match_the_exact_installed_endpoint ... ok
+test service::tests::broker_connection_limit_is_exact_and_permits_return_on_drop ... ok
+test platform::linux::assets::tests::service_stop_uses_the_recorded_release_and_rejects_changed_files ... ok
+test uninstall::tests::cleanup_failures_do_not_skip_residue_verification ... ok
+test uninstall::tests::every_preflight_refusal_happens_before_mutation ... ok
+test uninstall::tests::dry_run_is_deterministic_closed_and_non_mutating ... ok
+test uninstall::tests::linux_vendor_uninstall_is_the_terminal_action ... ok
+test uninstall::tests::macos_removes_receipt_and_directories_before_broker_account ... ok
+test uninstall::tests::manifest_requires_exact_complete_compiled_ids ... ok
+test uninstall::tests::manifest_round_trip_preserves_exact_file_content_identity ... ok
+test uninstall::tests::preexisting_base_nix_is_never_a_product_removal_target ... ok
+test uninstall::tests::product_cleanup_failure_never_dispatches_terminal_vendor ... ok
+test uninstall::tests::residue_failure_has_priority_and_success_is_total ... ok
+test uninstall::tests::residue_failure_never_dispatches_terminal_vendor ... ok
+test uninstall::tests::service_stop_is_a_cleanup_barrier ... ok
+test uninstall::tests::macos_alpha47_receipt_retains_its_exact_bytes_and_ownership ... ok
+test uninstall::tests::temporary_directories_are_removed_with_their_owned_private_homes ... ok
+test uninstall::tests::v2_linux_receipt_rejects_missing_and_non_file_digests ... ok
+test uninstall::tests::uninstall_manifest_disk_form_is_strict_canonical_and_complete ... ok
+
+test result: ok. 367 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.67s
+
+     Running unittests src/bin/pkg-install.rs (target/debug/deps/pkg_install-71529b74a5e05225)
+
+running 6 tests
+test tests::invocation_accepts_one_optional_channel_base_url ... ok
+test tests::invocation_requires_the_exact_product_repair_option ... ok
+test tests::channel_urls_prefer_the_command_line_then_the_environment ... ok
+test tests::public_failures_are_short_and_do_not_expose_internal_inputs ... ok
+test tests::package_boundary_and_trust_inputs_are_fixed ... ok
+test tests::public_results_keep_distinct_safe_operator_actions ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/pkg-nix-broker.rs (target/debug/deps/pkg_nix_broker-e3e67267232cdf6d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/pkg-root-helper.rs (target/debug/deps/pkg_root_helper-c8d98e260058a688)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_macos_security-bfb258f9e171d933)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_nix-ef563817281091e3)
+
+running 277 tests
+test adapter::tests::live_build_estimates_are_strictly_non_terminal ... ok
+test broker::tests::begin_repair_acquires_gc_inhibitor_and_refuses_while_gc_admitted ... ok
+test broker::tests::admission_replan_failure_consumes_approval_and_releases_every_gate ... ok
+test broker::tests::broker_executes_private_receipt_once_and_retains_gc_inhibit_for_rooting ... ok
+test broker::tests::build_and_gc_admission_release_on_cancel_and_disconnect ... ok
+test broker::tests::cache_failure_has_a_distinct_code_and_releases_gc_inhibition ... ok
+test broker::tests::cache_hit_retains_gc_inhibition_until_exact_roots_are_published ... ok
+test broker::tests::cache_miss_releases_gc_inhibition_and_permits_completion ... ok
+test broker::tests::caller_identity_is_transport_bound ... ok
+test broker::tests::cancellation_during_cache_acquisition_defers_inhibitor_release ... ok
+test broker::tests::cancellation_during_root_publication_defers_admission_release ... ok
+test broker::tests::cancellation_during_root_transition_defers_inhibit_release ... ok
+test broker::tests::contained_child_policy_is_absolute_fixed_and_scrubbed ... ok
+test broker::tests::disconnect_preserves_other_connections_for_the_same_uid ... ok
+test broker::tests::dispatcher_execution_refuses_an_unavailable_preparation_estimate ... ok
+test broker::tests::dispatcher_execution_uses_only_the_replanner_retained_before_approval ... ok
+test broker::tests::expiry_releases_every_admission_gate ... ok
+test broker::tests::finish_repair_dispatch_cancels_a_still_running_failure ... ok
+test broker::tests::finish_repair_dispatch_rejects_foreign_handle_without_releasing ... ok
+test broker::tests::finish_repair_dispatch_rejects_non_dispatching_repair_without_releasing ... ok
+test broker::tests::fresh_same_uid_connection_can_explicitly_reconcile_an_operation ... ok
+test broker::tests::build_admission_waits_fifo_and_lifecycle_cancel_removes_waiter ... ok
+test broker::tests::handles_are_uid_bound_expiring_and_restart_bound ... ok
+test broker::tests::lifecycle_cancel_during_build_defers_admission_release_until_adapter_returns ... ok
+test broker::tests::mismatched_root_receipt_is_terminal_and_releases_admission ... ok
+test broker::tests::operation_class_cannot_widen_admission_authority ... ok
+test broker::tests::operation_handle_debug_is_redacted ... ok
+test broker::tests::private_build_plan_approval_is_uid_bound_exact_and_journaled ... ok
+test broker::tests::private_build_plan_is_invalidated_by_cancel_disconnect_and_restart ... ok
+test broker::tests::queued_build_reservation_blocks_gc_during_handoff ... ok
+test broker::tests::refused_retained_replan_consumes_approval_before_adapter_build ... ok
+test broker::tests::repair_approval_is_operation_bound_journaled_and_single_use ... ok
+test broker::tests::repair_dispatch_completion_retains_inhibitor_until_finish ... ok
+test broker::tests::repair_dispatch_disconnect_retains_inhibitor_until_finish ... ok
+test broker::tests::repair_dispatch_expiry_retains_admission_and_finish_rejects_late_success ... ok
+test broker::tests::repair_dispatch_rejects_external_complete_and_cancel_retains_until_finish ... ok
+test broker::tests::root_attestation_injects_uid_and_holds_inhibit_until_recovery_commit ... ok
+test broker::tests::root_transition_injects_uid_and_holds_inhibit_until_state_commit ... ok
+test broker::tests::root_transition_requires_activate_and_helper_failure_is_terminal ... ok
+test broker::tests::successful_root_transition_is_not_compensated_by_later_cancellation ... ok
+test broker::tests::terminal_lifecycle_signals_private_operation_cancellation ... ok
+test broker::tests::gc_admission_waits_for_realize_to_root_inhibitors ... ok
+test build::tests::approval_is_journaled_once_consumed_once_and_binds_exact_request ... ok
+test build::tests::approval_recording_does_not_block_lifecycle_cancellation ... ok
+test build::tests::bootstrap_admission_keeps_unknowns_honest_and_does_not_scale_with_misses ... ok
+test build::tests::bootstrap_disk_threshold_is_enforced_without_a_second_margin ... ok
+test build::tests::cache_only_preview_needs_no_build_approval ... ok
+test build::tests::admission_serializes_operations_and_cancelled_ticket_does_not_stall_queue ... ok
+test build::tests::config_is_exact_cross_platform_and_never_claims_darwin_cgroups ... ok
+test build::tests::host_resource_probe_uses_safe_fixed_inputs_and_strict_load_parsing ... ok
+test build::tests::plan_is_deterministic_mutation_sensitive_and_preview_is_public ... ok
+test build::tests::policy_and_readiness_refuse_before_approval ... ok
+test build::tests::preview_notice_is_strictly_platform_specific ... ok
+test build::tests::repair_plan_binds_every_deriver_output_and_preview_hides_store_identity ... ok
+test build::tests::locally_present_cache_input_survives_remote_cache_miss ... ok
+test build::tests::resource_claims_match_runtime_ownership_and_change_digest ... ok
+test build_cache::tests::cached_selected_closure_skips_build_only_subject_misses ... ok
+test build_cache::tests::classification_is_exact_sorted_and_missing_derivations_are_private ... ok
+test build_cache::tests::incomplete_evidence_fails_closed_and_all_hits_need_no_build ... ok
+test build_cache::tests::local_content_is_present_without_consuming_new_disk_space ... ok
+test build_cache::tests::missing_package_stops_at_cached_compiler_and_ignores_unrequested_outputs ... ok
+test build_cache::tests::one_selected_miss_does_not_probe_other_package_build_outputs ... ok
+test catalog::tests::query_and_report_bounds_are_closed ... ok
+test contract::tests::bounded_seq_visitor_enforces_count_cap ... ok
+test contract::tests::bounded_string_seq_visitor_enforces_count_and_byte_caps ... ok
+test contract::tests::bounded_unique_string_map_rejects_duplicates_and_caps ... ok
+test contract::tests::builtin_derivations_are_explicit_and_platform_compatible ... ok
+test contract::tests::method_kind_round_trips ... ok
+test contract::tests::root_name_rejects_traversal_and_leading_dot ... ok
+test contract::tests::root_ref_validates_canonical_managed_gcroot ... ok
+test contract::tests::schema_version_only_accepts_current ... ok
+test error::tests::bounded_summary_truncates_at_char_boundary ... ok
+test error::tests::code_maps_each_variant ... ok
+test error::tests::codes_are_stable_strings ... ok
+test error::tests::display_is_redacted_and_bounded ... ok
+test error::tests::unexpected_call_emits_only_static_summaries ... ok
+test error::tests::unexpected_extra_call_represents_no_head_honestly ... ok
+test error::tests::unexpected_extra_call_works_for_every_method_kind ... ok
+test framing::tests::arbitrary_short_frames_never_panic_or_decode_as_valid ... ok
+test build::tests::replan_mutation_invalidates_and_resource_failure_rechecks_exactly_once ... ok
+test framing::tests::both_channels_round_trip_with_exact_headers ... ok
+test framing::tests::build_preparation_method_round_trips_success_and_closed_refusals ... ok
+test framing::tests::cache_wire_preserves_local_presence_and_rejects_contradictory_bytes ... ok
+test framing::tests::channel_refresh_frame_contains_only_handle_and_sanitized_result ... ok
+test framing::tests::catalog_frames_are_bounded_product_metadata_only ... ok
+test framing::tests::framing_rejects_wrong_channel_version_length_and_extension ... ok
+test framing::tests::helper_grammar_rejects_raw_paths_options_and_forged_capabilities ... ok
+test framing::tests::managed_ownership_frames_are_path_free_and_strict ... ok
+test framing::tests::repair_generation_frames_keep_paths_and_nix_controls_private ... ok
+test framing::tests::repair_scope_round_trip_preserves_every_binding ... ok
+test framing::tests::retired_root_source_methods_refuse_valid_payloads ... ok
+test framing::tests::preview_purpose_is_bound_to_each_enclosing_operation ... ok
+test framing::tests::root_nix_complete_grammar_round_trips_all_requests_results_and_failures ... ok
+test framing::tests::root_nix_path_lists_reject_empty_duplicate_invalid_and_excessive_values ... ok
+test framing::tests::typed_adapter_envelopes_preserve_nested_strictness_and_promote_paths ... ok
+test maintenance::tests::broker_restart_handshake_invalidates_session_and_capability ... ok
+test maintenance::tests::capability_is_single_use_expiring_and_cross_uid_bound ... ok
+test maintenance::tests::closed_scope_rejects_empty_paths_and_mode_plan_mismatch ... ok
+test maintenance::tests::executor_cardinality_mismatch_fails_closed_and_consumes_capability ... ok
+test maintenance::tests::helper_restart_invalidates_capability_but_preserves_root_set ... ok
+test maintenance::tests::maintenance_capability_debug_is_redacted ... ok
+test maintenance::tests::publication_revalidates_retained_roots_against_durable_source ... ok
+test maintenance::tests::root_attestation_is_path_free_restart_safe_and_caller_bound ... ok
+test maintenance::tests::root_set_identity_cannot_be_republished_with_different_content ... ok
+test maintenance::tests::root_sets_are_sorted_idempotent_and_caller_bound ... ok
+test maintenance::tests::root_transition_can_only_retain_exact_source_names_and_targets ... ok
+test maintenance::tests::root_transition_rejects_alias_reuse_empty_and_identity_drift ... ok
+test maintenance::tests::unauthenticated_peer_and_stale_session_fail_closed ... ok
+test maintenance::tests::validated_scope_is_the_only_input_to_the_repair_executor ... ok
+test managed::accounts::tests::darwin_directory_parsers_join_accounts_and_group_evidence ... ok
+test managed::accounts::tests::linux_directory_parsers_retain_uid_gid_and_explicit_members ... ok
+test managed::accounts::tests::malformed_duplicate_and_mismatched_directories_refuse ... ok
+test managed::detect::tests::account_database_parsers_match_only_nix_build_identities ... ok
+test managed::detect::tests::macos_scans_a_protected_sibling_home_alias_once ... ok
+test framing::tests::root_nix_result_kind_is_exact_and_helper_cap_includes_report_overhead ... ok
+test managed::installer_bundle::tests::datastore_handoff_is_private_and_rejects_links ... ok
+test managed::installer_bundle::tests::intel_darwin_refuses_before_datastore_mutation ... ok
+test managed::installer_bundle::tests::owner_bound_state_is_private_before_publication ... ok
+test managed::installer_bundle::tests::platform_route_selects_only_supported_determinate_targets ... ok
+test managed::installer_bundle::tests::remote_repository_refuses_unsafe_urls_before_state_creation ... ok
+test managed::installer_bundle::tests::repository_datastore_write_failure_is_redacted_as_state_failure ... ok
+test managed::ownership::tests::artifact_groups_are_bound_by_the_expectation ... ok
+test managed::ownership::tests::asset_manifest_unknown_fields_and_digest_mismatch_fail_closed ... ok
+test managed::ownership::tests::authenticated_manifest_digest_rejects_a_truncated_artifact_set ... ok
+test managed::ownership::tests::changed_artifact_group_is_rejected_after_receipt_match ... ok
+test managed::ownership::tests::changed_artifact_mode_is_rejected ... ok
+test managed::ownership::tests::changed_file_bytes_are_rejected ... ok
+test managed::installer_bundle::tests::darwin_bundle_has_no_legacy_runtime_fallback ... ok
+test managed::ownership::tests::changed_file_size_or_type_is_rejected ... ok
+test managed::ownership::tests::changed_symlink_target_is_rejected ... ok
+test managed::ownership::tests::duplicate_and_out_of_scope_paths_are_rejected ... ok
+test managed::ownership::tests::complete_store_object_collected_by_gc_still_verifies ... ok
+test managed::ownership::tests::forged_receipt_is_irrelevant_to_the_receipt_free_verifier ... ok
+test managed::ownership::tests::malformed_or_extended_receipt_is_rejected ... ok
+test managed::ownership::tests::missing_artifact_is_rejected ... ok
+test managed::ownership::tests::oversized_or_symlinked_receipt_is_rejected ... ok
+test managed::ownership::tests::parent_symlink_escape_is_rejected ... ok
+test managed::ownership::tests::partially_collected_store_object_is_rejected ... ok
+test managed::ownership::tests::receipt_free_verifier_passes_without_a_receipt ... ok
+test managed::ownership::tests::receipt_free_verifier_refuses_missing_and_tampered_artifacts ... ok
+test managed::ownership::tests::receipt_is_not_self_authenticating ... ok
+test managed::ownership::tests::store_parent_uses_the_store_expectations_group ... ok
+test managed::ownership::tests::symlink_targets_cannot_escape_managed_prefixes_or_parent_other_assets ... ok
+test managed::ownership::tests::signed_manifest_binds_roles_without_baking_in_host_gids ... ok
+test managed::ownership::tests::unsafe_receipt_mode_is_rejected ... ok
+test managed::provision::tests::absent_scratch_parent_proves_the_workspace_is_absent ... ok
+test managed::provision::tests::blocking_entry_point_refuses_a_nested_runtime ... ok
+test managed::ownership::tests::valid_receipt_and_complete_artifact_set_verify ... ok
+test managed::provision::tests::blocking_installer_runtime_enables_time ... ok
+test managed::provision::tests::determinate_crash_staging_reconciles_only_exact_private_files ... ok
+test managed::provision::tests::installer_payloads_use_only_fixed_authenticated_targets ... ok
+test managed::provision::tests::interrupted_workspace_recovery_preserves_siblings_and_symlink_targets ... ok
+test managed::provision::tests::missing_or_empty_installer_payload_refuses_authentication ... ok
+test managed::provision::tests::raw_channel_sha256_uses_the_product_digest_prefix ... ok
+test managed::provision::tests::reauthentication_requires_the_exact_authenticated_identity ... ok
+test managed::provision::tests::staged_determinate_installer_closes_writer_before_execution ... ok
+test managed::provision::tests::workspace_recovery_refuses_symlinks_and_unsafe_modes ... ok
+test managed::runtime_archive::tests::foreign_archive_member_is_rejected ... ok
+test managed::runtime_archive::tests::missing_registration_is_rejected ... ok
+test managed::runtime_archive::tests::official_archive_maps_to_a_decodable_runtime_manifest ... ok
+test managed::runtime_archive::tests::official_nix_2_34_8_archive_is_representable ... ignored, requires PKG_TEST_NIX_ARCHIVE with the official Nix 2.34.8 aarch64-linux tarball
+test managed::uninstall::tests::changed_local_manifest_refuses_during_preparation ... ok
+test managed::uninstall::tests::changed_runtime_identity_is_never_deleted ... ok
+test managed::uninstall::tests::complete_store_objects_collected_before_preparation_are_accepted ... ok
+test managed::uninstall::tests::complete_store_objects_collected_before_removal_are_accepted ... ok
+test managed::uninstall::tests::exact_runtime_and_registration_state_are_removed ... ok
+test managed::uninstall::tests::exclusive_authority_captures_and_removes_product_closure_under_lock ... ok
+test managed::uninstall::tests::exclusive_authority_creates_a_missing_gc_lock ... ok
+test managed::uninstall::tests::exclusive_authority_refuses_an_unregistered_store_object ... ok
+test managed::uninstall::tests::foreign_profile_refuses_gc_authorization_even_for_product_store_path ... ok
+test managed::provision::tests::installer_authentication_distinguishes_download_state_and_signature_failures ... ok
+test managed::uninstall::tests::gc_lock_waits_for_a_posix_record_lock ... ok
+test managed::uninstall::tests::mounted_dynamic_root_device_is_refused ... ok
+test managed::uninstall::tests::non_pid_temporary_root_record_refuses_before_any_store_deletion ... ok
+test managed::uninstall::tests::ordinary_runtime_failure_still_removes_metadata_and_store_state ... ok
+test managed::uninstall::tests::partially_collected_store_tree_refuses_before_runtime_deletion ... ok
+test managed::uninstall::tests::posix_record_lock_holder ... ignored, helper process for the POSIX record-lock interoperability test
+test managed::uninstall::tests::preexisting_store_policy_never_mutates_nix ... ok
+test managed::uninstall::tests::product_closure_inventory_accepts_only_exact_store_objects ... ok
+test managed::uninstall::tests::receipt_free_partial_runtime_is_removed_but_outer_roots_remain ... ok
+test managed::uninstall::tests::receipt_free_prepare_captures_an_unreceipted_exact_runtime ... ok
+test managed::uninstall::tests::receipt_free_prepare_noops_when_the_nix_tree_is_absent ... ok
+test managed::uninstall::tests::receipt_free_prepare_noops_without_runtime_state ... ok
+test managed::uninstall::tests::receipt_free_prepare_refuses_a_symlinked_metadata_parent ... ok
+test managed::uninstall::tests::receipt_free_prepare_refuses_a_tampered_artifact ... ok
+test managed::uninstall::tests::receipt_free_prepare_refuses_an_unexpected_runtime_entry ... ok
+test managed::uninstall::tests::receipt_free_prepare_refuses_mismatched_metadata ... ok
+test managed::uninstall::tests::receipt_free_prepare_removes_an_exact_late_receipt ... ok
+test managed::uninstall::tests::receipt_free_prepare_succeeds_without_a_manifest ... ok
+test managed::uninstall::tests::remaining_store_object_preserves_all_nix_state ... ok
+test managed::uninstall::tests::stale_temporary_root_record_is_removed_with_the_store ... ok
+test managed::uninstall::tests::unexpected_runtime_entry_refuses_before_any_store_deletion ... ok
+test managed::uninstall::tests::unexpected_store_tree_entry_refuses_before_any_deletion ... ok
+test managed::uninstall::tests::unknown_gc_root_refuses_before_any_store_deletion ... ok
+test managed::uninstall::tests::user_profile_refuses_before_any_store_deletion ... ok
+test nixpkgs::tests::fetch_spec_exposes_only_the_authenticated_pin ... ok
+test nixpkgs::tests::malformed_oversized_duplicate_and_non_store_outputs_are_refused ... ok
+test nixpkgs::tests::optional_top_level_revision_may_be_absent ... ok
+test nixpkgs::tests::release_pin_promotes_the_same_verified_private_source ... ok
+test nixpkgs::tests::revision_nar_hash_and_top_level_revision_mismatches_fail_closed ... ok
+test nixpkgs::tests::runner_failure_stays_closed_and_redacted ... ok
+test nixpkgs::tests::source_kind_owner_and_repo_mismatches_fail_closed ... ok
+test nixpkgs::tests::top_level_locked_identity_promotes_a_private_source ... ok
+test real::tests::absolute_root_operation_deadline_clamps_all_executor_timeouts ... ok
+test real::tests::broker_repair_closure_counts_shared_dependencies_once ... ok
+test real::tests::broker_repair_closure_uses_only_fixed_recursive_daemon_queries ... ok
+test real::tests::build_cache_probe_falls_back_from_failed_batch_to_exact_hits_and_misses ... ok
+test real::tests::build_cache_probe_never_contacts_remote_for_local_hits ... ok
+test real::tests::build_cache_probe_refuses_malformed_exact_remote_json ... ok
+test real::tests::build_cache_probe_refuses_non_missing_exact_failure ... ok
+test real::tests::build_cache_probe_refuses_unverified_remote_signature ... ok
+test real::tests::build_json_accepts_pinned_optional_timing_metrics ... ok
+test real::tests::build_provenance_requires_ultimate_or_cryptographic_trust ... ok
+test real::tests::cache_probe::download_probe_batches_mixed_roots_without_cross_contaminating_closures ... ok
+test real::tests::cache_probe::download_probe_bounds_process_count_for_many_leaf_dependencies ... ok
+test real::tests::cache_probe::download_probe_falls_back_after_failed_local_batch ... ok
+test real::tests::cache_probe::download_probe_rejects_failed_or_malformed_validity_responses ... ok
+test real::tests::cache_probe::download_probe_rejects_incomplete_recursive_graphs_and_untrusted_hits ... ok
+test real::tests::cache_probe::entirely_missing_local_batches_never_fall_back_to_per_path_queries ... ok
+test real::tests::derivation_v4_normalizes_relative_paths_and_closed_fields ... ok
+test real::tests::derivation_v4_rejects_malformed_structured_output_selection ... ok
+test real::tests::determinate_metadata_disables_lazy_trees_and_managed_metadata_does_not ... ok
+test real::tests::download_probe_accounts_for_the_complete_missing_closure ... ok
+test real::tests::download_probe_preserves_remote_root_miss_before_recursive_expansion ... ok
+test real::tests::download_probe_refuses_recursive_failure_after_confirmed_root_hit ... ok
+test real::tests::fixed_args_never_accept_caller_trust_or_store_controls ... ok
+test real::tests::fixed_mode_versions_are_exact_and_environment_runner_is_not_bypassed ... ok
+test real::tests::fixed_mode_versions_reject_wrong_brand_version_and_legacy_banner ... ok
+test real::tests::gc_preflights_dead_paths_then_reports_only_actual_deletions ... ok
+test real::tests::install_and_repair_builds_enforce_local_sandbox_options ... ok
+test real::tests::internal_json_build_progress_is_bounded_monotonic_and_path_free ... ok
+test real::tests::internal_json_parser_recovers_after_oversized_private_line ... ok
+test real::tests::internal_json_progress_sink_failure_stops_parsing ... ok
+test real::tests::linux_executor_does_not_create_a_source_workspace ... ok
+test real::tests::managed_store_ping_uses_only_the_fixed_daemon_store ... ok
+test real::tests::managed_store_wait_caps_the_last_sleep_and_times_out ... ok
+test real::tests::managed_store_wait_rejects_success_that_finishes_after_deadline ... ok
+test real::tests::managed_store_wait_retries_transient_errors_until_success ... ok
+test real::tests::managed_store_wait_returns_terminal_error_without_sleeping ... ok
+test real::tests::managed_store_wait_stops_when_a_ping_finishes_at_deadline ... ok
+test real::tests::managed_store_wait_uses_only_the_fixed_daemon_store ... ok
+test real::tests::nixpkgs_index_projection_uses_only_the_fixed_expression_and_source ... ok
+test real::tests::nixpkgs_metadata_runner_failure_is_closed ... ok
+test real::tests::nixpkgs_metadata_runner_reconstructs_only_the_fixed_command ... ok
+test managed::uninstall::tests::locked_temporary_root_record_refuses_before_any_store_deletion ... ok
+test real::tests::path_info_v2_filters_upstream_self_reference_and_sums_closure ... ok
+test real::tests::noisy_stderr_cannot_starve_timeout_or_progress_cancellation ... ok
+test real::tests::public_flake_adapter_calls_refuse_before_starting_a_process ... ok
+test real::tests::public_flake_evaluation_pins_root_inputs_and_configuration ... ignored, public flakes are refused on Linux
+test real::tests::public_flake_metadata_is_locked_and_missing_root_hash_is_calculated ... ignored, public flakes are refused on Linux
+test real::tests::recursive_verify_dimension_cannot_drop_closure_semantics ... ok
+
+running 1 test
+test real::tests::progress_callback_failure_reaps_a_silent_child_process_group ... ok
+test real::tests::root_gc_does_not_downgrade_command_failure ... ok
+test real::tests::root_gc_lists_only_valid_registered_local_paths ... ok
+test real::tests::root_gc_refuses_malformed_preflight_before_deletion ... ok
+test real::tests::root_gc_resolves_only_the_fixed_local_product_closure ... ok
+test real::tests::root_gc_uses_only_the_fixed_local_store ... ok
+test real::tests::root_operation_clone_preserves_standard_determinate_version_banner ... ok
+test real::tests::root_repair_build_is_bounded_and_must_verify_clean ... ok
+test real::tests::root_repair_cache_miss_requires_successful_repair_and_live_local_store ... ok
+test real::tests::root_repair_command_failure_is_not_downgraded_to_cache_miss ... ok
+test real::tests::substitution_batch_confirms_an_omitted_remote_path ... ok
+test real::tests::substitution_batch_reports_a_cache_miss_for_local_build_inputs ... ok
+test real::tests::substitution_batch_uses_one_remote_query_and_copy ... ok
+test real::tests::substitution_copies_signatures_before_local_metadata_and_fails_closed ... ok
+test real::tests::repair_executors_keep_standard_determinate_and_managed_environments_distinct ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 276 filtered out; finished in 0.04s
+
+test real::tests::repair_executors_keep_standard_determinate_and_managed_environments_distinct ... ok
+test root_nix::tests::method_ids_and_client_grace_are_fixed_and_unique ... ok
+test substitute::tests::cache_evidence_refuses_fresh_metadata_drift ... ok
+test substitute::tests::cache_miss_is_normal_and_stops_after_substitute ... ok
+test substitute::tests::fetched_path_requires_approved_signature_verify_then_matching_info ... ok
+test substitute::tests::metadata_or_adapter_trust_failure_never_returns_a_store_object ... ok
+test substitute::tests::unapproved_signature_and_corrupt_nar_fail_before_metadata_use ... ok
+test substitute::tests::verified_substitute_creates_cache_signed_install_evidence ... ok
+test verify::tests::closure_duplicates_and_report_coverage_fail_closed ... ok
+test verify::tests::exact_report_classifies_corrupt_missing_and_untrusted ... ok
+test verify::tests::missing_integrity_round_trips_through_public_codec ... ok
+test real::tests::timeout_terminates_descendants_before_joining_capture_threads ... ok
+
+test result: ok. 273 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 1.99s
+
+     Running tests/contract.rs (target/debug/deps/contract-ede7bc22fee8edf4)
+
+running 48 tests
+test adapter_errors_are_bounded_and_redacted ... ok
+test adapter_failure_path_is_closed_nix_adapter_error ... ok
+test build_approval_receipt_binds_operation_plan_and_policy ... ok
+test build_report_requires_explicit_output_provenance ... ok
+test build_report_round_trips_built_and_acquire_no_binary ... ok
+test bounded_collection_encodings_remain_byte_identical ... ok
+test build_request_round_trip ... ok
+test codec_size_limit_is_exact_and_checked_before_parsing ... ok
+test constructors_reject_empty_and_duplicate_collections ... ok
+test decode_rejects_deeply_nested_input_as_malformed ... ok
+test decode_rejects_duplicate_realization_output_keys ... ok
+test decode_rejects_eval_outputs_over_count_cap_during_visiting ... ok
+test decode_rejects_invalid_promoted_values ... ok
+test decode_rejects_malformed_json_and_wrong_types ... ok
+test decode_rejects_signatures_over_count_cap_during_visiting ... ok
+test decode_rejects_trailing_bytes ... ok
+test decode_rejects_unknown_nested_fields ... ok
+test build_request_enforces_target_count_bound_without_huge_allocations ... ok
+test decode_rejects_unknown_top_level_fields ... ok
+test decode_rejects_unsupported_schema_version ... ok
+test derivation_plan_report_round_trip ... ok
+test derivation_plan_rejects_missing_unknown_and_duplicate_input_edges ... ok
+test derived_output_targets_require_explicit_selection_or_all_marker ... ok
+test encode_is_deterministic_across_calls ... ok
+test evaluate_derivation_request_round_trips_default_and_explicit_outputs ... ok
+test every_shape_carries_explicit_schema_version_1 ... ok
+test gc_report_canonicalizes_collected ... ok
+test gc_report_round_trips_collected_and_refused ... ok
+test gc_unknown_measurement_round_trips_without_becoming_zero ... ok
+test inconsistent_status_payload_combinations_rejected ... ok
+test method_kind_has_exactly_seven_variants ... ok
+test no_shape_carries_a_forbidden_per_call_knob ... ok
+test path_info_canonicalizes_signatures_and_references ... ok
+test path_info_report_round_trip ... ok
+test root_name_rejects_unsafe_components ... ok
+test root_ref_rejects_non_canonical_managed_paths ... ok
+test root_ref_round_trip ... ok
+test evaluate_derivation_constructor_enforces_output_count_cap ... ok
+test schema_version_only_accepts_current ... ok
+test substitute_outcomes_are_normal_only_failures_are_errors ... ok
+test stub_dispatches_all_seven_methods_through_dyn ... ok
+test trait_is_object_safe_send_sync_and_dyn_compatible ... ok
+test unexpected_extra_call_is_redacted_truthful_no_head ... ok
+test substitute_report_round_trips_all_outcomes ... ok
+test verify_report_round_trip ... ok
+test verify_request_round_trip ... ok
+test version_info_round_trip ... ok
+test wire_names_are_stable_camelcase ... ok
+
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/managed_detect.rs (target/debug/deps/managed_detect-331e9fa9691427f9)
+
+running 13 tests
+test clean_root_is_clean ... ok
+test build_users_profiles_mounts_and_binaries_are_detected ... ok
+test environment_detection_checks_names_without_values ... ok
+test determinate_handoff_suppresses_removal_without_proving_ownership ... ok
+test missing_scan_root_refuses_as_ambiguous ... ok
+test ownership_marker_alone_never_authorizes_installation ... ok
+test ownership_receipt_is_a_claim_but_never_authorizes_installation ... ok
+test pkg_broker_configuration_suppresses_removal_without_proving_ownership ... ok
+test stray_nix_tree_refuses_with_stable_redacted_signals ... ok
+test platform_service_checks_do_not_cross_operating_systems ... ok
+test uninspectable_service_and_binary_paths_remain_ambiguity_only ... ok
+test unreadable_home_profile_probe_is_ambiguity_not_foreign_evidence ... ok
+test unreadable_nix_root_and_marker_are_not_definite_evidence ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/real_nix.rs (target/debug/deps/real_nix-8088c71ab3a7832b)
+
+running 2 tests
+test real_nix_matches_the_normalized_adapter_contract ... ignored, requires an isolated product-pinned Nix 2.34.8 store
+test real_root_repair_stops_on_cache_miss_then_builds_after_typed_approval ... ignored, requires an isolated root-owned product-pinned Nix 2.34.8 store
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_pipeline-08a4202afbfd7216)
+
+running 62 tests
+test acquire::tests::trusted_download_probe_rejects_duplicate_incomplete_and_foreign_evidence ... ok
+test acquire::tests::shared_closure_bytes_follow_actual_substitution_order ... ok
+test acquire::tests::trusted_download_probe_requires_exact_all_hit_coverage ... ok
+test activation_repair::tests::cleanup_never_follows_an_unexpected_symlink ... ok
+test build_authority::tests::acquisition_diagnostics_are_one_static_redacted_line ... ok
+test build_authority::tests::authority_is_send_sync_and_debug_is_opaque ... ok
+test build_authority::tests::channel_publication_is_monotonic_and_same_sequence_is_exact ... ok
+test build_authority_refresh::tests::refresh_failures_keep_public_retry_and_trust_classes_distinct ... ok
+test build_authority_refresh::tests::refresh_service_boundary_is_opaque_send_sync_and_native ... ok
+test build_intent::tests::host_facts_refuse_unknown_core_capacity ... ok
+test activation_repair::tests::replacement_and_interrupted_publish_keep_recovery_paths_bounded ... ok
+test build_plan::tests::authenticated_identity_match_binds_every_source_field ... ok
+test build_intent::tests::selector_batch_is_bounded_and_identity_unique_before_any_nix_work ... ok
+test build_preparation::tests::preparation_is_broker_private_send_sync_and_debug_is_opaque ... ok
+test build_plan::tests::complete_plan_identity_binds_the_platform_runtime_contract ... ok
+test commit::tests::aborted_state_edit_remains_discoverable_before_prune_intent ... ok
+test commit::tests::activated_fault_restores_views_and_commits_forward ... ok
+test commit::tests::broker_attestation_receipt_recovers_prepared_generation_without_republication ... ok
+test commit::tests::active_unfinished_generation_requires_recovery_before_history ... ok
+test commit::tests::broker_publication_receipt_finishes_prepared_generation_without_republication ... ok
+test commit::tests::candidate_hash_or_snapshot_binding_tamper_fails_closed ... ok
+test commit::tests::broker_transition_receipt_finishes_prepared_generation_without_republication ... ok
+test commit::tests::candidate_refuses_activation_roots_not_selected_by_lock ... ok
+test commit::tests::candidate_refuses_lock_from_another_channel_sequence ... ok
+test commit::tests::committed_generation_loads_as_active_verified_history ... ok
+test commit::tests::committed_recovery_is_idempotent ... ok
+test commit::tests::cross_operation_prune_is_terminal_for_aborted_install ... ok
+test commit::tests::empty_generation_commits_and_recovers_without_publishing_roots ... ok
+test commit::tests::empty_prepared_generation_needs_neither_transition_nor_receipt ... ok
+test commit::tests::generation_order_is_numeric_and_discard_staging_removes_debris ... ok
+test commit::tests::failed_root_last_discard_converges_through_generic_recovery ... ok
+test commit::tests::helper_removed_before_terminal_row_retries_idempotently ... ok
+test commit::tests::interrupted_state_edit_resumes_before_and_after_the_current_switch ... ok
+test commit::tests::interrupted_rollback_resumes_from_the_retained_target ... ok
+test commit::tests::journal_symlink_is_refused_without_touching_target ... ok
+test commit::tests::interrupted_update_resumes_before_and_after_the_current_switch ... ok
+test commit::tests::journaled_install_is_discovered_and_resumed_after_restart ... ok
+test commit::tests::prepare_requires_and_holds_exclusive_state_lease ... ok
+test commit::tests::prepared_and_aborted_without_intent_are_not_generic_prunes ... ok
+test commit::tests::prepared_fault_discards_record_snapshots_and_staging ... ok
+test commit::tests::preprepared_orphans_and_current_temp_are_cleaned_without_publishing ... ok
+test commit::tests::published_activation_refuses_a_same_size_wrong_root_mapping ... ok
+test commit::tests::retained_history_refuses_unknown_or_oversized_files ... ok
+test commit::tests::rooted_fault_removes_roots_and_leaves_current_unchanged ... ok
+test commit::tests::superseded_attempt_is_discarded_without_reverting_a_committed_sibling ... ok
+test commit::tests::superseded_recovery_refuses_a_previously_activated_attempt ... ok
+test commit::tests::transitioned_activation_refuses_a_mismatched_broker_receipt ... ok
+test commit::tests::upgrade_generation_rebinds_channel_outputs_collision_and_approval ... ok
+test host_facts::tests::authenticated_config_binding_refuses_any_byte_change ... ok
+test host_facts::tests::exact_linux_and_darwin_observations_are_accepted ... ok
+test host_facts::tests::legacy_darwin_config_and_max_jobs_remain_exact_without_cgroup_observation ... ok
+test host_facts::tests::linux_builder_count_membership_and_account_identity_are_exact ... ok
+test host_facts::tests::linux_ignores_managed_config_and_requires_cgroup_availability ... ok
+test host_facts::tests::standard_darwin_uses_vendor_accounts_without_retired_config_or_cgroups ... ok
+test install_generation::tests::broker_evidence_builds_a_closed_initial_candidate ... ok
+test lifecycle::tests::broker_evidence_is_the_complete_install_state_input ... ok
+test lifecycle::tests::local_build_truth_survives_state_promotion ... ok
+test lifecycle::tests::repeated_install_evidence_reports_already_installed ... ok
+test lifecycle::tests::upgrade_evidence_advances_only_the_selected_exact_lock ... ok
+test rollback::tests::rollback_prepares_and_activates_a_fresh_generation ... ok
+test rollback::tests::rollback_refuses_stale_or_non_monotonic_generation_before_staging ... ok
+test commit::tests::preparation_refuses_every_pending_operation_family ... ok
+
+test result: ok. 62 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_release-a6a7ca69a8b964a0)
+
+running 22 tests
+test audit::tests::audit_log_is_allowlisted_newline_terminated_and_create_only ... ok
+test publish::tests::partial_immutable_upload_resumes_by_accepting_exact_objects ... ok
+test publish::tests::preflights_both_then_verifies_mirror_and_source_before_commits ... ok
+test publish::tests::publication_object_is_independent_of_its_source_path ... ok
+test publish::tests::verification_failure_prevents_both_discovery_commits ... ok
+test rel::tests::helpers_validate_lane_url_commit_and_bundle_envelopes ... ok
+test rel::tests::key_init_refuses_an_existing_directory ... ok
+test publish::tests::authorization_commit_failure_retains_a_retryable_refresh ... ok
+test rel::tests::key_init_writes_a_verifiable_three_year_root ... ok
+test rel::tests::publish_refuses_a_placeholder_sigstore_bundle ... ok
+test rel::tests::publish_refuses_target_trees_that_are_not_the_closed_set ... ok
+test sign::tests::approved_digest_covers_the_intentional_prepared_manifest ... ok
+test sign::tests::artifact_mutation_after_approval_is_refused_before_output ... ok
+test rel::tests::publish_prints_a_card_that_matches_a_reloadable_channel ... ok
+test sign::tests::existing_output_and_missing_threshold_key_fail_closed ... ok
+test sign::tests::manifest_refuses_a_symlinked_source_ancestor ... ok
+test sign::tests::manifest_refuses_changed_determinate_inventory ... ok
+test sign::tests::dry_run_signs_threshold_root_repo_and_client_verifies ... ok
+test sign::tests::prepared_manifest_validates_payloads_without_bundle_files_and_refuses_partial_state ... ok
+test sign::tests::relative_output_path_is_made_absolute ... ok
+test sign::tests::sign_error_names_its_inner_causes ... ok
+test sign::tests::manifest_refuses_forged_approval_extended_schema_and_target_confusion ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running unittests src/bin/pkg-rel.rs (target/debug/deps/pkg_rel-5d42f4ac890192b2)
+
+running 3 tests
+test tests::key_init_parse_accepts_only_the_closed_inputs ... ok
+test tests::flag_parsing_rejects_unknown_repeated_and_bare_arguments ... ok
+test tests::publish_parse_accepts_the_closed_inputs_and_keeps_defaults ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/pkg-release-index.rs (target/debug/deps/pkg_release_index-8d04a19d14705b31)
+
+running 3 tests
+test tests::parser_accepts_only_the_closed_release_inputs ... ok
+test tests::staging_uses_descriptor_pin_and_refuses_unsupported_systems ... ok
+test tests::output_must_not_exist ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/linux_proof_publication.rs (target/debug/examples/linux_proof_publication-6c1d7e6685658b8f)
+
+running 8 tests
+test tests::cli_artifacts_refuse_a_symlinked_bundle ... ok
+test tests::dn16_channel_preserves_exact_sealed_manifest_bytes ... ok
+test tests::dn16_channel_refuses_a_different_sealed_manifest ... ok
+test tests::cli_artifacts_bind_exact_input_payloads_and_bundles ... ok
+test tests::prepared_cli_artifacts_need_no_bundle_files ... ok
+test tests::dn16_refuses_placeholder_and_plain_text_bundles ... ok
+test tests::proof_pair_refuses_invalid_product_commits_before_writing ... ok
+test tests::proof_pair_binds_complete_canonical_inventories ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_resolver-e2d7c024e907c20a)
+
+running 6 tests
+test tests::ambiguity_and_version_mismatch_fail_closed ... ok
+test tests::index_alias_selects_attribute_but_evaluation_owns_version ... ok
+test tests::public_flake_resolution_refuses_linux_before_nix_runs ... ok
+test tests::missing_index_direct_attribute_evaluates_once_without_realizing ... ok
+test tests::source_mismatch_and_adapter_failure_are_redacted ... ok
+test tests::public_flake_resolution_uses_its_lock_and_preserves_original_reference ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_store-2f1cf775f2bd7faa)
+
+running 34 tests
+test activate::tests::aborts_collision_without_creating_staging ... ok
+test activate::tests::bound_sources_record_selector_and_output_choices ... ok
+test activate::tests::detects_repointed_leaf ... ok
+test activate::tests::nested_activation_directories_are_private ... ok
+test activate::tests::keeps_non_conflicting_files_and_records_deterministic_winner ... ok
+test activate::tests::nix_build_metadata_does_not_collide_in_the_user_environment ... ok
+test activate::tests::rejects_file_directory_conflicts_before_writing ... ok
+test activate::tests::read_only_planning_checks_the_same_collisions_as_materialization ... ok
+test activate::tests::verification_refuses_a_symlink_in_place_of_the_forest_root ... ok
+test current::tests::classifies_all_four_recovery_states_and_rejects_impossible_evidence ... ok
+test activate::tests::treats_source_symlink_as_a_leaf_without_following_it ... ok
+test current::tests::helper_refusal_never_retains_or_switches_the_forest ... ok
+test current::tests::empty_generation_activates_without_an_empty_root_request ... ok
+test current::tests::initialization_never_adopts_nonempty_unmarked_state ... ok
+test current::tests::mismatched_root_set_is_refused_before_publication ... ok
+test current::tests::rejects_symlinked_or_world_writable_state_components ... ok
+test current::tests::initializes_only_the_fixed_private_state_tree ... ok
+test current::tests::swaps_current_as_an_exact_relative_symlink ... ok
+test current::tests::roots_and_retains_before_switching_current ... ok
+test gc::tests::active_target_and_shared_lease_are_refused_before_deletion ... ok
+test gc::tests::manual_prune_selects_only_a_retired_retained_generation ... ok
+test gc::tests::planning_rejects_duplicate_missing_active_and_future_timestamps ... ok
+test gc::tests::execute_prunes_metadata_root_last_then_calls_fake_nix_once ... ok
+test gc::tests::retention_requires_both_count_and_age_expiry_and_never_selects_active ... ok
+test gc::tests::recovery_finishes_an_intended_prune_idempotently ... ok
+test gc::tests::root_removal_authority_requires_root_last_state_and_refuses_active ... ok
+test gc::tests::symlinked_generation_parent_is_refused_before_cross_tree_deletion ... ok
+test leases::tests::exclusive_conflicts_and_drop_releases_without_stale_lock_stealing ... ok
+test leases::tests::lease_authority_is_bound_to_one_exact_state_layout ... ok
+test leases::tests::shared_readers_coexist_and_block_a_writer ... ok
+test gc::tests::root_removal_failure_leaves_only_a_recoverable_rooted_intent ... ok
+test leases::tests::symlink_and_permissive_state_are_refused ... ok
+test roots::tests::empty_set_is_refused_before_helper_call ... ok
+test roots::tests::names_are_deterministic_safe_and_publication_is_idempotent ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (target/debug/deps/pkg_testkit-4296f43d0edaae44)
+
+running 13 tests
+test chaos::tests::checkpoint_helper ... ok
+test chaos::tests::checkpoint_names_and_paths_fail_closed ... ok
+test clock::tests::fixed_clock_returns_the_set_instant_and_advances ... ok
+test fake_nix::tests::lock_recovers_from_poison_without_panicking ... ok
+test fake_nixpkgs::tests::fake_is_send_sync_runner_and_empty_transcript_is_exhausted ... ok
+
+running 1 test
+test chaos::tests::child_is_killed_only_after_durable_checkpoint ... ok
+test http::tests::script_rejects_unsafe_or_non_faulting_inputs ... ok
+test parity::tests::capture_overflow_does_not_change_wrapped_results ... ok
+test parity::tests::capture_round_trips_and_replays_exact_typed_result ... ok
+test parity::tests::error_capture_replays_the_same_stable_code ... ok
+test parity::tests::schema_and_size_limits_fail_closed ... ok
+test parity::tests::strict_decoders_reject_widening_and_duplicates ... ok
+test http::tests::exact_transcript_serves_drop_and_truncate_faults ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/fake_nix.rs (target/debug/deps/fake_nix-dab94c9e4b0500b5)
+
+running 25 tests
+test assert_exhausted_ok_when_empty ... ok
+test assert_exhausted_reports_remaining_count_only ... ok
+test all_seven_methods_return_canned_results_in_fifo_order ... ok
+test canned_errors_are_returned_unchanged ... ok
+test build_matches_exact_request_only ... ok
+test canned_malformed_payload_error_round_trips ... ok
+test default_is_empty ... ok
+test dyn_dispatch_replays_transcript ... ok
+test evaluate_derivation_matches_exact_request_only ... ok
+test expect_methods_chain_and_preserve_ownership ... ok
+test extra_call_after_exhausting_transcript_returns_unexpected_extra_call ... ok
+test concurrent_calls_consume_distinct_heads_exactly_once ... ok
+test extra_call_against_empty_transcript_returns_unexpected_extra_call ... ok
+test fake_nix_is_send_sync_and_dyn_compatible ... ok
+test fake_nix_debug_shows_only_remaining_count ... ok
+test fifo_order_is_enforced_out_of_order_calls_mismatch ... ok
+test ignored_extra_call_errors_are_not_observable_via_assert_exhausted ... ok
+test pkg_testkit_types_are_pkg_nix_types ... ok
+test path_info_matches_exact_store_path_only ... ok
+test transcript_error_is_std_error ... ok
+test substitute_matches_exact_store_path_only ... ok
+test unexpected_call_display_carries_only_method_names_and_static_summary ... ok
+test unexpected_extra_call_display_is_bounded_and_redacted ... ok
+test verify_matches_exact_request_only ... ok
+test wrong_method_mismatch_consumes_head_and_names_real_expected ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/maintenance.rs (target/debug/deps/maintenance-102c09b21c6fadd4)
+
+running 1 test
+test phase_zero_to_capability_repair_round_trip_is_closed_and_restart_safe ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/real_parity.rs (target/debug/deps/real_parity-c669368174fe903a)
+
+running 2 tests
+test real_nix_capture_matches_golden_and_replays_in_fake ... ignored, requires an isolated product-pinned Nix 2.34.8 store
+test checked_in_goldens_are_canonical_and_replayable ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.32s
+

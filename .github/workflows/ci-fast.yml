@@ -340,10 +340,34 @@ jobs:
       - name: Signing refusal and native packaging checks
         run: python3 -m unittest discover -s packaging/macos -v
 
+  test-contracts:
+    name: Behavior test regression guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Check the guard with real subprocess fixtures
+        run: python3 -m unittest discover -s tools/verify -p 'test_check_test_contracts.py' -v
+      - name: Prove behavior tests catch known defects
+        run: python3 tools/verify/check_test_contracts.py --output "$RUNNER_TEMP/test-contracts"
+      - name: Retain mutation and restored-control results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: test-contracts
+          path: ${{ runner.temp }}/test-contracts/
+          if-no-files-found: warn
+          retention-days: 7
+
   results:
     name: CI results
     if: always()
-    needs: [g-ambient-time-audit, g-hermetic, g-hermetic-macos, g-lint, g-test, g-lint-macos, g-quality, bootstrap]
+    needs: [g-ambient-time-audit, g-hermetic, g-hermetic-macos, g-lint, g-test, g-lint-macos, g-quality, bootstrap, test-contracts]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

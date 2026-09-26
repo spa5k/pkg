@@ -1,0 +1,38 @@
+   Compiling tokio v1.53.1
+   Compiling serde v1.0.229
+   Compiling hyper v1.11.0
+   Compiling getrandom v0.3.4
+   Compiling tower v0.5.3
+   Compiling hyper-util v0.1.20
+   Compiling tokio-rustls v0.26.4
+   Compiling regex-syntax v0.8.11
+   Compiling regex-automata v0.4.18
+   Compiling hyper-rustls v0.27.9
+   Compiling tower-http v0.6.11
+   Compiling tokio-util v0.7.19
+   Compiling tempfile v3.27.0
+   Compiling serde_json_canonicalizer v0.3.2
+   Compiling globset v0.4.20
+   Compiling reqwest v0.13.4
+   Compiling olpc-cjson v0.1.4
+   Compiling serde_plain v1.0.2
+   Compiling tough v0.24.0
+   Compiling pkg-core v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-core)
+   Compiling pkg-channel v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-channel)
+   Compiling lzma-rust2 v0.18.1
+   Compiling pkg-nix v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-nix)
+   Compiling pkg-index v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-index)
+   Compiling pkg-resolver v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-resolver)
+   Compiling pkg-store v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-store)
+   Compiling pkg-pipeline v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-pipeline)
+   Compiling pkg-installer v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-installer)
+   Compiling pkg-cli v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-cli)
+   Compiling pkg-testkit v0.1.0-alpha.56 (/tmp/pkg-audit/mutations/workspace/crates/pkg-testkit)
+    Finished `test` profile [unoptimized] target(s) in 1m 02s
+     Running tests/e2e_fake.rs (/home/user/workspace/target/debug/deps/e2e_fake-11149a8bffd8099c)
+
+running 1 test
+test every_command_routes_through_typed_fake_core_and_engine_calls_are_exact ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

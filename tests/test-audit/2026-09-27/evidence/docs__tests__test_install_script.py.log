@@ -1,0 +1,8 @@
+test_only_verify_only_is_accepted (test_install_script.InstallScriptTests.test_only_verify_only_is_accepted) ... ok
+test_template_has_closed_https_and_checksum_contract (test_install_script.InstallScriptTests.test_template_has_closed_https_and_checksum_contract) ... ok
+test_unrendered_template_refuses_before_network (test_install_script.InstallScriptTests.test_unrendered_template_refuses_before_network) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.004s
+
+OK

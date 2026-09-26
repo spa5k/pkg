@@ -1,0 +1,13 @@
+test_accepts_complete_result_below_both_limits (test_check.PerformanceGateTests.test_accepts_complete_result_below_both_limits) ... ok
+test_missing_data_fails_closed (test_check.PerformanceGateTests.test_missing_data_fails_closed) ... ok
+test_rejects_a_different_runner_of_the_same_platform (test_check.PerformanceGateTests.test_rejects_a_different_runner_of_the_same_platform) ... ok
+test_rejects_absolute_failure_even_with_loose_baseline (test_check.PerformanceGateTests.test_rejects_absolute_failure_even_with_loose_baseline) ... ok
+test_rejects_non_native_or_wrong_platform_baseline (test_check.PerformanceGateTests.test_rejects_non_native_or_wrong_platform_baseline) ... ok
+test_rejects_regression_even_below_absolute_ceiling (test_check.PerformanceGateTests.test_rejects_regression_even_below_absolute_ceiling) ... ok
+test_workflow_is_pinned_to_the_baseline_reference_host (test_check.PerformanceWorkflowTests.test_workflow_is_pinned_to_the_baseline_reference_host) ... ok
+test_workflow_pins_external_inputs_and_gates_both_native_outputs (test_check.PerformanceWorkflowTests.test_workflow_pins_external_inputs_and_gates_both_native_outputs) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.005s
+
+OK

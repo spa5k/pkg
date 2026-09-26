@@ -1,0 +1,16 @@
+test_bootstrap_refuses_an_unsafe_layout (test_serve_pair_loopback.LoopbackServerTests.test_bootstrap_refuses_an_unsafe_layout) ... ok
+test_bootstrap_refuses_ports_outside_the_unprivileged_range (test_serve_pair_loopback.LoopbackServerTests.test_bootstrap_refuses_ports_outside_the_unprivileged_range) ... ok
+test_bootstrap_restores_a_rejected_staging_directory (test_serve_pair_loopback.LoopbackServerTests.test_bootstrap_restores_a_rejected_staging_directory) ... ok
+test_bootstrap_restores_staging_when_a_pair_file_is_tampered (test_serve_pair_loopback.LoopbackServerTests.test_bootstrap_restores_staging_when_a_pair_file_is_tampered) ... ok
+test_bootstrap_serves_the_verified_pair_over_loopback_tls (test_serve_pair_loopback.LoopbackServerTests.test_bootstrap_serves_the_verified_pair_over_loopback_tls) ... ok
+test_plain_http_and_untrusted_tls_are_refused (test_serve_pair_loopback.LoopbackServerTests.test_plain_http_and_untrusted_tls_are_refused) ... ok
+test_served_channel_is_read_only_and_exactly_the_pair (test_serve_pair_loopback.LoopbackServerTests.test_served_channel_is_read_only_and_exactly_the_pair) ... ok
+test_status_fails_closed_on_a_corrupt_state (test_serve_pair_loopback.LoopbackServerTests.test_status_fails_closed_on_a_corrupt_state) ... ok
+test_stop_refuses_a_foreign_process_in_the_state (test_serve_pair_loopback.LoopbackServerTests.test_stop_refuses_a_foreign_process_in_the_state) ... ok
+test_stop_removes_the_publication_state_and_port (test_serve_pair_loopback.LoopbackServerTests.test_stop_removes_the_publication_state_and_port) ... ok
+test_usage_is_bounded_to_the_documented_commands (test_serve_pair_loopback.LoopbackServerTests.test_usage_is_bounded_to_the_documented_commands) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 8.150s
+
+OK

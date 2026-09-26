@@ -1,0 +1,9 @@
+test_committed_manifest_is_exact_and_closed (test_runner.SecurityManifestTests.test_committed_manifest_is_exact_and_closed) ... ok
+test_malformed_external_gate_type_fails_closed (test_runner.SecurityManifestTests.test_malformed_external_gate_type_fails_closed) ... ok
+test_missing_duplicate_or_out_of_order_case_is_rejected (test_runner.SecurityManifestTests.test_missing_duplicate_or_out_of_order_case_is_rejected) ... ok
+test_shell_network_and_unapproved_manifests_are_rejected (test_runner.SecurityManifestTests.test_shell_network_and_unapproved_manifests_are_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK

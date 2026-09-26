@@ -1,0 +1,24 @@
+   Compiling pkg-cli v0.1.0-alpha.56 (/tmp/pkg-cleanup/final-mutations/workspace/crates/pkg-cli)
+    Finished `test` profile [unoptimized] target(s) in 6.31s
+     Running tests/cli.rs (/home/user/workspace/target/debug/deps/cli-bd02fbee5409d5b6)
+
+running 1 test
+test completion_is_real_static_source_and_doctor_reports_verified_host_state ... FAILED
+
+failures:
+
+---- completion_is_real_static_source_and_doctor_reports_verified_host_state stdout ----
+
+thread 'completion_is_real_static_source_and_doctor_reports_verified_host_state' (26105) panicked at crates/pkg-cli/tests/cli.rs:118:9:
+assertion `left == right` failed: runtime.managed must appear exactly once
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    completion_is_real_static_source_and_doctor_reports_verified_host_state
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 30.03s
+
+error: test failed, to rerun pass `-p pkg-cli --test cli`

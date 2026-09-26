@@ -83,6 +83,12 @@ Remaining code-quality work:
   period before promoting new assurance checks to production prerequisites.
 - **Rollback:** revert new test tooling. Do not weaken an existing passing gate.
 
+The [test cleanup evidence](../tests/test-audit/2026-09-27/cleanup.md) records
+the retained contracts and eleven caught defects. The
+[behavior test regression guard](../tools/verify/TEST-CONTRACTS.md) repeats those
+defects in Fast CI. This completes that bounded guard; native repeat proofs,
+fault coverage, and the observation period below remain open.
+
 The workflow exists, but the latest retained
 [repeat-proof run](https://github.com/spa5k/pkg/actions/runs/33898972544) failed.
 The latest inspected [nightly run](https://github.com/spa5k/pkg/actions/runs/36109155550)

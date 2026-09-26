@@ -1,0 +1,13 @@
+{
+  "candidate_hashes_match": true,
+  "fake_suite_deleted": true,
+  "all_mutation_owners_restored": [
+    ".github/workflows/release.yml",
+    "crates/pkg-cli/src/commands/doctor.rs",
+    "crates/pkg-cli/src/commands/execute.rs",
+    "crates/pkg-cli/src/path.rs",
+    "tests/linux-clean-host/run.sh",
+    "tools/install/render.py"
+  ],
+  "model": "zai/glm-5.3-flash"
+}

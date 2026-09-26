@@ -1,0 +1,10 @@
+test_deadline_is_bounded (test_build_capacity.BuildCapacityTests.test_deadline_is_bounded) ... ok
+test_delayed_wakeup_cannot_admit_after_deadline (test_build_capacity.BuildCapacityTests.test_delayed_wakeup_cannot_admit_after_deadline) ... ok
+test_nonfinite_or_negative_load_does_not_admit (test_build_capacity.BuildCapacityTests.test_nonfinite_or_negative_load_does_not_admit) ... ok
+test_short_final_interval_cannot_supply_a_third_ready_sample (test_build_capacity.BuildCapacityTests.test_short_final_interval_cannot_supply_a_third_ready_sample) ... ok
+test_transient_idle_sample_does_not_admit_busy_runner (test_build_capacity.BuildCapacityTests.test_transient_idle_sample_does_not_admit_busy_runner) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.000s
+
+OK

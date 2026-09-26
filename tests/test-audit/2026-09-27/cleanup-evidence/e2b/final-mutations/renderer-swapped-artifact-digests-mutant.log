@@ -1,0 +1,78 @@
+test_both_platforms_keep_real_failure_status_and_private_log (test_install_script.InstallScriptTests.test_both_platforms_keep_real_failure_status_and_private_log) ... 
+  test_both_platforms_keep_real_failure_status_and_private_log (test_install_script.InstallScriptTests.test_both_platforms_keep_real_failure_status_and_private_log) (system='Linux') ... FAIL
+  test_both_platforms_keep_real_failure_status_and_private_log (test_install_script.InstallScriptTests.test_both_platforms_keep_real_failure_status_and_private_log) (system='Darwin') ... FAIL
+test_both_platforms_keep_real_failure_status_and_private_log (test_install_script.InstallScriptTests.test_both_platforms_keep_real_failure_status_and_private_log) ... FAIL
+test_both_platforms_verify_without_elevation (test_install_script.InstallScriptTests.test_both_platforms_verify_without_elevation) ... 
+  test_both_platforms_verify_without_elevation (test_install_script.InstallScriptTests.test_both_platforms_verify_without_elevation) (system='Linux') ... FAIL
+  test_both_platforms_verify_without_elevation (test_install_script.InstallScriptTests.test_both_platforms_verify_without_elevation) (system='Darwin') ... FAIL
+test_setup_success_requires_healthy_installed_version (test_install_script.InstallScriptTests.test_setup_success_requires_healthy_installed_version) ... FAIL
+test_tampered_package_and_wrapper_never_execute (test_install_script.InstallScriptTests.test_tampered_package_and_wrapper_never_execute) ... ok
+test_unsupported_host_and_network_failure_never_execute (test_install_script.InstallScriptTests.test_unsupported_host_and_network_failure_never_execute) ... ok
+
+======================================================================
+FAIL: test_both_platforms_keep_real_failure_status_and_private_log (test_install_script.InstallScriptTests.test_both_platforms_keep_real_failure_status_and_private_log) (system='Linux')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/release/test_install_script.py", line 87, in test_both_platforms_keep_real_failure_status_and_private_log
+    self.assertEqual(result.returncode, 17, result.stderr)
+AssertionError: 1 != 17 : shasum: WARNING: 1 computed checksum did NOT match
+
+pkg: Checksum mismatch. Nothing was installed. Download the installer again.
+
+
+======================================================================
+FAIL: test_both_platforms_keep_real_failure_status_and_private_log (test_install_script.InstallScriptTests.test_both_platforms_keep_real_failure_status_and_private_log) (system='Darwin')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/release/test_install_script.py", line 87, in test_both_platforms_keep_real_failure_status_and_private_log
+    self.assertEqual(result.returncode, 17, result.stderr)
+AssertionError: 1 != 17 : shasum: WARNING: 1 computed checksum did NOT match
+
+pkg: Checksum mismatch. Nothing was installed. Download the installer again.
+
+
+======================================================================
+FAIL: test_both_platforms_keep_real_failure_status_and_private_log (test_install_script.InstallScriptTests.test_both_platforms_keep_real_failure_status_and_private_log)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/release/test_install_script.py", line 92, in test_both_platforms_keep_real_failure_status_and_private_log
+    self.assertEqual(len(logs), 2)
+AssertionError: 0 != 2
+
+======================================================================
+FAIL: test_both_platforms_verify_without_elevation (test_install_script.InstallScriptTests.test_both_platforms_verify_without_elevation) (system='Linux')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/release/test_install_script.py", line 78, in test_both_platforms_verify_without_elevation
+    self.assertEqual(result.returncode, 0, result.stderr)
+AssertionError: 1 != 0 : shasum: WARNING: 1 computed checksum did NOT match
+
+pkg: Checksum mismatch. Nothing was installed. Download the installer again.
+
+
+======================================================================
+FAIL: test_both_platforms_verify_without_elevation (test_install_script.InstallScriptTests.test_both_platforms_verify_without_elevation) (system='Darwin')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/release/test_install_script.py", line 78, in test_both_platforms_verify_without_elevation
+    self.assertEqual(result.returncode, 0, result.stderr)
+AssertionError: 1 != 0 : shasum: WARNING: 1 computed checksum did NOT match
+
+pkg: Checksum mismatch. Nothing was installed. Download the installer again.
+
+
+======================================================================
+FAIL: test_setup_success_requires_healthy_installed_version (test_install_script.InstallScriptTests.test_setup_success_requires_healthy_installed_version)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/pkg-cleanup/final-mutations/workspace/tools/release/test_install_script.py", line 111, in test_setup_success_requires_healthy_installed_version
+    self.assertEqual(result.returncode, 0, result.stderr)
+AssertionError: 1 != 0 : shasum: WARNING: 1 computed checksum did NOT match
+
+pkg: Checksum mismatch. Nothing was installed. Download the installer again.
+
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.392s
+
+FAILED (failures=6)

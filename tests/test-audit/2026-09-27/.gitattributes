@@ -1,0 +1,4 @@
+# Preserve verbatim command and model output, including diff context whitespace.
+*.log -whitespace
+*.patch -whitespace
+glm-*.md -whitespace
