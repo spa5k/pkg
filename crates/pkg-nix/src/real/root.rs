@@ -320,7 +320,7 @@ pub(super) fn collect_garbage(
         return Err(NixAdapterError::OperationFailed);
     }
     let collected = parse_gc_deletions(&outcome.stderr)?;
-    GcReport::new(GcStatus::Collected, collected, 0)
+    GcReport::without_byte_measurement(collected)
 }
 
 pub(super) fn bounded_timeout(

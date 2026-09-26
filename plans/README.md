@@ -2,7 +2,7 @@
 
 The only active implementation plan is
 [the current implementation plan](determinate-nix-stacked-prs.md).
-It lists quality, verification, production trust, and the deferred next release.
+It lists quality, verification, production trust, and the authorized alpha.55 release.
 
 The [onboarding audit](../tests/macos-clean-host/ONBOARDING-2026-09-26.md)
 records public setup results and measured quality debt. The later

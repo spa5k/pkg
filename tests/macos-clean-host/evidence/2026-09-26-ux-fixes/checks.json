@@ -1,0 +1,27 @@
+{
+  "toolchain": "1.96.1",
+  "tests": {
+    "passed": 1245,
+    "failed": 0,
+    "ignored": 5
+  },
+  "quality": {
+    "sites": 922,
+    "lints": 23
+  },
+  "logSha256": {
+    "workspace-tests.log": "d5694466e6377898c68a74d3a0f2b26170fcffb4d133939dd75e8fd423b48212",
+    "clippy.log": "24af102dabbd51fd2c82a425187557b70ab5a3d0456d5751a21bcf7f3d941eaa",
+    "doc.log": "9a35d317f02aac111537964662d7aa9dd3585de47f3108fced3ebc32f38eaef2",
+    "all-build.log": "b0989b020d3da54f6861c217fb918c76a8873bf6331e5f75705a0a2d1d32be40",
+    "deny.log": "32af4a5c11b6f23bf09153d0aec7204a3c084ffc78d5ee253bf1e4b0bc062df7",
+    "audit.log": "d2e6300602624cdf41059c9b62e034a06d5a3ba80b099a8bb22fd4e25249e337",
+    "quality.log": "9622393fac02c7f8427336d59aabd6c03d18ea577b22d886be8cb16da8b5d486",
+    "release-tools.log": "1e0267abb6bd90a268149765903687cacb77dd65651771833752cd84ef46655e"
+  },
+  "vmCandidateSha256": {
+    "pkg": "3a7ed39dc4b40ac2d0e9c2e4e9517cbed6fc9ec2fcf3133eee503997e7556fee",
+    "pkg-nix-broker": "c89d77f254c441ccd1588c448ea80262ff7829645b429087484f4d9b591a032e",
+    "pkg-root-helper": "e9c7973fe1f9506886d203b1917dae0b5cdea4ed2650d15e4cb3d2699d2753d9"
+  }
+}

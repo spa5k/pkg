@@ -120,12 +120,21 @@ case "$pkg_kernel" in
     Linux) pkg_user_bin="$HOME/.local/share/pkg/current/bin" ;;
 esac
 pkg_note 'Checking the installation...'
-if ! PATH="$pkg_user_bin:/usr/local/bin:$PATH" "$pkg_cli" --no-color doctor; then
+pkg_check_path=$PATH
+case ":$pkg_check_path:" in
+    *:/usr/local/bin:*) ;;
+    *) pkg_check_path="/usr/local/bin:$pkg_check_path" ;;
+esac
+case ":$pkg_check_path:" in
+    *:"$pkg_user_bin":*) ;;
+    *) pkg_check_path="$pkg_user_bin:$pkg_check_path" ;;
+esac
+if ! PATH="$pkg_check_path" "$pkg_cli" --no-color doctor; then
     pkg_fail "Setup finished, but a health check failed. Follow the steps above. Keep this log: $pkg_log"
 fi
 pkg_ok 'pkg is ready.'
 # Shell setup is printed for the invoking shell, not evaluated by the installer.
 # shellcheck disable=SC2016
-printf '%s\n' '' 'Open a new terminal, or run:' '  eval "$(/usr/local/bin/pkg shellenv)"' \
+printf '%s\n' '' 'Open a new terminal, or run:' '  [ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"' \
     '' 'Start here:' '  pkg search ripgrep' '  pkg install ripgrep' '  pkg list' \
     '' 'Run this same installer command when you want to update pkg.'

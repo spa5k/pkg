@@ -27,6 +27,7 @@ pub(super) fn write_details(
         write_plan(&mut writer, plan, style)?;
     }
     write_fields(&mut writer, fields, style)?;
+    write_gc_details(&mut writer, fields, style)?;
     if fields.contains_key("deferredChecks") {
         style.text(
             &mut writer,
@@ -49,14 +50,29 @@ pub(super) fn write_details(
             }
         }
     }
-    if command == "system uninstall"
-        && fields.get("status").and_then(Value::as_str) == Some("planned")
-    {
+    if command == "system uninstall" {
+        super::super::uninstall::write_details(&mut writer, fields, style)?;
+    }
+    Ok(())
+}
+
+fn write_gc_details(
+    mut writer: impl Write,
+    fields: &Map<String, Value>,
+    style: Style,
+) -> io::Result<()> {
+    if let Some(retention) = fields.get("retention") {
         style.text(
             &mut writer,
-            "Scope: ",
-            "pkg and its managed Nix installation will be removed.",
+            "Retention: ",
+            &format!(
+                "Keep the active generation, the newest {} retired generations, and all generations no older than {} days. Delete only generations outside both protections.",
+                retention["keepRetiredGenerations"], retention["maxAgeDays"]
+            ),
         )?;
+    }
+    if fields.contains_key("estimateScope") {
+        style.text(&mut writer, "Estimate scope: ", "Selected generation output closures only. Shared dependencies can overlap. Other dead store paths and build inputs are excluded. This is not measured disk space.")?;
     }
     Ok(())
 }
@@ -87,7 +103,10 @@ fn write_fields(
     }
     for (key, title) in [
         ("freedBytes", "Space freed"),
-        ("estimatedReclaimableBytes", "Estimated space to free"),
+        (
+            "estimatedReclaimableBytes",
+            "Selected output closure estimate",
+        ),
     ] {
         if let Some(value) = fields.get(key) {
             let text = value

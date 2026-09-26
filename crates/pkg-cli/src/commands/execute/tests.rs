@@ -591,3 +591,29 @@ fn terminal_search_preserves_broken_status_and_stale_catalog_notes() {
     assert!(text.contains("Catalog updated: 2026-09-01"));
     assert!(text.contains("Catalog data is stale."));
 }
+
+#[test]
+fn preview_notice_uses_only_human_stderr() {
+    for command in [vec!["install", "hello"], vec!["upgrade", "--all"]] {
+        for flag in [None, Some("--quiet"), Some("--json"), Some("--jsonl")] {
+            let mut args = vec!["pkg", "--dry-run", "--no-color"];
+            args.extend(flag);
+            args.extend(command.iter().copied());
+            let cli = Cli::try_parse(args).unwrap();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            assert_eq!(
+                execute_command(&cli, &mut EchoEngine, &mut stdout, &mut stderr).unwrap(),
+                ExitCode::Ok
+            );
+            let text = String::from_utf8(stderr).unwrap();
+            assert_eq!(text.contains("Preparing the preview"), flag.is_none());
+            assert!(!String::from_utf8_lossy(&stdout).contains("Preparing the preview"));
+            if matches!(flag, Some("--json" | "--jsonl")) {
+                for line in String::from_utf8_lossy(&stdout).lines() {
+                    serde_json::from_str::<Value>(line).unwrap();
+                }
+            }
+        }
+    }
+}

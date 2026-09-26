@@ -3303,3 +3303,13 @@ fn cancel_operation_rejects_running_after_failed_reconciliation() {
     caller.cancel(&handle).unwrap();
     assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
 }
+
+#[test]
+fn gc_result_preserves_unknown_measurement_and_effective_retention() {
+    let report = pkg_nix::GcReport::without_byte_measurement(vec![]).unwrap();
+    let result = gc_run_result(&[], &[], &report, GcPolicy::new(3, 30).unwrap()).unwrap();
+    assert!(result.fields()["freedBytes"].is_null());
+    assert_eq!(result.fields()["retention"]["keepRetiredGenerations"], 3);
+    assert_eq!(result.fields()["retention"]["maxAgeDays"], 30);
+    assert_eq!(result.fields()["retention"]["alwaysKeepActive"], true);
+}

@@ -338,9 +338,9 @@ pub enum Command {
         after_help = "Examples:\n  pkg doctor\n  pkg doctor --json\n  pkg doctor --support\n\nDoctor checks your system. --support prints a sanitized support preview. It does not send it."
     )]
     Doctor(DoctorArgs),
-    /// Print shell setup for Bash or zsh: eval "$(pkg shellenv)".
+    /// Print shell setup for Bash or zsh.
     #[command(
-        after_help = "Examples (Bash or Zsh):\n  eval \"$(pkg shellenv)\"\n\nThis prints shell code. Add the line above to your shell startup file for future sessions."
+        after_help = "Examples (Bash or Zsh):\n  [ ! -x /usr/local/bin/pkg ] || eval \"$(/usr/local/bin/pkg shellenv)\"\n\nThis prints shell code. Add the line above to your shell startup file for future sessions."
     )]
     Shellenv,
     /// Generate shell completions.
@@ -778,10 +778,10 @@ impl RollbackArgs {
 /// Garbage-collection command arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct GcArgs {
-    /// Number of recent generations to preserve.
+    /// Keep this many newest retired generations (default: 10), plus the active generation.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32))]
     keep_generations: Option<u32>,
-    /// Preserve generations no older than this many days.
+    /// Also keep generations no older than this many days (default: 30). Both protections apply.
     #[arg(long, value_name = "DAYS", value_parser = clap::value_parser!(u32))]
     max_age_days: Option<u32>,
 }

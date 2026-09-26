@@ -571,7 +571,7 @@ fn path_check(observation: &PathObservation) -> DoctorCheck {
             CheckStatus::Fail,
             "installed package commands are not on PATH",
             Some(
-                "run `eval \"$(pkg shellenv)\"` in Bash or zsh; add it to your shell settings for future sessions",
+                "add `[ ! -x /usr/local/bin/pkg ] || eval \"$(/usr/local/bin/pkg shellenv)\"` to your Bash or zsh settings, then open a new shell",
             ),
         ),
         (Some(_), _, _, false) => DoctorCheck::new(

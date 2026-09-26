@@ -1,0 +1,190 @@
+CASE 001
+$ sudo /tmp/pkg system uninstall --dry-run
+error[VERIFY_FAIL]: pkg could not verify this installation
+hint: run `pkg doctor` before you retry
+Shared connection to 192.168.64.32 closed.
+
+CASE 002
+$ sudo launchctl bootout system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo cp /tmp/pkg-nix-broker-alpha54-final /opt/pkg/bin/pkg-nix-broker; sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo /tmp/pkg system uninstall --dry-run
+cp: /tmp/pkg-nix-broker-alpha54-final: No such file or directory
+error[VERIFY_FAIL]: pkg could not verify this installation
+hint: run `pkg doctor` before you retry
+Shared connection to 192.168.64.32 closed.
+
+CASE 003
+$ sudo launchctl bootout system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo cp /tmp/pkg-nix-broker-alpha54 /opt/pkg/bin/pkg-nix-broker; sudo chmod 755 /opt/pkg/bin/pkg-nix-broker; sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo /tmp/pkg system uninstall --dry-run
+error[VERIFY_FAIL]: pkg could not verify this installation
+hint: run `pkg doctor` before you retry
+Shared connection to 192.168.64.32 closed.
+
+CASE 005
+$ sudo /usr/local/bin/pkg system uninstall --dry-run --json; shasum -a 256 /usr/local/bin/pkg /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper; /tmp/pkg doctor --json
+{"schemaVersion":1,"ok":false,"command":"system uninstall","error":{"symbol":"VERIFY_FAIL","code":70,"message":"pkg could not verify this installation","hint":"run `pkg doctor` before you retry"}}
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  /usr/local/bin/pkg
+shasum: /opt/pkg/bin/pkg-nix-broker: Permission denied
+shasum: /opt/pkg/bin/pkg-root-helper: Permission denied
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+Shared connection to 192.168.64.32 closed.
+
+CASE 006
+$ sudo chmod 750 /opt/pkg/bin/pkg-nix-broker; sudo /tmp/pkg system uninstall --dry-run
+Scope: pkg and its managed Nix installation will be removed.
+Stop services: pkg services
+Remove package roots: Registered pkg users
+Remove user state: Package selections, generations, logs, and caches for registered pkg users
+Remove file: /usr/local/bin/pkg
+Remove file: /private/etc/paths.d/pkg
+Remove file: /opt/pkg/bin/pkg-root-helper
+Remove file: /opt/pkg/bin/pkg-nix-broker
+Remove file: /Library/LaunchDaemons/org.pkg.root-helper.plist
+Remove file: /Library/LaunchDaemons/org.pkg.nix-broker.plist
+Remove directory: /Library/Application Support/pkg/run/helper
+Remove directory: /Library/Application Support/pkg/run/broker
+Remove directory: /Library/Application Support/pkg/log/helper
+Remove directory: /Library/Application Support/pkg/log/broker
+Remove directory: /Library/Application Support/pkg/broker-home/channel
+Remove directory: /private/var/db/pkg-source
+Remove directory: /Library/Application Support/pkg/run
+Remove directory: /Library/Application Support/pkg/log
+Remove directory: /Library/Application Support/pkg/helper-home
+Remove directory: /Library/Application Support/pkg/broker-home
+Remove directory: /opt/pkg/bin
+Remove directory: /Library/Application Support/pkg
+Remove account: pkg-nix-broker
+Remove group: pkg-nix-broker
+Remove file: /opt/pkg/uninstall/manifest.json
+Remove directory: /opt/pkg/uninstall
+Remove directory: /opt/pkg
+Verify cleanup: Product services, accounts, and privileged files
+Run vendor uninstall: Determinate removes Base Nix and its managed store; its result is final
+Retained: Personal shell startup files and unrelated user files
+Retained: The root-owned install coordination lock (contains no lifecycle state)
+Shell setup: Remove old unguarded pkg shellenv lines from your Bash or zsh startup file. Guarded setup lines can stay. Open a new shell after uninstall.
+Preview: No changes were applied.
+Shared connection to 192.168.64.32 closed.
+
+CASE 007
+$ sudo /tmp/pkg system uninstall --dry-run --json
+{"actions":28,"command":"system uninstall","ok":true,"plannedActions":[{"action":"Stop services","target":"pkg services"},{"action":"Remove package roots","target":"Registered pkg users"},{"action":"Remove user state","target":"Package selections, generations, logs, and caches for registered pkg users"},{"action":"Remove file","target":"/usr/local/bin/pkg"},{"action":"Remove file","target":"/private/etc/paths.d/pkg"},{"action":"Remove file","target":"/opt/pkg/bin/pkg-root-helper"},{"action":"Remove file","target":"/opt/pkg/bin/pkg-nix-broker"},{"action":"Remove file","target":"/Library/LaunchDaemons/org.pkg.root-helper.plist"},{"action":"Remove file","target":"/Library/LaunchDaemons/org.pkg.nix-broker.plist"},{"action":"Remove directory","target":"/Library/Application Support/pkg/run/helper"},{"action":"Remove directory","target":"/Library/Application Support/pkg/run/broker"},{"action":"Remove directory","target":"/Library/Application Support/pkg/log/helper"},{"action":"Remove directory","target":"/Library/Application Support/pkg/log/broker"},{"action":"Remove directory","target":"/Library/Application Support/pkg/broker-home/channel"},{"action":"Remove directory","target":"/private/var/db/pkg-source"},{"action":"Remove directory","target":"/Library/Application Support/pkg/run"},{"action":"Remove directory","target":"/Library/Application Support/pkg/log"},{"action":"Remove directory","target":"/Library/Application Support/pkg/helper-home"},{"action":"Remove directory","target":"/Library/Application Support/pkg/broker-home"},{"action":"Remove directory","target":"/opt/pkg/bin"},{"action":"Remove directory","target":"/Library/Application Support/pkg"},{"action":"Remove account","target":"pkg-nix-broker"},{"action":"Remove group","target":"pkg-nix-broker"},{"action":"Remove file","target":"/opt/pkg/uninstall/manifest.json"},{"action":"Remove directory","target":"/opt/pkg/uninstall"},{"action":"Remove directory","target":"/opt/pkg"},{"action":"Verify cleanup","target":"Product services, accounts, and privileged files"},{"action":"Run vendor uninstall","target":"Determinate removes Base Nix and its managed store; its result is final"}],"retainedItems":["Personal shell startup files and unrelated user files","The root-owned install coordination lock (contains no lifecycle state)"],"schemaVersion":1,"shellGuidance":"Remove old unguarded pkg shellenv lines from your Bash or zsh startup file. Guarded setup lines can stay. Open a new shell after uninstall.","status":"planned"}
+Shared connection to 192.168.64.32 closed.
+
+CASE 008
+$ sudo launchctl bootout system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo launchctl bootout system /Library/LaunchDaemons/org.pkg.root-helper.plist; sudo cp /tmp/pkg-nix-broker /opt/pkg/bin/pkg-nix-broker; sudo cp /tmp/pkg-root-helper /opt/pkg/bin/pkg-root-helper; sudo chmod 750 /opt/pkg/bin/pkg-nix-broker; sudo chmod 700 /opt/pkg/bin/pkg-root-helper; sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.root-helper.plist; sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper; /tmp/pkg gc --dry-run --keep-generations 3
+c89d77f254c441ccd1588c448ea80262ff7829645b429087484f4d9b591a032e  /opt/pkg/bin/pkg-nix-broker
+e9c7973fe1f9506886d203b1917dae0b5cdea4ed2650d15e4cb3d2699d2753d9  /opt/pkg/bin/pkg-root-helper
+Selected output closure estimate: 0 B
+Retention: Keep the active generation, the newest 3 retired generations, and all generations no older than 30 days. Delete only generations outside both protections.
+Estimate scope: Selected generation output closures only. Shared dependencies can overlap. Other dead store paths and build inputs are excluded. This is not measured disk space.
+Preview: No changes were applied.
+Shared connection to 192.168.64.32 closed.
+
+CASE 009
+$ /tmp/pkg gc --dry-run --keep-generations 3 --max-age-days 0 --json
+{"command":"gc","dryRun":true,"estimateScope":"selected-generation-output-closures","estimatedReclaimableBytes":99589488,"generations":["gen-0001","gen-0002","gen-0003","gen-0004","gen-0005","gen-0006","gen-0007","gen-0008","gen-0009","gen-0010","gen-0011","gen-0013","gen-0014","gen-0015","gen-0016","gen-0017","gen-0018","gen-0019","gen-0020","gen-0021","gen-0022","gen-0023","gen-0024","gen-0025","gen-0026","gen-0027"],"ok":true,"retention":{"alwaysKeepActive":true,"keepRetiredGenerations":3,"maxAgeDays":0,"pruneRule":"outside-count-and-older-than-age"},"schemaVersion":1}
+Shared connection to 192.168.64.32 closed.
+
+CASE 011
+$ /tmp/pkg install fzf --dry-run
+Preparing the preview. Checking package sources and build requirements...
+error[STATE_LOCKED]: the package state could not be read consistently
+hint: wait for the active operation, then run `pkg doctor` if this persists
+Shared connection to 192.168.64.32 closed.
+
+CASE 010
+$ /tmp/pkg gc --keep-generations 3 --max-age-days 0 --yes --json
+{"collectedPathCount":2314,"command":"gc","freedBytes":null,"ok":true,"prunedGenerations":["gen-0001","gen-0002","gen-0003","gen-0004","gen-0005","gen-0006","gen-0007","gen-0008","gen-0009","gen-0010","gen-0011","gen-0013","gen-0014","gen-0015","gen-0016","gen-0017","gen-0018","gen-0019","gen-0020","gen-0021","gen-0022","gen-0023","gen-0024","gen-0025","gen-0026","gen-0027"],"recoveredGenerations":[],"retention":{"alwaysKeepActive":true,"keepRetiredGenerations":3,"maxAgeDays":0,"pruneRule":"outside-count-and-older-than-age"},"schemaVersion":1}
+Shared connection to 192.168.64.32 closed.
+
+CASE 012
+$ /tmp/pkg install fzf --dry-run
+Preparing the preview. Checking package sources and build requirements...
+error[STAGE_COLLISION]: the installed outputs conflict under the requested collision policy
+hint: remove a conflicting package or select an explicit --on-collision policy
+Shared connection to 192.168.64.32 closed.
+
+CASE 013
+$ /tmp/pkg install fzf --dry-run --on-collision keep-first
+Preparing the preview. Checking package sources and build requirements...
+Package  Version  Source
+fzf      0.46.0   Available output
+Estimated new disk use: unknown
+Free disk needed to start: 5.1 GiB
+Build estimates are approximate. A build can need more space.
+
+Preview generation: gen-0031
+Pending checks: New output collisions and final state validation require acquisition. The preview does not confirm activation.
+Preview: No changes were applied.
+Shared connection to 192.168.64.32 closed.
+
+CASE 014
+$ /tmp/pkg install fzf --dry-run --on-collision keep-first --json
+{"basedOnGeneration":"gen-0031","checked":["installed-selectors","installed-output-collisions"],"command":"install","deferredChecks":["new-output-collisions","final-state-revalidation"],"dryRun":true,"ok":true,"preflight":{"approvalRequired":false,"build":{"count":0,"hasFixedOutput":false,"names":[]},"buildPlanDigest":"sha256:adf626ebbfaac3c8efcd6565f1a8dae3ae202de47c58572be3a40b6c6c3ad9ad","cache":{"knownContentBytes":97348984,"knownDownloadBytes":15651900},"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null,"minimumFreeDiskBytes":5504310181},"platform":{"arch":"arm64","os":"macos"},"policyVersion":1,"purpose":"build","readiness":{"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","notice":"macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.","perBuildResourceCap":false},"sandboxed":true},"targets":[{"localBuildRequired":false,"outputsToInstall":["man","out"],"packageName":"fzf","selector":"fzf","version":"0.46.0"}],"unknownLocalOutputs":0},"schemaVersion":1}
+Shared connection to 192.168.64.32 closed.
+
+CASE 015
+$ /tmp/pkg install fzf --dry-run --on-collision keep-first --jsonl
+{"basedOnGeneration":"gen-0031","checked":["installed-selectors","installed-output-collisions"],"command":"install","deferredChecks":["new-output-collisions","final-state-revalidation"],"dryRun":true,"ok":true,"preflight":{"approvalRequired":false,"build":{"count":0,"hasFixedOutput":false,"names":[]},"buildPlanDigest":"sha256:cc9ae602b71d1fabf259db6f258a30f8b0f97962b23f5ffe9dfe911e4904fa72","cache":{"knownContentBytes":97348984,"knownDownloadBytes":15651900},"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null,"minimumFreeDiskBytes":5504310181},"platform":{"arch":"arm64","os":"macos"},"policyVersion":1,"purpose":"build","readiness":{"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","notice":"macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.","perBuildResourceCap":false},"sandboxed":true},"targets":[{"localBuildRequired":false,"outputsToInstall":["man","out"],"packageName":"fzf","selector":"fzf","version":"0.46.0"}],"unknownLocalOutputs":0},"schemaVersion":1,"type":"result"}
+Shared connection to 192.168.64.32 closed.
+
+CASE 016
+$ /tmp/pkg install fzf --dry-run --on-collision keep-first --quiet
+Package  Version  Source
+fzf      0.46.0   Available output
+Estimated new disk use: unknown
+Free disk needed to start: 5.1 GiB
+Build estimates are approximate. A build can need more space.
+
+Preview generation: gen-0031
+Pending checks: New output collisions and final state validation require acquisition. The preview does not confirm activation.
+Preview: No changes were applied.
+Shared connection to 192.168.64.32 closed.
+
+CASE 019
+$ /bin/sh /tmp/shell-ux-proof.sh
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+managed PATH entries: 1
+PASS: Bash and zsh startup before and after binary removal
+Shared connection to 192.168.64.32 closed.
+
+CASE 017
+$ /tmp/pkg upgrade --all --dry-run
+Preparing the preview. Checking package sources and build requirements...
+Package  Version  Source
+ripgrep  13.0.0   Available output
+hello    2.12.1   Available output
+just     1.25.2   Available output
+just     1.58.0   Local build
+Estimated new disk use: unknown
+Free disk needed to start: 8.9 GiB
+Build estimates are approximate. A build can need more space.
+
+Preview: No changes were applied.
+Shared connection to 192.168.64.32 closed.
+
+CASE 018
+$ /tmp/pkg gc --keep-generations 3 --max-age-days 0 --yes; /tmp/pkg history; /tmp/pkg repair --verify-only; /tmp/pkg doctor
+Collected store paths: 1940
+Space freed: unknown
+Retention: Keep the active generation, the newest 3 retired generations, and all generations no older than 0 days. Delete only generations outside both protections.
+Pruned 0 generations; collected 1940 store paths.
+Generation         Created               Operation  Changes
+gen-0031 (active)  2026-09-26T10:19:09Z  rollback   ripgrep: Added 13.0.0
+gen-0030           2026-09-26T10:18:25Z  remove     ripgrep: Removed 13.0.0
+gen-0029           2026-09-26T10:17:03Z  rollback   ripgrep: Added 13.0.0
+gen-0028           2026-09-26T10:15:43Z  remove     Previous generation not retained. Saved: just 1.25.2, just 1.58.0, hello 2.12.1
+
+4 generations retained.
+Damaged paths: 0
+Generation: gen-0031
+The generation links and store closure are verified.
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[ok] state.activation: the active package links match the committed generation; store contents are not checked
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+Shared connection to 192.168.64.32 closed.

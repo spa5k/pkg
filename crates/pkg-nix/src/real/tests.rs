@@ -478,6 +478,7 @@ fn root_gc_uses_only_the_fixed_local_store() -> Result<(), Box<dyn std::error::E
     let report = RootNixGcExecutor::scripted(scripted).collect()?;
 
     assert_eq!(report.status(), GcStatus::Collected);
+    assert_eq!(report.freed_bytes(), None);
     assert_eq!(
         report
             .collected()
@@ -1785,6 +1786,7 @@ fn gc_preflights_dead_paths_then_reports_only_actual_deletions()
     let report = adapter.gc()?;
 
     assert_eq!(report.collected(), &[StorePath::new(second)?]);
+    assert_eq!(report.freed_bytes(), None);
     let calls = calls.lock().map_err(|_| "poisoned call log")?;
     assert_eq!(calls[0], os_args(["--gc", "--print-dead"]));
     assert_eq!(calls[1], os_args(["--gc"]));

@@ -89,6 +89,10 @@ flake sources as unchecked. Use `pkg upgrade` to check and install their updates
 `pkg uninstall fzf` is the same command as `pkg remove fzf`.
 `sudo pkg system uninstall` removes **pkg and its managed Nix installation**.
 Use `sudo pkg system uninstall --dry-run` to inspect that operation first.
+The preview lists verified removal actions, product paths, affected accounts,
+and registered user state. Personal shell startup files stay in place.
+Remove old unguarded `pkg shellenv` lines from those files. Guarded setup lines
+can stay. Open a new shell after uninstall.
 
 Remove, uninstall, pin, unpin, and upgrade accept a unique installed package name.
 For example, `pkg remove just` finds `github:casey/just#default` when its installed
@@ -109,6 +113,16 @@ for approval before it restores the previous environment. Use `pkg rollback <ID>
 for another saved environment. Use `--dry-run` for a preview or `--yes` in scripts.
 Removed files can remain in the store while a saved generation needs them.
 Use `pkg gc --dry-run` to preview cleanup. Use `pkg gc` to perform it.
+By default, GC keeps the active generation, the newest 10 retired generations,
+and all generations no older than 30 days. The count and age rules both protect
+history. `--keep-generations 3 --max-age-days 0` keeps the active generation and
+at least three retired generations. A generation created in the current second
+also remains protected. The preview shows the effective settings.
+
+The GC estimate covers selected generation output closures. Shared dependencies
+can overlap. Other dead paths and build inputs are excluded. Actual freed bytes
+are `null` in JSON, or `unknown` in plain output, when the backend does not
+measure them.
 
 ## Package coverage
 
@@ -127,11 +141,11 @@ stays in the package store and does not cause conflicts in the active environmen
 
 ## Shell setup
 
-Alpha.48 provides `pkg shellenv` for Bash and zsh.
+`pkg shellenv` provides shell setup for Bash and zsh. The guard below also works after uninstall. Remove an old unguarded `eval` line from your shell startup file when you replace it.
 It prints shell settings and does not edit your files:
 
 ```sh
-eval "$(pkg shellenv)"
+[ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"
 ```
 
 Add this line to `~/.zshrc` or your Bash startup file for future sessions.
