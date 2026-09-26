@@ -1,0 +1,146 @@
+[
+  {
+    "case": "001",
+    "command": "sudo /tmp/pkg system uninstall --dry-run",
+    "started": "2026-09-26T10:44:17.249918+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 0.38,
+    "exit_code": 70
+  },
+  {
+    "case": "002",
+    "command": "sudo launchctl bootout system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo cp /tmp/pkg-nix-broker-alpha54-final /opt/pkg/bin/pkg-nix-broker; sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo /tmp/pkg system uninstall --dry-run",
+    "started": "2026-09-26T10:44:42.170207+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 0.18,
+    "exit_code": 70
+  },
+  {
+    "case": "003",
+    "command": "sudo launchctl bootout system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo cp /tmp/pkg-nix-broker-alpha54 /opt/pkg/bin/pkg-nix-broker; sudo chmod 755 /opt/pkg/bin/pkg-nix-broker; sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo /tmp/pkg system uninstall --dry-run",
+    "started": "2026-09-26T10:46:59.737420+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 21.51,
+    "exit_code": 70
+  },
+  {
+    "case": "005",
+    "command": "sudo /usr/local/bin/pkg system uninstall --dry-run --json; shasum -a 256 /usr/local/bin/pkg /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper; /tmp/pkg doctor --json",
+    "started": "2026-09-26T10:47:33.522775+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 8.31,
+    "exit_code": 0
+  },
+  {
+    "case": "006",
+    "command": "sudo chmod 750 /opt/pkg/bin/pkg-nix-broker; sudo /tmp/pkg system uninstall --dry-run",
+    "started": "2026-09-26T10:48:44.042656+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 18.04,
+    "exit_code": 0
+  },
+  {
+    "case": "007",
+    "command": "sudo /tmp/pkg system uninstall --dry-run --json",
+    "started": "2026-09-26T10:49:02.152567+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 15.2,
+    "exit_code": 0
+  },
+  {
+    "case": "008",
+    "command": "sudo launchctl bootout system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo launchctl bootout system /Library/LaunchDaemons/org.pkg.root-helper.plist; sudo cp /tmp/pkg-nix-broker /opt/pkg/bin/pkg-nix-broker; sudo cp /tmp/pkg-root-helper /opt/pkg/bin/pkg-root-helper; sudo chmod 750 /opt/pkg/bin/pkg-nix-broker; sudo chmod 700 /opt/pkg/bin/pkg-root-helper; sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.root-helper.plist; sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist; sudo shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper; /tmp/pkg gc --dry-run --keep-generations 3",
+    "started": "2026-09-26T10:49:42.855277+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 2.56,
+    "exit_code": 0
+  },
+  {
+    "case": "009",
+    "command": "/tmp/pkg gc --dry-run --keep-generations 3 --max-age-days 0 --json",
+    "started": "2026-09-26T10:49:45.466723+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 1.02,
+    "exit_code": 0
+  },
+  {
+    "case": "011",
+    "command": "/tmp/pkg install fzf --dry-run",
+    "started": "2026-09-26T10:50:00.424873+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 0.47,
+    "exit_code": 72
+  },
+  {
+    "case": "010",
+    "command": "/tmp/pkg gc --keep-generations 3 --max-age-days 0 --yes --json",
+    "started": "2026-09-26T10:49:46.528989+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 44.82,
+    "exit_code": 0
+  },
+  {
+    "case": "012",
+    "command": "/tmp/pkg install fzf --dry-run",
+    "started": "2026-09-26T10:51:17.100534+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 0.43,
+    "exit_code": 71
+  },
+  {
+    "case": "013",
+    "command": "/tmp/pkg install fzf --dry-run --on-collision keep-first",
+    "started": "2026-09-26T10:51:43.945548+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 27.22,
+    "exit_code": 0
+  },
+  {
+    "case": "014",
+    "command": "/tmp/pkg install fzf --dry-run --on-collision keep-first --json",
+    "started": "2026-09-26T10:52:11.221468+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 4.45,
+    "exit_code": 0
+  },
+  {
+    "case": "015",
+    "command": "/tmp/pkg install fzf --dry-run --on-collision keep-first --jsonl",
+    "started": "2026-09-26T10:52:15.697572+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 4.08,
+    "exit_code": 0
+  },
+  {
+    "case": "016",
+    "command": "/tmp/pkg install fzf --dry-run --on-collision keep-first --quiet",
+    "started": "2026-09-26T10:52:19.806189+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 4.88,
+    "exit_code": 0
+  },
+  {
+    "case": "019",
+    "command": "/bin/sh /tmp/shell-ux-proof.sh",
+    "started": "2026-09-26T10:52:58.296075+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 4.61,
+    "exit_code": 0
+  },
+  {
+    "case": "017",
+    "command": "/tmp/pkg upgrade --all --dry-run",
+    "started": "2026-09-26T10:52:24.708790+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 73.23,
+    "exit_code": 0
+  },
+  {
+    "case": "018",
+    "command": "/tmp/pkg gc --keep-generations 3 --max-age-days 0 --yes; /tmp/pkg history; /tmp/pkg repair --verify-only; /tmp/pkg doctor",
+    "started": "2026-09-26T10:53:37.972108+00:00",
+    "vm": "pkg-bug02-final-20260926",
+    "seconds": 15.28,
+    "exit_code": 0
+  }
+]

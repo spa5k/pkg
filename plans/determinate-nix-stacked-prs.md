@@ -1,7 +1,8 @@
 # Active implementation plan
 
-Status: alpha product. Reviewed on 26 September 2026. The local bug fixes are
-based on `4ab2121` and are not merged or released.
+Status: alpha product. Reviewed on 26 September 2026. The nine bug fixes are
+committed in `538cdbe`; the six UX fixes are committed in `03c4e3a`.
+Alpha.55 publication is authorized and in progress.
 The filename is retained for existing links. The original four-PR migration
 stack is complete. New work branches from current `main`.
 
@@ -13,8 +14,8 @@ stack is complete. New work branches from current `main`.
   current public release. Alpha.53 remains an unpublished candidate.
 - PUBLIC-23 merged in [PR #61](https://github.com/spa5k/pkg/pull/61). Its bounded
   startup check is on `main`, but it is not in alpha.54.
-- The next alpha release is deferred at the owner's request. This audit does
-  not publish a release or change the live channel.
+- The owner resumed alpha release work on 26 September. Alpha.55 will include
+  PUBLIC-23, the nine bug fixes, and the six UX fixes after the release gates.
 - Production trust is not active. The alpha uses a test root and ad-hoc macOS
   signing. Tooling readiness does not mean production readiness.
 
@@ -40,7 +41,7 @@ removed; their replacements are in the completed-work record and Git history.
 The [26 September VM audit](../tests/macos-clean-host/ONBOARDING-2026-09-26.md)
 records measured onboarding and code-quality findings.
 The [daily-use and logic audit](../tests/macos-clean-host/BUG-HUNT-2026-09-26.md)
-adds 68 VM cases and nine confirmed defects. All nine now have local fixes
+adds 68 VM cases and nine confirmed defects. All nine now have committed fixes
 and native macOS regression evidence. The original failures remain historical
 evidence; they are no longer open implementation tasks.
 [Issue #4](https://github.com/spa5k/pkg/issues/4) owns the quality backlog.
@@ -50,13 +51,13 @@ prove every interruption or security boundary.
 
 The [fix status and evidence](../tests/macos-clean-host/BUG-FIXES-2026-09-26.md)
 link the nine separate implementation checkpoints and the final combined checks.
-Independent review and native Linux validation remain required before merge.
-The next release remains deferred. VERIFY-01 owns the remaining cross-platform
+Independent E and A source reviews found no concrete defects. Native Linux
+validation remains a merge gate. VERIFY-01 owns the remaining cross-platform
 and wider interruption matrix; do not recreate the regressions already added.
 
-Six onboarding UX findings remain in issue #4: unknown GC freed-byte reporting,
-system-removal plan details, repeat-install PATH handling, preview progress,
-shell cleanup after uninstall, and GC retention explanation.
+The six onboarding UX findings are implemented in `03c4e3a`.
+[UX verification](../tests/macos-clean-host/UX-FIXES-2026-09-26.md) records their
+tests and VM checks. They are not additional open implementation tasks.
 
 Remaining code-quality work:
 
@@ -112,12 +113,17 @@ The [production tasks](../openspec/changes/execute-production-trust-ceremony/tas
 contain only the remaining activation work. Signing helpers and the initial
 runbook already exist.
 
-### RELEASE-NEXT: deferred alpha publication
+### RELEASE-NEXT: alpha.55 publication
 
-Package PUBLIC-23 in a later alpha when the owner resumes release work.
-Use final signed bytes for the public installer and exact-release tests.
-Record installation, upgrade, reboot, removal, and fresh public checks before
-updating installation links. No release number or date is assigned here.
+- **Purpose:** publish PUBLIC-23 and the confirmed bug and UX fixes.
+- **Owns:** version metadata, signed alpha assets, channel sequence 55, public
+  installation instructions, and exact-release lifecycle evidence.
+- **Depends:** reviewed source changes and passing CI for the final source.
+- **Tests & gates:** signed native builds; authenticated channel and artifact
+  verification; native macOS alpha.54-to-alpha.55 upgrade on the same VM;
+  reboot; package workflows; removal; fresh public Linux and macOS checks.
+- **Rollback:** publish a higher channel sequence with prior approved content.
+  Never replay older metadata. Keep the alpha test root separate from production.
 
 ## Supported scope and deferred features
 

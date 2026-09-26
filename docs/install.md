@@ -57,13 +57,13 @@ open until setup finishes. The log path appears before setup starts.
 Add installed commands to your current shell:
 
 ```sh
-eval "$(pkg shellenv)"
+[ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"
 pkg doctor
 pkg install fzf
 fzf --version
 ```
 
-Add the same `eval "$(pkg shellenv)"` line to `~/.zshrc` for future zsh sessions.
+Add the same `[ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"` line to `~/.zshrc` for future zsh sessions.
 Use `~/.bashrc` if your interactive shell is Bash. `cxx-prettyprint` is a
 header library; it does not add a command to PATH.
 

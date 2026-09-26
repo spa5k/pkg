@@ -20,8 +20,8 @@ on independent native hosts before a production announcement.
 ## Non-goals
 
 No alpha-root promotion, product rename, arbitrary channel override, or new
-package feature. This proposal does not authorize a release during the current
-audit. The next alpha release is deferred separately.
+package feature. This proposal does not authorize production publication. The owner authorized
+alpha.55 separately; that release continues to use the alpha test root.
 
 ## Impact
 
