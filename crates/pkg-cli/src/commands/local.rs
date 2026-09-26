@@ -46,13 +46,14 @@ use pkg_nix::{
     RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
-    CommitError, InstallGenerationError, InstallGenerationMetadata, InstallStateError,
-    StateEditKind, StateEditMetadata, assemble_upgrade_evidence_state, discard_unprepared_installs,
-    discard_unprepared_state_edits, load_active_snapshot, load_retained_history,
-    pending_install_discard_generation, pending_install_generation, pending_state_edit_generation,
-    pending_state_transition_source, prepare_install_generation, prepare_rollback,
-    prepare_state_edit, recover_generation, recover_transitioned_state_edit,
-    resume_prepared_install, resume_prepared_state_edit,
+    ActivatedGeneration, CommitError, InstallGenerationError, InstallGenerationMetadata,
+    InstallStateError, StateEditKind, StateEditMetadata, assemble_upgrade_evidence_state,
+    discard_unprepared_installs, discard_unprepared_state_edits, ensure_recovered_state,
+    load_active_snapshot, load_retained_history, pending_discard_generation,
+    pending_install_generation, pending_state_edit_generation, pending_state_transition_source,
+    prepare_install_generation, prepare_rollback, prepare_state_edit, recover_generation,
+    recover_transitioned_state_edit, repair_generation_activation, resume_prepared_install,
+    resume_prepared_state_edit, superseded_pending_generation, verify_generation_activation,
 };
 use pkg_store::{
     GcError, GcPolicy, LeaseError, LeaseIdentity, PruneOutcome, StateLayout, StateLease, plan_gc,
@@ -253,14 +254,14 @@ impl CoreOperations for LocalStateOperations {
         args: &RemoveArgs,
         policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
+        super::state::require_supported_remove_options(args)?;
         if policy.dry_run() {
             return Ok(remove_state(self.active()?.state().clone(), args)?
                 .into_parts()
                 .1);
         }
-        // Validate before opening a broker operation. Re-plan under the exclusive
-        // lease so approval is bound to the exact state that will be committed.
-        remove_state(self.active()?.state().clone(), args)?;
+        // Recover before selecting targets; approval uses the recovered state
+        // under the exclusive lease.
         self.commit_state_edit(StateEditKind::Remove, |state| {
             let edit = remove_state(state, args)?;
             confirm_edit(
@@ -333,6 +334,9 @@ impl CoreOperations for LocalStateOperations {
             ChannelRefreshMode::Apply
         };
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        if mode != ChannelRefreshMode::Check {
+            self.recover_pending_mutations(self.layout(), &mut broker)?;
+        }
         let report = refresh_channel_metadata(&mut broker, mode)?;
         if mode == ChannelRefreshMode::Check {
             return channel_refresh_result(report, mode, false);
@@ -447,6 +451,9 @@ impl CoreOperations for LocalStateOperations {
             ));
         }
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        if !args.verify_only() && !policy.dry_run() {
+            self.recover_pending_mutations(self.layout(), &mut broker)?;
+        }
         self.repair_with_broker(&mut broker, args, policy)
     }
 }
@@ -586,6 +593,10 @@ impl LocalStateOperations {
         self.require_broker_state()?;
         require_supported_upgrade_options(args)?;
         let layout = self.layout().clone();
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        if !policy.dry_run() {
+            self.recover_pending_mutations(&layout, &mut broker)?;
+        }
         let source = self.active()?;
         let labels = super::state::package_labels(source.state());
         let mut selection = select_upgrade(
@@ -610,7 +621,6 @@ impl LocalStateOperations {
                 .with_package_labels(labels)
                 .map_err(|_| mutation_failed());
         }
-        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
         let has_local_build = selected_ids.iter().any(|id| {
             source
                 .state()
@@ -662,10 +672,9 @@ impl LocalStateOperations {
                 .with_package_labels(labels)
                 .map_err(|_| mutation_failed());
         }
-        self.recover_pending_install(&layout, &mut broker)?;
         let (handle, public_operation_id, evidence, build_approval) =
             acquire_install_evidence(&mut broker, selectors, policy, !args.no_build(), progress)?;
-        let mut local_committed = false;
+        let mut local_applied = false;
         let result = (|| {
             let plan = selection
                 .bind_channel(evidence.channel_sequence(), evidence.revision().clone())
@@ -739,17 +748,16 @@ impl LocalStateOperations {
                         .map_err(install_broker_error)
                 })
                 .transpose()?;
-            prepared
-                .activate_published(report.as_ref(), &nonce)
-                .map_err(|_| install_commit_failed())?
-                .finish()
-                .map_err(|_| install_commit_failed())?;
-            local_committed = true;
+            finish_activation(
+                prepared.activate_published(report.as_ref(), &nonce),
+                &generation_id,
+                &mut local_applied,
+            )?;
             let _ = broker.complete(handle.clone());
             Ok(command_result)
         })();
-        if result.is_err() && !local_committed {
-            let _ = broker.cancel(handle);
+        if result.is_err() {
+            release_failed_operation(&mut broker, handle, local_applied);
         }
         result
     }
@@ -768,13 +776,14 @@ impl LocalStateOperations {
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
 
         if policy.dry_run() {
-            return preview_install(&mut broker, selectors);
+            let generation = validate_install_preview(&layout, args, &selectors)?;
+            return preview_install(&mut broker, selectors, generation.as_deref());
         }
-        self.recover_pending_install(&layout, &mut broker)?;
+        self.recover_pending_mutations(&layout, &mut broker)?;
 
         let (handle, public_operation_id, evidence, build_approval) =
             acquire_install_evidence(&mut broker, selectors, policy, true, progress)?;
-        let mut local_committed = false;
+        let mut local_applied = false;
         let result = (|| {
             emit_phase(progress, &public_operation_id, "stage", "started")?;
             let created_at = utc_now()?;
@@ -827,12 +836,11 @@ impl LocalStateOperations {
                         .map_err(install_broker_error)
                 })
                 .transpose()?;
-            prepared
-                .activate_published(report.as_ref(), &nonce)
-                .map_err(|_| install_commit_failed())?
-                .finish()
-                .map_err(|_| install_commit_failed())?;
-            local_committed = true;
+            finish_activation(
+                prepared.activate_published(report.as_ref(), &nonce),
+                &generation_id,
+                &mut local_applied,
+            )?;
             let _ = broker.complete(handle.clone());
             let _ = emit_phase(progress, &public_operation_id, "activate", "completed");
             if let Ok(event) = PublicEvent::committed(&public_operation_id, &generation_id) {
@@ -845,10 +853,36 @@ impl LocalStateOperations {
                 &evidence,
             )
         })();
-        if result.is_err() && !local_committed {
-            let _ = broker.cancel(handle);
+        if result.is_err() {
+            release_failed_operation(&mut broker, handle, local_applied);
         }
         result
+    }
+
+    /// Reconcile all transaction families before selecting a new mutation's state.
+    fn recover_pending_mutations(
+        &self,
+        layout: &StateLayout,
+        broker: &mut BrokerLifecycleClient,
+    ) -> Result<Vec<String>, CommandError> {
+        let recovered = self.recover_pending_prunes(layout, broker)?;
+        let superseded = {
+            let (lease, _) = self.gc_lease(layout)?;
+            discard_unprepared_installs(layout, &lease).map_err(state_read_error)?;
+            discard_unprepared_state_edits(layout, &lease).map_err(state_read_error)?;
+            superseded_pending_generation(layout, &lease).map_err(state_read_error)?
+        };
+        if let Some(generation) = superseded {
+            self.discard_pending_generation_with(
+                layout,
+                broker,
+                &mut BrokerLifecycleClient::connect_default,
+                &generation,
+            )?;
+        }
+        self.recover_pending_install(layout, broker)?;
+        self.recover_pending_state_edit(layout, broker)?;
+        Ok(recovered)
     }
 
     fn recover_pending_install(
@@ -868,11 +902,11 @@ impl LocalStateOperations {
     ) -> Result<(), CommandError> {
         let probe = StateLease::try_shared(layout).map_err(state_lease_error)?;
         let pending_discard =
-            pending_install_discard_generation(layout, &probe).map_err(state_read_error)?;
+            pending_discard_generation(layout, &probe).map_err(state_read_error)?;
         drop(probe);
         if let Some(generation) = pending_discard {
             self.recover_pending_prunes(layout, broker)?;
-            self.discard_unrooted_install_with(layout, broker, reconnect, &generation)?;
+            self.discard_pending_generation_with(layout, broker, reconnect, &generation)?;
             return Ok(());
         }
         let nonce = secure_nonce()?;
@@ -889,34 +923,35 @@ impl LocalStateOperations {
         let handle = broker
             .begin(BrokerOperationKind::Activate)
             .map_err(broker_error)?;
-        // `local_committed` marks the linearization point after which the
+        // `local_applied` marks the linearization point after which the
         // Activate operation must be completed, never cancelled.
         // `activate_cancelled` marks the AttestationFailed branch, which has
         // already cancelled the Activate handle before the nested GC discard.
-        let mut local_committed = false;
+        let mut local_applied = false;
         let mut activate_cancelled = false;
         let result = (|| {
             if current.as_ref() == Some(&pending) {
+                local_applied = true;
                 let report = broker
                     .attest_generation_roots(handle.clone(), pending.clone())
-                    .map_err(install_broker_error)?;
+                    .map_err(|_| CommandError::activated_needs_recovery(pending.as_str(), true))?;
                 let maintenance = AttestedRootMaintenance { report };
                 recover_generation(layout, &lease, &pending, &maintenance)
-                    .map_err(|_| install_commit_failed())?;
-                local_committed = true;
-                return complete_operation(broker, reconnect, handle.clone());
+                    .map_err(|_| CommandError::activated_needs_recovery(pending.as_str(), true))?;
+                return complete_operation(broker, reconnect, handle.clone())
+                    .map_err(|_| CommandError::activated_needs_recovery(pending.as_str(), true));
             }
             let prepared = resume_prepared_install(layout.clone(), lease, &pending)
                 .map_err(|_| install_commit_failed())?;
             match broker.attest_generation_roots(handle.clone(), pending.clone()) {
                 Ok(report) => {
-                    prepared
-                        .activate_published(Some(&report), &nonce)
-                        .map_err(|_| install_commit_failed())?
-                        .finish()
-                        .map_err(|_| install_commit_failed())?;
-                    local_committed = true;
+                    finish_activation(
+                        prepared.activate_published(Some(&report), &nonce),
+                        pending.as_str(),
+                        &mut local_applied,
+                    )?;
                     complete_operation(broker, reconnect, handle.clone())
+                        .map_err(|_| CommandError::activated_needs_recovery(pending.as_str(), true))
                 }
                 Err(error)
                     if error.generation_root_attestation_code()
@@ -927,18 +962,22 @@ impl LocalStateOperations {
                         return Err(install_broker_error(error));
                     }
                     activate_cancelled = true;
-                    self.discard_unrooted_install_with(layout, broker, reconnect, &pending)
+                    self.discard_pending_generation_with(layout, broker, reconnect, &pending)
                 }
                 Err(error) => Err(install_broker_error(error)),
             }
         })();
-        if result.is_err() && !local_committed && !activate_cancelled {
-            cancel_operation(broker, reconnect, handle);
+        if result.is_err() && !activate_cancelled {
+            if local_applied {
+                let _ = broker.complete(handle);
+            } else {
+                cancel_operation(broker, reconnect, handle);
+            }
         }
         result
     }
 
-    fn discard_unrooted_install_with(
+    fn discard_pending_generation_with(
         &self,
         layout: &StateLayout,
         broker: &mut BrokerLifecycleClient,
@@ -948,7 +987,7 @@ impl LocalStateOperations {
         let handle = broker
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
-        let mut local_committed = false;
+        let mut local_applied = false;
         let result = (|| {
             broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let (lease, _) = self.gc_lease(layout)?;
@@ -959,10 +998,10 @@ impl LocalStateOperations {
             recover_generation(layout, &lease, generation, &maintenance)
                 .map_err(|_| install_commit_failed())?;
             drop(maintenance);
-            local_committed = true;
+            local_applied = true;
             complete_operation(broker, reconnect, handle.clone())
         })();
-        if result.is_err() && !local_committed {
+        if result.is_err() && !local_applied {
             cancel_operation(broker, reconnect, handle);
         }
         result
@@ -992,8 +1031,7 @@ impl LocalStateOperations {
         let generation = args.delete().ok_or_else(mutation_failed)?;
         let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
-        let recovered = self.recover_pending_prunes(&layout, &mut broker)?;
-        self.recover_pending_state_edit(&layout, &mut broker)?;
+        let recovered = self.recover_pending_mutations(&layout, &mut broker)?;
         if recovered.iter().any(|id| id == generation) {
             return generation_prune_result(generation, false);
         }
@@ -1003,6 +1041,7 @@ impl LocalStateOperations {
         let result = (|| {
             broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let (lease, operation_id) = self.gc_lease(&layout)?;
+            ensure_recovered_state(&layout, &lease).map_err(state_read_error)?;
             let active = load_active_snapshot(&layout, &lease)
                 .map_err(state_read_error)?
                 .ok_or_else(no_active_generation)?;
@@ -1048,14 +1087,14 @@ impl LocalStateOperations {
         self.require_broker_state()?;
         let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
-        let recovered = self.recover_pending_prunes(&layout, &mut broker)?;
-        self.recover_pending_state_edit(&layout, &mut broker)?;
+        let recovered = self.recover_pending_mutations(&layout, &mut broker)?;
         let handle = broker
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
         let result = (|| {
             broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let (lease, operation_id) = self.gc_lease(&layout)?;
+            ensure_recovered_state(&layout, &lease).map_err(state_read_error)?;
             let active = load_active_snapshot(&layout, &lease)
                 .map_err(state_read_error)?
                 .ok_or_else(no_active_generation)?;
@@ -1105,12 +1144,11 @@ impl LocalStateOperations {
         self.require_broker_state()?;
         let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
-        let _ = self.recover_pending_prunes(&layout, &mut broker)?;
-        self.recover_pending_state_edit(&layout, &mut broker)?;
+        self.recover_pending_mutations(&layout, &mut broker)?;
         let handle = broker
             .begin(BrokerOperationKind::Activate)
             .map_err(broker_error)?;
-        let mut local_committed = false;
+        let mut local_applied = false;
         let result = (|| {
             let nonce = secure_nonce()?;
             let created_at = utc_now()?;
@@ -1166,17 +1204,16 @@ impl LocalStateOperations {
                         .map_err(broker_error)
                 })
                 .transpose()?;
-            prepared
-                .activate_transitioned(report.as_ref(), &nonce)
-                .map_err(|_| mutation_failed())?
-                .finish()
-                .map_err(|_| mutation_failed())?;
-            local_committed = true;
+            finish_activation(
+                prepared.activate_transitioned(report.as_ref(), &nonce),
+                &generation_id,
+                &mut local_applied,
+            )?;
             let _ = broker.complete(handle.clone());
             Ok(command_result)
         })();
-        if result.is_err() && !local_committed {
-            let _ = broker.cancel(handle);
+        if result.is_err() {
+            release_failed_operation(&mut broker, handle, local_applied);
         }
         result
     }
@@ -1209,12 +1246,11 @@ impl LocalStateOperations {
         self.require_broker_state()?;
         let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
-        let _ = self.recover_pending_prunes(&layout, &mut broker)?;
-        self.recover_pending_state_edit(&layout, &mut broker)?;
+        self.recover_pending_mutations(&layout, &mut broker)?;
         let handle = broker
             .begin(BrokerOperationKind::Activate)
             .map_err(broker_error)?;
-        let mut local_committed = false;
+        let mut local_applied = false;
         let result = (|| {
             let nonce = secure_nonce()?;
             let created_at = utc_now()?;
@@ -1266,20 +1302,19 @@ impl LocalStateOperations {
                         .map_err(broker_error)
                 })
                 .transpose()?;
-            prepared
-                .activate_transitioned(report.as_ref(), &nonce)
-                .map_err(|_| mutation_failed())?
-                .finish()
-                .map_err(|_| mutation_failed())?;
-            local_committed = true;
+            finish_activation(
+                prepared.activate_transitioned(report.as_ref(), &nonce),
+                &generation_id,
+                &mut local_applied,
+            )?;
             // The local generation switch is the linearization point. A lost
             // completion acknowledgement must not turn an applied edit into a
             // retryable failure or authorize cancellation of its roots.
             let _ = broker.complete(handle.clone());
             Ok(command_result)
         })();
-        if result.is_err() && !local_committed {
-            let _ = broker.cancel(handle);
+        if result.is_err() {
+            release_failed_operation(&mut broker, handle, local_applied);
         }
         result
     }
@@ -1307,7 +1342,7 @@ impl LocalStateOperations {
             == Some(&pending)
         {
             recover_transitioned_state_edit(layout, &lease, &pending)
-                .map_err(|_| mutation_failed())?;
+                .map_err(|_| CommandError::activated_needs_recovery(pending.as_str(), true))?;
             return Ok(());
         }
         let source = pending_state_transition_source(layout, &lease, &pending)
@@ -1317,7 +1352,7 @@ impl LocalStateOperations {
         let handle = broker
             .begin(BrokerOperationKind::Activate)
             .map_err(broker_error)?;
-        let mut local_committed = false;
+        let mut local_applied = false;
         let result = (|| {
             let intent = prepared
                 .root_transition_intent(source)
@@ -1329,17 +1364,16 @@ impl LocalStateOperations {
                         .map_err(broker_error)
                 })
                 .transpose()?;
-            prepared
-                .activate_transitioned(report.as_ref(), &nonce)
-                .map_err(|_| mutation_failed())?
-                .finish()
-                .map_err(|_| mutation_failed())?;
-            local_committed = true;
+            finish_activation(
+                prepared.activate_transitioned(report.as_ref(), &nonce),
+                pending.as_str(),
+                &mut local_applied,
+            )?;
             let _ = broker.complete(handle.clone());
             Ok(())
         })();
-        if result.is_err() && !local_committed {
-            let _ = broker.cancel(handle);
+        if result.is_err() {
+            release_failed_operation(broker, handle, local_applied);
         }
         result
     }
@@ -1388,6 +1422,7 @@ impl LocalStateOperations {
         let mut handle: Option<OperationHandle> = None;
         let result = (|| {
             let (lease, _) = self.gc_lease(&layout)?;
+            ensure_recovered_state(&layout, &lease).map_err(state_read_error)?;
             let generation = match args.generation() {
                 Some(generation) => pkg_nix::GenerationId::new(generation).map_err(|_| {
                     CommandError::new(
@@ -1409,15 +1444,26 @@ impl LocalStateOperations {
                     })?
                 }
             };
+            match verify_generation_activation(&layout, &lease, &generation) {
+                Err(CommitError::StageMismatch) if verify_only => return Err(activation_damage()),
+                Ok(()) | Err(CommitError::StageMismatch) => {}
+                Err(error) => return Err(state_read_error(error)),
+            }
+            if let Some(result) =
+                repair_empty_generation(&layout, &lease, &generation, verify_only)?
+            {
+                return Ok(result);
+            }
             let opened = broker
                 .begin(BrokerOperationKind::Repair)
                 .map_err(broker_error)?;
             handle = Some(opened.clone());
+            let mut lease = Some(lease);
             if verify_only {
                 // The Broker-held GC inhibitor now protects the selected
                 // generation and its roots. Release the exclusive state lease
                 // before the long read-only verification.
-                drop(lease);
+                drop(lease.take());
             }
             let mut report = broker
                 .repair_generation(
@@ -1461,14 +1507,39 @@ impl LocalStateOperations {
                     )
                     .map_err(repair_broker_error)?;
             }
+            let activation_repaired = if !verify_only
+                && matches!(
+                    report.status(),
+                    RepairGenerationStatus::Clean
+                        | RepairGenerationStatus::RepairedFromCache
+                        | RepairGenerationStatus::RepairedByBuild
+                ) {
+                repair_generation_activation(
+                    &layout,
+                    lease.as_ref().ok_or_else(mutation_failed)?,
+                    &generation,
+                )
+                .map_err(|_| activation_damage())?
+            } else {
+                false
+            };
             match report.status() {
                 RepairGenerationStatus::Clean => repair_result(
-                    "The generation is clean.",
+                    if activation_repaired {
+                        "The package activation links were repaired."
+                    } else {
+                        "The generation links and store closure are verified."
+                    },
                     &generation,
-                    "clean",
+                    if activation_repaired {
+                        "repaired-activation"
+                    } else {
+                        "clean"
+                    },
                     0,
                     verify_only,
                     approved_preview,
+                    activation_repaired,
                 ),
                 RepairGenerationStatus::RepairedFromCache => repair_result(
                     "The generation was repaired from the signed cache.",
@@ -1477,6 +1548,7 @@ impl LocalStateOperations {
                     0,
                     false,
                     approved_preview,
+                    activation_repaired,
                 ),
                 RepairGenerationStatus::RepairedByBuild => repair_result(
                     "The generation was repaired by an approved local build.",
@@ -1485,6 +1557,7 @@ impl LocalStateOperations {
                     0,
                     false,
                     approved_preview,
+                    activation_repaired,
                 ),
                 RepairGenerationStatus::DamageDetected => Err(CommandError::new(
                     ExitCode::VerifyFail,
@@ -1513,44 +1586,112 @@ impl LocalStateOperations {
     }
 }
 
+/// Records the current-switch boundary before finishing mutable views and journal.
+fn finish_activation(
+    activated: Result<ActivatedGeneration, CommitError>,
+    generation: &str,
+    local_applied: &mut bool,
+) -> Result<(), CommandError> {
+    let activated = activated.map_err(|error| {
+        if error.requires_forward_recovery() {
+            *local_applied = true;
+            CommandError::activated_needs_recovery(generation, false)
+        } else {
+            mutation_failed()
+        }
+    })?;
+    *local_applied = true;
+    activated
+        .finish()
+        .map_err(|_| CommandError::activated_needs_recovery(generation, true))
+}
+
+fn release_failed_operation(
+    broker: &mut BrokerLifecycleClient,
+    handle: OperationHandle,
+    local_applied: bool,
+) {
+    if local_applied {
+        let _ = broker.complete(handle);
+    } else {
+        let _ = broker.cancel(handle);
+    }
+}
+
+fn repair_empty_generation(
+    layout: &StateLayout,
+    lease: &StateLease,
+    generation: &GenerationId,
+    verify_only: bool,
+) -> Result<Option<CommandResult>, CommandError> {
+    let history = load_retained_history(layout, lease).map_err(state_read_error)?;
+    let snapshot = history
+        .snapshots()
+        .iter()
+        .find(|snapshot| snapshot.generation().id() == generation.as_str())
+        .ok_or_else(no_active_generation)?;
+    // Snapshot validation binds manifest, lock outputs, and activation roots.
+    // Only a committed empty set can bypass helper root attestation.
+    if !snapshot.state().manifest().entries().is_empty() {
+        return Ok(None);
+    }
+    let repaired = !verify_only
+        && repair_generation_activation(layout, lease, generation)
+            .map_err(|_| activation_damage())?;
+    repair_result(
+        "The empty generation is verified.",
+        generation,
+        if repaired {
+            "repaired-activation"
+        } else {
+            "clean"
+        },
+        0,
+        verify_only,
+        None,
+        repaired,
+    )
+    .map(Some)
+}
+
 /// Completes one committed Broker operation and reconciles an uncertain reply.
 ///
 /// A lost completion acknowledgement never returns success while it is
 /// uncertain. The caller polls the exact handle on a fresh same-uid connection.
-/// A confirmed completed report is success. A confirmed live handle is
-/// cancelled before the original error is returned.
+/// A confirmed completed report is success. A live handle receives another
+/// completion request. Applied work is never cancelled during reconciliation.
 fn complete_operation(
     broker: &mut BrokerLifecycleClient,
     reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
     handle: OperationHandle,
 ) -> Result<(), CommandError> {
-    match broker.complete(handle.clone()) {
+    let recovery_handle = handle.clone();
+    match broker.complete(handle) {
         Ok(()) => Ok(()),
-        Err(error) => reconcile_completion(reconnect, handle, error),
+        Err(error) => reconcile_completion(reconnect, &recovery_handle, error),
     }
 }
 
 /// Reconciles one operation after a lost completion reply on a fresh connection.
 fn reconcile_completion(
     reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
-    handle: OperationHandle,
+    handle: &OperationHandle,
     first_error: BrokerClientError,
 ) -> Result<(), CommandError> {
-    match reconnect() {
-        Ok(mut fresh) => match fresh.poll(handle.clone()) {
-            Ok(OperationStatus::Completed) => Ok(()),
+    for _ in 0..2 {
+        let Ok(mut fresh) = reconnect() else { continue };
+        match fresh.poll(handle.clone()) {
+            Ok(OperationStatus::Completed) => return Ok(()),
             Ok(OperationStatus::Running) => {
-                cancel_operation(&mut fresh, reconnect, handle);
-                Err(broker_error(first_error))
+                if fresh.complete(handle.clone()).is_ok() {
+                    return Ok(());
+                }
             }
-            Ok(OperationStatus::Cancelled) => Err(broker_error(first_error)),
-            Err(_) => {
-                cancel_operation(&mut fresh, reconnect, handle);
-                Err(broker_error(first_error))
-            }
-        },
-        Err(_) => Err(broker_error(first_error)),
+            Ok(OperationStatus::Cancelled) => break,
+            Err(_) => {}
+        }
     }
+    Err(broker_error(first_error))
 }
 
 /// Cancels one still-live Broker operation, falling back to a fresh same-uid
@@ -1635,6 +1776,13 @@ fn require_gc_confirmation(
 }
 
 fn require_supported_install_options(args: &InstallArgs) -> Result<(), CommandError> {
+    if args.keep_going() {
+        return Err(CommandError::new(
+            ExitCode::Config,
+            "--keep-going is not supported for install",
+            "remove --keep-going; installation stops at the first failure and commits no partial package set",
+        ));
+    }
     if args.channel().is_some() {
         return Err(CommandError::new(
             ExitCode::Config,
@@ -2070,9 +2218,56 @@ fn build_preview_details(value: &Value) -> Vec<String> {
     details
 }
 
+fn validate_install_preview(
+    layout: &StateLayout,
+    args: &InstallArgs,
+    selectors: &[PackageSelector],
+) -> Result<Option<String>, CommandError> {
+    let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
+    ensure_recovered_state(layout, &lease).map_err(state_read_error)?;
+    let Some(active) = load_active_snapshot(layout, &lease).map_err(state_read_error)? else {
+        return Ok(None);
+    };
+    for selector in selectors {
+        if active
+            .state()
+            .manifest()
+            .entries()
+            .iter()
+            .any(|entry| entry.selector() == selector.selector())
+        {
+            return Err(CommandError::new(
+                ExitCode::PreflightFail,
+                format!("{} is already installed", selector.selector().as_str()),
+                "use `pkg upgrade` to update an installed package",
+            ));
+        }
+    }
+    pkg_pipeline::plan_state_activation(
+        active.state(),
+        state_collision_policy(args.collision_policy()),
+    )
+    .map_err(|error| match error {
+        pkg_store::ActivationError::Collision | pkg_store::ActivationError::StructuralConflict => {
+            CommandError::new(
+                ExitCode::StageCollision,
+                "the installed outputs conflict under the requested collision policy",
+                "remove a conflicting package or select an explicit --on-collision policy",
+            )
+        }
+        _ => CommandError::new(
+            ExitCode::VerifyFail,
+            "the installed outputs could not be inspected for activation conflicts",
+            "run `pkg repair --yes` before preparing an install preview",
+        ),
+    })?;
+    Ok(Some(active.generation().id().to_owned()))
+}
+
 fn preview_install(
     broker: &mut BrokerLifecycleClient,
     selectors: Vec<PackageSelector>,
+    source_generation: Option<&str>,
 ) -> Result<CommandResult, CommandError> {
     let handle = broker
         .begin(BrokerOperationKind::Build)
@@ -2083,8 +2278,14 @@ fn preview_install(
         .and_then(|preview| {
             let value = public_build_preview(&preview)?;
             CommandResult::new(
-                "Install preview is ready. No package was downloaded or activated.",
-                Map::from_iter([("dryRun".into(), json!(true)), ("preflight".into(), value)]),
+                "Install preview is ready. New output collisions will be checked after acquisition. No package was downloaded or activated.",
+                Map::from_iter([
+                    ("dryRun".into(), json!(true)),
+                    ("preflight".into(), value),
+                    ("basedOnGeneration".into(), json!(source_generation)),
+                    ("checked".into(), json!(["installed-selectors", "installed-output-collisions"])),
+                    ("deferredChecks".into(), json!(["new-output-collisions", "final-state-revalidation"])),
+                ]),
                 Vec::new(),
             )
             .map_err(|_| install_commit_failed())
@@ -2691,7 +2892,14 @@ fn state_lease_error(error: LeaseError) -> CommandError {
     )
 }
 
-fn state_read_error(_error: CommitError) -> CommandError {
+fn state_read_error(error: CommitError) -> CommandError {
+    if error == CommitError::PendingRecovery {
+        return CommandError::new(
+            ExitCode::StateLocked,
+            "an earlier package operation needs recovery",
+            "run `pkg repair --yes` to recover it, then retry the command",
+        );
+    }
     CommandError::new(
         ExitCode::StateCorrupt,
         "the package generation history failed verification",
@@ -2773,6 +2981,14 @@ fn write_repair_warning() -> Result<(), CommandError> {
     })
 }
 
+fn activation_damage() -> CommandError {
+    CommandError::new(
+        ExitCode::VerifyFail,
+        "the generation activation links are damaged or could not be restored",
+        "run `pkg repair --yes` to rebuild links from verified package state",
+    )
+}
+
 fn repair_result(
     summary: &str,
     generation: &pkg_nix::GenerationId,
@@ -2780,6 +2996,7 @@ fn repair_result(
     damaged_paths: u32,
     verify_only: bool,
     build_preview: Option<serde_json::Value>,
+    activation_repaired: bool,
 ) -> Result<CommandResult, CommandError> {
     let mut fields = Map::from_iter([
         ("generation".into(), json!(generation.as_str())),
@@ -2787,6 +3004,18 @@ fn repair_result(
         ("damagedPathCount".into(), json!(damaged_paths)),
         ("verifyOnly".into(), json!(verify_only)),
         ("nonAtomic".into(), json!(!verify_only)),
+        (
+            "activationStatus".into(),
+            json!(if activation_repaired {
+                "repaired"
+            } else {
+                "verified"
+            }),
+        ),
+        (
+            "verificationScope".into(),
+            json!(["activation-links", "store-closure"]),
+        ),
     ]);
     if let Some(preview) = build_preview {
         fields.insert("buildPreview".into(), preview);

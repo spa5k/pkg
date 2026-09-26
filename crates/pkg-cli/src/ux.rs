@@ -100,6 +100,13 @@ pub struct CommandError {
     exit_code: ExitCode,
     message: String,
     hint: String,
+    recovery: Option<ActivationRecovery>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct ActivationRecovery {
+    generation: String,
+    outcome: &'static str,
 }
 
 impl CommandError {
@@ -110,7 +117,26 @@ impl CommandError {
             exit_code,
             message: sanitize_public_text(message.as_ref()),
             hint: sanitize_public_text(hint.as_ref()),
+            recovery: None,
         }
+    }
+
+    pub(crate) fn activated_needs_recovery(generation: &str, confirmed: bool) -> Self {
+        let message = if confirmed {
+            format!("generation {generation} is active, but final state updates failed")
+        } else {
+            format!("generation {generation} may already be active; activation needs recovery")
+        };
+        let mut error = Self::new(
+            ExitCode::StateCorrupt,
+            message,
+            "do not repeat the change; resolve any state write failure, then run `pkg repair --yes` to finish recovery",
+        );
+        error.recovery = Some(ActivationRecovery {
+            generation: sanitize_public_text(generation),
+            outcome: if confirmed { "applied" } else { "uncertain" },
+        });
+        error
     }
 
     /// Stable exit code.
@@ -139,6 +165,8 @@ struct ErrorDetail<'a> {
     code: u8,
     message: &'a str,
     hint: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery: Option<&'a ActivationRecovery>,
 }
 
 #[derive(Serialize)]
@@ -212,6 +240,7 @@ pub(crate) fn write_error_with_operation(
         code: error.exit_code.as_u8(),
         message: error.message(),
         hint: error.hint(),
+        recovery: error.recovery.as_ref(),
     };
     match mode {
         OutputMode::Human => write_human_error(&mut stderr, error, style),
@@ -280,6 +309,7 @@ pub(crate) fn terminal_error_ndjson_line(
             code: error.exit_code.as_u8(),
             message: error.message(),
             hint: error.hint(),
+            recovery: error.recovery.as_ref(),
         },
     })
 }

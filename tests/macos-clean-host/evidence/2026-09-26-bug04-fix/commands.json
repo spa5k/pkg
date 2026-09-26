@@ -1,0 +1,38 @@
+{
+  "source_base": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "patch_scope": "cumulative runtime BUG-01 through BUG-04",
+  "patch_sha256": "68f1004ef1c53bd4e8fddc3febc6c5abad1c9564c127502c5115bb6720c008ba",
+  "final_cli_sha256": "c9fcc722e8df9eb0cb84e8b68bb93fd250d89b85fa3953ada5e0ecafa23e87c5",
+  "cases": [
+    {
+      "case": "001",
+      "command": "/tmp/pkg-bug03-fixed unpin ripgrep --json && /tmp/pkg-bug03-fixed remove hello just \"github:casey/just#default\" ripgrep --yes --json && /tmp/pkg-bug03-fixed list --json && /tmp/pkg-bug03-fixed repair --verify-only --json",
+      "started": "2026-09-26T09:50:13.765819+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 5.53,
+      "exit_code": 77,
+      "output_sha256": "83744ebb2d36a9c2c7ebe1dd2a6b56d649ee505d2c6dd231bdcb98aa5be2c46d",
+      "build": "before BUG-04"
+    },
+    {
+      "case": "002",
+      "command": "/tmp/pkg-bug04-fixed repair --verify-only --json && /tmp/pkg-bug04-fixed repair --yes --json && /tmp/pkg-bug04-fixed doctor --json && /tmp/pkg-bug04-fixed rollback --yes --json && rg --version && hello && /tmp/pkg-bug04-fixed repair --verify-only --json",
+      "started": "2026-09-26T09:50:42.291081+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 12.9,
+      "exit_code": 0,
+      "output_sha256": "03fb1be834ad74b7aa65a2f4fb870728e888276601b2680677eded0fc9cb9124",
+      "build": "development"
+    },
+    {
+      "case": "003",
+      "command": "/tmp/pkg-bug04-fixed repair gen-0020 --verify-only --json && /tmp/pkg-bug04-fixed repair gen-0020 --yes --json && /tmp/pkg-bug04-fixed remove hello just \"github:casey/just#default\" ripgrep --yes --json && /tmp/pkg-bug04-fixed repair --verify-only --json && /tmp/pkg-bug04-fixed repair --yes --json && /tmp/pkg-bug04-fixed rollback --yes --json && rg --version && hello && shasum -a 256 /tmp/pkg-bug04-fixed",
+      "started": "2026-09-26T09:52:30.018501+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 11.47,
+      "exit_code": 0,
+      "output_sha256": "1434e25d37fcff13283b9f4423dad515a3d40db258144e189d10610b409cd359",
+      "build": "final"
+    }
+  ]
+}

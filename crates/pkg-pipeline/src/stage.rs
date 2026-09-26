@@ -5,6 +5,20 @@ use pkg_store::{ActivationError, ActivationInput, ActivationPlan, stage_activati
 
 use crate::VerifiedInstall;
 
+/// Checks installed output collisions using the same bindings as generation staging.
+///
+/// # Errors
+/// Returns an error for unreadable outputs or a conflict refused by the policy.
+pub fn plan_state_activation(
+    state: &pkg_core::lifecycle::LifecycleState,
+    collision_policy: CollisionPolicy,
+) -> Result<ActivationPlan, ActivationError> {
+    pkg_store::plan_activation(
+        &crate::activation_metadata::activation_inputs(state),
+        collision_policy,
+    )
+}
+
 /// A verified install paired with its durable Rust-only staging plan.
 #[derive(Debug)]
 pub struct StagedInstall {

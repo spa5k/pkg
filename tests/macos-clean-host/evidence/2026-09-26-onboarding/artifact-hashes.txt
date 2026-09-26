@@ -1,0 +1,7 @@
+Installed assets before repeat setup and reboot.
+All five matched after repeat setup. CLI, Nix receipt, and Nix installer matched after reboot.
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  /usr/local/bin/pkg
+b486b3f6e6b88316a0d2f2ca38512d7678bccbe9d9f73a3cbd871c94f11bdb64  /opt/pkg/bin/pkg-nix-broker
+0c6d44a2eb824fa3a4979f49dd6208736f80f79572902c8b0c0f6bb8825c43e2  /opt/pkg/bin/pkg-root-helper
+d7c9336a64c6411395188e787f7a11327d4d3c40060ac4d99115c1d3fae96a4d  /nix/receipt.json
+90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b  /nix/nix-installer

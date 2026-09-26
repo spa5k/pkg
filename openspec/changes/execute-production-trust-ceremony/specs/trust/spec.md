@@ -1,69 +1,55 @@
 ## ADDED Requirements
 
-### Requirement: Production TUF root with ceremony
+### Requirement: Reviewed production signing authority
 
-The production TUF root key SHALL be generated offline on an air-gapped machine with recorded
-ceremony steps, SHALL never exist on a network-connected machine, and online keys SHALL use a
-3-of-5 threshold. Root v1 SHALL be published before any production target.
+Production root keys SHALL be generated offline with recorded custody and
+recovery owners. Role thresholds and provider identities SHALL be approved and
+verified before use. Below-threshold and revoked signers SHALL be rejected.
 
-#### Scenario: Offline root generation
+#### Scenario: Threshold refusal
 
-- **WHEN** the root key is generated
-- **THEN** the ceremony record lists participants, machine, date, and key fingerprint
-- **AND** the private key material never transits a network-connected host
+- **WHEN** staging metadata lacks the required approved signing authority
+- **THEN** the product refuses it without changing installed state
 
-#### Scenario: Threshold enforcement
+### Requirement: Immutable HTTPS channel
 
-- **WHEN** channel metadata is signed
-- **THEN** at least 3 of 5 online keys are required, and the client rejects metadata signed
-  below threshold
+The selected production channel SHALL have verified domain and deployment
+control. Published target bytes SHALL be immutable. Metadata expiry and refresh
+SHALL be tested against the chosen cache policy.
 
-### Requirement: Stable channel hosting
+#### Scenario: Rollback
 
-The release channel SHALL be served at `channel.kelv.dev` over TLS, targets SHALL be immutable
-once published, and the product's channel constant SHALL reference this host in production
-builds.
+- **WHEN** approved content must be restored
+- **THEN** publication uses a higher sequence and does not replay old metadata
 
-#### Scenario: TLS and immutability
+### Requirement: Signed and notarized macOS artifacts
 
-- **WHEN** a client fetches metadata or targets
-- **THEN** the connection is TLS-verified and a published target's bytes never change
+Command binaries SHALL use Developer ID Application signatures. The package
+SHALL use Developer ID Installer from the same team. Notarization acceptance,
+stapling, and clean-Mac Gatekeeper checks SHALL pass before production release.
 
-#### Scenario: Proof URLs retired
+#### Scenario: Clean-Mac verification
 
-- **WHEN** production builds are produced
-- **THEN** no trycloudflare or localhost URL appears in any shipped binary or script
+- **WHEN** the final package and commands are downloaded on a clean Mac
+- **THEN** default Gatekeeper policy accepts the exact published artifacts
 
-### Requirement: Signed and notarized macOS package
+### Requirement: Final artifact proof
 
-The macOS `.pkg` SHALL be signed with a Developer ID Application certificate, notarized with
-Apple's notary service, and stapled. A clean Mac SHALL install it with a default Gatekeeper
-policy without warnings.
+Production proof SHALL identify exact signed bytes, native host identity,
+installation, upgrade, reboot, removal, and required failure checks. Skipped
+required checks SHALL prevent a production-readiness claim.
 
-#### Scenario: Gatekeeper clean pass
+#### Scenario: Live-channel upgrade
 
-- **WHEN** a user installs the stapled package on a clean macOS machine
-- **THEN** Gatekeeper accepts it and `spctl -a -vv` reports accepted with the Developer ID
+- **WHEN** the channel will advance from N to N+1
+- **THEN** the old installation is prepared first and retained for the same-VM upgrade and reboot proof
 
-### Requirement: Production release re-proof
+### Requirement: Operations evidence
 
-Before public availability, one full slot lifecycle proof SHALL run against the production
-channel and the signed package, with evidence archived to the same standard as the DN-16
-proof.
+The existing runbook SHALL contain reviewed provider-specific custody,
+signing, rotation, refresh, compromise, and rollback procedures.
 
-#### Scenario: Production proof gate
+#### Scenario: Missing input
 
-- **WHEN** the production release candidate exists
-- **THEN** the proof workflow runs against `channel.kelv.dev` and the notarized package
-- **AND** the release is published only after every slot verdict passes
-
-### Requirement: Key custody runbook
-
-An operations runbook SHALL document key custody locations, signing procedures, rotation
-schedule, compromise response, and channel rollback, and SHALL be reviewed after any key event.
-
-#### Scenario: Rotation procedure exists
-
-- **WHEN** an online key needs rotation
-- **THEN** the runbook specifies the exact steps and the client's threshold behavior during
-  rotation
+- **WHEN** credentials, key custody, domain control, or native proof are absent
+- **THEN** tooling readiness is reported separately from production readiness

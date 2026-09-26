@@ -53,13 +53,18 @@ fn list_maps_active_state_without_private_identity() {
 
 #[test]
 fn remove_and_pin_use_core_atomic_lifecycle_editors() {
-    let remove = Cli::try_parse(["pkg", "remove", "beta", "--orphan-check"]).unwrap();
+    let remove = Cli::try_parse(["pkg", "remove", "beta"]).unwrap();
     let Command::Remove(args) = remove.parsed_command() else {
         unreachable!()
     };
     let removed = remove_state(state(), args).unwrap();
     assert_eq!(removed.state().manifest().entries().len(), 1);
-    assert_eq!(removed.result().fields()["orphanCheckRequested"], true);
+    assert!(
+        !removed
+            .result()
+            .fields()
+            .contains_key("orphanCheckRequested")
+    );
 
     let pin = Cli::try_parse(["pkg", "pin", "alpha"]).unwrap();
     let Command::Pin(args) = pin.parsed_command() else {

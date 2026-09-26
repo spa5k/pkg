@@ -1,0 +1,119 @@
+CASE 001
+$ /bin/zsh -f /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug08-fixed
+unset: /Users/admin/Library/Application Support/pkg/current/share/man:/Users/admin/Library/Application Support/pkg/current/share/man:/Users/admin/Library/Application Support/pkg/current/share/man:
+Shared connection to 192.168.64.32 closed.
+
+EXIT 1
+
+CASE 002
+$ /bin/bash --noprofile --norc /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug09-fixed && /bin/zsh -f /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug09-fixed && rg --version && /tmp/pkg-bug09-fixed doctor --json && /tmp/pkg-bug09-fixed repair --verify-only --json && shasum -a 256 /tmp/pkg-bug09-fixed && readlink "$HOME/Library/Application Support/pkg/current"
+unset: /Users/admin/Library/Application Support/pkg/current/share/man:
+empty: /Users/admin/Library/Application Support/pkg/current/share/man:
+custom: /Users/admin/Library/Application Support/pkg/current/share/man:/custom/man
+defaults: /Users/admin/Library/Application Support/pkg/current/share/man::/custom/man:
+present: /Users/admin/Library/Application Support/pkg/current/share/man
+unset: /Users/admin/Library/Application Support/pkg/current/share/man:
+empty: /Users/admin/Library/Application Support/pkg/current/share/man:
+custom: /Users/admin/Library/Application Support/pkg/current/share/man:/custom/man
+defaults: /Users/admin/Library/Application Support/pkg/current/share/man::/custom/man:
+present: /Users/admin/Library/Application Support/pkg/current/share/man
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0027","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":true}
+18db757b03a387a73df10ef01424f0c233694c86e1abcb83356fc5e709219e47  /tmp/pkg-bug09-fixed
+activations/gen-0027
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 003
+$ sudo -n cp -p /opt/pkg/bin/pkg-nix-broker /tmp/pkg-nix-broker-alpha54-final && sudo -n launchctl bootout system/org.pkg.nix-broker && sudo -n cp /tmp/pkg-nix-broker-fixed /opt/pkg/bin/pkg-nix-broker && sudo -n launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist && sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker && /tmp/pkg-bug09-fixed doctor --json
+71c36f6f46713c13c7826acc34b0b7de10d78b9a4da9594c63a6dee174d913d3  /opt/pkg/bin/pkg-nix-broker
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 005
+$ /tmp/pkg-bug09-fixed doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"fail","detail":"the active package links or generation state could not be verified","hint":"wait for any active operation, then run `pkg repair --yes`"},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"needs_attention"}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 78
+
+CASE 004
+$ /tmp/pkg-bug09-fixed remove ripgrep
+Package  Version
+ripgrep  13.0.0
+
+
+Remove these packages? [y/N] y
+Package  Version
+ripgrep  13.0.0
+
+Generation: gen-0028
+Packages removed. Your package environment is ready.
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 006
+$ /tmp/pkg-bug09-fixed rollback --yes --json && rg --version && /tmp/pkg-bug09-fixed doctor --json
+{"command":"rollback","generation":"gen-0029","ok":true,"packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packageCount":4,"schemaVersion":1,"sourceGeneration":"gen-0028","targetGeneration":"gen-0027"}
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 008
+$ /tmp/pkg-bug09-fixed doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"deferred","detail":"another package operation holds the state lease; activation verification must wait","hint":"wait for that operation to finish, then run `pkg doctor` again"},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"needs_attention"}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 78
+
+CASE 007
+$ /tmp/pkg-bug09-fixed remove ripgrep
+Package  Version
+ripgrep  13.0.0
+
+
+Remove these packages? [y/N] y
+Package  Version
+ripgrep  13.0.0
+
+Generation: gen-0030
+Packages removed. Your package environment is ready.
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 009
+$ /tmp/pkg-bug09-fixed rollback --yes --json && rg --version && /bin/bash --noprofile --norc /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug09-fixed && /bin/zsh -f /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug09-fixed && /tmp/pkg-bug09-fixed doctor --json && /tmp/pkg-bug09-fixed repair --verify-only --json && /tmp/pkg-bug09-fixed list --json && readlink "$HOME/Library/Application Support/pkg/current" && shasum -a 256 /tmp/pkg-bug09-fixed /usr/local/bin/pkg && sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper
+{"command":"rollback","generation":"gen-0031","ok":true,"packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packageCount":4,"schemaVersion":1,"sourceGeneration":"gen-0030","targetGeneration":"gen-0029"}
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+unset: /Users/admin/Library/Application Support/pkg/current/share/man:
+empty: /Users/admin/Library/Application Support/pkg/current/share/man:
+custom: /Users/admin/Library/Application Support/pkg/current/share/man:/custom/man
+defaults: /Users/admin/Library/Application Support/pkg/current/share/man::/custom/man:
+present: /Users/admin/Library/Application Support/pkg/current/share/man
+unset: /Users/admin/Library/Application Support/pkg/current/share/man:
+empty: /Users/admin/Library/Application Support/pkg/current/share/man:
+custom: /Users/admin/Library/Application Support/pkg/current/share/man:/custom/man
+defaults: /Users/admin/Library/Application Support/pkg/current/share/man::/custom/man:
+present: /Users/admin/Library/Application Support/pkg/current/share/man
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0031","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":true}
+{"command":"list","entries":[{"name":"hello","pinned":false,"selector":"hello","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"2.12.1"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"},{"name":"ripgrep","pinned":false,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+activations/gen-0031
+773616b2c6d35f6737a47d21f7932b80d6adb66d92b840da6c0d665cada09177  /tmp/pkg-bug09-fixed
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  /usr/local/bin/pkg
+71c36f6f46713c13c7826acc34b0b7de10d78b9a4da9594c63a6dee174d913d3  /opt/pkg/bin/pkg-nix-broker
+0c6d44a2eb824fa3a4979f49dd6208736f80f79572902c8b0c0f6bb8825c43e2  /opt/pkg/bin/pkg-root-helper
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0

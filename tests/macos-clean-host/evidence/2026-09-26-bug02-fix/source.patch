@@ -1,0 +1,865 @@
+diff --git a/crates/pkg-cli/src/commands/local.rs b/crates/pkg-cli/src/commands/local.rs
+index bb9b54e..3fc72b7 100644
+--- a/crates/pkg-cli/src/commands/local.rs
++++ b/crates/pkg-cli/src/commands/local.rs
+@@ -48,11 +48,11 @@ use pkg_nix::{
+ use pkg_pipeline::{
+     CommitError, InstallGenerationError, InstallGenerationMetadata, InstallStateError,
+     StateEditKind, StateEditMetadata, assemble_upgrade_evidence_state, discard_unprepared_installs,
+-    discard_unprepared_state_edits, load_active_snapshot, load_retained_history,
+-    pending_install_discard_generation, pending_install_generation, pending_state_edit_generation,
+-    pending_state_transition_source, prepare_install_generation, prepare_rollback,
+-    prepare_state_edit, recover_generation, recover_transitioned_state_edit,
+-    resume_prepared_install, resume_prepared_state_edit,
++    discard_unprepared_state_edits, ensure_recovered_state, load_active_snapshot,
++    load_retained_history, pending_discard_generation, pending_install_generation,
++    pending_state_edit_generation, pending_state_transition_source, prepare_install_generation,
++    prepare_rollback, prepare_state_edit, recover_generation, recover_transitioned_state_edit,
++    resume_prepared_install, resume_prepared_state_edit, superseded_pending_generation,
+ };
+ use pkg_store::{
+     GcError, GcPolicy, LeaseError, LeaseIdentity, PruneOutcome, StateLayout, StateLease, plan_gc,
+@@ -258,9 +258,8 @@ impl CoreOperations for LocalStateOperations {
+                 .into_parts()
+                 .1);
+         }
+-        // Validate before opening a broker operation. Re-plan under the exclusive
+-        // lease so approval is bound to the exact state that will be committed.
+-        remove_state(self.active()?.state().clone(), args)?;
++        // Recover before selecting targets; approval uses the recovered state
++        // under the exclusive lease.
+         self.commit_state_edit(StateEditKind::Remove, |state| {
+             let edit = remove_state(state, args)?;
+             confirm_edit(
+@@ -333,6 +332,9 @@ impl CoreOperations for LocalStateOperations {
+             ChannelRefreshMode::Apply
+         };
+         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
++        if mode != ChannelRefreshMode::Check {
++            self.recover_pending_mutations(self.layout(), &mut broker)?;
++        }
+         let report = refresh_channel_metadata(&mut broker, mode)?;
+         if mode == ChannelRefreshMode::Check {
+             return channel_refresh_result(report, mode, false);
+@@ -447,6 +449,9 @@ impl CoreOperations for LocalStateOperations {
+             ));
+         }
+         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
++        if !args.verify_only() && !policy.dry_run() {
++            self.recover_pending_mutations(self.layout(), &mut broker)?;
++        }
+         self.repair_with_broker(&mut broker, args, policy)
+     }
+ }
+@@ -586,6 +591,10 @@ impl LocalStateOperations {
+         self.require_broker_state()?;
+         require_supported_upgrade_options(args)?;
+         let layout = self.layout().clone();
++        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
++        if !policy.dry_run() {
++            self.recover_pending_mutations(&layout, &mut broker)?;
++        }
+         let source = self.active()?;
+         let labels = super::state::package_labels(source.state());
+         let mut selection = select_upgrade(
+@@ -610,7 +619,6 @@ impl LocalStateOperations {
+                 .with_package_labels(labels)
+                 .map_err(|_| mutation_failed());
+         }
+-        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+         let has_local_build = selected_ids.iter().any(|id| {
+             source
+                 .state()
+@@ -662,7 +670,6 @@ impl LocalStateOperations {
+                 .with_package_labels(labels)
+                 .map_err(|_| mutation_failed());
+         }
+-        self.recover_pending_install(&layout, &mut broker)?;
+         let (handle, public_operation_id, evidence, build_approval) =
+             acquire_install_evidence(&mut broker, selectors, policy, !args.no_build(), progress)?;
+         let mut local_committed = false;
+@@ -770,7 +777,7 @@ impl LocalStateOperations {
+         if policy.dry_run() {
+             return preview_install(&mut broker, selectors);
+         }
+-        self.recover_pending_install(&layout, &mut broker)?;
++        self.recover_pending_mutations(&layout, &mut broker)?;
+ 
+         let (handle, public_operation_id, evidence, build_approval) =
+             acquire_install_evidence(&mut broker, selectors, policy, true, progress)?;
+@@ -851,6 +858,32 @@ impl LocalStateOperations {
+         result
+     }
+ 
++    /// Reconcile all transaction families before selecting a new mutation's state.
++    fn recover_pending_mutations(
++        &self,
++        layout: &StateLayout,
++        broker: &mut BrokerLifecycleClient,
++    ) -> Result<Vec<String>, CommandError> {
++        let recovered = self.recover_pending_prunes(layout, broker)?;
++        let superseded = {
++            let (lease, _) = self.gc_lease(layout)?;
++            discard_unprepared_installs(layout, &lease).map_err(state_read_error)?;
++            discard_unprepared_state_edits(layout, &lease).map_err(state_read_error)?;
++            superseded_pending_generation(layout, &lease).map_err(state_read_error)?
++        };
++        if let Some(generation) = superseded {
++            self.discard_pending_generation_with(
++                layout,
++                broker,
++                &mut BrokerLifecycleClient::connect_default,
++                &generation,
++            )?;
++        }
++        self.recover_pending_install(layout, broker)?;
++        self.recover_pending_state_edit(layout, broker)?;
++        Ok(recovered)
++    }
++
+     fn recover_pending_install(
+         &self,
+         layout: &StateLayout,
+@@ -868,11 +901,11 @@ impl LocalStateOperations {
+     ) -> Result<(), CommandError> {
+         let probe = StateLease::try_shared(layout).map_err(state_lease_error)?;
+         let pending_discard =
+-            pending_install_discard_generation(layout, &probe).map_err(state_read_error)?;
++            pending_discard_generation(layout, &probe).map_err(state_read_error)?;
+         drop(probe);
+         if let Some(generation) = pending_discard {
+             self.recover_pending_prunes(layout, broker)?;
+-            self.discard_unrooted_install_with(layout, broker, reconnect, &generation)?;
++            self.discard_pending_generation_with(layout, broker, reconnect, &generation)?;
+             return Ok(());
+         }
+         let nonce = secure_nonce()?;
+@@ -927,7 +960,7 @@ impl LocalStateOperations {
+                         return Err(install_broker_error(error));
+                     }
+                     activate_cancelled = true;
+-                    self.discard_unrooted_install_with(layout, broker, reconnect, &pending)
++                    self.discard_pending_generation_with(layout, broker, reconnect, &pending)
+                 }
+                 Err(error) => Err(install_broker_error(error)),
+             }
+@@ -938,7 +971,7 @@ impl LocalStateOperations {
+         result
+     }
+ 
+-    fn discard_unrooted_install_with(
++    fn discard_pending_generation_with(
+         &self,
+         layout: &StateLayout,
+         broker: &mut BrokerLifecycleClient,
+@@ -992,8 +1025,7 @@ impl LocalStateOperations {
+         let generation = args.delete().ok_or_else(mutation_failed)?;
+         let layout = self.layout().clone();
+         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+-        let recovered = self.recover_pending_prunes(&layout, &mut broker)?;
+-        self.recover_pending_state_edit(&layout, &mut broker)?;
++        let recovered = self.recover_pending_mutations(&layout, &mut broker)?;
+         if recovered.iter().any(|id| id == generation) {
+             return generation_prune_result(generation, false);
+         }
+@@ -1003,6 +1035,7 @@ impl LocalStateOperations {
+         let result = (|| {
+             broker.acquire_gc(handle.clone()).map_err(broker_error)?;
+             let (lease, operation_id) = self.gc_lease(&layout)?;
++            ensure_recovered_state(&layout, &lease).map_err(state_read_error)?;
+             let active = load_active_snapshot(&layout, &lease)
+                 .map_err(state_read_error)?
+                 .ok_or_else(no_active_generation)?;
+@@ -1048,14 +1081,14 @@ impl LocalStateOperations {
+         self.require_broker_state()?;
+         let layout = self.layout().clone();
+         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+-        let recovered = self.recover_pending_prunes(&layout, &mut broker)?;
+-        self.recover_pending_state_edit(&layout, &mut broker)?;
++        let recovered = self.recover_pending_mutations(&layout, &mut broker)?;
+         let handle = broker
+             .begin(BrokerOperationKind::Gc)
+             .map_err(broker_error)?;
+         let result = (|| {
+             broker.acquire_gc(handle.clone()).map_err(broker_error)?;
+             let (lease, operation_id) = self.gc_lease(&layout)?;
++            ensure_recovered_state(&layout, &lease).map_err(state_read_error)?;
+             let active = load_active_snapshot(&layout, &lease)
+                 .map_err(state_read_error)?
+                 .ok_or_else(no_active_generation)?;
+@@ -1105,8 +1138,7 @@ impl LocalStateOperations {
+         self.require_broker_state()?;
+         let layout = self.layout().clone();
+         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+-        let _ = self.recover_pending_prunes(&layout, &mut broker)?;
+-        self.recover_pending_state_edit(&layout, &mut broker)?;
++        self.recover_pending_mutations(&layout, &mut broker)?;
+         let handle = broker
+             .begin(BrokerOperationKind::Activate)
+             .map_err(broker_error)?;
+@@ -1209,8 +1241,7 @@ impl LocalStateOperations {
+         self.require_broker_state()?;
+         let layout = self.layout().clone();
+         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+-        let _ = self.recover_pending_prunes(&layout, &mut broker)?;
+-        self.recover_pending_state_edit(&layout, &mut broker)?;
++        self.recover_pending_mutations(&layout, &mut broker)?;
+         let handle = broker
+             .begin(BrokerOperationKind::Activate)
+             .map_err(broker_error)?;
+@@ -1388,6 +1419,7 @@ impl LocalStateOperations {
+         let mut handle: Option<OperationHandle> = None;
+         let result = (|| {
+             let (lease, _) = self.gc_lease(&layout)?;
++            ensure_recovered_state(&layout, &lease).map_err(state_read_error)?;
+             let generation = match args.generation() {
+                 Some(generation) => pkg_nix::GenerationId::new(generation).map_err(|_| {
+                     CommandError::new(
+@@ -2691,7 +2723,14 @@ fn state_lease_error(error: LeaseError) -> CommandError {
+     )
+ }
+ 
+-fn state_read_error(_error: CommitError) -> CommandError {
++fn state_read_error(error: CommitError) -> CommandError {
++    if error == CommitError::PendingRecovery {
++        return CommandError::new(
++            ExitCode::StateLocked,
++            "an earlier package operation needs recovery",
++            "run `pkg repair --yes` to recover it, then retry the command",
++        );
++    }
+     CommandError::new(
+         ExitCode::StateCorrupt,
+         "the package generation history failed verification",
+diff --git a/crates/pkg-cli/src/commands/local/tests.rs b/crates/pkg-cli/src/commands/local/tests.rs
+index 9310588..cdffd3e 100644
+--- a/crates/pkg-cli/src/commands/local/tests.rs
++++ b/crates/pkg-cli/src/commands/local/tests.rs
+@@ -2211,6 +2211,135 @@ fn prepared_pending_install_fixture() -> (TempDir, StateLayout, u32) {
+     (home, layout, uid)
+ }
+ 
++#[test]
++fn common_recovery_commits_install_then_resumes_an_interrupted_remove() {
++    let (_home, layout, uid) = prepared_pending_install_fixture();
++    let helper = InProcessHelper::new(991).unwrap();
++    let maintenance = helper
++        .connect(InProcessPeer::authenticated_uid(991))
++        .unwrap()
++        .for_caller(uid);
++    let identity = LeaseIdentity::new("op_setup", "nonce_setup", "2026-09-26T00:00:00Z").unwrap();
++    let lease = StateLease::try_exclusive(&layout, &identity).unwrap();
++    let pending = GenerationId::new("gen-0001").unwrap();
++    let prepared = resume_prepared_install(layout.clone(), lease, &pending).unwrap();
++    let intent = prepared.root_intent().unwrap().unwrap();
++    let roots = RootSet::new(uid, pending.clone(), intent.entries().to_vec()).unwrap();
++    maintenance.publish_root_set(&roots).unwrap();
++    drop(prepared); // Crash after roots are published, before current changes.
++
++    let broker = InProcessBroker::new().unwrap();
++    let caller = broker
++        .connect(InProcessCallerPeer::authenticated(uid))
++        .unwrap();
++    let server_caller = caller.clone();
++    let mut workers = Vec::new();
++    let mut client = scripted_server(&mut workers, move |server| {
++        // First recovery: pending install. Second recovery: pending remove.
++        for needs_attestation in [true, false] {
++            for kind in [BrokerOperationKind::Gc, BrokerOperationKind::Activate] {
++                let (id, request) = read_request(server);
++                assert_eq!(request, CliBrokerRequest::Begin(kind));
++                let handle = server_caller.begin(kind).unwrap();
++                write_response(server, id, &CliBrokerResponse::Started(handle.clone()));
++                if kind == BrokerOperationKind::Gc {
++                    let (id, request) = read_request(server);
++                    assert_eq!(request, CliBrokerRequest::AcquireGc(handle.clone()));
++                    server_caller.acquire_gc_wait(&handle).unwrap();
++                    write_response(server, id, &CliBrokerResponse::GcAdmissionAcquired);
++                } else if needs_attestation {
++                    let (id, request) = read_request(server);
++                    assert_eq!(
++                        request,
++                        CliBrokerRequest::AttestGenerationRoots(handle.clone(), pending.clone())
++                    );
++                    let report = server_caller
++                        .attest_generation_root_intent(&handle, pending.clone(), |request| {
++                            maintenance.attest_root_set(request)
++                        })
++                        .unwrap();
++                    write_response(
++                        server,
++                        id,
++                        &CliBrokerResponse::GenerationRootsAttested(report),
++                    );
++                }
++                let (id, request) = read_request(server);
++                assert_eq!(request, CliBrokerRequest::Complete(handle.clone()));
++                server_caller.complete(&handle).unwrap();
++                write_response(server, id, &CliBrokerResponse::Completed);
++            }
++        }
++        // Both recoveries retain the original non-empty roots for rollback.
++        assert!(
++            maintenance
++                .attest_root_set(&RootSetAttestationRequest::new(uid, pending))
++                .is_ok()
++        );
++        let mut eof = [0_u8; 1];
++        let _ = server.read(&mut eof);
++    });
++    let operations = LocalStateOperations {
++        source: layout.clone(),
++        broker_state_compatible: true,
++    };
++    operations
++        .recover_pending_mutations(&layout, &mut client)
++        .unwrap();
++    let lease = StateLease::try_exclusive(&layout, &identity).unwrap();
++    let active = load_active_snapshot(&layout, &lease).unwrap().unwrap();
++    assert_eq!(active.generation().id(), "gen-0001");
++    assert_eq!(pending_install_generation(&layout, &lease).unwrap(), None);
++    let cli = Cli::try_parse(["pkg", "remove", "hello", "--yes"]).unwrap();
++    let crate::cli::Command::Remove(args) = cli.parsed_command() else {
++        panic!("expected remove")
++    };
++    let next = remove_state(active.state().clone(), args)
++        .unwrap()
++        .into_parts()
++        .0;
++    prepare_state_edit(
++        layout.clone(),
++        lease,
++        &active,
++        &next,
++        StateEditMetadata::new(
++            "gen-0002",
++            "2026-09-26T00:00:01Z",
++            "op_remove",
++            StateEditKind::Remove,
++        ),
++    )
++    .unwrap();
++
++    // A later command must complete this approved removal before it chooses
++    // its own source, even if that command would otherwise be a no-op.
++    operations
++        .recover_pending_mutations(&layout, &mut client)
++        .unwrap();
++    drop(client);
++    for worker in workers {
++        worker.join().unwrap();
++    }
++    let lease = StateLease::try_shared(&layout).unwrap();
++    let active = load_active_snapshot(&layout, &lease).unwrap().unwrap();
++    assert_eq!(active.generation().id(), "gen-0002");
++    assert!(active.state().manifest().entries().is_empty());
++    assert_eq!(
++        pending_state_edit_generation(&layout, &lease).unwrap(),
++        None
++    );
++    assert_eq!(
++        load_retained_history(&layout, &lease)
++            .unwrap()
++            .snapshots()
++            .len(),
++        2
++    );
++    assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
++    assert!(!broker.admission_snapshot().gc_held());
++}
++
+ #[test]
+ fn attestation_failure_reconciles_cancelled_activate_then_discards_with_gc() {
+     let (_home, layout, uid) = prepared_pending_install_fixture();
+diff --git a/crates/pkg-pipeline/src/commit.rs b/crates/pkg-pipeline/src/commit.rs
+index 73a7eee..78e5e8c 100644
+--- a/crates/pkg-pipeline/src/commit.rs
++++ b/crates/pkg-pipeline/src/commit.rs
+@@ -121,6 +121,8 @@ pub enum CommitError {
+     ActivatedNeedsRecovery,
+     /// The caller did not transfer an exclusive state-mutation lease.
+     LeaseRequired,
++    /// Another generation must be reconciled before a new one can be prepared.
++    PendingRecovery,
+ }
+ 
+ impl fmt::Display for CommitError {
+@@ -180,6 +182,28 @@ pub fn load_retained_history(
+     lease: &StateLease,
+ ) -> Result<History, CommitError> {
+     let (snapshots, active) = load_retained_snapshots(layout, lease)?;
++    let snapshots = snapshots
++        .into_iter()
++        .filter_map(|snapshot| {
++            journal_has_status(
++                layout,
++                lease,
++                snapshot.generation().operation().op_id(),
++                "commit",
++                "committed",
++            )
++            .map(|committed| committed.then_some(snapshot))
++            .transpose()
++        })
++        .collect::<Result<Vec<_>, _>>()?;
++    // An active but unfinished generation needs forward recovery, not a
++    // completed-history entry or a rollback/GC plan built from partial state.
++    if active
++        .as_ref()
++        .is_some_and(|id| !snapshots.iter().any(|s| s.generation().id() == id.as_str()))
++    {
++        return Err(CommitError::PendingRecovery);
++    }
+     History::new(snapshots, active.as_ref().map(GenerationId::as_str))
+         .map_err(|_| CommitError::InvalidCandidate)
+ }
+@@ -255,8 +279,71 @@ pub fn pending_install_generation(
+     pending_generation(layout, lease, is_install_operation)
+ }
+ 
+-/// Returns the sole aborted install generation whose discard is not terminal.
+-pub fn pending_install_discard_generation(
++/// Requires completed generation transactions before another state mutation.
++///
++/// # Errors
++/// Returns an error for an invalid lease or state, or an unfinished generation
++/// that must be recovered before preparing, repairing, or pruning state.
++pub fn ensure_recovered_state(layout: &StateLayout, lease: &StateLease) -> Result<(), CommitError> {
++    if pending_generation(layout, lease, |_| true)?.is_some()
++        || pending_discard_generation(layout, lease)?.is_some()
++    {
++        return Err(CommitError::PendingRecovery);
++    }
++    Ok(())
++}
++
++/// Identifies an unactivated attempt bypassed by a newer committed sibling.
++///
++/// Older CLIs could commit a different operation from the same parent without
++/// recovering this attempt. It must be discarded root-last, never activated
++/// over the newer committed state. Other divergent histories remain refused.
++///
++/// # Errors
++/// Returns an error for an invalid lease, invalid state, multiple pending
++/// generations, or divergence without a proved committed sibling.
++pub fn superseded_pending_generation(
++    layout: &StateLayout,
++    lease: &StateLease,
++) -> Result<Option<GenerationId>, CommitError> {
++    if !lease.authorizes(layout, LeaseMode::Exclusive) {
++        return Err(CommitError::LeaseRequired);
++    }
++    let Some(pending_id) = pending_generation(layout, lease, |_| true)? else {
++        return Ok(None);
++    };
++    let pending = load_generation_snapshot(layout, &pending_id)?;
++    let active = load_active_snapshot(layout, lease)?;
++    if active.as_ref().map(|s| s.generation().id()) == Some(pending_id.as_str())
++        || active.as_ref().map(|s| s.generation().id()) == pending.generation().parent()
++    {
++        return Ok(None);
++    }
++    let active = active.ok_or(CommitError::InvalidCandidate)?;
++    if !strictly_newer(active.generation().id(), pending_id.as_str())
++        || active.generation().parent() != pending.generation().parent()
++        || !journal_has_status(
++            layout,
++            lease,
++            active.generation().operation().op_id(),
++            "commit",
++            "committed",
++        )?
++        || journal_has_status(
++            layout,
++            lease,
++            pending.generation().operation().op_id(),
++            "activate",
++            "activated",
++        )?
++    {
++        return Err(CommitError::InvalidCandidate);
++    }
++    Ok(Some(pending_id))
++}
++
++/// Returns the sole aborted generation whose discard is not terminal.
++pub fn pending_discard_generation(
+     layout: &StateLayout,
+     lease: &StateLease,
+ ) -> Result<Option<GenerationId>, CommitError> {
+@@ -286,7 +373,9 @@ pub fn pending_install_discard_generation(
+                 if fields
+                     .get("operationKind")
+                     .and_then(Value::as_str)
+-                    .is_some_and(is_install_operation)
++                    .is_some_and(|kind| {
++                        is_install_operation(kind) || is_resumable_state_operation(kind)
++                    })
+                 {
+                     aborted.insert(key);
+                 }
+@@ -729,6 +818,9 @@ impl PreparedGeneration {
+             return Err(CommitError::LeaseRequired);
+         }
+         layout.validate().map_err(|_| CommitError::StateIo)?;
++        // Recovery and acquisition can release the lease before preparation.
++        // Recheck here so a concurrent interrupted command cannot be bypassed.
++        ensure_recovered_state(&layout, &lease)?;
+         validate_plan(&candidate, &plan)?;
+         let root = layout.state_root();
+         validate_directory(&root.join("generations"))?;
+diff --git a/crates/pkg-pipeline/src/commit/tests.rs b/crates/pkg-pipeline/src/commit/tests.rs
+index df6102a..9d079f2 100644
+--- a/crates/pkg-pipeline/src/commit/tests.rs
++++ b/crates/pkg-pipeline/src/commit/tests.rs
+@@ -232,6 +232,258 @@ fn mutation_lease(layout: &StateLayout) -> StateLease {
+     .unwrap()
+ }
+ 
++fn next_candidate(
++    layout: &StateLayout,
++    template: &CandidateGeneration,
++    id: &str,
++    kind: &str,
++) -> (CandidateGeneration, ActivationPlan) {
++    let staging = layout
++        .state_root()
++        .join(format!("activations/{id}.staging"));
++    fs::create_dir(&staging).unwrap();
++    fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
++    symlink(format!("{STORE}/bin/demo"), staging.join("demo")).unwrap();
++    let plan = inspect_staged_activation(&staging, vec![StorePath::new(STORE).unwrap()]).unwrap();
++    let mut record: Value = serde_json::from_slice(&template.generation_bytes).unwrap();
++    record["id"] = json!(id);
++    record["manifestSnapshot"] = json!(format!("generations/{id}.manifest.json"));
++    record["lockSnapshot"] = json!(format!("generations/{id}.lock.json"));
++    record["activation"]["treePath"] = json!(format!("activations/{id}"));
++    record["operation"]["opId"] = json!(format!("op_{id}"));
++    record["operation"]["kind"] = json!(kind);
++    record.as_object_mut().unwrap().remove("generationHash");
++    record["generationHash"] = json!(canonical_digest(&record).unwrap().to_string());
++    let candidate = CandidateGeneration::new(
++        template.manifest_bytes.clone(),
++        template.lock_bytes.clone(),
++        serde_json::to_vec(&record).unwrap(),
++    )
++    .unwrap();
++    (candidate, plan)
++}
++
++#[test]
++fn preparation_refuses_every_pending_operation_family() {
++    let kinds = [
++        "install", "upgrade", "remove", "pin", "unpin", "update", "rollback",
++    ];
++    for pending_kind in kinds {
++        for next_kind in kinds {
++            let fixture = fixture();
++            let (pending, plan) = next_candidate(
++                &fixture.layout,
++                &fixture.candidate,
++                "gen-0002",
++                pending_kind,
++            );
++            let lease = mutation_lease(&fixture.layout);
++            PreparedGeneration::prepare(fixture.layout.clone(), pending, plan, lease).unwrap();
++            let lease = mutation_lease(&fixture.layout);
++            assert!(
++                load_retained_history(&fixture.layout, &lease)
++                    .unwrap()
++                    .snapshots()
++                    .is_empty()
++            );
++            let (next, plan) =
++                next_candidate(&fixture.layout, &fixture.candidate, "gen-0003", next_kind);
++            assert!(
++                matches!(
++                    PreparedGeneration::prepare(fixture.layout.clone(), next, plan, lease),
++                    Err(CommitError::PendingRecovery)
++                ),
++                "{pending_kind} -> {next_kind}"
++            );
++            assert!(
++                !fixture
++                    .layout
++                    .state_root()
++                    .join("generations/gen-0003.json")
++                    .exists()
++            );
++            assert_eq!(fixture.layout.current_generation().unwrap(), None);
++        }
++    }
++}
++
++#[test]
++fn active_unfinished_generation_requires_recovery_before_history() {
++    let fixture = fixture();
++    let lease = mutation_lease(&fixture.layout);
++    PreparedGeneration::prepare(
++        fixture.layout.clone(),
++        fixture.candidate,
++        fixture.plan,
++        lease,
++    )
++    .unwrap()
++    .activate(&fixture.maintenance, "unfinished")
++    .unwrap();
++    let lease = mutation_lease(&fixture.layout);
++    assert!(matches!(
++        load_retained_history(&fixture.layout, &lease),
++        Err(CommitError::PendingRecovery)
++    ));
++    assert_eq!(
++        superseded_pending_generation(&fixture.layout, &lease).unwrap(),
++        None
++    );
++    recover_generation(
++        &fixture.layout,
++        &lease,
++        &fixture.generation_id,
++        &fixture.maintenance,
++    )
++    .unwrap();
++    assert_eq!(
++        load_retained_history(&fixture.layout, &lease)
++            .unwrap()
++            .snapshots()
++            .len(),
++        1
++    );
++}
++
++fn legacy_superseded_fixture() -> Fixture {
++    let fixture = fixture();
++    let (pending, plan) = next_candidate(&fixture.layout, &fixture.candidate, "gen-0002", "remove");
++    let lease = mutation_lease(&fixture.layout);
++    PreparedGeneration::prepare(fixture.layout.clone(), pending, plan, lease).unwrap();
++    let (sibling, _) = next_candidate(&fixture.layout, &fixture.candidate, "gen-0003", "install");
++    let lease = mutation_lease(&fixture.layout);
++    // Reconstruct the legacy failure: old prepare accepted a sibling while an
++    // earlier generation was pending. Current prepare must never allow this.
++    for (relative, bytes) in [
++        (
++            "generations/gen-0003.manifest.json",
++            &sibling.manifest_bytes,
++        ),
++        ("generations/gen-0003.lock.json", &sibling.lock_bytes),
++        ("generations/gen-0003.json", &sibling.generation_bytes),
++    ] {
++        write_with_sidecar(fixture.layout.state_root(), relative, bytes).unwrap();
++    }
++    append_phase(
++        &fixture.layout,
++        &lease,
++        "op_gen-0003",
++        "commit",
++        "prepared",
++        [("generationId", json!("gen-0003"))],
++    )
++    .unwrap();
++    let active = GenerationId::new("gen-0003").unwrap();
++    let resumed = resume_prepared_install(fixture.layout.clone(), lease, &active).unwrap();
++    resumed
++        .activate(&fixture.maintenance, "sibling")
++        .unwrap()
++        .finish()
++        .unwrap();
++    fixture
++}
++
++#[test]
++fn superseded_attempt_is_discarded_without_reverting_a_committed_sibling() {
++    let fixture = legacy_superseded_fixture();
++    let active = GenerationId::new("gen-0003").unwrap();
++    let lease = mutation_lease(&fixture.layout);
++    let pending = superseded_pending_generation(&fixture.layout, &lease)
++        .unwrap()
++        .unwrap();
++    assert_eq!(pending.as_str(), "gen-0002");
++    recover_generation(&fixture.layout, &lease, &pending, &fixture.maintenance).unwrap();
++    assert_eq!(fixture.layout.current_generation().unwrap(), Some(active));
++    assert!(
++        journal_has_status(&fixture.layout, &lease, "op_gen-0002", "commit", "aborted").unwrap()
++    );
++    assert!(journal_has_status(&fixture.layout, &lease, "op_gen-0002", "prune", "pruned").unwrap());
++    assert_eq!(
++        pending_state_edit_generation(&fixture.layout, &lease).unwrap(),
++        None
++    );
++    assert_eq!(
++        load_retained_history(&fixture.layout, &lease)
++            .unwrap()
++            .snapshots()
++            .len(),
++        1
++    );
++    let request = pkg_nix::RootSetAttestationRequest::new(
++        fixture.layout.owner_uid(),
++        GenerationId::new("gen-0003").unwrap(),
++    );
++    assert!(fixture.maintenance.attest_root_set(&request).is_ok());
++}
++
++#[test]
++fn superseded_recovery_refuses_a_previously_activated_attempt() {
++    let fixture = legacy_superseded_fixture();
++    let lease = mutation_lease(&fixture.layout);
++    append_phase(
++        &fixture.layout,
++        &lease,
++        "op_gen-0002",
++        "activate",
++        "activated",
++        [],
++    )
++    .unwrap();
++    assert_eq!(
++        superseded_pending_generation(&fixture.layout, &lease),
++        Err(CommitError::InvalidCandidate)
++    );
++    assert!(
++        fixture
++            .layout
++            .state_root()
++            .join("generations/gen-0002.json")
++            .exists()
++    );
++    assert_eq!(
++        fixture
++            .layout
++            .current_generation()
++            .unwrap()
++            .unwrap()
++            .as_str(),
++        "gen-0003"
++    );
++}
++
++#[test]
++fn aborted_state_edit_remains_discoverable_before_prune_intent() {
++    let fixture = fixture();
++    let (candidate, plan) =
++        next_candidate(&fixture.layout, &fixture.candidate, "gen-0002", "remove");
++    let lease = mutation_lease(&fixture.layout);
++    PreparedGeneration::prepare(fixture.layout.clone(), candidate, plan, lease).unwrap();
++    let lease = mutation_lease(&fixture.layout);
++    append_phase(
++        &fixture.layout,
++        &lease,
++        "op_gen-0002",
++        "commit",
++        "aborted",
++        [
++            ("generationId", json!("gen-0002")),
++            ("operationKind", json!("remove")),
++        ],
++    )
++    .unwrap();
++    assert_eq!(
++        pending_discard_generation(&fixture.layout, &lease)
++            .unwrap()
++            .unwrap()
++            .as_str(),
++        "gen-0002"
++    );
++    assert_eq!(
++        ensure_recovered_state(&fixture.layout, &lease),
++        Err(CommitError::PendingRecovery)
++    );
++}
++
+ #[test]
+ fn prepared_fault_discards_record_snapshots_and_staging() {
+     let fixture = fixture();
+@@ -302,7 +554,7 @@ fn prepared_and_aborted_without_intent_are_not_generic_prunes() {
+             .exists()
+     );
+     assert_eq!(
+-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
++        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+         None
+     );
+ 
+@@ -324,7 +576,7 @@ fn prepared_and_aborted_without_intent_are_not_generic_prunes() {
+             .is_empty()
+     );
+     assert_eq!(
+-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
++        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+         Some(fixture.generation_id.clone())
+     );
+     assert_eq!(
+@@ -350,7 +602,7 @@ fn prepared_and_aborted_without_intent_are_not_generic_prunes() {
+             .exists()
+     );
+     assert_eq!(
+-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
++        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+         None
+     );
+ }
+@@ -383,7 +635,7 @@ fn failed_root_last_discard_converges_through_generic_recovery() {
+         Err(CommitError::ActivationFailed)
+     );
+     assert_eq!(
+-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
++        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+         Some(fixture.generation_id.clone())
+     );
+     assert!(
+@@ -410,7 +662,7 @@ fn failed_root_last_discard_converges_through_generic_recovery() {
+             .is_empty()
+     );
+     assert_eq!(
+-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
++        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+         None
+     );
+ }
+@@ -476,7 +728,7 @@ fn cross_operation_prune_is_terminal_for_aborted_install() {
+             .exists()
+     );
+     assert_eq!(
+-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
++        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+         None
+     );
+     assert!(
+@@ -514,7 +766,7 @@ fn helper_removed_before_terminal_row_retries_idempotently() {
+         Err(CommitError::ActivationFailed)
+     );
+     assert_eq!(
+-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
++        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+         Some(fixture.generation_id.clone())
+     );
+     let maintenance = RootLastMaintenance {
+@@ -529,7 +781,7 @@ fn helper_removed_before_terminal_row_retries_idempotently() {
+         vec!["gen-0001".to_owned()]
+     );
+     assert_eq!(
+-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
++        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+         None
+     );
+ }
+diff --git a/crates/pkg-pipeline/src/lib.rs b/crates/pkg-pipeline/src/lib.rs
+index dd8b757..d574462 100644
+--- a/crates/pkg-pipeline/src/lib.rs
++++ b/crates/pkg-pipeline/src/lib.rs
+@@ -45,10 +45,11 @@ pub use build_preparation::{
+ };
+ pub use commit::{
+     ActivatedGeneration, CandidateGeneration, CommitError, PreparedGeneration, RecoveryResult,
+-    discard_unprepared_installs, discard_unprepared_state_edits, load_active_snapshot,
+-    load_retained_history, pending_install_discard_generation, pending_install_generation,
+-    pending_state_edit_generation, pending_state_transition_source, recover_generation,
+-    recover_transitioned_state_edit, resume_prepared_install, resume_prepared_state_edit,
++    discard_unprepared_installs, discard_unprepared_state_edits, ensure_recovered_state,
++    load_active_snapshot, load_retained_history, pending_discard_generation,
++    pending_install_generation, pending_state_edit_generation, pending_state_transition_source,
++    recover_generation, recover_transitioned_state_edit, resume_prepared_install,
++    resume_prepared_state_edit, superseded_pending_generation,
+ };
+ pub use host_facts::ProductionBuildHostFactsProbe;
+ pub use install_generation::{

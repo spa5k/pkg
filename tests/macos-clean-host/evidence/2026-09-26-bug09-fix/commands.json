@@ -1,0 +1,99 @@
+{
+  "source_base": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "patch_scope": "cumulative runtime BUG-01 through BUG-09 including final busy-doctor refinement",
+  "patch_sha256": "fe6032a7f7188da88d2afd65503045fd55e2d816ee2c083b3b37e6ef2eb9157a",
+  "final_cli_sha256": "773616b2c6d35f6737a47d21f7932b80d6adb66d92b840da6c0d665cada09177",
+  "fixed_broker_sha256": "71c36f6f46713c13c7826acc34b0b7de10d78b9a4da9594c63a6dee174d913d3",
+  "cases": [
+    {
+      "case": "001",
+      "command": "/bin/zsh -f /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug08-fixed",
+      "started": "2026-09-26T10:14:07.581923+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.25,
+      "exit_code": 1,
+      "output_sha256": "7e78c65f2d72f763d4715ea68d72468153d613e1a666274b8e1f8ed6eb1098da",
+      "build": "before BUG-09"
+    },
+    {
+      "case": "002",
+      "command": "/bin/bash --noprofile --norc /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug09-fixed && /bin/zsh -f /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug09-fixed && rg --version && /tmp/pkg-bug09-fixed doctor --json && /tmp/pkg-bug09-fixed repair --verify-only --json && shasum -a 256 /tmp/pkg-bug09-fixed && readlink \"$HOME/Library/Application Support/pkg/current\"",
+      "started": "2026-09-26T10:14:37.462527+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 8.74,
+      "exit_code": 0,
+      "output_sha256": "4fce9d541e187ea892a9a7ab07a2983491ee40e4ef5bf281b01b35e4d2c55a25",
+      "build": "development-before-busy-doctor-refinement"
+    },
+    {
+      "case": "003",
+      "command": "sudo -n cp -p /opt/pkg/bin/pkg-nix-broker /tmp/pkg-nix-broker-alpha54-final && sudo -n launchctl bootout system/org.pkg.nix-broker && sudo -n cp /tmp/pkg-nix-broker-fixed /opt/pkg/bin/pkg-nix-broker && sudo -n launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist && sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker && /tmp/pkg-bug09-fixed doctor --json",
+      "started": "2026-09-26T10:15:32.171068+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 8.23,
+      "exit_code": 0,
+      "output_sha256": "adb18e81c67a87f6b4de7bb3aebecf5287bd94896a7218d818a634d0a4976af5",
+      "build": "development-before-busy-doctor-refinement"
+    },
+    {
+      "case": "005",
+      "command": "/tmp/pkg-bug09-fixed doctor --json",
+      "started": "2026-09-26T10:16:05.530260+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.73,
+      "exit_code": 78,
+      "output_sha256": "d3317eabb56f0d3c5a0145933e62e55465d7479c550940d4329e2713060c17f4",
+      "build": "development-before-busy-doctor-refinement"
+    },
+    {
+      "case": "004",
+      "command": "/tmp/pkg-bug09-fixed remove ripgrep",
+      "started": "2026-09-26T10:15:41.004244+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 40.13,
+      "exit_code": 0,
+      "output_sha256": "23afeb5b1d9705c2cc6ff43742ba6d9cc2106110897bc586e81783b04fd38e1e",
+      "build": "development-before-busy-doctor-refinement"
+    },
+    {
+      "case": "006",
+      "command": "/tmp/pkg-bug09-fixed rollback --yes --json && rg --version && /tmp/pkg-bug09-fixed doctor --json",
+      "started": "2026-09-26T10:17:01.197861+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 5.6,
+      "exit_code": 0,
+      "output_sha256": "347b82dd6c53bacedd6074e84f68c3478c439b955f45cfa7cc23de04ea672edd",
+      "build": "development-before-busy-doctor-refinement"
+    },
+    {
+      "case": "008",
+      "command": "/tmp/pkg-bug09-fixed doctor --json",
+      "started": "2026-09-26T10:18:53.027564+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.8,
+      "exit_code": 78,
+      "output_sha256": "e0ca722e9262ebe71cb77782692b17890482c24ff73d5993fe9f96435d844742",
+      "build": "final"
+    },
+    {
+      "case": "007",
+      "command": "/tmp/pkg-bug09-fixed remove ripgrep",
+      "started": "2026-09-26T10:18:23.189238+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 43.48,
+      "exit_code": 0,
+      "output_sha256": "d2ff4da3c35151fa0ddda3124e308f3ad0c87446344d8afec927d28389c0ef35",
+      "build": "final"
+    },
+    {
+      "case": "009",
+      "command": "/tmp/pkg-bug09-fixed rollback --yes --json && rg --version && /bin/bash --noprofile --norc /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug09-fixed && /bin/zsh -f /tmp/pkg-shellenv-proof.sh /tmp/pkg-bug09-fixed && /tmp/pkg-bug09-fixed doctor --json && /tmp/pkg-bug09-fixed repair --verify-only --json && /tmp/pkg-bug09-fixed list --json && readlink \"$HOME/Library/Application Support/pkg/current\" && shasum -a 256 /tmp/pkg-bug09-fixed /usr/local/bin/pkg && sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper",
+      "started": "2026-09-26T10:19:06.792487+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 11.38,
+      "exit_code": 0,
+      "output_sha256": "802115e8d933717a676028343daac77d4583012c2b21b9bda19affaf9a8418e6",
+      "build": "final"
+    }
+  ]
+}

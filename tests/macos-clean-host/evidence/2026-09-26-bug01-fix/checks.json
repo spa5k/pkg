@@ -1,0 +1,54 @@
+{
+  "toolchain": "1.96.1",
+  "workspace_tests": {
+    "passed": 1221,
+    "failed": 0,
+    "ignored": 5
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked --workspace",
+      "exit_code": 0,
+      "log_sha256": "139eb28a5f310361700072ec56994a6c498af79565cbd689c1252f62cc4909d7"
+    },
+    {
+      "command": "RUSTDOCFLAGS=\"-D warnings\" cargo doc --workspace --all-features --no-deps --locked",
+      "exit_code": 0,
+      "log_sha256": "90e0eb5cbad7c33ad62f25ba60d7287e5e85f71543d217f48da4631195532b91"
+    },
+    {
+      "command": "cargo build --workspace --all-targets --all-features --locked",
+      "exit_code": 0,
+      "log_sha256": "d5608f7c65c8ec2c39e3126d37247bfeab60d63bdc5fefaa949ec04a5cd99bc0"
+    },
+    {
+      "command": "cargo deny --locked check",
+      "exit_code": 0,
+      "log_sha256": "32af4a5c11b6f23bf09153d0aec7204a3c084ffc78d5ee253bf1e4b0bc062df7"
+    },
+    {
+      "command": "cargo audit",
+      "exit_code": 0,
+      "log_sha256": "d2e6300602624cdf41059c9b62e034a06d5a3ba80b099a8bb22fd4e25249e337"
+    },
+    {
+      "command": "BASE_REF=origin/main tools/quality/quality-gate.sh check",
+      "exit_code": 0,
+      "log_sha256": "8f218fac95fae8f8b692a99f2e3c361396c6ba348b0e6cbf1ea29712fab90ee2"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+      "exit_code": 0,
+      "log_sha256": "b6e234bd7d0d1889d101e34971eb52dcbe168659e6f9e39300554353b3da8ea0"
+    },
+    {
+      "command": "cargo test --locked -p pkg-nix -p pkg-installer -p pkg-cli broker --lib",
+      "exit_code": 0,
+      "log_sha256": "d84b3516b0e1e9de71610bbf1027ccd594df3c627b71e14e7bc5ac0e398f10c7"
+    },
+    {
+      "command": "cargo fmt --all --check",
+      "exit_code": 0
+    }
+  ]
+}

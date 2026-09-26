@@ -1,0 +1,542 @@
+CASE 001-baseline
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:40:03.615017+00:00
+$ pkg --version; pkg doctor; pkg list --json; pkg history --json
+pkg 0.1.0-alpha.54
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+{"command":"list","entries":[{"name":"fzf","pinned":false,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+{"command":"history","entries":[{"active":true,"changes":null,"createdAt":"2026-09-25T22:30:59Z","id":"gen-0001","operation":"install","packageChanges":null,"packages":[{"name":"fzf","pinned":false,"selector":"fzf","version":"0.46.0"}],"parent":null}],"ok":true,"schemaVersion":1}
+EXIT 0 | 1.26 seconds
+
+CASE 002-duplicate-install
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:40:04.898718+00:00
+$ pkg install fzf --yes --json
+{"schemaVersion":1,"opId":"op_889ec7581dead416e68965d9c25d41e0","ok":false,"command":"install","error":{"symbol":"PREFLIGHT_FAIL","code":65,"message":"one or more requested packages are already installed","hint":"run `pkg upgrade`, or remove the package before you install it again"}}
+EXIT 65 | 23.46 seconds
+
+CASE 003-mixed-invalid-install
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:40:28.387468+00:00
+$ pkg install ripgrep definitely-not-a-package --yes --json
+{"schemaVersion":1,"opId":"op_ba260dc13ebae0676914ec865b599a1e","ok":false,"command":"install","error":{"symbol":"RESOLVE_FAILED","code":64,"message":"package was not found in the verified index","hint":"run `pkg search` or `pkg update` and try again"}}
+EXIT 64 | 1.32 seconds
+
+CASE 004-state-after-failure
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:40:29.727942+00:00
+$ pkg list --json; pkg history --json
+{"command":"list","entries":[{"name":"fzf","pinned":false,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+{"command":"history","entries":[{"active":true,"changes":null,"createdAt":"2026-09-25T22:30:59Z","id":"gen-0001","operation":"install","packageChanges":null,"packages":[{"name":"fzf","pinned":false,"selector":"fzf","version":"0.46.0"}],"parent":null}],"ok":true,"schemaVersion":1}
+EXIT 0 | 0.11 seconds
+
+CASE 005-duplicate-pin
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:40:29.856187+00:00
+$ pkg pin fzf fzf --json
+{"changed":["sel_015ef1da55e3ae51398e5908b8bd15eb_0"],"command":"pin","generation":"gen-0002","ok":true,"packages":[{"name":"fzf","pinned":true,"selector":"fzf","version":"0.46.0"}],"schemaVersion":1,"unchanged":[]}
+EXIT 0 | 0.28 seconds
+
+CASE 006-remove-alias-missing
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:40:30.168502+00:00
+$ pkg remove fzf missing --yes --json
+{"schemaVersion":1,"ok":false,"command":"remove","error":{"symbol":"RESOLVE_FAILED","code":64,"message":"package 'missing' is not installed","hint":"run `pkg list` to see installed names and selectors"}}
+EXIT 64 | 0.11 seconds
+
+CASE 007-state-after-edits
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:40:30.311507+00:00
+$ pkg list --json; pkg history --json
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+{"command":"history","entries":[{"active":true,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-25T22:40:29Z","id":"gen-0002","operation":"pin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0001"},{"active":false,"changes":null,"createdAt":"2026-09-25T22:30:59Z","id":"gen-0001","operation":"install","packageChanges":null,"packages":[{"name":"fzf","pinned":false,"selector":"fzf","version":"0.46.0"}],"parent":null}],"ok":true,"schemaVersion":1}
+EXIT 0 | 0.13 seconds
+
+CASE 008-mixed-valid-duplicate
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:40:52.873916+00:00
+$ pkg install ripgrep fzf --yes --json
+{"schemaVersion":1,"opId":"op_09547aeae2f3dcfcaffe9580ce68ada6","ok":false,"command":"install","error":{"symbol":"PREFLIGHT_FAIL","code":65,"message":"one or more requested packages are already installed","hint":"run `pkg upgrade`, or remove the package before you install it again"}}
+EXIT 65 | 12.69 seconds
+
+CASE 009-keep-going-errors
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:05.599994+00:00
+$ pkg install no-such-one no-such-two --keep-going --yes --json
+{"schemaVersion":1,"opId":"op_2c99457c2e0be877b77f81392471fa31","ok":false,"command":"install","error":{"symbol":"RESOLVE_FAILED","code":64,"message":"package was not found in the verified index","hint":"run `pkg search` or `pkg update` and try again"}}
+EXIT 64 | 0.45 seconds
+
+CASE 010-orphan-preview
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:06.069967+00:00
+$ pkg remove fzf --orphan-check --dry-run --json
+{"command":"remove","ok":true,"orphanCheckRequested":true,"packages":[{"name":"fzf","pinned":true,"selector":"fzf","version":"0.46.0"}],"removed":["sel_015ef1da55e3ae51398e5908b8bd15eb_0"],"schemaVersion":1}
+EXIT 0 | 0.1 seconds
+
+CASE 011-dry-run-duplicate
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:06.194843+00:00
+$ pkg install fzf --dry-run --json
+{"command":"install","dryRun":true,"ok":true,"preflight":{"approvalRequired":false,"build":{"count":0,"hasFixedOutput":false,"names":[]},"buildPlanDigest":"sha256:204cb0972485a905b3f199732dec637a7103ce19608e23d1e983724f18fbc272","cache":{"knownContentBytes":0,"knownDownloadBytes":0},"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null,"minimumFreeDiskBytes":5368709120},"platform":{"arch":"arm64","os":"macos"},"policyVersion":1,"purpose":"build","readiness":{"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","notice":"macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.","perBuildResourceCap":false},"sandboxed":true},"targets":[{"localBuildRequired":false,"outputsToInstall":["man","out"],"packageName":"fzf","selector":"fzf","version":"0.46.0"}],"unknownLocalOutputs":0},"schemaVersion":1}
+EXIT 0 | 1.86 seconds
+
+CASE 012-state-after-previews
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:08.079513+00:00
+$ pkg list --json; pkg history --json
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+{"command":"history","entries":[{"active":true,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-25T22:40:29Z","id":"gen-0002","operation":"pin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0001"},{"active":false,"changes":null,"createdAt":"2026-09-25T22:30:59Z","id":"gen-0001","operation":"install","packageChanges":null,"packages":[{"name":"fzf","pinned":false,"selector":"fzf","version":"0.46.0"}],"parent":null}],"ok":true,"schemaVersion":1}
+EXIT 0 | 0.11 seconds
+
+CASE 013-shellenv-reentry
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:08.212210+00:00
+$ print -r -- "MANPATH before: $MANPATH"; eval "$(pkg shellenv)"; eval "$(pkg shellenv)"; print -r -- "MANPATH after: $MANPATH"
+MANPATH before: /Users/admin/Library/Application Support/pkg/current/share/man:
+MANPATH after: /Users/admin/Library/Application Support/pkg/current/share/man:/Users/admin/Library/Application Support/pkg/current/share/man:/Users/admin/Library/Application Support/pkg/current/share/man:
+EXIT 0 | 0.09 seconds
+
+CASE 014-install-ripgrep
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:08.324247+00:00
+$ pkg install ripgrep --yes --json
+{"added":[{"outputs":["out"],"package":"ripgrep","selector":"ripgrep","version":"13.0.0"}],"command":"install","generation":{"id":"gen-0003","parent":"gen-0002"},"ok":true,"opId":"op_d04064416883e61da1390e57fa8c7867","schemaVersion":1}
+EXIT 0 | 2.58 seconds
+
+CASE 015-alias-remove-preview
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:42.793829+00:00
+$ pkg remove rg --dry-run --json
+{"schemaVersion":1,"ok":false,"command":"remove","error":{"symbol":"RESOLVE_FAILED","code":64,"message":"package 'rg' is not installed","hint":"run `pkg list` to see installed names and selectors"}}
+EXIT 64 | 0.15 seconds
+
+CASE 016-bump-pinned-preview
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:42.971522+00:00
+$ pkg upgrade --all --bump-pinned --dry-run --json
+{"command":"upgrade","dryRun":true,"ok":true,"preflight":{"approvalRequired":false,"build":{"count":0,"hasFixedOutput":false,"names":[]},"buildPlanDigest":"sha256:5c26f97a0ced7eee8385b53bb561d5e86663ed312d51a6707e0a97060847cf33","cache":{"knownContentBytes":0,"knownDownloadBytes":0},"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null,"minimumFreeDiskBytes":5368709120},"platform":{"arch":"arm64","os":"macos"},"policyVersion":1,"purpose":"build","readiness":{"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","notice":"macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.","perBuildResourceCap":false},"sandboxed":true},"targets":[{"localBuildRequired":false,"outputsToInstall":["man","out"],"packageName":"fzf","selector":"fzf","version":"0.46.0"},{"localBuildRequired":false,"outputsToInstall":["out"],"packageName":"ripgrep","selector":"ripgrep","version":"13.0.0"}],"unknownLocalOutputs":0},"schemaVersion":1,"skippedPinned":[]}
+EXIT 0 | 2.49 seconds
+
+CASE 017-upgrade-current
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:45.486991+00:00
+$ pkg upgrade --all --yes --json
+{"buildApproval":"not_required","command":"upgrade","generation":null,"ok":true,"opId":"op_116ea9d8702f9271a4072689b25de560","schemaVersion":1,"skippedPinned":["sel_015ef1da55e3ae51398e5908b8bd15eb_0"],"upgraded":[]}
+EXIT 0 | 2.7 seconds
+
+CASE 018-orphan-remove
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:48.208521+00:00
+$ pkg remove ripgrep --orphan-check --yes --json
+{"command":"remove","generation":"gen-0004","ok":true,"orphanCheckRequested":true,"packages":[{"name":"ripgrep","pinned":false,"selector":"ripgrep","version":"13.0.0"}],"removed":["sel_dac5136006cad3aa1dd2039c31eed77f_0"],"schemaVersion":1}
+EXIT 0 | 0.27 seconds
+
+CASE 019-rollback-remove
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:48.502012+00:00
+$ pkg rollback --yes --json
+{"command":"rollback","generation":"gen-0005","ok":true,"packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packageCount":2,"schemaVersion":1,"sourceGeneration":"gen-0004","targetGeneration":"gen-0003"}
+EXIT 0 | 0.3 seconds
+
+CASE 020-after-rollback
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:41:48.827650+00:00
+$ pkg list --json; command -v rg; rg --version; pkg history --json
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"ripgrep","pinned":false,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+/Users/admin/Library/Application Support/pkg/current/bin/rg
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+{"command":"history","entries":[{"active":true,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-25T22:41:48Z","id":"gen-0005","operation":"rollback","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0004"},{"active":false,"changes":{"added":0,"changed":0,"removed":1},"createdAt":"2026-09-25T22:41:48Z","id":"gen-0004","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"13.0.0","kind":"removed","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0003"},{"active":false,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-25T22:41:10Z","id":"gen-0003","operation":"install","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0002"},{"active":false,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-25T22:40:29Z","id":"gen-0002","operation":"pin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0001"},{"active":false,"changes":null,"createdAt":"2026-09-25T22:30:59Z","id":"gen-0001","operation":"install","packageChanges":null,"packages":[{"name":"fzf","pinned":false,"selector":"fzf","version":"0.46.0"}],"parent":null}],"ok":true,"schemaVersion":1}
+EXIT 0 | 0.12 seconds
+
+CASE 021-activation-damage-setup
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:42:08.448402+00:00
+$ state="$HOME/Library/Application Support/pkg"; readlink "$state/current/bin/rg" > /tmp/pkg-rg-link-before; test -s /tmp/pkg-rg-link-before && rm "$state/current/bin/rg"; command -v rg
+
+EXIT 1 | 0.1 seconds
+
+CASE 022-damaged-activation-doctor
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:42:08.573584+00:00
+$ pkg doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+EXIT 0 | 0.8 seconds
+
+CASE 023-damaged-activation-verify
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:42:09.398695+00:00
+$ pkg repair --verify-only --json
+{"command":"repair","damagedPathCount":0,"generation":"gen-0005","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verifyOnly":true}
+EXIT 0 | 5.91 seconds
+
+CASE 024-damaged-activation-repair
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:42:15.334908+00:00
+$ pkg repair --yes --json
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"command":"repair","damagedPathCount":0,"generation":"gen-0005","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"clean","verifyOnly":false}
+EXIT 0 | 6.17 seconds
+
+CASE 025-command-after-repair
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:42:21.525937+00:00
+$ command -v rg; rg --version
+zsh:1: command not found: rg
+EXIT 127 | 0.09 seconds
+
+CASE 026-activation-restore
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:42:21.638261+00:00
+$ state="$HOME/Library/Application Support/pkg"; ln -s "$(cat /tmp/pkg-rg-link-before)" "$state/current/bin/rg"; rg --version
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+EXIT 0 | 0.1 seconds
+
+CASE 027-install-collision-pair
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:42:33.555083+00:00
+$ pkg install just "github:casey/just#default" --on-collision keep-first --yes --json
+{"schemaVersion":1,"opId":"op_e214523b501ab4d23b42605bf4978fdd","ok":false,"command":"install","error":{"symbol":"ENGINE_UNAVAILABLE","code":79,"message":"the local build could not be prepared","hint":"run `pkg doctor`, then retry the package operation"}}
+EXIT 79 | 58.96 seconds
+
+CASE 028-doctor-during-install
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:43:26.207496+00:00
+$ pkg doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+EXIT 0 | 0.63 seconds
+
+CASE 029-main-cli-check
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:43:52.796343+00:00
+$ /tmp/pkg-main --version; shasum -a 256 /tmp/pkg-main; /tmp/pkg-main doctor --json
+pkg 0.1.0-alpha.54
+110ad367bdf72a21555269534ca6a24c78a1daf494f5f9781a30597218a63ef9  /tmp/pkg-main
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+EXIT 0 | 0.78 seconds
+
+CASE 030-collision-install-alone
+VM: pkg-onboarding-20260926
+Started: 2026-09-25T22:44:20.539913+00:00
+$ pkg install just "github:casey/just#default" --on-collision keep-first --yes --json
+{"added":[{"outputs":["doc","man","out"],"package":"just","selector":"just","version":"1.25.2"},{"outputs":["out"],"package":"just","selector":"github:casey/just#default","version":"1.58.0"}],"command":"install","generation":{"id":"gen-0006","parent":"gen-0005"},"ok":true,"opId":"op_6498fcd0d88cae3025b26db6ff8e4025","schemaVersion":1}
+EXIT 0 | 155.78 seconds
+
+CASE 031-resume-baseline
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:45:36.077039+00:00
+$ pkg list --json; just --version; /tmp/pkg-main doctor --json
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"},{"name":"ripgrep","pinned":false,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+just 1.25.2
+zsh:1: no such file or directory: /tmp/pkg-main
+EXIT 127 | 0.21 seconds
+
+CASE 032-main-remove-paused
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:45:46.476141+00:00
+$ /tmp/pkg-main remove ripgrep
+Package  Version
+ripgrep  13.0.0
+
+
+Remove these packages? [y/N] y
+error[ENGINE_UNAVAILABLE]: the managed package service refused the transaction
+hint: run `pkg doctor` to inspect managed broker readiness
+EXIT 79 | 18.63 seconds
+
+CASE 033-main-doctor-during-prompt
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:45:51.413371+00:00
+$ /tmp/pkg-main doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+EXIT 0 | 1.23 seconds
+
+CASE 034-after-concurrent-cancel
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:46:05.218129+00:00
+$ /tmp/pkg-main list --json; rg --version; readlink "$HOME/Library/Application Support/pkg/current"
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"},{"name":"ripgrep","pinned":false,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+activations/gen-0006
+EXIT 0 | 0.44 seconds
+
+CASE 035-recover-state-edit
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:46:23.510527+00:00
+$ /tmp/pkg-main pin fzf --json
+{"changed":[],"command":"pin","ok":true,"packages":[],"schemaVersion":1,"unchanged":["sel_015ef1da55e3ae51398e5908b8bd15eb_0"]}
+EXIT 0 | 0.62 seconds
+
+CASE 036-after-recovery
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:46:24.220201+00:00
+$ /tmp/pkg-main list --json; readlink "$HOME/Library/Application Support/pkg/current"; /tmp/pkg-main history --json
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+activations/gen-0007
+{"command":"history","entries":[{"active":true,"changes":{"added":0,"changed":0,"removed":1},"createdAt":"2026-09-26T07:45:46Z","id":"gen-0007","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"13.0.0","kind":"removed","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0006"},{"active":false,"changes":{"added":2,"changed":0,"removed":0},"createdAt":"2026-09-25T22:46:56Z","id":"gen-0006","operation":"install","packageChanges":[{"afterOutputs":["doc","man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"1.25.2","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"just"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","afterVersion":"1.58.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"github:casey/just#default"}],"packages":null,"parent":"gen-0005"},{"active":false,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-25T22:41:48Z","id":"gen-0005","operation":"rollback","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0004"},{"active":false,"changes":{"added":0,"changed":0,"removed":1},"createdAt":"2026-09-25T22:41:48Z","id":"gen-0004","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"13.0.0","kind":"removed","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0003"},{"active":false,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-25T22:41:10Z","id":"gen-0003","operation":"install","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0002"},{"active":false,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-25T22:40:29Z","id":"gen-0002","operation":"pin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0001"},{"active":false,"changes":null,"createdAt":"2026-09-25T22:30:59Z","id":"gen-0001","operation":"install","packageChanges":null,"packages":[{"name":"fzf","pinned":false,"selector":"fzf","version":"0.46.0"}],"parent":null}],"ok":true,"schemaVersion":1}
+EXIT 0 | 0.35 seconds
+
+CASE 037-preview-unrelated-install
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:46:24.646297+00:00
+$ /tmp/pkg-main install hello --dry-run --json
+{"command":"install","dryRun":true,"ok":true,"preflight":{"approvalRequired":false,"build":{"count":0,"hasFixedOutput":false,"names":[]},"buildPlanDigest":"sha256:c9f20d4b7d077a54bdfb95fc9d3e4eaa6c2e831e935b625ca799adfdeeac100c","cache":{"knownContentBytes":121144,"knownDownloadBytes":25404},"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null,"minimumFreeDiskBytes":5368884978},"platform":{"arch":"arm64","os":"macos"},"policyVersion":1,"purpose":"build","readiness":{"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","notice":"macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.","perBuildResourceCap":false},"sandboxed":true},"targets":[{"localBuildRequired":false,"outputsToInstall":["out"],"packageName":"hello","selector":"hello","version":"2.12.1"}],"unknownLocalOutputs":0},"schemaVersion":1}
+EXIT 0 | 25.9 seconds
+
+CASE 038-unrelated-install
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:46:50.573682+00:00
+$ /tmp/pkg-main install hello --yes --json
+{"schemaVersion":1,"opId":"op_0360b174528ff4d375828ee619e3760f","ok":false,"command":"install","error":{"symbol":"STAGE_COLLISION","code":71,"message":"package commands collide under the abort policy","hint":"remove one conflicting package or select different outputs"}}
+EXIT 71 | 4.14 seconds
+
+CASE 039-block-state-view
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:47:25.563633+00:00
+$ state="$HOME/Library/Application Support/pkg"; mv "$state/lock.json" /tmp/pkg-lock-before; mkdir "$state/lock.json"; readlink "$state/current"
+activations/gen-0007
+EXIT 0 | 0.24 seconds
+
+CASE 040-unpin-blocked-view
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:47:25.843968+00:00
+$ /tmp/pkg-main unpin fzf --json
+{"schemaVersion":1,"ok":false,"command":"unpin","error":{"symbol":"STATE_CORRUPT","code":73,"message":"the package state change could not be committed safely","hint":"run `pkg doctor` before retrying the change"}}
+EXIT 73 | 0.57 seconds
+
+CASE 041-state-after-failed-unpin
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:47:26.443710+00:00
+$ /tmp/pkg-main list --json; readlink "$HOME/Library/Application Support/pkg/current"; /tmp/pkg-main doctor --json
+{"command":"list","entries":[{"name":"fzf","pinned":false,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+activations/gen-0008
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+EXIT 0 | 1.01 seconds
+
+CASE 042-unblock-state-view
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:47:27.493768+00:00
+$ state="$HOME/Library/Application Support/pkg"; rmdir "$state/lock.json" && mv /tmp/pkg-lock-before "$state/lock.json"; /tmp/pkg-main pin fzf --json
+{"changed":["sel_015ef1da55e3ae51398e5908b8bd15eb_0"],"command":"pin","generation":"gen-0009","ok":true,"packages":[{"name":"fzf","pinned":true,"selector":"fzf","version":"0.46.0"}],"schemaVersion":1,"unchanged":[]}
+EXIT 0 | 0.66 seconds
+
+CASE 043-empty-environment
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:47:28.190364+00:00
+$ /tmp/pkg-main remove fzf just "github:casey/just#default" --yes --json
+{"command":"remove","generation":"gen-0010","ok":true,"orphanCheckRequested":false,"packages":[{"name":"fzf","pinned":true,"selector":"fzf","version":"0.46.0"},{"name":"just","pinned":false,"selector":"just","version":"1.25.2"},{"name":"just","pinned":false,"selector":"github:casey/just#default","version":"1.58.0"}],"removed":["sel_015ef1da55e3ae51398e5908b8bd15eb_0","sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0","sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"],"schemaVersion":1}
+EXIT 0 | 0.59 seconds
+
+CASE 044-empty-list
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:47:28.813326+00:00
+$ /tmp/pkg-main list --json
+{"command":"list","entries":[],"nameOnly":false,"ok":true,"schemaVersion":1}
+EXIT 0 | 0.34 seconds
+
+CASE 045-empty-repair-verify
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:47:29.231331+00:00
+$ /tmp/pkg-main repair --verify-only --json
+{"schemaVersion":1,"ok":false,"command":"repair","error":{"symbol":"PERMISSION","code":77,"message":"the privileged repair helper refused the operation","hint":"run `pkg doctor` to inspect helper readiness"}}
+EXIT 77 | 0.87 seconds
+
+CASE 046-empty-repair
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:47:30.195366+00:00
+$ /tmp/pkg-main repair --yes --json
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"schemaVersion":1,"ok":false,"command":"repair","error":{"symbol":"PERMISSION","code":77,"message":"the privileged repair helper refused the operation","hint":"run `pkg doctor` to inspect helper readiness"}}
+EXIT 77 | 0.3 seconds
+
+CASE 047-restore-inventory
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:47:30.522239+00:00
+$ /tmp/pkg-main rollback --yes --json
+{"command":"rollback","generation":"gen-0011","ok":true,"packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"fzf","selector":"fzf"},{"afterOutputs":["doc","man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"1.25.2","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"just"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","afterVersion":"1.58.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"github:casey/just#default"}],"packageCount":3,"schemaVersion":1,"sourceGeneration":"gen-0010","targetGeneration":"gen-0009"}
+EXIT 0 | 0.53 seconds
+
+CASE 048-main-damage-setup
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:48:09.484199+00:00
+$ state="$HOME/Library/Application Support/pkg"; readlink "$state/current/bin/fzf" > /tmp/pkg-fzf-link-before; test -s /tmp/pkg-fzf-link-before && rm "$state/current/bin/fzf"; command -v fzf
+
+EXIT 1 | 0.15 seconds
+
+CASE 049-main-damage-verify
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:48:09.656009+00:00
+$ /tmp/pkg-main repair --verify-only --json
+{"command":"repair","damagedPathCount":0,"generation":"gen-0011","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verifyOnly":true}
+EXIT 0 | 8.17 seconds
+
+CASE 050-main-damage-repair
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:48:17.845973+00:00
+$ /tmp/pkg-main repair --yes --json
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"command":"repair","damagedPathCount":0,"generation":"gen-0011","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"clean","verifyOnly":false}
+EXIT 0 | 9.53 seconds
+
+CASE 051-main-damage-doctor
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:48:27.413531+00:00
+$ /tmp/pkg-main doctor --json; command -v fzf
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+EXIT 1 | 0.95 seconds
+
+CASE 052-main-activation-restore
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:48:28.429101+00:00
+$ state="$HOME/Library/Application Support/pkg"; ln -s "$(cat /tmp/pkg-fzf-link-before)" "$state/current/bin/fzf"; fzf --version
+0.46.0 (0.46.0)
+EXIT 0 | 0.17 seconds
+
+CASE 053-main-keep-going
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:48:28.629305+00:00
+$ /tmp/pkg-main install no-such-one no-such-two --keep-going --yes --json
+{"schemaVersion":1,"opId":"op_bc8c9c1e70c0dfaa82d8ba245b9d3e4b","ok":false,"command":"install","error":{"symbol":"RESOLVE_FAILED","code":64,"message":"package was not found in the verified index","hint":"run `pkg search` or `pkg update` and try again"}}
+EXIT 64 | 0.5 seconds
+
+CASE 054-main-orphan-preview
+VM: pkg-onboarding-20260926
+Started: 2026-09-26T07:48:29.154681+00:00
+$ /tmp/pkg-main remove fzf --orphan-check --dry-run --json
+{"command":"remove","ok":true,"orphanCheckRequested":true,"packages":[{"name":"fzf","pinned":true,"selector":"fzf","version":"0.46.0"}],"removed":["sel_015ef1da55e3ae51398e5908b8bd15eb_0"],"schemaVersion":1}
+EXIT 0 | 0.12 seconds
+
+CASE 055-recovery-baseline
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:49:48.982531+00:00
+$ /tmp/pkg-main doctor --json; /tmp/pkg-main list --json; readlink "$HOME/Library/Application Support/pkg/current"
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+activations/gen-0011
+EXIT 0 | 1.25 seconds
+
+CASE 056-recovery-remove-paused
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:50:07.476820+00:00
+$ /tmp/pkg-main remove fzf
+Package  Version  Pinned
+fzf      0.46.0   yes
+
+
+Remove these packages? [y/N] y
+error[ENGINE_UNAVAILABLE]: the managed package service refused the transaction
+hint: run `pkg doctor` to inspect managed broker readiness
+EXIT 79 | 23.02 seconds
+
+CASE 057-recovery-doctor-during-prompt
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:50:12.849988+00:00
+$ /tmp/pkg-main doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+EXIT 0 | 0.63 seconds
+
+CASE 058-install-after-failed-remove
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:50:30.620559+00:00
+$ /tmp/pkg-main install hello --on-collision keep-first --yes --json
+{"added":[{"outputs":["out"],"package":"hello","selector":"hello","version":"2.12.1"}],"command":"install","generation":{"id":"gen-0013","parent":"gen-0011"},"ok":true,"opId":"op_3e6c04b578030dfc32d1cd93a6872894","schemaVersion":1}
+EXIT 0 | 21.3 seconds
+
+CASE 059-pin-after-install
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:50:51.955386+00:00
+$ /tmp/pkg-main pin fzf --json
+{"schemaVersion":1,"ok":false,"command":"pin","error":{"symbol":"STATE_CORRUPT","code":73,"message":"the package state change could not be committed safely","hint":"run `pkg doctor` before retrying the change"}}
+EXIT 73 | 0.3 seconds
+
+CASE 060-remove-after-install
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:50:52.275759+00:00
+$ /tmp/pkg-main remove hello --yes --json
+{"schemaVersion":1,"ok":false,"command":"remove","error":{"symbol":"STATE_CORRUPT","code":73,"message":"the package state change could not be committed safely","hint":"run `pkg doctor` before retrying the change"}}
+EXIT 73 | 0.29 seconds
+
+CASE 061-rollback-after-install
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:50:52.592558+00:00
+$ /tmp/pkg-main rollback --yes --json
+{"schemaVersion":1,"ok":false,"command":"rollback","error":{"symbol":"STATE_CORRUPT","code":73,"message":"the package state change could not be committed safely","hint":"run `pkg doctor` before retrying the change"}}
+EXIT 73 | 0.3 seconds
+
+CASE 062-recovery-repair
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:50:52.909749+00:00
+$ /tmp/pkg-main repair --yes --json
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"command":"repair","damagedPathCount":0,"generation":"gen-0013","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"clean","verifyOnly":false}
+EXIT 0 | 7.54 seconds
+
+CASE 063-recovery-pin-retry
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:51:00.471719+00:00
+$ /tmp/pkg-main pin fzf --json
+{"schemaVersion":1,"ok":false,"command":"pin","error":{"symbol":"STATE_CORRUPT","code":73,"message":"the package state change could not be committed safely","hint":"run `pkg doctor` before retrying the change"}}
+EXIT 73 | 0.28 seconds
+
+CASE 064-recovery-final-state
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:51:00.776061+00:00
+$ /tmp/pkg-main list --json; readlink "$HOME/Library/Application Support/pkg/current"; /tmp/pkg-main history --json; /tmp/pkg-main doctor --json
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"hello","pinned":false,"selector":"hello","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"2.12.1"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+activations/gen-0013
+{"command":"history","entries":[{"active":true,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-26T07:50:51Z","id":"gen-0013","operation":"install","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"2.12.1","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"hello","selector":"hello"}],"packages":null,"parent":"gen-0011"},{"active":false,"changes":{"added":0,"changed":0,"removed":1},"createdAt":"2026-09-26T07:50:07Z","id":"gen-0012","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["man","out"],"beforePinned":true,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"removed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0011"},{"active":false,"changes":{"added":3,"changed":0,"removed":0},"createdAt":"2026-09-26T07:47:30Z","id":"gen-0011","operation":"rollback","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"fzf","selector":"fzf"},{"afterOutputs":["doc","man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"1.25.2","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"just"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","afterVersion":"1.58.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"github:casey/just#default"}],"packages":null,"parent":"gen-0010"},{"active":false,"changes":{"added":0,"changed":0,"removed":3},"createdAt":"2026-09-26T07:47:28Z","id":"gen-0010","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["man","out"],"beforePinned":true,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"removed","name":"fzf","selector":"fzf"},{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["doc","man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"1.25.2","kind":"removed","name":"just","selector":"just"},{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["out"],"beforePinned":false,"beforeRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","beforeVersion":"1.58.0","kind":"removed","name":"just","selector":"github:casey/just#default"}],"packages":null,"parent":"gen-0009"},{"active":false,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-26T07:47:27Z","id":"gen-0009","operation":"pin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0008"},{"active":false,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-26T07:47:26Z","id":"gen-0008","operation":"unpin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":true,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0007"},{"active":false,"changes":{"added":0,"changed":0,"removed":1},"createdAt":"2026-09-26T07:45:46Z","id":"gen-0007","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"13.0.0","kind":"removed","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0006"},{"active":false,"changes":{"added":2,"changed":0,"removed":0},"createdAt":"2026-09-25T22:46:56Z","id":"gen-0006","operation":"install","packageChanges":[{"afterOutputs":["doc","man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"1.25.2","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"just"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","afterVersion":"1.58.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"github:casey/just#default"}],"packages":null,"parent":"gen-0005"},{"active":false,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-25T22:41:48Z","id":"gen-0005","operation":"rollback","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0004"},{"active":false,"changes":{"added":0,"changed":0,"removed":1},"createdAt":"2026-09-25T22:41:48Z","id":"gen-0004","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"13.0.0","kind":"removed","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0003"},{"active":false,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-25T22:41:10Z","id":"gen-0003","operation":"install","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0002"},{"active":false,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-25T22:40:29Z","id":"gen-0002","operation":"pin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0001"},{"active":false,"changes":null,"createdAt":"2026-09-25T22:30:59Z","id":"gen-0001","operation":"install","packageChanges":null,"packages":[{"name":"fzf","pinned":false,"selector":"fzf","version":"0.46.0"}],"parent":null}],"ok":true,"schemaVersion":1}
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+EXIT 0 | 0.62 seconds
+
+CASE 065-pending-state-evidence
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:51:25.261813+00:00
+$ state="$HOME/Library/Application Support/pkg"; readlink "$state/current"; cat "$state/generations/gen-0012.json"; cat "$state/generations/gen-0013.json"; ls "$state/journal"
+activations/gen-0013
+{"activation":{"collisionPolicy":"keep-first","collisionResolutions":[{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"bin/just","winner":{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}},{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"share/bash-completion/completions/just.bash","winner":{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}},{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"share/fish/vendor_completions.d/just.fish","winner":{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}},{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"share/man/man1/just.1.gz","winner":{"output":"man","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}},{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"share/zsh/site-functions/_just","winner":{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}}],"entryCount":125,"kind":"pkg-symlink-forest","outputRoots":["/nix/store/9d91xap4varzxxhdr4sdq0b9ihkj85fb-just-1.25.2","/nix/store/a11d6bxqm4ir9yyr9fx40zw8l92mp6m1-just-1.25.2-doc","/nix/store/nllvxxg5y8m8z8wavxhizsl3crmyfav3-just-1.25.2-man","/nix/store/qzdmxb1mffvkapbivar62vmi3ygmjz6r-just-1.58.0"],"treeDigest":"sha256-47195b20c993d08f733eaba03d6965d4847a7a3933f13afab99288419e8d03b0","treePath":"activations/gen-0012"},"channelSeq":54,"createdAt":"2026-09-26T07:50:07Z","generationHash":"sha256-80da2f45b8045323e509da6fd1be24fb21cae9d0fe819edb4454a5fe68bb7abf","id":"gen-0012","lockHash":"sha256-c002646eb288a0206437736281b28fd2f7c36d11a7f5bad43feb13218e96a4a8","lockSnapshot":"generations/gen-0012.lock.json","manifestHash":"sha256-e988bc83150c951ccbe339e48b71bb1df1f7e33fb9c069bb31d0ab5e085cc334","manifestSnapshot":"generations/gen-0012.manifest.json","operation":{"approval":{"build":"not_required"},"kind":"remove","opId":"op_2dcd14b354103c250d22e32236eead0c"},"outputs":[{"attribute":"just","closureNarSize":5526656,"deriver":"/nix/store/4205ivp80d5dvgx9v890k2jhjspf79nh-just-1.25.2.drv","id":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0","narHash":"sha256-5Gx5D/mNZQURGyJ5+UkAVZPTMhfx7X10kveY19csKQQ=","nixpkgsRev":"a62e6edd6d5e1fa0329b8653c801147986f8d446","outputsToInstall":["doc","man","out"],"pinned":false,"provenance":"cache:authenticated","storePath":"/nix/store/9d91xap4varzxxhdr4sdq0b9ihkj85fb-just-1.25.2"},{"attribute":"default","closureNarSize":50843384,"deriver":"/nix/store/3iai5d5n3fa7v4arp5dnp728fx5k5g1p-just-1.58.0.drv","id":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1","narHash":"sha256-loJpys+/fZWE2rNtxz3OMJx2g8/+CLyjC9BYUln2n6E=","nixpkgsRev":"3095fc171a1369505e0c6a2fd30616e5ff46c139","outputsToInstall":["out"],"pinned":false,"provenance":"build:local","storePath":"/nix/store/qzdmxb1mffvkapbivar62vmi3ygmjz6r-just-1.58.0"}],"parent":"gen-0011","schemaVersion":1,"uid":501}{"activation":{"collisionPolicy":"keep-first","collisionResolutions":[{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"bin/just","winner":{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}},{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"share/bash-completion/completions/just.bash","winner":{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}},{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"share/fish/vendor_completions.d/just.fish","winner":{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}},{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"share/man/man1/just.1.gz","winner":{"output":"man","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}},{"losers":[{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"}],"relativePath":"share/zsh/site-functions/_just","winner":{"output":"out","sourceSelector":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0"}}],"entryCount":142,"kind":"pkg-symlink-forest","outputRoots":["/nix/store/9d91xap4varzxxhdr4sdq0b9ihkj85fb-just-1.25.2","/nix/store/a11d6bxqm4ir9yyr9fx40zw8l92mp6m1-just-1.25.2-doc","/nix/store/hxfba4h5dwrgz9mplmakqvp5knzrhamc-hello-2.12.1","/nix/store/i49m0pk89zbz4n8v24b0p4az0pvjlzys-fzf-0.46.0","/nix/store/nllvxxg5y8m8z8wavxhizsl3crmyfav3-just-1.25.2-man","/nix/store/nwdzvhql6p7h51z54mdilbd47pvlnsxv-fzf-0.46.0-man","/nix/store/qzdmxb1mffvkapbivar62vmi3ygmjz6r-just-1.58.0"],"treeDigest":"sha256-855cb3bff9373518df420141b9052fe826b889839586b023a40b0a749db47a8b","treePath":"activations/gen-0013"},"channelSeq":54,"createdAt":"2026-09-26T07:50:51Z","generationHash":"sha256-7c427ffd05aecd5faa0b1345d2d4cde1e5a636d5219c1742e8a21f16e24f17f3","id":"gen-0013","lockHash":"sha256-70a1227a10519ea469c8584b6838c510f343e9afc9ce072ae8184d1110da4258","lockSnapshot":"generations/gen-0013.lock.json","manifestHash":"sha256-38c82578e817171f41a79b2b7b653aaa38623e82513ff484c0d2eac9e759c250","manifestSnapshot":"generations/gen-0013.manifest.json","operation":{"approval":{"build":"not_required"},"kind":"install","opId":"op_3e6c04b578030dfc32d1cd93a6872894"},"outputs":[{"attribute":"fzf","closureNarSize":99589488,"deriver":"/nix/store/0v3pnvys612qajlwrykkss3v4jwqvqil-fzf-0.46.0.drv","id":"sel_015ef1da55e3ae51398e5908b8bd15eb_0","narHash":"sha256-ha/UQicCieN7X9G/LF7F2H/hYGjCgg5khzjR6ngzndM=","nixpkgsRev":"a62e6edd6d5e1fa0329b8653c801147986f8d446","outputsToInstall":["man","out"],"pinned":true,"provenance":"cache:authenticated","storePath":"/nix/store/i49m0pk89zbz4n8v24b0p4az0pvjlzys-fzf-0.46.0"},{"attribute":"just","closureNarSize":5526656,"deriver":"/nix/store/4205ivp80d5dvgx9v890k2jhjspf79nh-just-1.25.2.drv","id":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0","narHash":"sha256-5Gx5D/mNZQURGyJ5+UkAVZPTMhfx7X10kveY19csKQQ=","nixpkgsRev":"a62e6edd6d5e1fa0329b8653c801147986f8d446","outputsToInstall":["doc","man","out"],"pinned":false,"provenance":"cache:authenticated","storePath":"/nix/store/9d91xap4varzxxhdr4sdq0b9ihkj85fb-just-1.25.2"},{"attribute":"default","closureNarSize":50843384,"deriver":"/nix/store/3iai5d5n3fa7v4arp5dnp728fx5k5g1p-just-1.58.0.drv","id":"sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1","narHash":"sha256-loJpys+/fZWE2rNtxz3OMJx2g8/+CLyjC9BYUln2n6E=","nixpkgsRev":"3095fc171a1369505e0c6a2fd30616e5ff46c139","outputsToInstall":["out"],"pinned":false,"provenance":"build:local","storePath":"/nix/store/qzdmxb1mffvkapbivar62vmi3ygmjz6r-just-1.58.0"},{"attribute":"hello","closureNarSize":121144,"deriver":"/nix/store/2wh92n6n3yiax74pkzblhaw7qzikvb0r-hello-2.12.1.drv","id":"sel_7db6fbf9a973f77ee5c082fa75fabf41_0","narHash":"sha256-++6tUt3cXco91XqCiBiXg32hIe8wnko6d2hrC4SMPUU=","nixpkgsRev":"a62e6edd6d5e1fa0329b8653c801147986f8d446","outputsToInstall":["out"],"pinned":false,"provenance":"cache:authenticated","storePath":"/nix/store/hxfba4h5dwrgz9mplmakqvp5knzrhamc-hello-2.12.1"}],"parent":"gen-0011","schemaVersion":1,"uid":501}journal.ndjson
+EXIT 0 | 0.14 seconds
+
+CASE 066-pending-journal
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:51:41.976647+00:00
+$ state="$HOME/Library/Application Support/pkg"; /usr/bin/grep -E "op_2dcd14b354103c250d22e32236eead0c|op_3e6c04b578030dfc32d1cd93a6872894" "$state/journal/journal.ndjson"
+{"schemaVersion":1,"seq":45,"prevRowHash":"sha256-f586d114ae31af1e97707480254a8ea1ed54757442f5d01fc3ef90a97bde62dc","rowHash":"sha256-16909fcce6defc0c75bede5e8fd6bc8e99ddd5134107d0a098aace348370838b","generationId":"gen-0012","lockHash":"sha256-c002646eb288a0206437736281b28fd2f7c36d11a7f5bad43feb13218e96a4a8","manifestHash":"sha256-e988bc83150c951ccbe339e48b71bb1df1f7e33fb9c069bb31d0ab5e085cc334","opId":"op_2dcd14b354103c250d22e32236eead0c","phase":"commit","status":"prepared"}
+{"schemaVersion":1,"seq":46,"prevRowHash":"sha256-16909fcce6defc0c75bede5e8fd6bc8e99ddd5134107d0a098aace348370838b","rowHash":"sha256-c258f1a2fb130e792b43e9d3ae3baab9ae28e78ed1c334f552c6ac5f3f70891f","generationId":"gen-0013","lockHash":"sha256-70a1227a10519ea469c8584b6838c510f343e9afc9ce072ae8184d1110da4258","manifestHash":"sha256-38c82578e817171f41a79b2b7b653aaa38623e82513ff484c0d2eac9e759c250","opId":"op_3e6c04b578030dfc32d1cd93a6872894","phase":"commit","status":"prepared"}
+{"schemaVersion":1,"seq":47,"prevRowHash":"sha256-c258f1a2fb130e792b43e9d3ae3baab9ae28e78ed1c334f552c6ac5f3f70891f","rowHash":"sha256-aa8282e97469ab4c31e1902fa0900cb77866ce91564833b2478db11d7f63b5fb","opId":"op_3e6c04b578030dfc32d1cd93a6872894","phase":"commit","status":"rooted"}
+{"schemaVersion":1,"seq":48,"prevRowHash":"sha256-aa8282e97469ab4c31e1902fa0900cb77866ce91564833b2478db11d7f63b5fb","rowHash":"sha256-f06801f2e792bca89ecebe074a4bee44268c000563a0343054a550f65f52fecd","opId":"op_3e6c04b578030dfc32d1cd93a6872894","phase":"activate","status":"activated"}
+{"schemaVersion":1,"seq":49,"prevRowHash":"sha256-f06801f2e792bca89ecebe074a4bee44268c000563a0343054a550f65f52fecd","rowHash":"sha256-b62f6cbef2773c59bb88c6949bcb78aac17cf397ea029efc3792d444bad20159","nextStateHash":"sha256-7c427ffd05aecd5faa0b1345d2d4cde1e5a636d5219c1742e8a21f16e24f17f3","opId":"op_3e6c04b578030dfc32d1cd93a6872894","phase":"commit","status":"committed"}
+EXIT 0 | 0.14 seconds
+
+CASE 067-final-artifact-identity
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:51:42.143203+00:00
+$ sw_vers; shasum -a 256 /usr/local/bin/pkg /tmp/pkg-main /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper; hello; fzf --version; just --version
+ProductName:		macOS
+ProductVersion:		15.7.7
+BuildVersion:		24G720
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  /usr/local/bin/pkg
+110ad367bdf72a21555269534ca6a24c78a1daf494f5f9781a30597218a63ef9  /tmp/pkg-main
+shasum: /opt/pkg/bin/pkg-nix-broker: Permission denied
+shasum: /opt/pkg/bin/pkg-root-helper: Permission denied
+Hello, world!
+0.46.0 (0.46.0)
+just 1.25.2
+EXIT 0 | 0.36 seconds
+
+CASE 068-protected-artifact-identity
+VM: pkg-bug-hunt-recovery-20260926
+Started: 2026-09-26T07:51:50.671441+00:00
+$ sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper
+b486b3f6e6b88316a0d2f2ca38512d7678bccbe9d9f73a3cbd871c94f11bdb64  /opt/pkg/bin/pkg-nix-broker
+0c6d44a2eb824fa3a4979f49dd6208736f80f79572902c8b0c0f6bb8825c43e2  /opt/pkg/bin/pkg-root-helper
+EXIT 0 | 0.24 seconds

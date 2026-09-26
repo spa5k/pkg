@@ -95,7 +95,7 @@ pub enum SubsystemObservation {
         /// Product-facing remediation.
         hint: String,
     },
-    /// The check is not wired yet and must not be represented as healthy.
+    /// The check cannot run yet and must not be represented as healthy.
     Deferred {
         /// Owning milestone or missing observation.
         detail: String,
@@ -201,6 +201,8 @@ pub struct DoctorInputs {
     pub managed_runtime: SubsystemObservation,
     /// Signed channel observation from the channel client.
     pub channel: SubsystemObservation,
+    /// Integrity of the active generation's local activation links.
+    pub activation: SubsystemObservation,
     pub(crate) installed_nix: Option<InstalledNixState>,
 }
 
@@ -224,7 +226,56 @@ impl DoctorInputs {
                 hint: "complete the signed channel client before relying on doctor".into(),
             },
             installed_nix: None,
+            activation: SubsystemObservation::Deferred {
+                detail: "the active package links have not been checked".into(),
+                hint: "run the local activation check before relying on doctor".into(),
+            },
         }
+    }
+}
+
+/// Checks active generation metadata and links without changing package state.
+/// The store closure is verified separately by `pkg repair --verify-only`.
+#[must_use]
+pub fn observe_activation(location: &crate::path::StateLocation, uid: u32) -> SubsystemObservation {
+    if fs::symlink_metadata(location.state_root())
+        .is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+    {
+        return SubsystemObservation::Passed("no package state has been created".into());
+    }
+    let checked = (|| {
+        let layout =
+            pkg_store::StateLayout::open(location.trusted_boundary(), location.state_root(), uid)
+                .map_err(|_| pkg_store::LeaseError::UnsafeState)?;
+        let lease = pkg_store::StateLease::try_shared(&layout)?;
+        pkg_pipeline::ensure_recovered_state(&layout, &lease)
+            .map_err(|_| pkg_store::LeaseError::UnsafeState)?;
+        let active = pkg_pipeline::load_active_snapshot(&layout, &lease)
+            .map_err(|_| pkg_store::LeaseError::UnsafeState)?;
+        if let Some(active) = active {
+            let generation = pkg_nix::GenerationId::new(active.generation().id())
+                .map_err(|_| pkg_store::LeaseError::UnsafeState)?;
+            pkg_pipeline::verify_generation_activation(&layout, &lease, &generation)
+                .map_err(|_| pkg_store::LeaseError::UnsafeState)?;
+            Ok(
+                "the active package links match the committed generation; store contents are not checked",
+            )
+        } else {
+            Ok("no package generation is active")
+        }
+    })();
+    match checked {
+        Ok(detail) => SubsystemObservation::Passed(detail.into()),
+        Err(pkg_store::LeaseError::Locked) => SubsystemObservation::Deferred {
+            detail:
+                "another package operation holds the state lease; activation verification must wait"
+                    .into(),
+            hint: "wait for that operation to finish, then run `pkg doctor` again".into(),
+        },
+        Err(_) => SubsystemObservation::Failed {
+            detail: "the active package links or generation state could not be verified".into(),
+            hint: "wait for any active operation, then run `pkg repair --yes`".into(),
+        },
     }
 }
 
@@ -335,6 +386,7 @@ impl DoctorReport {
             path_check(&inputs.path),
             raw_nix_check(inputs.raw_nix_visibility),
             state_permissions_check(&inputs.state_root, inputs.expected_state_uid),
+            subsystem_check("state.activation", &inputs.activation),
         ];
         if let Some(state) = inputs.installed_nix {
             checks.push(installed_nix_check(state));
@@ -759,6 +811,7 @@ mod tests {
             managed_runtime: SubsystemObservation::Passed("managed runtime is healthy".into()),
             channel: SubsystemObservation::Passed("signed channel is current".into()),
             installed_nix: Some(InstalledNixState::Accepted),
+            activation: SubsystemObservation::Passed("activation links verified".into()),
         }
     }
 
@@ -824,6 +877,7 @@ mod tests {
         inputs.unmanaged_nix = UnmanagedNixObservation::Clean;
         inputs.managed_runtime = SubsystemObservation::Passed("managed runtime is healthy".into());
         inputs.channel = SubsystemObservation::Passed("signed channel is current".into());
+        inputs.activation = SubsystemObservation::Passed("activation links verified".into());
         let report = DoctorReport::evaluate(&inputs);
 
         assert_eq!(report.overall(), DoctorOverall::Healthy);

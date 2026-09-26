@@ -1,0 +1,38 @@
+{
+  "source_base": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "patch_scope": "cumulative runtime BUG-01 through BUG-07",
+  "patch_sha256": "868c1ccfb0c4641eb41e4bb81235865fb0dc22840e1737d4b7a09e993dea7981",
+  "final_cli_sha256": "15a3270d476f15683687df5eb5a6c1c7860f8aa4b6506c459f4eabfdaab1477f",
+  "cases": [
+    {
+      "case": "001",
+      "command": "/tmp/pkg-bug07-fixed install no-such-one no-such-two --keep-going --yes --json",
+      "started": "2026-09-26T10:08:50.066204+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.13,
+      "exit_code": 78,
+      "output_sha256": "07710ffa8d727a839208a5d97f45ee2e1251edcdfe2fb23cc23a52f1778d78fe",
+      "build": "final"
+    },
+    {
+      "case": "002",
+      "command": "/tmp/pkg-bug07-fixed install no-such-one no-such-two --keep-going --dry-run --json",
+      "started": "2026-09-26T10:09:16.060264+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.13,
+      "exit_code": 78,
+      "output_sha256": "07710ffa8d727a839208a5d97f45ee2e1251edcdfe2fb23cc23a52f1778d78fe",
+      "build": "final"
+    },
+    {
+      "case": "003",
+      "command": "/tmp/pkg-bug07-fixed install --help && shasum -a 256 \"$HOME/Library/Application Support/pkg/journal/journal.ndjson\" && readlink \"$HOME/Library/Application Support/pkg/current\" && shasum -a 256 /tmp/pkg-bug07-fixed",
+      "started": "2026-09-26T10:09:16.281976+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.2,
+      "exit_code": 0,
+      "output_sha256": "16bd579420b14e8bd44a462eea00b9f7a0319b8aacc5cc16419fa8f1095d05e3",
+      "build": "final"
+    }
+  ]
+}

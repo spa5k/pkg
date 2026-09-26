@@ -1,0 +1,63 @@
+{
+  "toolchain": "1.96.1",
+  "workspace_tests": {
+    "passed": 1240,
+    "failed": 0,
+    "ignored": 5
+  },
+  "checks": [
+    {
+      "command": "cargo test --workspace --locked",
+      "exit_code": 0,
+      "log_sha256": "1bff7896c0bedd16c836ce8026de78ffe1475374ebc5f519a00cc9c05bd3f771"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+      "exit_code": 0,
+      "log_sha256": "b604504d48b682fe6064e82f7c9671edb0bf898f51bf6c0ce2e8737fae9f4f3d"
+    },
+    {
+      "command": "BASE_REF=origin/main tools/quality/quality-gate.sh check",
+      "exit_code": 0,
+      "log_sha256": "9622393fac02c7f8427336d59aabd6c03d18ea577b22d886be8cb16da8b5d486"
+    },
+    {
+      "command": "RUSTDOCFLAGS=\"-D warnings\" cargo doc --workspace --all-features --no-deps --locked",
+      "exit_code": 0,
+      "log_sha256": "bf75794d75f0805768d2d54e354dbbdb12417e61d0a4d874918bb490d971cc7e"
+    },
+    {
+      "command": "cargo build --workspace --all-targets --all-features --locked",
+      "exit_code": 0,
+      "log_sha256": "73596b79c23573c30ea3176cec2df235cf5a72cea804331b01f4aa027afa4a13"
+    },
+    {
+      "command": "cargo deny --locked check",
+      "exit_code": 0,
+      "log_sha256": "32af4a5c11b6f23bf09153d0aec7204a3c084ffc78d5ee253bf1e4b0bc062df7"
+    },
+    {
+      "command": "cargo audit",
+      "exit_code": 0,
+      "log_sha256": "d2e6300602624cdf41059c9b62e034a06d5a3ba80b099a8bb22fd4e25249e337"
+    },
+    {
+      "command": "cargo fmt --all --check",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 .github/scripts/check_docs_links.py",
+      "exit_code": 0,
+      "log_sha256": "c42c885a656738a8cd302ccbd4eae4130ff74a30e8592297d720a5d7ee333153"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "quality": {
+    "sites": 922,
+    "lints": 23,
+    "baseline_changed": false
+  }
+}

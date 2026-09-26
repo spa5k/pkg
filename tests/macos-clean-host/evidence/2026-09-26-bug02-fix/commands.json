@@ -1,0 +1,188 @@
+{
+  "source_base": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "source_patch_sha256": "678cfebe9dccd6716a00f7cc3db277acf3af6191e424d185e16649fa0f3c6968",
+  "final_cli_sha256": "f24407b6f058295aed15f1b49adafb636d9ed8eac51f29e6d7470347fad8162d",
+  "image": "ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4bc2773d924ff8b7565f958761420ec41a0c",
+  "cases": [
+    {
+      "case": "001",
+      "command": "pkg list --json && pkg pin fzf --json",
+      "started": "2026-09-26T09:14:30.403358+00:00",
+      "seconds": 0.35,
+      "exit_code": 73,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "development-before-final-lease-recheck",
+      "output_sha256": "4fef4cff67e0ffa776305d45d030e3325f02cb8c4f303a4ac13108896ca305fc"
+    },
+    {
+      "case": "002",
+      "command": "/tmp/pkg-bug02-fixed pin fzf --json && /tmp/pkg-bug02-fixed list --json && hello && fzf --version && /tmp/pkg-bug02-fixed history --json",
+      "started": "2026-09-26T09:14:59.383268+00:00",
+      "seconds": 1.02,
+      "exit_code": 0,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "development-before-final-lease-recheck",
+      "output_sha256": "af4b896ae5c1db4b0615f71d22b2a256c8501ff44baa378cdcfc5d293d441528"
+    },
+    {
+      "case": "003",
+      "command": "/tmp/pkg-bug02-fixed remove hello --yes --json && /tmp/pkg-bug02-fixed rollback --yes --json && hello && /tmp/pkg-bug02-fixed unpin fzf --json && /tmp/pkg-bug02-fixed pin fzf --json && /tmp/pkg-bug02-fixed doctor --json",
+      "started": "2026-09-26T09:17:01.071254+00:00",
+      "seconds": 6.31,
+      "exit_code": 0,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "development-before-final-lease-recheck",
+      "output_sha256": "58fbb8ed50a60430ea5a3aff0fa08c99fcdd34a2d4c2060bd27cfc1e74212b62"
+    },
+    {
+      "case": "004",
+      "command": "pkg remove fzf",
+      "started": "2026-09-26T09:18:05.527832+00:00",
+      "seconds": 31.78,
+      "exit_code": 79,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "development-before-final-lease-recheck",
+      "output_sha256": "bef0cd53c4a3dfd91fca3f7d6c25dfbf5f479d8f915ae9b0e78e1e2658a845ec"
+    },
+    {
+      "case": "005",
+      "command": "pkg doctor --json",
+      "started": "2026-09-26T09:18:25.377848+00:00",
+      "seconds": 0.63,
+      "exit_code": 0,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "development-before-final-lease-recheck",
+      "output_sha256": "073bab8bef9918c3462838869a7f9a62e162e3237d23ac6a0cd68d13b13c07e2"
+    },
+    {
+      "case": "006",
+      "command": "/tmp/pkg-bug02-fixed history --json && /tmp/pkg-bug02-fixed install ripgrep --on-collision keep-first --yes --json",
+      "started": "2026-09-26T09:18:37.419382+00:00",
+      "seconds": 26.95,
+      "exit_code": 0,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "development-before-final-lease-recheck",
+      "output_sha256": "d50d55fbd13dc5f8619a73aaa3d38693100508947ad20280ebdedb9ddb048f57"
+    },
+    {
+      "case": "007",
+      "command": "/tmp/pkg-bug02-fixed list --json && rg --version && /tmp/pkg-bug02-fixed pin ripgrep --json && /tmp/pkg-bug02-fixed remove hello --yes --json && /tmp/pkg-bug02-fixed rollback --yes --json && hello",
+      "started": "2026-09-26T09:19:38.077898+00:00",
+      "seconds": 9.18,
+      "exit_code": 0,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "development-before-final-lease-recheck",
+      "output_sha256": "2dffc789d910ad881c86bbf46a70c8d5b685476ce59dac8add1bd644d8831e66"
+    },
+    {
+      "case": "008",
+      "command": "pkg remove hello",
+      "started": "2026-09-26T09:21:12.720145+00:00",
+      "seconds": 27.7,
+      "exit_code": 79,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "development-before-final-lease-recheck",
+      "output_sha256": "a961dab85862f2dbffd4bca0cd51fc4ffb0738265d63371352fa9d88fd76a505"
+    },
+    {
+      "case": "009",
+      "command": "pkg doctor --json",
+      "started": "2026-09-26T09:21:22.921046+00:00",
+      "seconds": 1.49,
+      "exit_code": 0,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "development-before-final-lease-recheck",
+      "output_sha256": "073bab8bef9918c3462838869a7f9a62e162e3237d23ac6a0cd68d13b13c07e2"
+    },
+    {
+      "case": "010",
+      "command": "/tmp/pkg-bug02-fixed repair --verify-only --json",
+      "started": "2026-09-26T09:21:40.516657+00:00",
+      "seconds": 0.6,
+      "exit_code": 72,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "final",
+      "output_sha256": "27bce42b437adb41490fafcd7983f9ac0d6d7e35616a4aa5272f858775b2df62"
+    },
+    {
+      "case": "011",
+      "command": "/tmp/pkg-bug02-fixed repair --yes --json && /tmp/pkg-bug02-fixed list --json && /tmp/pkg-bug02-fixed repair --verify-only --json && /tmp/pkg-bug02-fixed install hello --on-collision keep-first --yes --json && hello",
+      "started": "2026-09-26T09:22:22.460206+00:00",
+      "seconds": 15.86,
+      "exit_code": 0,
+      "vm": "pkg-bug02-fixed-20260926",
+      "cli_build": "final",
+      "output_sha256": "0213ed32bfad5576356e7d09204882bb763e4918f750e0b05ce266f18fee157b"
+    },
+    {
+      "case": "012",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; readlink \"$state/current\"; cat \"$state/journal/journal.ndjson\"; sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper; shasum -a 256 /usr/local/bin/pkg /tmp/pkg-bug02-fixed",
+      "started": "2026-09-26T09:23:29.397162+00:00",
+      "vm": "pkg-bug02-fixed-20260926",
+      "seconds": 0.71,
+      "exit_code": 0,
+      "cli_build": "final",
+      "output_sha256": "595e4e23f112ae835cc11b1ca633e9a8ca03e79efd1897b97580921b3fa07cfa"
+    },
+    {
+      "case": "013",
+      "command": "pkg pin fzf --json",
+      "started": "2026-09-26T09:24:01.291528+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.31,
+      "exit_code": 73,
+      "cli_build": "final",
+      "output_sha256": "32c02ac54723eddc16edbf95569d37a2d7c9d238d1ed411ac9c814159baed631"
+    },
+    {
+      "case": "014",
+      "command": "/tmp/pkg-bug02-fixed pin fzf --json && /tmp/pkg-bug02-fixed list --json && hello && fzf --version && /tmp/pkg-bug02-fixed repair --verify-only --json && shasum -a 256 /tmp/pkg-bug02-fixed && readlink \"$HOME/Library/Application Support/pkg/current\"",
+      "started": "2026-09-26T09:24:01.688529+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 10.21,
+      "exit_code": 0,
+      "cli_build": "final",
+      "output_sha256": "d2ccc7f37d84b508dc50958a94410560343b3b9b47ff734edfb985f3ab794b46"
+    },
+    {
+      "case": "015",
+      "command": "pkg remove fzf",
+      "started": "2026-09-26T09:24:12.609042+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 38.57,
+      "exit_code": 79,
+      "cli_build": "final",
+      "output_sha256": "75f33ee06abce0122dc9a22a85e3a25e9d19668c86d0daf4163afbd7385f9906"
+    },
+    {
+      "case": "016",
+      "command": "pkg doctor --json",
+      "started": "2026-09-26T09:24:39.933230+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.59,
+      "exit_code": 0,
+      "cli_build": "final",
+      "output_sha256": "984cb7867f747fec69a7441693e64b7c62deed1d34489c4b4bbdb1ba91d6af99"
+    },
+    {
+      "case": "017",
+      "command": "/tmp/pkg-bug02-fixed install ripgrep --on-collision keep-first --yes --json && /tmp/pkg-bug02-fixed pin ripgrep --json && /tmp/pkg-bug02-fixed remove hello --yes --json && /tmp/pkg-bug02-fixed rollback --yes --json && rg --version && hello",
+      "started": "2026-09-26T09:24:51.278146+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 27.5,
+      "exit_code": 0,
+      "cli_build": "final",
+      "output_sha256": "bda94cdc682126bcdc470ff83b8ea5a6be753e5dd6ed8fbcc8944b8d96beab1d"
+    },
+    {
+      "case": "018",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; readlink \"$state/current\"; cat \"$state/journal/journal.ndjson\"; /tmp/pkg-bug02-fixed list --json; sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper; shasum -a 256 /usr/local/bin/pkg /tmp/pkg-bug02-fixed",
+      "started": "2026-09-26T09:26:25.504311+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.54,
+      "exit_code": 0,
+      "cli_build": "final",
+      "output_sha256": "c4c2f1345d8c31786af7ef4ca506d8f6bcbbcc88a7278654b79ba7100e8cb281"
+    }
+  ]
+}

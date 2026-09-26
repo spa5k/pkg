@@ -1,14 +1,20 @@
 # Implementation plans
 
 The only active implementation plan is
-[`determinate-nix-stacked-prs.md`](determinate-nix-stacked-prs.md).
-It defines the accepted target and future work. The DN-16 native proof passed. The active plan records completed migration
-work, public alpha improvements, and the remaining production trust work.
+[the current implementation plan](determinate-nix-stacked-prs.md).
+It lists quality, verification, production trust, and the deferred next release.
 
-The supporting architecture evidence is
-[`architecture-report.html`](../architecture-report.html).
+The [onboarding audit](../tests/macos-clean-host/ONBOARDING-2026-09-26.md)
+records public setup results and measured quality debt. The later
+[daily-use and logic audit](../tests/macos-clean-host/BUG-HUNT-2026-09-26.md)
+records nine defects. All nine now have local fixes and VM regression evidence.
+The [fix status and evidence](../tests/macos-clean-host/BUG-FIXES-2026-09-26.md)
+record each result. These changes are not merged or released. Six separate
+onboarding UX findings and the wider quality/assurance work remain open.
 
-The files in
-[`archive/2026-08-22-custom-managed-nix-v1/`](archive/2026-08-22-custom-managed-nix-v1/README.md)
-describe the earlier custom private-Nix, broker, and root-helper design. The
-archive is historical evidence. It is not normative.
+[Completed alpha work](completed-alpha-work.md) records the finished migration
+and public improvements. It is not an active backlog.
+
+The [architecture report](../architecture-report.html) is supporting historical
+evidence. The [custom private-Nix archive](archive/2026-08-22-custom-managed-nix-v1/README.md)
+is historical and is not normative. The active plan wins over older proposals.

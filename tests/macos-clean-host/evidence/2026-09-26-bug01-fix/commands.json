@@ -1,0 +1,88 @@
+{
+  "source_base": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "source_patch_sha256": "994b45c0dc41eff5dd850f45679159a54a3542e0a7f6b28b5a88feaf2e0b8040",
+  "vm": "pkg-bug01-fixed-20260926",
+  "image": "ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4bc2773d924ff8b7565f958761420ec41a0c",
+  "cases": [
+    {
+      "case": "001-public-baseline",
+      "command": "pkg --version; pkg doctor --json; pkg list --json",
+      "started": "2026-09-26T08:51:17.061906+00:00",
+      "seconds": 0.85,
+      "exit_code": 0,
+      "output_sha256": "9dea671c10ac43067cd024789221a05535b40d828a8b902fba7e73de5502d185"
+    },
+    {
+      "case": "002-install-fixed-broker",
+      "command": "sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker; sudo -n cp -p /opt/pkg/bin/pkg-nix-broker /tmp/pkg-nix-broker-alpha54; sudo -n launchctl bootout system/org.pkg.nix-broker && sudo -n cp /tmp/pkg-nix-broker-fixed /opt/pkg/bin/pkg-nix-broker && sudo -n launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist && sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker",
+      "started": "2026-09-26T08:51:51.197771+00:00",
+      "seconds": 0.41,
+      "exit_code": 0,
+      "output_sha256": "a586bf7783fab427b5f76b3832da75496548b75fe8c1f98c20ec7ecc50878abb"
+    },
+    {
+      "case": "003",
+      "command": "pkg doctor --json",
+      "started": "2026-09-26T08:54:58.705206+00:00",
+      "seconds": 0.76,
+      "exit_code": 0,
+      "output_sha256": "1a3831b83bb178db490a40afcc757a15847d465b6258ecf1e77dd56d3b2bac8c"
+    },
+    {
+      "case": "004",
+      "command": "pkg remove fzf",
+      "started": "2026-09-26T08:55:11.922864+00:00",
+      "seconds": 16.36,
+      "exit_code": 0,
+      "output_sha256": "44c537cc0850b1170bad9ee260060af39e0b83a5826bb4394382d3f5f9715eef"
+    },
+    {
+      "case": "005",
+      "command": "pkg doctor --json",
+      "started": "2026-09-26T08:55:18.440325+00:00",
+      "seconds": 0.7,
+      "exit_code": 0,
+      "output_sha256": "1a3831b83bb178db490a40afcc757a15847d465b6258ecf1e77dd56d3b2bac8c"
+    },
+    {
+      "case": "006",
+      "command": "pkg list --json && pkg rollback --yes --json && pkg list --json && fzf --version",
+      "started": "2026-09-26T08:55:45.826550+00:00",
+      "seconds": 0.37,
+      "exit_code": 0,
+      "output_sha256": "c3d2b1403bbac9b0f7250e2b3484842919dd48cc6e3cee6fb7e15f4178bcea15"
+    },
+    {
+      "case": "007",
+      "command": "pkg install hello --on-collision keep-first",
+      "started": "2026-09-26T08:55:54.974534+00:00",
+      "seconds": 25.59,
+      "exit_code": 0,
+      "output_sha256": "0b7f7ffeaaab87fb18b2cdfda35a8b1b36fef14f3bc60942b02e5b787a6fe930"
+    },
+    {
+      "case": "008",
+      "command": "pkg doctor --json",
+      "started": "2026-09-26T08:56:01.957958+00:00",
+      "seconds": 1.32,
+      "exit_code": 0,
+      "output_sha256": "1a3831b83bb178db490a40afcc757a15847d465b6258ecf1e77dd56d3b2bac8c"
+    },
+    {
+      "case": "009",
+      "command": "hello && pkg remove hello",
+      "started": "2026-09-26T08:56:58.267843+00:00",
+      "seconds": 9.22,
+      "exit_code": 75,
+      "output_sha256": "27c837db6ccf4dfd9784b766f169b31fc3a181678e6bb15f7ea661bbbe422643"
+    },
+    {
+      "case": "010",
+      "command": "pkg list --json && pkg history --json && pkg doctor --json && sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper && shasum -a 256 /usr/local/bin/pkg && sw_vers && uname -m",
+      "started": "2026-09-26T08:57:07.671526+00:00",
+      "seconds": 1.03,
+      "exit_code": 0,
+      "output_sha256": "4fd524af024e3808f025b456a944a41434627acc83fa3a974544e1cccc33b924"
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "source_base": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "patch_scope": "cumulative runtime BUG-01 through BUG-06",
+  "patch_sha256": "795be44c25205c23772f04d192789620b7c06d04d430fb3a20c4f2178946c4c4",
+  "final_cli_sha256": "fd60c971e349392cf158d5db5326b4dad9e04f5d2621d3dc50b0c34d875989c8",
+  "cases": [
+    {
+      "case": "001",
+      "command": "/tmp/pkg-bug05-fixed install ripgrep --dry-run --json",
+      "started": "2026-09-26T10:04:05.960123+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 24.26,
+      "exit_code": 0,
+      "output_sha256": "ad95848cf65b00d9632bb9475384f2293aaef2b6d7000b4449c36456360fc6e0",
+      "build": "before BUG-06"
+    },
+    {
+      "case": "002",
+      "command": "/tmp/pkg-bug05-fixed install fzf --dry-run --json",
+      "started": "2026-09-26T10:05:07.736488+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 2.76,
+      "exit_code": 0,
+      "output_sha256": "9308a11660656bade8f56420d2a16802d909257732e9218316531cc3f3d0e439",
+      "build": "before BUG-06"
+    },
+    {
+      "case": "003",
+      "command": "shasum -a 256 \"$HOME/Library/Application Support/pkg/journal/journal.ndjson\" \"$HOME/Library/Application Support/pkg/manifest.json\" \"$HOME/Library/Application Support/pkg/lock.json\" && readlink \"$HOME/Library/Application Support/pkg/current\" && /tmp/pkg-bug06-fixed install ripgrep --dry-run --json",
+      "started": "2026-09-26T10:05:52.597261+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 1.03,
+      "exit_code": 65,
+      "output_sha256": "8557b3b69c3c7f47c448a5c02e8b297e728e3e007a3addb07a6a640d73b08768",
+      "build": "final"
+    },
+    {
+      "case": "004",
+      "command": "/tmp/pkg-bug06-fixed install fzf --dry-run --json",
+      "started": "2026-09-26T10:06:06.630743+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.77,
+      "exit_code": 71,
+      "output_sha256": "b55c174c43f5af03d88f572517b9486959cd6cad515e3e0b1c7597e2e0fbf143",
+      "build": "final"
+    },
+    {
+      "case": "005",
+      "command": "/tmp/pkg-bug06-fixed install fzf --dry-run --on-collision keep-first --json && /tmp/pkg-bug06-fixed install fzf --dry-run --on-collision keep-first --no-color && shasum -a 256 \"$HOME/Library/Application Support/pkg/journal/journal.ndjson\" \"$HOME/Library/Application Support/pkg/manifest.json\" \"$HOME/Library/Application Support/pkg/lock.json\" && readlink \"$HOME/Library/Application Support/pkg/current\" && shasum -a 256 /tmp/pkg-bug06-fixed",
+      "started": "2026-09-26T10:06:23.632008+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 5.76,
+      "exit_code": 0,
+      "output_sha256": "49647f5bdd2d1985562afd66a1cae4c59fc3a0e60c0947db6c3eee90c96d0ed8",
+      "build": "final"
+    }
+  ]
+}

@@ -511,36 +511,18 @@ pub fn authorize_generation_root_removal(
         return Err(GcError::PruneNotAuthorized);
     }
     let id = generation.as_str();
+    let activations = layout.state_root().join("activations");
+    let generations = layout.state_root().join("generations");
     for path in [
-        layout.state_root().join("activations").join(id),
-        layout
-            .state_root()
-            .join("activations")
-            .join(format!("{id}.staging")),
-        layout
-            .state_root()
-            .join("generations")
-            .join(format!("{id}.json")),
-        layout
-            .state_root()
-            .join("generations")
-            .join(format!("{id}.json.sha256")),
-        layout
-            .state_root()
-            .join("generations")
-            .join(format!("{id}.manifest.json")),
-        layout
-            .state_root()
-            .join("generations")
-            .join(format!("{id}.manifest.json.sha256")),
-        layout
-            .state_root()
-            .join("generations")
-            .join(format!("{id}.lock.json")),
-        layout
-            .state_root()
-            .join("generations")
-            .join(format!("{id}.lock.json.sha256")),
+        activations.join(id),
+        activations.join(format!("{id}.repair")),
+        activations.join(format!("{id}.staging")),
+        generations.join(format!("{id}.json")),
+        generations.join(format!("{id}.json.sha256")),
+        generations.join(format!("{id}.manifest.json")),
+        generations.join(format!("{id}.manifest.json.sha256")),
+        generations.join(format!("{id}.lock.json")),
+        generations.join(format!("{id}.lock.json.sha256")),
     ] {
         match fs::symlink_metadata(path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -567,6 +549,7 @@ fn delete_user_generation(root: &Path, owner_uid: u32, generation_id: &str) -> R
     validate_owned_directory(&activations, owner_uid)?;
     remove_directory_if_present(&activations.join(generation_id))?;
     remove_directory_if_present(&activations.join(format!("{generation_id}.staging")))?;
+    remove_directory_if_present(&activations.join(format!("{generation_id}.repair")))?;
     sync_directory(&activations)?;
     let generations = root.join("generations");
     validate_owned_directory(&generations, owner_uid)?;

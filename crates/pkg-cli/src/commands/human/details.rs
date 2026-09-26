@@ -27,6 +27,13 @@ pub(super) fn write_details(
         write_plan(&mut writer, plan, style)?;
     }
     write_fields(&mut writer, fields, style)?;
+    if fields.contains_key("deferredChecks") {
+        style.text(
+            &mut writer,
+            "Pending checks: ",
+            "New output collisions and final state validation require acquisition. The preview does not confirm activation.",
+        )?;
+    }
     if command == "update" {
         let updated_label = if fields.get("checkedOnly") == Some(&Value::Bool(true)) {
             "Update available"
@@ -64,6 +71,7 @@ fn write_fields(
         ("createdAt", "Created"),
         ("operation", "Operation"),
         ("sourceGeneration", "From"),
+        ("basedOnGeneration", "Preview generation"),
         ("targetGeneration", "Target environment"),
         ("packageCount", "Packages"),
         ("damagedPathCount", "Damaged paths"),

@@ -1,44 +1,30 @@
-# Proposal: Production trust ceremony
+# Proposal: Activate production trust
+
+Status: external inputs and final proof pending. Reconciled 26 September 2026.
+Scope: TRUST-01 in the [active plan](../../../plans/determinate-nix-stacked-prs.md).
 
 ## Why
 
-Everything shipped so far runs on proof-grade trust: a test TUF root (`1c5ceff8…` with three
-throwaway online keys), an ephemeral Quick Tunnel URL that no longer exists, and an unsigned
-macOS package. Real users require real trust: keys with ceremony and custody, a stable domain
-(`kelv.dev`, now owned), and a Developer ID-signed, notarized macOS package.
-
-This change is deliberately sequenced LAST. It executes only after the deterministic
-verification suite, the CLI UX change, and the installation experience change have landed and
-held green — putting production keys behind an unproven surface would be ceremony without
-safety.
+Alpha.54 is published with the alpha test root and ad-hoc macOS signatures.
+Production signing helpers, an initial runbook, and exact-release checks exist.
+Production key custody, provider identities, domain access, Apple identities,
+and notarization access are not established by that tooling.
 
 ## What Changes
 
-1. **Key ceremony**: generate a production TUF root key offline (air-gapped ceremony, recorded
-   steps, two-person acknowledgment where possible) and a threshold set of online keys
-   (3-of-5). Publish root v1. Define rotation and compromise procedures in an ops runbook.
-2. **Channel hosting**: stand up `channel.kelv.dev` with TLS, immutable target storage, and
-   CDN caching; point the product's channel constant at it; retire all proof-grade URLs.
-3. **macOS signing**: Developer ID Application certificate; sign the `.pkg` with
-   `productsign`; notarize with `notarytool`; staple the ticket; verify Gatekeeper pass on a
-   clean Mac.
-4. **Production release pair**: build, sign, seal, and publish the first production release
-   under the new root; update `SHA256SUMS` + sigstore bundles accordingly.
-5. **Re-proof**: one full slot lifecycle proof against the production channel and the signed
-   package before any public announcement. Evidence archived like DN-16.
-6. **Ops runbook**: key custody locations, signing procedures, rotation schedule, compromise
-   response, channel rollback procedure.
+Supply and review the operator inputs. Activate offline root custody,
+provider-backed online signing, an immutable HTTPS channel, Developer ID
+Application and Installer signing, and notarization. Prove the final artifacts
+on independent native hosts before a production announcement.
 
 ## Non-goals
 
-- No product behavior changes; trust infrastructure only.
-- No rename execution (separate change, may land before or after; the ceremony is
-  name-agnostic by pinning URLs in constants).
-- No beta/stable channel split; one production channel.
+No alpha-root promotion, product rename, arbitrary channel override, or new
+package feature. This proposal does not authorize a release during the current
+audit. The next alpha release is deferred separately.
 
 ## Impact
 
-- `tools/release/`: signing workflow steps, key handling, notarization integration.
-- Product channel constants move to `channel.kelv.dev`.
-- New `docs/ops/` runbooks (not public).
-- One new release tag on `main` after re-proof passes.
+Follow [the production runbook](../../../docs/ops/production-release.md) and
+[remaining tasks](tasks.md). Verify actual provider and domain access before
+changing constants or publication workflows.

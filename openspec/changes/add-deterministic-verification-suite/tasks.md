@@ -1,74 +1,45 @@
-# Tasks: Deterministic verification suite
+# Remaining tasks: deterministic verification
 
-## 1. Time injection
+Updated 26 September 2026. Scope: VERIFY-01 in the
+[active plan](../../../plans/determinate-nix-stacked-prs.md).
 
-- [x] 1.1 Define `Clock` trait in `pkg-core` with `now()` returning a `Timestamp`; default
-      impl delegates to `SystemTime`
-- [x] 1.2 Inject `Clock` at the single wall-clock decision: the channel freshness check
-      (`pkg-channel/src/policy.rs` `validate_descriptor` `now` parameter, fed from
-      `jiff::Timestamp::now()` at `tuf.rs` call sites). Record-only timestamp sites
-      (broker approval journal, repair report, CLI state files, logs) stay ambient:
-      a grounding audit confirmed they decide nothing and are excluded from byte
-      stability (owner decision, 2026-09-03). `Instant::now` timeouts are out of scope.
-- [x] 1.3 Add `FixedClock` test double in `pkg-testkit`
-- [x] 1.4 Convert timestamp-dependent tests to `FixedClock`; verify zero ambient-time reads in
-      `#[cfg(test)]` builds via a debug assertion
-- [x] 1.5 Run workspace tests with networking disabled (`tools/verify/run-hermetic.sh` wrapper
-      using `unshare -n` on Linux and a network-deny wrapper on macOS CI); fix every leak
+## Already delivered
 
-## 2. Repeat-run proof workflow
+Clock/FixedClock at channel freshness; hermetic wrapper and static audits;
+Linux clean-host release assurance; compiled CLI process tests; value-type
+property tests; platform adapter goldens; manual repeat-proof workflow and
+exact-release install/upgrade/reboot helpers. These are not new tasks.
 
-- [ ] 2.1 New workflow `proof-repeat.yml` with `workflow_dispatch` input `pair_sha`
-- [ ] 2.2 Job fetches pinned inputs by digest into an ephemeral in-job channel using
-      `serve_proof_channel.py _serve` bound to localhost
-- [ ] 2.3 Both macOS slots and the Linux staged host execute the full lifecycle matrix
-- [ ] 2.4 Verdict equality check: slot verdicts compared against a checked-in expected matrix
-- [ ] 2.5 Document dispatch procedure in `tools/release/README.md`
+## Repeat and scheduled execution
 
-## 3. Byte-stability suite
+- [ ] Diagnose the failed prepare phase in [run 33898972544](https://github.com/spa5k/pkg/actions/runs/33898972544); complete both slots and both real reboots.
+- [ ] Diagnose nightly cancellations; obtain full fault-harness and real-Nix results on both platforms.
+- [ ] Record exact inputs, host identity, phase verdicts, and retained logs; separate historical DN-16 evidence from current repeatability.
 
-- [ ] 3.1 Golden directory `crates/pkg-testkit/golden/{x86_64-linux,aarch64-darwin}/` with
-      journal, receipt, and channel metadata bytes for the representative pair
-- [ ] 3.2 Test `byte_stability` installs the pair twice into two clean fake roots and asserts
-      bit-equality of all three artifact classes
-- [ ] 3.3 `UPDATE_GOLDEN=1` regeneration path with a mandatory README note on review policy
-- [ ] 3.4 CI job runs the suite on both platforms
+## Stable-state and mutation coverage
 
-## 4. Fault-injection matrix
+- [ ] Define stable journal, receipt, and metadata fields with explicit normalization of record-only fields.
+- [ ] Add repeated same-platform install/repair fixtures and reviewed golden regeneration.
+- [ ] Define a shared cross-platform semantic contract instead of requiring different platform receipts to have identical raw bytes.
+- [ ] Inventory live mutation boundaries and map each to a crash/recovery test.
+- [ ] Add missing boundary tests and a completeness check that fails on uncovered additions.
 
-- [ ] 4.1 Generator `tools/verify/gen-boundary-inventory.rs` scanning mutation call sites
-- [ ] 4.2 Inventory file `tools/verify/boundaries.json` mapping boundary → test name
-- [ ] 4.3 Completeness check wired into CI; fails on uncovered boundary
-- [ ] 4.4 Add injection tests for every currently uncovered boundary (expected: the unlink and
-      rename windows; audit against `cbd3494` receipt-reuse path)
-- [ ] 4.5 Platform-gate `live_uninstall_accepts_only_plain_output`; convert any other
-      platform-dependent verdicts found by the hermetic audit
+## Additional integration evidence
 
-## 5. Determinism report and rollout
+- [ ] Complete the cross-platform concurrent-command matrix for BUG-01. The [local fix proof](../../../tests/macos-clean-host/BUG-01-FIX-2026-09-26.md) covers all eight operation kinds in process, Unix socket closure, and native macOS approval/preparation overlap. Linux runtime and the remaining lifecycle fault boundaries still need evidence.
+- [ ] Complete cross-platform BUG-02 lifecycle evidence. The [local fix proof](../../../tests/macos-clean-host/BUG-02-FIX-2026-09-26.md) covers 49 preparation pairs, rooted-install then remove recovery, superseded-attempt cleanup, and native macOS mixed-operation recovery. Keep Linux runtime and the full mutation-boundary matrix open.
+- [x] Add local missing-link activation, empty-generation repair, post-activation write failure, and preview-versus-commit regressions from BUG-03 through BUG-06. The [fix evidence](../../../tests/macos-clean-host/BUG-FIXES-2026-09-26.md) records the tests, faults, and macOS results.
+- [ ] Run these regressions on native Linux and extend the remaining interruption matrix. The existing local and macOS checks are complete; a zero CLI exit alone is not sufficient evidence.
+- [ ] Extend CLI process transcripts only where the current tests and onboarding audit expose gaps.
+- [ ] Add bounded fuzz targets for journal, framing, and metadata parsers with retained reproducers.
+- [ ] Add generated install/repair/upgrade/remove sequences with shrinking and lifecycle invariants.
+- [ ] Add historical/future journal fixtures for the documented accept-or-refuse policy.
+- [ ] Test supported protocol combinations and explicit refusal of unsupported versions; do not invent a compatibility promise.
+- [ ] Measure the current Linux proof duration before deciding whether a smaller per-push tier is needed.
+- [ ] Complete the planned cargo-nextest runner adoption and nightly cargo-llvm-cov reports after checking platform and hermetic-wrapper compatibility; triage measured coverage gaps.
 
-- [ ] 5.1 `tools/verify/determinism-report.sh` aggregating hermetic audit, byte-stability, and
-      boundary completeness into one verdict + JSON summary
-- [ ] 5.2 Nightly schedule for the report; two clean weeks before making it a merge gate
-- [ ] 5.3 Rebase `tools/quality/baseline.json` if lint sites moved
-- [ ] 5.4 Update `plans/` index and ADR 0005 quality-gate docs to reference the new gate
+## Report and rollout
 
-## 7. Integration tier (amended after plan review)
-
-- [ ] 7.1 Fast lifecycle smoke tier: reduced ~8-case list as a subset of the staged-proof
-      blocking matrix, containerized, real binaries + local TUF channel, per-push, <15 min
-- [ ] 7.2 Black-box CLI process tests with trycmd: spawn compiled binary, snapshot
-      stdout/stderr/exit codes/filesystem effects; golden transcripts for help, errors,
-      doctor
-- [ ] 7.3 cargo-fuzz targets: journal file parser, framing protocol decoder, TUF metadata
-      JSON parser; committed corpora; nightly 5-min bursts; reproducer artifact on finding
-- [ ] 7.4 Property-based operation sequences: proptest-generated install/repair/upgrade/
-      uninstall interleavings asserting idempotency, monotonic generations, exact receipt
-      reuse, fail-closed recovery; shrinkers recorded
-- [ ] 7.5 Protocol compatibility matrix: pinned old/new broker + client builds run the
-      framing contract tests; unsupported combos fail closed with the version error
-- [ ] 7.6 Cross-platform receipt equality test pinning byte-identical receipts for the
-      same pair across Linux container and macOS
-- [ ] 7.7 Journal schema migration goldens: one golden journal per historical schema
-      version; upgrade-or-refuse assertions; future-version refusal fail-closed
-- [ ] 7.8 Tooling adoption: cargo-nextest as the workspace runner; cargo-llvm-cov report
-      published nightly; coverage gaps triaged into follow-up tasks
+- [ ] Aggregate hermetic, stable-state, and boundary results into a machine-readable report with explicit skipped/failed scope.
+- [ ] Obtain two clean weeks of the required scheduled checks before promoting the new gates.
+- [ ] Update evidence links and quality baselines only after deliberate reviewed changes on both platforms.

@@ -1,0 +1,210 @@
+diff --git a/crates/pkg-installer/src/broker.rs b/crates/pkg-installer/src/broker.rs
+index 1cbf7aa..5547eda 100644
+--- a/crates/pkg-installer/src/broker.rs
++++ b/crates/pkg-installer/src/broker.rs
+@@ -2439,6 +2439,63 @@ mod tests {
+         Ok(())
+     }
+ 
++    #[test]
++    fn closing_another_same_uid_transport_preserves_the_running_operation()
++    -> Result<(), Box<dyn Error>> {
++        let broker = InProcessBroker::new()?;
++        let (first_server, mut first_client) = UnixStream::pair()?;
++        let first_broker = Arc::clone(&broker);
++        let first_worker =
++            thread::spawn(move || serve_broker_connection(first_server, &first_broker));
++        first_client.write_all(&ProductFrameCodec::encode_cli_request(
++            1,
++            &CliBrokerRequest::Begin(BrokerOperationKind::Activate),
++        )?)?;
++        let (_, started) =
++            ProductFrameCodec::decode_cli_response(&read_response(&mut first_client)?)?;
++        let CliBrokerResponse::Started(handle) = started else {
++            return Err(io::Error::other("expected started response").into());
++        };
++
++        let (second_server, mut second_client) = UnixStream::pair()?;
++        let second_broker = Arc::clone(&broker);
++        let second_worker =
++            thread::spawn(move || serve_broker_connection(second_server, &second_broker));
++        second_client.write_all(&ProductFrameCodec::encode_cli_request(
++            1,
++            &CliBrokerRequest::Begin(BrokerOperationKind::Doctor),
++        )?)?;
++        let (_, started) =
++            ProductFrameCodec::decode_cli_response(&read_response(&mut second_client)?)?;
++        let CliBrokerResponse::Started(check) = started else {
++            return Err(io::Error::other("expected started response").into());
++        };
++        second_client.write_all(&ProductFrameCodec::encode_cli_request(
++            2,
++            &CliBrokerRequest::Complete(check),
++        )?)?;
++        let (_, completed) =
++            ProductFrameCodec::decode_cli_response(&read_response(&mut second_client)?)?;
++        assert_eq!(completed, CliBrokerResponse::Completed);
++        drop(second_client);
++        second_worker
++            .join()
++            .map_err(|_| io::Error::other("broker thread panicked"))??;
++
++        first_client.write_all(&ProductFrameCodec::encode_cli_request(
++            2,
++            &CliBrokerRequest::Poll(handle),
++        )?)?;
++        let (_, status) =
++            ProductFrameCodec::decode_cli_response(&read_response(&mut first_client)?)?;
++        drop(first_client);
++        first_worker
++            .join()
++            .map_err(|_| io::Error::other("broker thread panicked"))??;
++        assert_eq!(status, CliBrokerResponse::Status(OperationStatus::Running));
++        Ok(())
++    }
++
+     #[test]
+     fn broker_disconnect_cancels_running_recovery_handle() -> Result<(), Box<dyn Error>> {
+         let broker = InProcessBroker::new()?;
+diff --git a/crates/pkg-nix/src/broker.rs b/crates/pkg-nix/src/broker.rs
+index 70e8a3a..7432743 100644
+--- a/crates/pkg-nix/src/broker.rs
++++ b/crates/pkg-nix/src/broker.rs
+@@ -182,6 +182,7 @@ pub enum OperationStatus {
+ #[derive(Debug, Clone)]
+ struct OperationRecord {
+     owner_uid: u32,
++    owner_connection: Arc<()>,
+     kind: BrokerOperationKind,
+     status: OperationStatus,
+     expires_at: Instant,
+@@ -489,6 +490,7 @@ impl InProcessBroker {
+             broker: Arc::clone(self),
+             epoch,
+             uid: peer.authenticated_uid,
++            connection: Arc::new(()),
+         })
+     }
+ 
+@@ -538,12 +540,14 @@ impl InProcessBroker {
+     }
+ }
+ 
+-/// Authenticated CLI-to-broker session bound to one uid and broker epoch.
++/// Authenticated connection bound to one uid and broker epoch.
++/// Clones share disconnect ownership; a fresh connection has its own identity.
+ #[derive(Clone)]
+ pub struct AuthenticatedCaller {
+     broker: Arc<InProcessBroker>,
+     epoch: u64,
+     uid: u32,
++    connection: Arc<()>,
+ }
+ 
+ impl fmt::Debug for AuthenticatedCaller {
+@@ -1584,8 +1588,9 @@ impl AuthenticatedCaller {
+         self.finish(handle, OperationStatus::Cancelled)
+     }
+ 
+-    /// Simulates CLI disconnect: every running operation owned by this caller
+-    /// is cancelled and all of its admission is released.
++    /// Cancels this connection's running operations on CLI disconnect.
++    /// Other connections for the same uid retain their operations and admission.
++    /// Explicit handle reconciliation remains uid-bound across connections.
+     pub fn disconnect(&self) -> Result<(), BrokerError> {
+         let mut state = self.broker.lock();
+         self.check_epoch(&state)?;
+@@ -1593,7 +1598,8 @@ impl AuthenticatedCaller {
+             .operations
+             .iter()
+             .filter(|(_, record)| {
+-                record.owner_uid == self.uid && record.status == OperationStatus::Running
++                Arc::ptr_eq(&record.owner_connection, &self.connection)
++                    && record.status == OperationStatus::Running
+             })
+             .map(|(handle, _)| handle.clone())
+             .collect::<Vec<_>>();
+@@ -1652,6 +1658,7 @@ impl AuthenticatedCaller {
+             handle.clone(),
+             OperationRecord {
+                 owner_uid: self.uid,
++                owner_connection: Arc::clone(&self.connection),
+                 kind,
+                 status: OperationStatus::Running,
+                 expires_at,
+diff --git a/crates/pkg-nix/src/broker/tests.rs b/crates/pkg-nix/src/broker/tests.rs
+index f549fce..52b4bac 100644
+--- a/crates/pkg-nix/src/broker/tests.rs
++++ b/crates/pkg-nix/src/broker/tests.rs
+@@ -308,6 +308,71 @@ fn caller_identity_is_transport_bound() {
+     );
+ }
+ 
++#[test]
++fn disconnect_preserves_other_connections_for_the_same_uid() {
++    for kind in BrokerOperationKind::ALL {
++        let broker = InProcessBroker::new().unwrap();
++        let owner = broker
++            .connect(InProcessCallerPeer::authenticated(1001))
++            .unwrap();
++        let handle = owner.begin(kind).unwrap();
++        match kind {
++            BrokerOperationKind::Build => {
++                owner.acquire_build(&handle).unwrap();
++                owner.acquire_gc_inhibit(&handle).unwrap();
++            }
++            BrokerOperationKind::Activate => {
++                owner.acquire_gc_inhibit(&handle).unwrap();
++            }
++            BrokerOperationKind::Gc => owner.acquire_gc(&handle).unwrap(),
++            _ => {}
++        }
++        let observer = broker
++            .connect(InProcessCallerPeer::authenticated(1001))
++            .unwrap();
++        let check = observer.begin(BrokerOperationKind::Doctor).unwrap();
++        observer.complete(&check).unwrap();
++        let before = broker.admission_snapshot();
++
++        observer.disconnect().unwrap();
++
++        assert_eq!(
++            owner.poll(&handle).unwrap(),
++            OperationStatus::Running,
++            "{kind:?}"
++        );
++        assert!(!operation_cancellation(&broker, &handle).is_cancelled());
++        assert_eq!(broker.admission_snapshot(), before);
++        // Clones belong to the original connection and must still clean it up.
++        owner.clone().disconnect().unwrap();
++        assert_eq!(owner.poll(&handle).unwrap(), OperationStatus::Cancelled);
++        let after = broker.admission_snapshot();
++        assert!(!after.build_held());
++        assert!(!after.gc_held());
++        assert_eq!(after.gc_inhibitor_count(), 0);
++    }
++}
++
++#[test]
++fn fresh_same_uid_connection_can_explicitly_reconcile_an_operation() {
++    let broker = InProcessBroker::new().unwrap();
++    let owner = broker
++        .connect(InProcessCallerPeer::authenticated(1001))
++        .unwrap();
++    let reconnect = broker
++        .connect(InProcessCallerPeer::authenticated(1001))
++        .unwrap();
++    let handle = owner.begin(BrokerOperationKind::Activate).unwrap();
++    assert_eq!(reconnect.poll(&handle).unwrap(), OperationStatus::Running);
++    reconnect.complete(&handle).unwrap();
++    assert_eq!(owner.poll(&handle).unwrap(), OperationStatus::Completed);
++    let handle = owner.begin(BrokerOperationKind::Activate).unwrap();
++    owner.acquire_gc_inhibit(&handle).unwrap();
++    reconnect.cancel(&handle).unwrap();
++    assert_eq!(owner.poll(&handle).unwrap(), OperationStatus::Cancelled);
++    assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
++}
++
+ #[test]
+ fn build_and_gc_admission_release_on_cancel_and_disconnect() {
+     let broker = InProcessBroker::new().unwrap();

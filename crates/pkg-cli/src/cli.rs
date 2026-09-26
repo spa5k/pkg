@@ -498,7 +498,7 @@ pub struct InstallArgs {
     /// Choose how to handle file name conflicts.
     #[arg(long, value_enum, default_value_t = CollisionPolicy::Abort)]
     on_collision: CollisionPolicy,
-    /// Resolve every target but commit nothing if any target fails.
+    /// Not available; requests with this option are refused.
     #[arg(long)]
     keep_going: bool,
     /// Select a signed channel by product identifier.
@@ -540,7 +540,7 @@ pub struct RemoveArgs {
     /// Installed package selectors to remove.
     #[arg(required = true, num_args = 1..)]
     packages: Vec<String>,
-    /// Preview closures that become collectible after removal.
+    /// Not available; use `pkg gc --dry-run` after removal.
     #[arg(long)]
     orphan_check: bool,
 }
@@ -655,7 +655,7 @@ pub struct UpgradeArgs {
     /// Choose how to handle file name conflicts.
     #[arg(long, value_enum, default_value_t = CollisionPolicy::Abort)]
     on_collision: CollisionPolicy,
-    /// Resolve every target but commit nothing if any target fails.
+    /// Not available; requests with this option are refused.
     #[arg(long)]
     keep_going: bool,
     /// Select a signed channel by product identifier.

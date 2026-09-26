@@ -5,6 +5,7 @@
 mod acquire;
 mod activate;
 mod activation_metadata;
+mod activation_repair;
 mod build_authority;
 mod build_authority_refresh;
 mod build_intent;
@@ -26,6 +27,7 @@ pub use acquire::{
     acquire_cache_only_with_progress, assemble_cache_install_evidence,
 };
 pub use activate::{activate_prepared, finish_activated, prepare_activation};
+pub use activation_repair::{repair_generation_activation, verify_generation_activation};
 pub use build_authority::{
     AuthenticatedBuildAuthority, BuildAuthorityError, BuildAuthorityErrorCode, BuildAuthorityUpdate,
 };
@@ -45,10 +47,11 @@ pub use build_preparation::{
 };
 pub use commit::{
     ActivatedGeneration, CandidateGeneration, CommitError, PreparedGeneration, RecoveryResult,
-    discard_unprepared_installs, discard_unprepared_state_edits, load_active_snapshot,
-    load_retained_history, pending_install_discard_generation, pending_install_generation,
-    pending_state_edit_generation, pending_state_transition_source, recover_generation,
-    recover_transitioned_state_edit, resume_prepared_install, resume_prepared_state_edit,
+    discard_unprepared_installs, discard_unprepared_state_edits, ensure_recovered_state,
+    load_active_snapshot, load_retained_history, pending_discard_generation,
+    pending_install_generation, pending_state_edit_generation, pending_state_transition_source,
+    recover_generation, recover_transitioned_state_edit, resume_prepared_install,
+    resume_prepared_state_edit, superseded_pending_generation,
 };
 pub use host_facts::ProductionBuildHostFactsProbe;
 pub use install_generation::{
@@ -61,6 +64,6 @@ pub use lifecycle::{
 pub use preflight::{PlannedOutput, PreflightError, PreflightInstall, preflight_cache_only};
 pub use resolve::{ResolveBatchError, ResolvedInstall, resolve_install};
 pub use rollback::{RollbackPrepareError, prepare_rollback};
-pub use stage::{StagedInstall, stage_verified};
+pub use stage::{StagedInstall, plan_state_activation, stage_verified};
 pub use state_edit::{StateEditKind, StateEditMetadata, StateEditPrepareError, prepare_state_edit};
 pub use verify::{VerifiedInstall, verify_acquired};

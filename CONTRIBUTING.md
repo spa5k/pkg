@@ -1,8 +1,8 @@
 # Contributing to `pkg`
 
 > **The active plan is the source of truth.** Design decisions, risks, and the
-> stacked-PR sequence live in the
-> [Determinate Nix implementation plan](plans/determinate-nix-stacked-prs.md).
+> remaining work live in the
+> [active implementation plan](plans/determinate-nix-stacked-prs.md).
 > The [plan index](plans/README.md) separates active and historical material.
 > The plan defines future implementation work. It does not change current alpha
 > behavior by itself.
@@ -10,12 +10,12 @@
 
 ## 1. Before you open a PR
 
-- **Find your PR in the [active plan](plans/determinate-nix-stacked-prs.md).**
-  Every implementation change maps to one stacked PR. State its identifier in
-  the PR description and copy its
+- **Map your PR to the [active plan](plans/determinate-nix-stacked-prs.md).**
+  Every implementation change maps to one active work entry. State its identifier
+  in the PR description and copy its
   `Purpose / Owns / Depends / Tests & gates` fields.
-- **Respect `Depends:`.** A PR may not merge until each listed dependency has merged. The
-  DAG and parallelism matrix in the roadmap are authoritative; do not invent new edges.
+- **Respect `Depends:`.** A PR may not merge until each listed dependency has
+  merged. Do not invent new dependency edges.
 - **One purpose per PR.** A reviewer must be able to hold the whole change in their head.
   Target a few hundred lines of *logic* (fixtures/tests excluded); anything larger is split.
 - **Every PR is reversible.** Your PR description must include the rollback strategy from the

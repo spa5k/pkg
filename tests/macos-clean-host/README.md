@@ -2,7 +2,13 @@
 
 The later [PUBLIC-04 checks](PUBLIC-04.md) record local regression evidence for
 automatic upgrades and public CLI changes. They are separate from the sealed
-DN-16 workflow below.
+DN-16 workflow below. The [26 September onboarding audit](ONBOARDING-2026-09-26.md)
+records 101 public alpha.54 command cases, measured quality debt, and open UX
+findings. It is separate regression evidence and does not certify a release.
+The later [daily-use and logic audit](BUG-HUNT-2026-09-26.md) adds 68 cases,
+controlled fault tests, and nine defects. The
+[fix status and evidence](BUG-FIXES-2026-09-26.md) record local fixes and VM
+regressions for all nine. They are not merged or released.
 
 This workflow is the destructive DN-16 lifecycle proof.
 The manual GitHub workflow is the only supported entry point.

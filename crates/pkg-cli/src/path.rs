@@ -152,7 +152,11 @@ case ":$PATH:" in
   *) PATH="$__pkg_state/current/bin:$PATH" ;;
 esac
 export PATH
-export MANPATH="$__pkg_state/current/share/man:${MANPATH:-}"
+case ":${MANPATH:-}:" in
+  *":$__pkg_state/current/share/man:"*) ;;
+  *) MANPATH="$__pkg_state/current/share/man:${MANPATH:-}" ;;
+esac
+export MANPATH
 unset __pkg_state
 "#
         }
@@ -164,7 +168,11 @@ case ":$PATH:" in
   *) PATH="$__pkg_state/current/bin:$PATH" ;;
 esac
 export PATH
-export MANPATH="$__pkg_state/current/share/man:${MANPATH:-}"
+case ":${MANPATH:-}:" in
+  *":$__pkg_state/current/share/man:"*) ;;
+  *) MANPATH="$__pkg_state/current/share/man:${MANPATH:-}" ;;
+esac
+export MANPATH
 unset __pkg_state
 "#
         }
