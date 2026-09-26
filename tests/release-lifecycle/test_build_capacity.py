@@ -9,12 +9,12 @@ SPEC.loader.exec_module(CAPACITY)
 
 
 class BuildCapacityTests(unittest.TestCase):
-    def run_wait(self, loads, timeout=600):
+    def run_wait(self, loads, timeout=600, wake_delay=0):
         samples = iter(loads)
         clock = [0]
         records = []
         def advance(seconds):
-            clock[0] += seconds
+            clock[0] += seconds + wake_delay
         CAPACITY.wait_for_capacity(3, lambda: next(samples), lambda: clock[0], advance,
                                    records.append, timeout)
         return clock[0], records
@@ -28,6 +28,14 @@ class BuildCapacityTests(unittest.TestCase):
         for load in [float('nan'), float('inf'), -1]:
             with self.subTest(load=load), self.assertRaises(ValueError):
                 self.run_wait([load], timeout=30)
+
+    def test_short_final_interval_cannot_supply_a_third_ready_sample(self):
+        with self.assertRaises(TimeoutError):
+            self.run_wait([0, 0, 0], timeout=20)
+
+    def test_delayed_wakeup_cannot_admit_after_deadline(self):
+        with self.assertRaises(TimeoutError):
+            self.run_wait([0, 0, 0], timeout=30, wake_delay=1)
 
     def test_deadline_is_bounded(self):
         with self.assertRaises(TimeoutError):

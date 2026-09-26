@@ -11,7 +11,11 @@ def wait_for_capacity(cores, sample, now, sleep, emit, timeout=600):
     deadline = now() + timeout
     consecutive = 0
     while True:
+        if now() >= deadline:
+            raise TimeoutError("hosted runner capacity deadline expired before the next sample")
         load = sample()
+        if now() >= deadline:
+            raise TimeoutError("hosted runner capacity deadline expired during measurement")
         if not math.isfinite(load) or load < 0:
             raise ValueError(f"invalid one-minute CPU load: {load!r}")
         consecutive = consecutive + 1 if load <= cores else 0
@@ -19,9 +23,9 @@ def wait_for_capacity(cores, sample, now, sleep, emit, timeout=600):
         if consecutive == 3:
             return
         remaining = deadline - now()
-        if remaining <= 0:
+        if remaining < 15:
             raise TimeoutError('hosted runner did not provide spare build capacity within the fixture deadline')
-        sleep(min(15, remaining))
+        sleep(15)
 
 
 def main():
