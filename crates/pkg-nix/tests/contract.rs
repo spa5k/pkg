@@ -432,7 +432,7 @@ fn stub_dispatches_all_seven_methods_through_dyn() {
     let g = a.gc().expect("gc");
     assert_eq!(g.status(), GcStatus::Collected);
     assert_eq!(g.collected(), &[store_path("unreachable-1")]);
-    assert_eq!(g.freed_bytes(), 12_345);
+    assert_eq!(g.freed_bytes(), Some(12_345));
 }
 
 #[test]
@@ -1712,4 +1712,24 @@ fn build_approval_receipt_binds_operation_plan_and_policy() {
             "build request exposes forbidden knob {knob}: {s}"
         );
     }
+}
+
+#[test]
+fn gc_unknown_measurement_round_trips_without_becoming_zero() {
+    let codec = JsonCodec::default();
+    let report = GcReport::without_byte_measurement(vec![store_path("dead")]).unwrap();
+    let encoded = report.encode().unwrap();
+    assert!(as_str(&encoded).contains("\"freedBytes\":null"));
+    assert_eq!(GcReport::decode(&codec, &encoded).unwrap(), report);
+    assert_eq!(report.freed_bytes(), None);
+    assert_eq!(
+        GcReport::new(GcStatus::Collected, vec![], 0)
+            .unwrap()
+            .freed_bytes(),
+        Some(0)
+    );
+    let refused = String::from_utf8(gc_report_refused().encode().unwrap())
+        .unwrap()
+        .replace("\"freedBytes\":0", "\"freedBytes\":null");
+    assert!(GcReport::decode(&codec, refused.as_bytes()).is_err());
 }

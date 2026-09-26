@@ -74,11 +74,18 @@ impl PruneCandidate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GcPlan {
     active_generation: String,
+    policy: GcPolicy,
     candidates: Vec<PruneCandidate>,
     estimated_reclaimable_bytes: u64,
 }
 
 impl GcPlan {
+    /// Returns the effective count and age protections used by this plan.
+    #[must_use]
+    pub const fn policy(&self) -> GcPolicy {
+        self.policy
+    }
+
     /// Returns the active generation that must still match under the lease.
     #[must_use]
     pub fn active_generation(&self) -> &str {
@@ -187,6 +194,7 @@ pub fn plan_gc(
     }
     Ok(GcPlan {
         active_generation: active_id.to_owned(),
+        policy,
         candidates,
         estimated_reclaimable_bytes,
     })

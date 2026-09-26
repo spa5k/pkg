@@ -6,3 +6,4 @@ mod human;
 pub mod local;
 pub mod query;
 pub mod state;
+pub mod uninstall;

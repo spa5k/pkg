@@ -441,6 +441,20 @@ fn execute_command_inner(
         Style::default()
     };
     let mut human_progress = crate::progress::HumanProgress::new(progress_style)?;
+    if mode == OutputMode::Human
+        && !cli.quiet()
+        && cli.dry_run()
+        && matches!(
+            cli.parsed_command(),
+            Command::Install(_) | Command::Upgrade(_)
+        )
+    {
+        writeln!(
+            stderr,
+            "Preparing the preview. Checking package sources and build requirements..."
+        )?;
+        stderr.flush()?;
+    }
     let result = {
         let mut progress = |event: PublicEvent| -> Result<(), CommandError> {
             let bytes = event.to_ndjson_line().map_err(public_stream_unavailable)?;

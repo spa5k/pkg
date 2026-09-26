@@ -108,42 +108,27 @@ impl CommandEngine for UninstallEngine {
         };
         // Ownership and absence checks precede approval. The live path checks
         // them again before it can remove product-owned state.
-        let actions = uninstall(true).map_err(|error| uninstall_command_error(error.code()))?;
-        if request.dry_run() || actions == 0 {
-            return uninstall_result(actions, request.dry_run());
+        let plan = uninstall(true).map_err(|error| uninstall_command_error(error.code()))?;
+        if request.dry_run() || plan.is_none() {
+            return pkg_cli::commands::uninstall::result(plan.as_ref(), request.dry_run());
         }
+        let preview = pkg_cli::commands::uninstall::result(plan.as_ref(), true)?;
+        pkg_cli::commands::uninstall::write_confirmation(&preview, std::io::stderr()).map_err(
+            |_| {
+                CommandError::new(
+                    ExitCode::EngineUnavailable,
+                    "pkg could not display the uninstall plan",
+                    "retry with an available terminal",
+                )
+            },
+        )?;
         confirm_destructive(
             request.yes(),
             "Uninstall pkg and its managed Nix installation?",
         )?;
-        let actions = uninstall(false).map_err(|error| uninstall_command_error(error.code()))?;
-        uninstall_result(actions, request.dry_run())
+        let plan = uninstall(false).map_err(|error| uninstall_command_error(error.code()))?;
+        pkg_cli::commands::uninstall::result(plan.as_ref(), false)
     }
-}
-
-fn uninstall_result(actions: usize, dry_run: bool) -> Result<CommandResult, CommandError> {
-    let (summary, status) = if actions == 0 {
-        ("pkg is not installed.", "absent")
-    } else if dry_run {
-        ("pkg can be safely uninstalled.", "planned")
-    } else {
-        ("pkg is uninstalled.", "removed")
-    };
-    CommandResult::new(
-        summary,
-        serde_json::Map::from_iter([
-            ("actions".to_owned(), serde_json::json!(actions)),
-            ("status".to_owned(), serde_json::json!(status)),
-        ]),
-        Vec::new(),
-    )
-    .map_err(|_| {
-        CommandError::new(
-            ExitCode::EngineUnavailable,
-            "pkg could not report the uninstall result",
-            "run `pkg doctor`",
-        )
-    })
 }
 
 fn run_uninstall(cli: &Cli) -> ProcessExitCode {

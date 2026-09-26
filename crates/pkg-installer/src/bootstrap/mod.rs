@@ -127,13 +127,16 @@ pub fn install_linux_from_bundle<'a>(
 
 /// Authenticates the fixed production release and uninstalls its Linux assets.
 ///
+/// Returns the authenticated plan, or `None` when the installation is absent.
 /// A dry run performs all read-only ownership and foreign-state checks but no
 /// service, account, store, or installed-file mutation.
 ///
 /// # Errors
 ///
 /// Returns a stable redacted uninstall failure.
-pub fn uninstall_linux_production(dry_run: bool) -> Result<usize, UninstallError> {
+pub fn uninstall_linux_production(
+    dry_run: bool,
+) -> Result<Option<crate::UninstallPlan>, UninstallError> {
     if !nix::unistd::Uid::effective().is_root() {
         return Err(UninstallError::new(UninstallErrorCode::PrivilegeRequired));
     }
@@ -143,7 +146,7 @@ pub fn uninstall_linux_production(dry_run: bool) -> Result<usize, UninstallError
         (_, _) => return Err(UninstallError::backend_failure()),
     };
     if verify_linux_install_absent().is_ok() {
-        return Ok(0);
+        return Ok(None);
     }
 
     let groups = crate::plan_linux_group_bindings()
@@ -184,20 +187,22 @@ pub fn uninstall_linux_production(dry_run: bool) -> Result<usize, UninstallError
     let plan = crate::plan_uninstall(&manifest)?;
     if dry_run {
         preflight_uninstall(&manifest, &plan, &mut backend)?;
-        Ok(plan.actions().len())
     } else {
-        execute_uninstall(&manifest, &plan, &mut backend)
-            .map(crate::UninstallReport::completed_actions)
+        execute_uninstall(&manifest, &plan, &mut backend)?;
     }
+    Ok(Some(plan))
 }
 
 /// Authenticates the fixed production release and uninstalls its macOS assets.
+/// Returns the authenticated plan, or `None` when the installation is absent.
 ///
 /// # Errors
 ///
 /// Returns a stable refusal for insufficient privilege, invalid release data,
 /// changed ownership state, incomplete cleanup, or unsupported hosts.
-pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError> {
+pub fn uninstall_macos_production(
+    dry_run: bool,
+) -> Result<Option<crate::UninstallPlan>, UninstallError> {
     if !nix::unistd::Uid::effective().is_root() {
         return Err(UninstallError::new(UninstallErrorCode::PrivilegeRequired));
     }
@@ -212,7 +217,7 @@ pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError
         match handoff {
             DeterminateHandoffState::Accepted => {}
             DeterminateHandoffState::NotStarted if macos_nix_absent_at(Path::new("/"))? => {
-                return Ok(0);
+                return Ok(None);
             }
             DeterminateHandoffState::NotStarted | DeterminateHandoffState::Started => {
                 return Err(UninstallError::backend_failure());
@@ -252,11 +257,10 @@ pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError
     let plan = crate::plan_uninstall(&manifest)?;
     if dry_run {
         preflight_uninstall(&manifest, &plan, &mut backend)?;
-        Ok(plan.actions().len())
     } else {
-        execute_uninstall(&manifest, &plan, &mut backend)
-            .map(crate::UninstallReport::completed_actions)
+        execute_uninstall(&manifest, &plan, &mut backend)?;
     }
+    Ok(Some(plan))
 }
 
 fn macos_nix_absent_at(root: &Path) -> Result<bool, UninstallError> {

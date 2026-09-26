@@ -141,7 +141,7 @@ fn execute_prunes_metadata_root_last_then_calls_fake_nix_once() {
     fake.expect_gc(Ok(report));
     let result = execute_gc(&layout, &lease, &plan, &maintenance, &fake, "op_gc").unwrap();
     assert_eq!(result.pruned_generations(), ["gen-0001"]);
-    assert_eq!(result.nix_report().freed_bytes(), 4096);
+    assert_eq!(result.nix_report().freed_bytes(), Some(4096));
     assert!(
         !layout
             .state_root()

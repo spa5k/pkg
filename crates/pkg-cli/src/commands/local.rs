@@ -1118,7 +1118,7 @@ impl LocalStateOperations {
             drop(maintenance);
             let report = broker.gc(handle.clone()).map_err(broker_error)?;
             let _ = broker.complete(handle.clone());
-            gc_run_result(&pruned, &recovered, &report)
+            gc_run_result(&pruned, &recovered, &report, plan.policy())
         })();
         if result.is_err() {
             let _ = broker.cancel(handle);
@@ -1767,7 +1767,7 @@ fn require_gc_confirmation(
     confirm_destructive(
         policy.yes(),
         &format!(
-            "Prune {} generation(s) [{}] and run store GC (estimated reclaimable: {} bytes)?",
+            "Prune {} generation(s) [{}] and run store GC (selected output closure estimate: {} bytes; actual freed space is unknown)?",
             plan.candidates().len(),
             generations,
             plan.estimated_reclaimable_bytes()
@@ -2729,6 +2729,15 @@ fn gc_policy(args: &GcArgs) -> Result<GcPolicy, CommandError> {
     GcPolicy::new(keep_generations, max_age_days).map_err(|_| gc_failed())
 }
 
+fn gc_retention(policy: GcPolicy) -> Value {
+    json!({
+        "keepRetiredGenerations": policy.keep_generations(),
+        "maxAgeDays": policy.max_age_days(),
+        "alwaysKeepActive": true,
+        "pruneRule": "outside-count-and-older-than-age"
+    })
+}
+
 fn gc_preview_result(plan: &pkg_store::GcPlan) -> Result<CommandResult, CommandError> {
     let generations = plan
         .candidates()
@@ -2749,6 +2758,11 @@ fn gc_preview_result(plan: &pkg_store::GcPlan) -> Result<CommandResult, CommandE
         Map::from_iter([
             ("dryRun".into(), json!(true)),
             ("generations".into(), json!(generations)),
+            ("retention".into(), gc_retention(plan.policy())),
+            (
+                "estimateScope".into(),
+                json!("selected-generation-output-closures"),
+            ),
             (
                 "estimatedReclaimableBytes".into(),
                 json!(plan.estimated_reclaimable_bytes()),
@@ -2763,6 +2777,7 @@ fn gc_run_result(
     pruned: &[String],
     recovered: &[String],
     report: &pkg_nix::GcReport,
+    retention: GcPolicy,
 ) -> Result<CommandResult, CommandError> {
     let records = pruned
         .iter()
@@ -2784,6 +2799,7 @@ fn gc_run_result(
             ("recoveredGenerations".into(), json!(recovered)),
             ("collectedPathCount".into(), json!(report.collected().len())),
             ("freedBytes".into(), json!(report.freed_bytes())),
+            ("retention".into(), gc_retention(retention)),
         ]),
         records,
     )

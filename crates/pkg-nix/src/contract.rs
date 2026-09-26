@@ -2949,14 +2949,13 @@ pub enum GcStatus {
 ///
 /// `gc()` takes **no** roots argument; it consults the on-disk GC-roots tree.
 /// In addition to the closed status and the collected paths, it carries a
-/// **checked** `freed_bytes`
-/// total — the bytes the backend reports freed, which must be consistent with
-/// the status ([`GcStatus::RefusedUnderLease`] requires zero).
+/// measured `freed_bytes`, or `None` when the backend cannot measure it.
+/// A refused collection always reports a known zero.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GcReport {
     status: GcStatus,
     collected: Vec<StorePath>,
-    freed_bytes: u64,
+    freed_bytes: Option<u64>,
 }
 
 impl GcReport {
@@ -2975,8 +2974,24 @@ impl GcReport {
     /// status/payload combination, duplicates, or an over-large collection.
     pub fn new(
         status: GcStatus,
-        mut collected: Vec<StorePath>,
+        collected: Vec<StorePath>,
         freed_bytes: u64,
+    ) -> Result<Self, NixAdapterError> {
+        Self::from_measurement(status, collected, Some(freed_bytes))
+    }
+
+    /// Constructs a collected report when the backend did not measure freed bytes.
+    ///
+    /// # Errors
+    /// Returns a validation failure for duplicate or excessive collected paths.
+    pub fn without_byte_measurement(collected: Vec<StorePath>) -> Result<Self, NixAdapterError> {
+        Self::from_measurement(GcStatus::Collected, collected, None)
+    }
+
+    fn from_measurement(
+        status: GcStatus,
+        mut collected: Vec<StorePath>,
+        freed_bytes: Option<u64>,
     ) -> Result<Self, NixAdapterError> {
         match status {
             GcStatus::Collected => {
@@ -2996,7 +3011,7 @@ impl GcReport {
                 if !collected.is_empty() {
                     return Err(invalid("refused with collected"));
                 }
-                if freed_bytes != 0 {
+                if freed_bytes != Some(0) {
                     return Err(invalid("refused with freed bytes"));
                 }
             }
@@ -3020,9 +3035,9 @@ impl GcReport {
         &self.collected
     }
 
-    /// Returns the total bytes reported freed by the backend.
+    /// Returns measured freed bytes, or `None` when no measurement is available.
     #[must_use]
-    pub const fn freed_bytes(&self) -> u64 {
+    pub const fn freed_bytes(&self) -> Option<u64> {
         self.freed_bytes
     }
 }
@@ -3041,7 +3056,7 @@ struct GcReportWire {
     status: GcStatusWire,
     #[serde(deserialize_with = "deserialize_gc_collected")]
     collected: BoundedStringSeq,
-    freed_bytes: u64,
+    freed_bytes: Option<u64>,
 }
 
 impl GcReport {
@@ -3079,7 +3094,7 @@ impl GcReport {
         for c in c_vec {
             collected.push(StorePath::new(&c).map_err(|_| invalid("invalid collected path"))?);
         }
-        Self::new(status, collected, dto.freed_bytes)
+        Self::from_measurement(status, collected, dto.freed_bytes)
     }
 }
 
