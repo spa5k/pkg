@@ -1,7 +1,0 @@
-{
-  "sandbox_id": "iqhwh2z27ui6el6r2o9bw",
-  "model": "zai/glm-5.3-flash",
-  "stopped": true,
-  "downloaded_archive_sha256": "a042fdb251f1699d114e374e2999499c1c2223ff3e08a992669233f4921c5537",
-  "candidate_matches_local": true
-}

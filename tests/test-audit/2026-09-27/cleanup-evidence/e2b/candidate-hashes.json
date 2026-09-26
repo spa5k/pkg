@@ -1,8 +1,0 @@
-{
-  "crates/pkg-cli/src/commands/execute.rs": "3af6fd05024f4f81dd36929161abe985fcc98d69d3cad01df29cd3ddbc3d77dc",
-  "crates/pkg-cli/src/commands/execute/tests.rs": "6e6dddc1d47cf81481012d67c4b9b01899f5f0170ec5c85f3de3ff2780120988",
-  "crates/pkg-cli/tests/cli.rs": "e9d934e0b6ad99e0b5486214c3a041d5a14a5d86a47ce72e9acfb43d702fc356",
-  "tools/install/test_render.py": "613c52e3fc82280caf1d3552564d79632d8ebc71f1ae96947d0da315725c8ace",
-  "tools/release/test_install_script.py": "a6d27eac83ea50d19338f41cf73861cd0d3c3605da61b1632d8bee5c9461ca0c",
-  "tools/release/test_workflow.py": "745294ead8bbe4484cd95b9f9ac702e34d162e515c52a4501df974ea00d74997"
-}

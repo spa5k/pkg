@@ -1,8 +1,0 @@
-test_later_symlink_is_refused_before_any_directory_change (test_prepare_host.HostFixtureTests.test_later_symlink_is_refused_before_any_directory_change) ... Before: /tmp/tmp0lsy54d6 uid=1001 gid=1001 mode=0700
-ok
-test_local_host_is_refused_before_mutation (test_prepare_host.HostFixtureTests.test_local_host_is_refused_before_mutation) ... ok
-
-----------------------------------------------------------------------
-Ran 2 tests in 0.002s
-
-OK

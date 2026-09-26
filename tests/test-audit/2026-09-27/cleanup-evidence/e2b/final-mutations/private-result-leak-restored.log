@@ -1,9 +1,0 @@
-   Compiling pkg-cli v0.1.0-alpha.56 (/tmp/pkg-cleanup/final-mutations/workspace/crates/pkg-cli)
-    Finished `test` profile [unoptimized] target(s) in 1.59s
-     Running unittests src/lib.rs (/home/user/workspace/target/debug/deps/pkg_cli-0df524e986288d00)
-
-running 1 test
-test commands::execute::tests::public_result_rejects_private_runtime_material_and_reserved_fields ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.00s
-
