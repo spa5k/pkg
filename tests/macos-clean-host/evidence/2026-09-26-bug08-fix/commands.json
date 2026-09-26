@@ -1,0 +1,38 @@
+{
+  "source_base": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "patch_scope": "cumulative runtime BUG-01 through BUG-08",
+  "patch_sha256": "f67deef984aba8986b323563d6fdf9fc4968d543322073ec41789f648ef8f6c4",
+  "final_cli_sha256": "b4d806fcab2fda5da62278043a7377222d245328450ad94b65625f088b630730",
+  "cases": [
+    {
+      "case": "001",
+      "command": "/tmp/pkg-bug08-fixed remove ripgrep --orphan-check --yes --json",
+      "started": "2026-09-26T10:11:27.634020+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.12,
+      "exit_code": 78,
+      "output_sha256": "85fd9032e3d0a54453cf6006f195af850b4a80b206fc07858f0f075918355254",
+      "build": "final"
+    },
+    {
+      "case": "002",
+      "command": "/tmp/pkg-bug08-fixed remove ripgrep --orphan-check --dry-run --json",
+      "started": "2026-09-26T10:11:52.340301+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.13,
+      "exit_code": 78,
+      "output_sha256": "85fd9032e3d0a54453cf6006f195af850b4a80b206fc07858f0f075918355254",
+      "build": "final"
+    },
+    {
+      "case": "003",
+      "command": "/tmp/pkg-bug08-fixed remove ripgrep --dry-run --json && /tmp/pkg-bug08-fixed remove --help && shasum -a 256 \"$HOME/Library/Application Support/pkg/journal/journal.ndjson\" && readlink \"$HOME/Library/Application Support/pkg/current\" && rg --version && shasum -a 256 /tmp/pkg-bug08-fixed",
+      "started": "2026-09-26T10:11:52.583920+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.24,
+      "exit_code": 0,
+      "output_sha256": "d6c295f035a5cb1e875a523c09de789d066874357c26b738fbcbabc65e3ef28e",
+      "build": "final"
+    }
+  ]
+}

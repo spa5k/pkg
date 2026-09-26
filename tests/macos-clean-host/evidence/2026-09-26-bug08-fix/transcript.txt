@@ -1,0 +1,85 @@
+CASE 001
+$ /tmp/pkg-bug08-fixed remove ripgrep --orphan-check --yes --json
+{"schemaVersion":1,"ok":false,"command":"remove","error":{"symbol":"CONFIG","code":78,"message":"--orphan-check is not supported for remove","hint":"omit --orphan-check; use `pkg gc --dry-run` after removal to inspect retained generations and GC candidates"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 78
+
+CASE 002
+$ /tmp/pkg-bug08-fixed remove ripgrep --orphan-check --dry-run --json
+{"schemaVersion":1,"ok":false,"command":"remove","error":{"symbol":"CONFIG","code":78,"message":"--orphan-check is not supported for remove","hint":"omit --orphan-check; use `pkg gc --dry-run` after removal to inspect retained generations and GC candidates"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 78
+
+CASE 003
+$ /tmp/pkg-bug08-fixed remove ripgrep --dry-run --json && /tmp/pkg-bug08-fixed remove --help && shasum -a 256 "$HOME/Library/Application Support/pkg/journal/journal.ndjson" && readlink "$HOME/Library/Application Support/pkg/current" && rg --version && shasum -a 256 /tmp/pkg-bug08-fixed
+{"command":"remove","ok":true,"packages":[{"name":"ripgrep","pinned":false,"selector":"ripgrep","version":"13.0.0"}],"removed":["sel_125b090add36b9958bd9191344ac61b1_0"],"schemaVersion":1}
+Remove packages from your active environment
+
+Usage: pkg-bug08-fixed remove [OPTIONS] <PACKAGES>...
+
+Arguments:
+  <PACKAGES>...
+          Installed package selectors to remove
+
+Options:
+      --orphan-check
+          Not available; use `pkg gc --dry-run` after removal
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Output:
+      --json
+          Print the final result as JSON
+
+      --jsonl
+          Print progress and the final result as JSON Lines
+
+  -q, --quiet
+          Show only the final result
+
+  -v, --verbose
+          Show operation details
+
+      --no-color
+          Use static output without color or animation
+
+Advanced:
+      --config <PATH>
+          Override the product configuration file
+
+      --state <DIR>
+          Use another package state directory
+
+      --profile <PROFILE>
+          Select a profile (currently only `default`)
+          
+          [default: default]
+          [possible values: default]
+
+Safety:
+  -y, --yes
+          Accept prompts and local build plans
+
+      --dry-run
+          Preview changes without applying them
+
+Examples:
+  pkg remove ripgrep --dry-run
+  pkg remove ripgrep
+
+Use an installed name or full selector. A short name must match one package. Use
+pkg rollback to restore an environment.
+24078ccdc3edb42ebb22f4b0e5bb4228cbed06ba9b1f3bc3803c45c39a07e0c4  /Users/admin/Library/Application Support/pkg/journal/journal.ndjson
+activations/gen-0027
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+b4d806fcab2fda5da62278043a7377222d245328450ad94b65625f088b630730  /tmp/pkg-bug08-fixed
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0

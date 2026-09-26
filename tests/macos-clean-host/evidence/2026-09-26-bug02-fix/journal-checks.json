@@ -1,0 +1,10 @@
+{
+  "source_case": "018",
+  "superseded_attempt": "gen-0012",
+  "superseded_aborted_and_pruned_without_activation": true,
+  "newer_committed_generation_preserved": "gen-0013",
+  "removal_committed_before_install_preparation": true,
+  "recovered_removal": "gen-0014",
+  "new_install": "gen-0015",
+  "last_committed_generation": "gen-0018"
+}

@@ -1,0 +1,811 @@
+{
+  "source_commit": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "public_release": "v0.1.0-alpha.54",
+  "main_cli_sha256": "110ad367bdf72a21555269534ca6a24c78a1daf494f5f9781a30597218a63ef9",
+  "case_count": 68,
+  "exit_counts": {
+    "0": 45,
+    "1": 3,
+    "127": 2,
+    "64": 5,
+    "65": 2,
+    "71": 1,
+    "73": 5,
+    "77": 2,
+    "79": 3
+  },
+  "notes": [
+    "Zero exit does not imply a passing behavior assertion.",
+    "Multi-command cases retain each output but record the final shell exit.",
+    "Cases 32 and 56 used an actual y reply after the other connection closed.",
+    "Case 31 temporary CLI absence was test setup after reboot, not a product defect.",
+    "Case 67 normal-user protected artifact reads were refused; case 68 retried with sudo.",
+    "No runtime source was changed. The main CLI ran against the unchanged alpha.54 services."
+  ],
+  "cases": [
+    {
+      "case": "001-baseline",
+      "command": "pkg --version; pkg doctor; pkg list --json; pkg history --json",
+      "started": "2026-09-25T22:40:03.615017+00:00",
+      "seconds": 1.26,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "df58ae618a216a822642d6e8d5caa036fc8aadd4b4d3075f872736e8dd88f8d8"
+    },
+    {
+      "case": "002-duplicate-install",
+      "command": "pkg install fzf --yes --json",
+      "started": "2026-09-25T22:40:04.898718+00:00",
+      "seconds": 23.46,
+      "exit_code": 65,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-06"
+      ],
+      "raw_output_sha256": "7664175b2a29588914eb5ac6d3280d60422dc52669a3a1129ee5ee81b654fbe4"
+    },
+    {
+      "case": "003-mixed-invalid-install",
+      "command": "pkg install ripgrep definitely-not-a-package --yes --json",
+      "started": "2026-09-25T22:40:28.387468+00:00",
+      "seconds": 1.32,
+      "exit_code": 64,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "bdf81e5cc816d1c02da44eb67e7ff72946d7cc13d3c2012748a809f4df8c04af"
+    },
+    {
+      "case": "004-state-after-failure",
+      "command": "pkg list --json; pkg history --json",
+      "started": "2026-09-25T22:40:29.727942+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "cfc11c84baf93f17fc60d4b42a2ecf840dad4af115d54b2300281f74cb57b51a"
+    },
+    {
+      "case": "005-duplicate-pin",
+      "command": "pkg pin fzf fzf --json",
+      "started": "2026-09-25T22:40:29.856187+00:00",
+      "seconds": 0.28,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "8a59f79ea979697a386ea3082087113311bd755228079cf826663033fef35b97"
+    },
+    {
+      "case": "006-remove-alias-missing",
+      "command": "pkg remove fzf missing --yes --json",
+      "started": "2026-09-25T22:40:30.168502+00:00",
+      "seconds": 0.11,
+      "exit_code": 64,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "ae5bd2cd9a2ff17161788ec1f8cbe4c4e7667fe8f000d575dd09f20e43cad0f4"
+    },
+    {
+      "case": "007-state-after-edits",
+      "command": "pkg list --json; pkg history --json",
+      "started": "2026-09-25T22:40:30.311507+00:00",
+      "seconds": 0.13,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "79f68c0560d9503552b16ab0da5ec3a580c99f3d4d6bd2b85fc226bdc566e97f"
+    },
+    {
+      "case": "008-mixed-valid-duplicate",
+      "command": "pkg install ripgrep fzf --yes --json",
+      "started": "2026-09-25T22:40:52.873916+00:00",
+      "seconds": 12.69,
+      "exit_code": 65,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-06"
+      ],
+      "raw_output_sha256": "f98482921110eb56af4e2e3887b35a6d26a7d180a42844fcb2573cdfe3fe28f0"
+    },
+    {
+      "case": "009-keep-going-errors",
+      "command": "pkg install no-such-one no-such-two --keep-going --yes --json",
+      "started": "2026-09-25T22:41:05.599994+00:00",
+      "seconds": 0.45,
+      "exit_code": 64,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-07"
+      ],
+      "raw_output_sha256": "4ab4f762b195fe81776546ce72ff4577fdb3bf3be3f3ebf950c32c65431f2910"
+    },
+    {
+      "case": "010-orphan-preview",
+      "command": "pkg remove fzf --orphan-check --dry-run --json",
+      "started": "2026-09-25T22:41:06.069967+00:00",
+      "seconds": 0.1,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-08"
+      ],
+      "raw_output_sha256": "4a88fc5158e1dd7a9695c3135732adc2ab63b51dc5862d8116cb1ee61b8854c8"
+    },
+    {
+      "case": "011-dry-run-duplicate",
+      "command": "pkg install fzf --dry-run --json",
+      "started": "2026-09-25T22:41:06.194843+00:00",
+      "seconds": 1.86,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-06"
+      ],
+      "raw_output_sha256": "18297ef3e666a68c8de94c1484b6ee26b28bfe82e0883cbeca31134eec47353c"
+    },
+    {
+      "case": "012-state-after-previews",
+      "command": "pkg list --json; pkg history --json",
+      "started": "2026-09-25T22:41:08.079513+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "79f68c0560d9503552b16ab0da5ec3a580c99f3d4d6bd2b85fc226bdc566e97f"
+    },
+    {
+      "case": "013-shellenv-reentry",
+      "command": "print -r -- \"MANPATH before: $MANPATH\"; eval \"$(pkg shellenv)\"; eval \"$(pkg shellenv)\"; print -r -- \"MANPATH after: $MANPATH\"",
+      "started": "2026-09-25T22:41:08.212210+00:00",
+      "seconds": 0.09,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-09"
+      ],
+      "raw_output_sha256": "33dfcdd2b524241b638257f6eea96525d62fc3ad13eaae184ccf15be68eabec6"
+    },
+    {
+      "case": "014-install-ripgrep",
+      "command": "pkg install ripgrep --yes --json",
+      "started": "2026-09-25T22:41:08.324247+00:00",
+      "seconds": 2.58,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "6dcb90d9c893b493cb611f727b0a67527af0d3516be446086b73b2ce46f96e6d"
+    },
+    {
+      "case": "015-alias-remove-preview",
+      "command": "pkg remove rg --dry-run --json",
+      "started": "2026-09-25T22:41:42.793829+00:00",
+      "seconds": 0.15,
+      "exit_code": 64,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "e541cca0c269a7fe108eb843d2a878495aebba19a1e1d15334b9fd40846f7a10"
+    },
+    {
+      "case": "016-bump-pinned-preview",
+      "command": "pkg upgrade --all --bump-pinned --dry-run --json",
+      "started": "2026-09-25T22:41:42.971522+00:00",
+      "seconds": 2.49,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "835fa47c1bcfeab0383e1329f3ea013bfca357fd7ce7d06f81d4ccb721ea1a59"
+    },
+    {
+      "case": "017-upgrade-current",
+      "command": "pkg upgrade --all --yes --json",
+      "started": "2026-09-25T22:41:45.486991+00:00",
+      "seconds": 2.7,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "849fc704d9e231656f88ab204ab88d5b340d610e796bea435f77267d203231d6"
+    },
+    {
+      "case": "018-orphan-remove",
+      "command": "pkg remove ripgrep --orphan-check --yes --json",
+      "started": "2026-09-25T22:41:48.208521+00:00",
+      "seconds": 0.27,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-08"
+      ],
+      "raw_output_sha256": "e598f69dc03de171b7fdf0277625780cae34bffaa991940d5307a4a1b489a208"
+    },
+    {
+      "case": "019-rollback-remove",
+      "command": "pkg rollback --yes --json",
+      "started": "2026-09-25T22:41:48.502012+00:00",
+      "seconds": 0.3,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "d09d3da2acfe88361732f4461134baaa1d95e0c2afd5a82d1c4b47e5593fe1de"
+    },
+    {
+      "case": "020-after-rollback",
+      "command": "pkg list --json; command -v rg; rg --version; pkg history --json",
+      "started": "2026-09-25T22:41:48.827650+00:00",
+      "seconds": 0.12,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "81feec701c87935da925bd317157cfe6a1679341c6e569eeb18c031c293aba9e"
+    },
+    {
+      "case": "021-activation-damage-setup",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; readlink \"$state/current/bin/rg\" > /tmp/pkg-rg-link-before; test -s /tmp/pkg-rg-link-before && rm \"$state/current/bin/rg\"; command -v rg",
+      "started": "2026-09-25T22:42:08.448402+00:00",
+      "seconds": 0.1,
+      "exit_code": 1,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "803039be39a2c2663618d5f97a3343d6cd42c98d80aa54488a086c3231375e79"
+    },
+    {
+      "case": "022-damaged-activation-doctor",
+      "command": "pkg doctor --json",
+      "started": "2026-09-25T22:42:08.573584+00:00",
+      "seconds": 0.8,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "f9d5f1920d0590498c10a98f3c125757581e67dcc91a26bff1c4bfd27e12515e"
+    },
+    {
+      "case": "023-damaged-activation-verify",
+      "command": "pkg repair --verify-only --json",
+      "started": "2026-09-25T22:42:09.398695+00:00",
+      "seconds": 5.91,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "95f593217ace2cffaa79c90c547b4c96c4613d280657b87cebe8dd48e575fa33"
+    },
+    {
+      "case": "024-damaged-activation-repair",
+      "command": "pkg repair --yes --json",
+      "started": "2026-09-25T22:42:15.334908+00:00",
+      "seconds": 6.17,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "fdec30241c9ed00cd2d2a3a95e6be77a1209fd317be064acb702bfc9fafdaed9"
+    },
+    {
+      "case": "025-command-after-repair",
+      "command": "command -v rg; rg --version",
+      "started": "2026-09-25T22:42:21.525937+00:00",
+      "seconds": 0.09,
+      "exit_code": 127,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "dcc2ae69caa96336b12806a7f081aa39d806324b7a58a8c6a58a2cd62a61e726"
+    },
+    {
+      "case": "026-activation-restore",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; ln -s \"$(cat /tmp/pkg-rg-link-before)\" \"$state/current/bin/rg\"; rg --version",
+      "started": "2026-09-25T22:42:21.638261+00:00",
+      "seconds": 0.1,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "1dac6350c01738e45b7f7220fa05a44fe0fb6b00554c9054e093e484424620b9"
+    },
+    {
+      "case": "027-install-collision-pair",
+      "command": "pkg install just \"github:casey/just#default\" --on-collision keep-first --yes --json",
+      "started": "2026-09-25T22:42:33.555083+00:00",
+      "seconds": 58.96,
+      "exit_code": 79,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-01"
+      ],
+      "raw_output_sha256": "ff787edea7eb28e6df1a2831a9e658149f0ae0ff9ae723fdaa669310dd15e5cd"
+    },
+    {
+      "case": "028-doctor-during-install",
+      "command": "pkg doctor --json",
+      "started": "2026-09-25T22:43:26.207496+00:00",
+      "seconds": 0.63,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-01"
+      ],
+      "raw_output_sha256": "f9d5f1920d0590498c10a98f3c125757581e67dcc91a26bff1c4bfd27e12515e"
+    },
+    {
+      "case": "029-main-cli-check",
+      "command": "/tmp/pkg-main --version; shasum -a 256 /tmp/pkg-main; /tmp/pkg-main doctor --json",
+      "started": "2026-09-25T22:43:52.796343+00:00",
+      "seconds": 0.78,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "2d716feb1cdb94702ad6568789e7d6e0b29c0fe53ba9cf52ed2e5947ec5df15a"
+    },
+    {
+      "case": "030-collision-install-alone",
+      "command": "pkg install just \"github:casey/just#default\" --on-collision keep-first --yes --json",
+      "started": "2026-09-25T22:44:20.539913+00:00",
+      "seconds": 155.78,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-01"
+      ],
+      "raw_output_sha256": "ce5961ec6bd06eb0d31f47639957204499d8e47bfc543709fa340f65a426aac9"
+    },
+    {
+      "case": "031-resume-baseline",
+      "command": "pkg list --json; just --version; /tmp/pkg-main doctor --json",
+      "started": "2026-09-26T07:45:36.077039+00:00",
+      "seconds": 0.21,
+      "exit_code": 127,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "428ed60b67350ee0bb1f82e597588b9ea4dabf79282d389b56e63191c632c7c6"
+    },
+    {
+      "case": "032-main-remove-paused",
+      "command": "/tmp/pkg-main remove ripgrep",
+      "started": "2026-09-26T07:45:46.476141+00:00",
+      "seconds": 18.63,
+      "exit_code": 79,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-01"
+      ],
+      "raw_output_sha256": "f30a99bcd6109d1c28e8ea00c724aae396fe2561286ba8f881904891362ee13b"
+    },
+    {
+      "case": "033-main-doctor-during-prompt",
+      "command": "/tmp/pkg-main doctor --json",
+      "started": "2026-09-26T07:45:51.413371+00:00",
+      "seconds": 1.23,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-01"
+      ],
+      "raw_output_sha256": "f9d5f1920d0590498c10a98f3c125757581e67dcc91a26bff1c4bfd27e12515e"
+    },
+    {
+      "case": "034-after-concurrent-cancel",
+      "command": "/tmp/pkg-main list --json; rg --version; readlink \"$HOME/Library/Application Support/pkg/current\"",
+      "started": "2026-09-26T07:46:05.218129+00:00",
+      "seconds": 0.44,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-01"
+      ],
+      "raw_output_sha256": "031be24570c46802d6b4b3e7c738c0d244100feb1b9c52b82bcb36a0d25df392"
+    },
+    {
+      "case": "035-recover-state-edit",
+      "command": "/tmp/pkg-main pin fzf --json",
+      "started": "2026-09-26T07:46:23.510527+00:00",
+      "seconds": 0.62,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-01"
+      ],
+      "raw_output_sha256": "f1059596170c761b2040f5b6cb0c03680ed37d24cf16cd181d0b8bcf52b87ddd"
+    },
+    {
+      "case": "036-after-recovery",
+      "command": "/tmp/pkg-main list --json; readlink \"$HOME/Library/Application Support/pkg/current\"; /tmp/pkg-main history --json",
+      "started": "2026-09-26T07:46:24.220201+00:00",
+      "seconds": 0.35,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-01"
+      ],
+      "raw_output_sha256": "b93472613a3c031ee39230c37eab084c10037cf605208ac7247c39f9a373d048"
+    },
+    {
+      "case": "037-preview-unrelated-install",
+      "command": "/tmp/pkg-main install hello --dry-run --json",
+      "started": "2026-09-26T07:46:24.646297+00:00",
+      "seconds": 25.9,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-06"
+      ],
+      "raw_output_sha256": "4e627d416a656b95223985e29978a806b3e01a5662bdd2ac5eccc2a4e4099837"
+    },
+    {
+      "case": "038-unrelated-install",
+      "command": "/tmp/pkg-main install hello --yes --json",
+      "started": "2026-09-26T07:46:50.573682+00:00",
+      "seconds": 4.14,
+      "exit_code": 71,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-06"
+      ],
+      "raw_output_sha256": "b47b3d44c0d4726d35548b50a28e396d46ea0ecd9081d21b05f9c029011eeaeb"
+    },
+    {
+      "case": "039-block-state-view",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; mv \"$state/lock.json\" /tmp/pkg-lock-before; mkdir \"$state/lock.json\"; readlink \"$state/current\"",
+      "started": "2026-09-26T07:47:25.563633+00:00",
+      "seconds": 0.24,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-05"
+      ],
+      "raw_output_sha256": "fd595a4719e94c08a952856efe4d7f8c59a479e886e185a971cf72a2be6bb04f"
+    },
+    {
+      "case": "040-unpin-blocked-view",
+      "command": "/tmp/pkg-main unpin fzf --json",
+      "started": "2026-09-26T07:47:25.843968+00:00",
+      "seconds": 0.57,
+      "exit_code": 73,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-05"
+      ],
+      "raw_output_sha256": "9a900737db421e92c6684aa1e8ab0d1b921b86934303201117b740fed68cb1a4"
+    },
+    {
+      "case": "041-state-after-failed-unpin",
+      "command": "/tmp/pkg-main list --json; readlink \"$HOME/Library/Application Support/pkg/current\"; /tmp/pkg-main doctor --json",
+      "started": "2026-09-26T07:47:26.443710+00:00",
+      "seconds": 1.01,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-05"
+      ],
+      "raw_output_sha256": "b420162276794fc08c09d140b59a2837286fd53093001b2015f35919b45ffe2e"
+    },
+    {
+      "case": "042-unblock-state-view",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; rmdir \"$state/lock.json\" && mv /tmp/pkg-lock-before \"$state/lock.json\"; /tmp/pkg-main pin fzf --json",
+      "started": "2026-09-26T07:47:27.493768+00:00",
+      "seconds": 0.66,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-05"
+      ],
+      "raw_output_sha256": "9cd4879ae58dc493274567afa3fe7ef806f86362eb763db96e2ef7afa287ec42"
+    },
+    {
+      "case": "043-empty-environment",
+      "command": "/tmp/pkg-main remove fzf just \"github:casey/just#default\" --yes --json",
+      "started": "2026-09-26T07:47:28.190364+00:00",
+      "seconds": 0.59,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-04"
+      ],
+      "raw_output_sha256": "85508e8d76e1c0c8dc8a880f204511e7228363cab0e5d5061feaab0ad805a8fc"
+    },
+    {
+      "case": "044-empty-list",
+      "command": "/tmp/pkg-main list --json",
+      "started": "2026-09-26T07:47:28.813326+00:00",
+      "seconds": 0.34,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-04"
+      ],
+      "raw_output_sha256": "8da10df30d6ca87480c02ffe960c5216126201456132e13560aa612122191daa"
+    },
+    {
+      "case": "045-empty-repair-verify",
+      "command": "/tmp/pkg-main repair --verify-only --json",
+      "started": "2026-09-26T07:47:29.231331+00:00",
+      "seconds": 0.87,
+      "exit_code": 77,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-04"
+      ],
+      "raw_output_sha256": "d736ff1a3ba195b613290de30cb601e07ff215b27644d41ac7c89f762cfdeefe"
+    },
+    {
+      "case": "046-empty-repair",
+      "command": "/tmp/pkg-main repair --yes --json",
+      "started": "2026-09-26T07:47:30.195366+00:00",
+      "seconds": 0.3,
+      "exit_code": 77,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-04"
+      ],
+      "raw_output_sha256": "a645254345bae574448499ad401a5947765e1c9918145552ef3e26fbf564c42f"
+    },
+    {
+      "case": "047-restore-inventory",
+      "command": "/tmp/pkg-main rollback --yes --json",
+      "started": "2026-09-26T07:47:30.522239+00:00",
+      "seconds": 0.53,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-04"
+      ],
+      "raw_output_sha256": "d1890e32618900e7426d7022572b81d82c529b5fdbbd3c2abf95b2eb9900c730"
+    },
+    {
+      "case": "048-main-damage-setup",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; readlink \"$state/current/bin/fzf\" > /tmp/pkg-fzf-link-before; test -s /tmp/pkg-fzf-link-before && rm \"$state/current/bin/fzf\"; command -v fzf",
+      "started": "2026-09-26T07:48:09.484199+00:00",
+      "seconds": 0.15,
+      "exit_code": 1,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "803039be39a2c2663618d5f97a3343d6cd42c98d80aa54488a086c3231375e79"
+    },
+    {
+      "case": "049-main-damage-verify",
+      "command": "/tmp/pkg-main repair --verify-only --json",
+      "started": "2026-09-26T07:48:09.656009+00:00",
+      "seconds": 8.17,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "7b5aeaff49919850796f185131ce36a067c458d5c5c2b06b3ff608ef0e6849e1"
+    },
+    {
+      "case": "050-main-damage-repair",
+      "command": "/tmp/pkg-main repair --yes --json",
+      "started": "2026-09-26T07:48:17.845973+00:00",
+      "seconds": 9.53,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "2fe71df3de3ea73ed0e1787944da832de6121548b9990d447d3b715a929d0eaa"
+    },
+    {
+      "case": "051-main-damage-doctor",
+      "command": "/tmp/pkg-main doctor --json; command -v fzf",
+      "started": "2026-09-26T07:48:27.413531+00:00",
+      "seconds": 0.95,
+      "exit_code": 1,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "f9d5f1920d0590498c10a98f3c125757581e67dcc91a26bff1c4bfd27e12515e"
+    },
+    {
+      "case": "052-main-activation-restore",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; ln -s \"$(cat /tmp/pkg-fzf-link-before)\" \"$state/current/bin/fzf\"; fzf --version",
+      "started": "2026-09-26T07:48:28.429101+00:00",
+      "seconds": 0.17,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-03"
+      ],
+      "raw_output_sha256": "c8cb7ef61510035a8f064a26b82a8a838dec969317456bbe86bb7df0a048ed50"
+    },
+    {
+      "case": "053-main-keep-going",
+      "command": "/tmp/pkg-main install no-such-one no-such-two --keep-going --yes --json",
+      "started": "2026-09-26T07:48:28.629305+00:00",
+      "seconds": 0.5,
+      "exit_code": 64,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-07"
+      ],
+      "raw_output_sha256": "2aa0f7b89e1ea4c1507725e0e2578f1c1bc9235d5137a307ca158a9a0a3df7e0"
+    },
+    {
+      "case": "054-main-orphan-preview",
+      "command": "/tmp/pkg-main remove fzf --orphan-check --dry-run --json",
+      "started": "2026-09-26T07:48:29.154681+00:00",
+      "seconds": 0.12,
+      "exit_code": 0,
+      "vm": "pkg-onboarding-20260926",
+      "related_findings": [
+        "BUG-08"
+      ],
+      "raw_output_sha256": "4a88fc5158e1dd7a9695c3135732adc2ab63b51dc5862d8116cb1ee61b8854c8"
+    },
+    {
+      "case": "055-recovery-baseline",
+      "command": "/tmp/pkg-main doctor --json; /tmp/pkg-main list --json; readlink \"$HOME/Library/Application Support/pkg/current\"",
+      "started": "2026-09-26T07:49:48.982531+00:00",
+      "seconds": 1.25,
+      "exit_code": 0,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "418f09745fbeae4bbe065f34d472aa78efa6aa20ec4b260bfdd016a0da104673"
+    },
+    {
+      "case": "056-recovery-remove-paused",
+      "command": "/tmp/pkg-main remove fzf",
+      "started": "2026-09-26T07:50:07.476820+00:00",
+      "seconds": 23.02,
+      "exit_code": 79,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-01",
+        "BUG-02"
+      ],
+      "raw_output_sha256": "ab5876caa2638b47af8912911b18f22a3ddff98d065501e022bc2e490a119303"
+    },
+    {
+      "case": "057-recovery-doctor-during-prompt",
+      "command": "/tmp/pkg-main doctor --json",
+      "started": "2026-09-26T07:50:12.849988+00:00",
+      "seconds": 0.63,
+      "exit_code": 0,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-01",
+        "BUG-02"
+      ],
+      "raw_output_sha256": "54089e9e724163292a10cac207dda2a105a013810f0da3843ccc13bd41691a34"
+    },
+    {
+      "case": "058-install-after-failed-remove",
+      "command": "/tmp/pkg-main install hello --on-collision keep-first --yes --json",
+      "started": "2026-09-26T07:50:30.620559+00:00",
+      "seconds": 21.3,
+      "exit_code": 0,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "977750499a8ff32cd912ad5cec607a2f464677db69dfbd7ddb40d6c34238b0af"
+    },
+    {
+      "case": "059-pin-after-install",
+      "command": "/tmp/pkg-main pin fzf --json",
+      "started": "2026-09-26T07:50:51.955386+00:00",
+      "seconds": 0.3,
+      "exit_code": 73,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "ace97bda195e197740927ee5543164682711fb459ccc178205079df8e4ce7cbf"
+    },
+    {
+      "case": "060-remove-after-install",
+      "command": "/tmp/pkg-main remove hello --yes --json",
+      "started": "2026-09-26T07:50:52.275759+00:00",
+      "seconds": 0.29,
+      "exit_code": 73,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "2409a41b10e7d7ce9d7f530da7f6d51b19873da4de7c51d7d85ac1352c15f09c"
+    },
+    {
+      "case": "061-rollback-after-install",
+      "command": "/tmp/pkg-main rollback --yes --json",
+      "started": "2026-09-26T07:50:52.592558+00:00",
+      "seconds": 0.3,
+      "exit_code": 73,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "42796d7b3c990cd58f331c2dd979925a5a3050261a2ab5ffddcf673207ea6aeb"
+    },
+    {
+      "case": "062-recovery-repair",
+      "command": "/tmp/pkg-main repair --yes --json",
+      "started": "2026-09-26T07:50:52.909749+00:00",
+      "seconds": 7.54,
+      "exit_code": 0,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "33d29722378652456f1f0fd433664e189818dab74a336a3e5c2bc600bf6357cd"
+    },
+    {
+      "case": "063-recovery-pin-retry",
+      "command": "/tmp/pkg-main pin fzf --json",
+      "started": "2026-09-26T07:51:00.471719+00:00",
+      "seconds": 0.28,
+      "exit_code": 73,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "ace97bda195e197740927ee5543164682711fb459ccc178205079df8e4ce7cbf"
+    },
+    {
+      "case": "064-recovery-final-state",
+      "command": "/tmp/pkg-main list --json; readlink \"$HOME/Library/Application Support/pkg/current\"; /tmp/pkg-main history --json; /tmp/pkg-main doctor --json",
+      "started": "2026-09-26T07:51:00.776061+00:00",
+      "seconds": 0.62,
+      "exit_code": 0,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "af0ad7fe889c1a237ab222b73cb135d4d71bb8c13f29edfb11cd9f9dfe15207c"
+    },
+    {
+      "case": "065-pending-state-evidence",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; readlink \"$state/current\"; cat \"$state/generations/gen-0012.json\"; cat \"$state/generations/gen-0013.json\"; ls \"$state/journal\"",
+      "started": "2026-09-26T07:51:25.261813+00:00",
+      "seconds": 0.14,
+      "exit_code": 0,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "c3f3a60d663a980bd1e7f89b4dcf0ce25037f8ff8231ee80af43f2aa9e1f90a5"
+    },
+    {
+      "case": "066-pending-journal",
+      "command": "state=\"$HOME/Library/Application Support/pkg\"; /usr/bin/grep -E \"op_2dcd14b354103c250d22e32236eead0c|op_3e6c04b578030dfc32d1cd93a6872894\" \"$state/journal/journal.ndjson\"",
+      "started": "2026-09-26T07:51:41.976647+00:00",
+      "seconds": 0.14,
+      "exit_code": 0,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [
+        "BUG-02"
+      ],
+      "raw_output_sha256": "25cf8b3d722a07e2295a4315d5369756589e9ac26b0298242ce8f4d68a727b5d"
+    },
+    {
+      "case": "067-final-artifact-identity",
+      "command": "sw_vers; shasum -a 256 /usr/local/bin/pkg /tmp/pkg-main /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper; hello; fzf --version; just --version",
+      "started": "2026-09-26T07:51:42.143203+00:00",
+      "seconds": 0.36,
+      "exit_code": 0,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "61653d4e9cb8fe15247874378829530da10e406f01148d3083a89106a9a280dc"
+    },
+    {
+      "case": "068-protected-artifact-identity",
+      "command": "sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper",
+      "started": "2026-09-26T07:51:50.671441+00:00",
+      "seconds": 0.24,
+      "exit_code": 0,
+      "vm": "pkg-bug-hunt-recovery-20260926",
+      "related_findings": [],
+      "raw_output_sha256": "0b1d9d75319aee83ab8ba0e844b2980c6911c87223ff1f5f3a58560e88016660"
+    }
+  ]
+}

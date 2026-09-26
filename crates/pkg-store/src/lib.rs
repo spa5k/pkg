@@ -14,7 +14,8 @@ mod roots;
 
 pub use activate::{
     ActivationError, ActivationInput, ActivationPlan, Collision, ForestEntry,
-    inspect_staged_activation, stage_activation, verify_activation, verify_recorded_activation,
+    inspect_staged_activation, plan_activation, stage_activation, verify_activation,
+    verify_recorded_activation,
 };
 pub use current::{
     ActivationEvent, CurrentError, RecoveryAction, RecoveryEvidence, STATE_OWNERSHIP_MARKER_BYTES,

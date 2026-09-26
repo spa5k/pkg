@@ -232,6 +232,258 @@ fn mutation_lease(layout: &StateLayout) -> StateLease {
     .unwrap()
 }
 
+fn next_candidate(
+    layout: &StateLayout,
+    template: &CandidateGeneration,
+    id: &str,
+    kind: &str,
+) -> (CandidateGeneration, ActivationPlan) {
+    let staging = layout
+        .state_root()
+        .join(format!("activations/{id}.staging"));
+    fs::create_dir(&staging).unwrap();
+    fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
+    symlink(format!("{STORE}/bin/demo"), staging.join("demo")).unwrap();
+    let plan = inspect_staged_activation(&staging, vec![StorePath::new(STORE).unwrap()]).unwrap();
+    let mut record: Value = serde_json::from_slice(&template.generation_bytes).unwrap();
+    record["id"] = json!(id);
+    record["manifestSnapshot"] = json!(format!("generations/{id}.manifest.json"));
+    record["lockSnapshot"] = json!(format!("generations/{id}.lock.json"));
+    record["activation"]["treePath"] = json!(format!("activations/{id}"));
+    record["operation"]["opId"] = json!(format!("op_{id}"));
+    record["operation"]["kind"] = json!(kind);
+    record.as_object_mut().unwrap().remove("generationHash");
+    record["generationHash"] = json!(canonical_digest(&record).unwrap().to_string());
+    let candidate = CandidateGeneration::new(
+        template.manifest_bytes.clone(),
+        template.lock_bytes.clone(),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    (candidate, plan)
+}
+
+#[test]
+fn preparation_refuses_every_pending_operation_family() {
+    let kinds = [
+        "install", "upgrade", "remove", "pin", "unpin", "update", "rollback",
+    ];
+    for pending_kind in kinds {
+        for next_kind in kinds {
+            let fixture = fixture();
+            let (pending, plan) = next_candidate(
+                &fixture.layout,
+                &fixture.candidate,
+                "gen-0002",
+                pending_kind,
+            );
+            let lease = mutation_lease(&fixture.layout);
+            PreparedGeneration::prepare(fixture.layout.clone(), pending, plan, lease).unwrap();
+            let lease = mutation_lease(&fixture.layout);
+            assert!(
+                load_retained_history(&fixture.layout, &lease)
+                    .unwrap()
+                    .snapshots()
+                    .is_empty()
+            );
+            let (next, plan) =
+                next_candidate(&fixture.layout, &fixture.candidate, "gen-0003", next_kind);
+            assert!(
+                matches!(
+                    PreparedGeneration::prepare(fixture.layout.clone(), next, plan, lease),
+                    Err(CommitError::PendingRecovery)
+                ),
+                "{pending_kind} -> {next_kind}"
+            );
+            assert!(
+                !fixture
+                    .layout
+                    .state_root()
+                    .join("generations/gen-0003.json")
+                    .exists()
+            );
+            assert_eq!(fixture.layout.current_generation().unwrap(), None);
+        }
+    }
+}
+
+#[test]
+fn active_unfinished_generation_requires_recovery_before_history() {
+    let fixture = fixture();
+    let lease = mutation_lease(&fixture.layout);
+    PreparedGeneration::prepare(
+        fixture.layout.clone(),
+        fixture.candidate,
+        fixture.plan,
+        lease,
+    )
+    .unwrap()
+    .activate(&fixture.maintenance, "unfinished")
+    .unwrap();
+    let lease = mutation_lease(&fixture.layout);
+    assert!(matches!(
+        load_retained_history(&fixture.layout, &lease),
+        Err(CommitError::PendingRecovery)
+    ));
+    assert_eq!(
+        superseded_pending_generation(&fixture.layout, &lease).unwrap(),
+        None
+    );
+    recover_generation(
+        &fixture.layout,
+        &lease,
+        &fixture.generation_id,
+        &fixture.maintenance,
+    )
+    .unwrap();
+    assert_eq!(
+        load_retained_history(&fixture.layout, &lease)
+            .unwrap()
+            .snapshots()
+            .len(),
+        1
+    );
+}
+
+fn legacy_superseded_fixture() -> Fixture {
+    let fixture = fixture();
+    let (pending, plan) = next_candidate(&fixture.layout, &fixture.candidate, "gen-0002", "remove");
+    let lease = mutation_lease(&fixture.layout);
+    PreparedGeneration::prepare(fixture.layout.clone(), pending, plan, lease).unwrap();
+    let (sibling, _) = next_candidate(&fixture.layout, &fixture.candidate, "gen-0003", "install");
+    let lease = mutation_lease(&fixture.layout);
+    // Reconstruct the legacy failure: old prepare accepted a sibling while an
+    // earlier generation was pending. Current prepare must never allow this.
+    for (relative, bytes) in [
+        (
+            "generations/gen-0003.manifest.json",
+            &sibling.manifest_bytes,
+        ),
+        ("generations/gen-0003.lock.json", &sibling.lock_bytes),
+        ("generations/gen-0003.json", &sibling.generation_bytes),
+    ] {
+        write_with_sidecar(fixture.layout.state_root(), relative, bytes).unwrap();
+    }
+    append_phase(
+        &fixture.layout,
+        &lease,
+        "op_gen-0003",
+        "commit",
+        "prepared",
+        [("generationId", json!("gen-0003"))],
+    )
+    .unwrap();
+    let active = GenerationId::new("gen-0003").unwrap();
+    let resumed = resume_prepared_install(fixture.layout.clone(), lease, &active).unwrap();
+    resumed
+        .activate(&fixture.maintenance, "sibling")
+        .unwrap()
+        .finish()
+        .unwrap();
+    fixture
+}
+
+#[test]
+fn superseded_attempt_is_discarded_without_reverting_a_committed_sibling() {
+    let fixture = legacy_superseded_fixture();
+    let active = GenerationId::new("gen-0003").unwrap();
+    let lease = mutation_lease(&fixture.layout);
+    let pending = superseded_pending_generation(&fixture.layout, &lease)
+        .unwrap()
+        .unwrap();
+    assert_eq!(pending.as_str(), "gen-0002");
+    recover_generation(&fixture.layout, &lease, &pending, &fixture.maintenance).unwrap();
+    assert_eq!(fixture.layout.current_generation().unwrap(), Some(active));
+    assert!(
+        journal_has_status(&fixture.layout, &lease, "op_gen-0002", "commit", "aborted").unwrap()
+    );
+    assert!(journal_has_status(&fixture.layout, &lease, "op_gen-0002", "prune", "pruned").unwrap());
+    assert_eq!(
+        pending_state_edit_generation(&fixture.layout, &lease).unwrap(),
+        None
+    );
+    assert_eq!(
+        load_retained_history(&fixture.layout, &lease)
+            .unwrap()
+            .snapshots()
+            .len(),
+        1
+    );
+    let request = pkg_nix::RootSetAttestationRequest::new(
+        fixture.layout.owner_uid(),
+        GenerationId::new("gen-0003").unwrap(),
+    );
+    assert!(fixture.maintenance.attest_root_set(&request).is_ok());
+}
+
+#[test]
+fn superseded_recovery_refuses_a_previously_activated_attempt() {
+    let fixture = legacy_superseded_fixture();
+    let lease = mutation_lease(&fixture.layout);
+    append_phase(
+        &fixture.layout,
+        &lease,
+        "op_gen-0002",
+        "activate",
+        "activated",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        superseded_pending_generation(&fixture.layout, &lease),
+        Err(CommitError::InvalidCandidate)
+    );
+    assert!(
+        fixture
+            .layout
+            .state_root()
+            .join("generations/gen-0002.json")
+            .exists()
+    );
+    assert_eq!(
+        fixture
+            .layout
+            .current_generation()
+            .unwrap()
+            .unwrap()
+            .as_str(),
+        "gen-0003"
+    );
+}
+
+#[test]
+fn aborted_state_edit_remains_discoverable_before_prune_intent() {
+    let fixture = fixture();
+    let (candidate, plan) =
+        next_candidate(&fixture.layout, &fixture.candidate, "gen-0002", "remove");
+    let lease = mutation_lease(&fixture.layout);
+    PreparedGeneration::prepare(fixture.layout.clone(), candidate, plan, lease).unwrap();
+    let lease = mutation_lease(&fixture.layout);
+    append_phase(
+        &fixture.layout,
+        &lease,
+        "op_gen-0002",
+        "commit",
+        "aborted",
+        [
+            ("generationId", json!("gen-0002")),
+            ("operationKind", json!("remove")),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        pending_discard_generation(&fixture.layout, &lease)
+            .unwrap()
+            .unwrap()
+            .as_str(),
+        "gen-0002"
+    );
+    assert_eq!(
+        ensure_recovered_state(&fixture.layout, &lease),
+        Err(CommitError::PendingRecovery)
+    );
+}
+
 #[test]
 fn prepared_fault_discards_record_snapshots_and_staging() {
     let fixture = fixture();
@@ -302,7 +554,7 @@ fn prepared_and_aborted_without_intent_are_not_generic_prunes() {
             .exists()
     );
     assert_eq!(
-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
         None
     );
 
@@ -324,7 +576,7 @@ fn prepared_and_aborted_without_intent_are_not_generic_prunes() {
             .is_empty()
     );
     assert_eq!(
-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
         Some(fixture.generation_id.clone())
     );
     assert_eq!(
@@ -350,7 +602,7 @@ fn prepared_and_aborted_without_intent_are_not_generic_prunes() {
             .exists()
     );
     assert_eq!(
-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
         None
     );
 }
@@ -383,7 +635,7 @@ fn failed_root_last_discard_converges_through_generic_recovery() {
         Err(CommitError::ActivationFailed)
     );
     assert_eq!(
-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
         Some(fixture.generation_id.clone())
     );
     assert!(
@@ -410,7 +662,7 @@ fn failed_root_last_discard_converges_through_generic_recovery() {
             .is_empty()
     );
     assert_eq!(
-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
         None
     );
 }
@@ -476,7 +728,7 @@ fn cross_operation_prune_is_terminal_for_aborted_install() {
             .exists()
     );
     assert_eq!(
-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
         None
     );
     assert!(
@@ -514,7 +766,7 @@ fn helper_removed_before_terminal_row_retries_idempotently() {
         Err(CommitError::ActivationFailed)
     );
     assert_eq!(
-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
         Some(fixture.generation_id.clone())
     );
     let maintenance = RootLastMaintenance {
@@ -529,7 +781,7 @@ fn helper_removed_before_terminal_row_retries_idempotently() {
         vec!["gen-0001".to_owned()]
     );
     assert_eq!(
-        pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+        pending_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
         None
     );
 }

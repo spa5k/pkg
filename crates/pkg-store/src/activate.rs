@@ -210,6 +210,20 @@ pub fn stage_activation(
     inputs: &[ActivationInput],
     collision_policy: CollisionPolicy,
 ) -> Result<ActivationPlan, ActivationError> {
+    let plan = plan_activation(inputs, collision_policy)?;
+    materialize_activation(staging, &plan)?;
+    Ok(plan)
+}
+
+/// Plans available output links and collisions without writing a staging tree.
+///
+/// # Errors
+/// Returns an error for unreadable or unsafe outputs, structural conflicts,
+/// or a collision refused by the selected policy.
+pub fn plan_activation(
+    inputs: &[ActivationInput],
+    collision_policy: CollisionPolicy,
+) -> Result<ActivationPlan, ActivationError> {
     let mut sources = inputs
         .iter()
         .map(|input| {
@@ -222,7 +236,7 @@ pub fn stage_activation(
         })
         .collect::<Vec<_>>();
     sort_bound_sources(&mut sources);
-    stage_ordered_sources(staging, &sources, collision_policy)
+    plan_ordered_sources(&sources, collision_policy)
 }
 
 fn sort_bound_sources(sources: &mut [LoserSource]) {
@@ -252,17 +266,15 @@ pub fn stage_from_sources(
         .map(|(output, source)| (output.clone(), source.clone(), None, None))
         .collect::<Vec<_>>();
     ordered.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
-    stage_ordered_sources(staging, &ordered, collision_policy)
+    let plan = plan_ordered_sources(&ordered, collision_policy)?;
+    materialize_activation(staging, &plan)?;
+    Ok(plan)
 }
 
-fn stage_ordered_sources(
-    staging: &Path,
+fn plan_ordered_sources(
     ordered: &[LoserSource],
     collision_policy: CollisionPolicy,
 ) -> Result<ActivationPlan, ActivationError> {
-    if fs::symlink_metadata(staging).is_ok() {
-        return Err(ActivationError::UnsafePath);
-    }
     let mut providers: BTreeMap<PathBuf, Vec<Provider>> = BTreeMap::new();
     let mut directories = BTreeMap::<PathBuf, StorePath>::new();
     let mut output_roots = ordered
@@ -335,9 +347,21 @@ fn stage_ordered_sources(
         });
     }
 
+    Ok(ActivationPlan {
+        tree_digest: digest_entries(&entries),
+        output_roots,
+        entries,
+        collisions,
+    })
+}
+
+fn materialize_activation(staging: &Path, plan: &ActivationPlan) -> Result<(), ActivationError> {
+    if fs::symlink_metadata(staging).is_ok() {
+        return Err(ActivationError::UnsafePath);
+    }
     fs::create_dir(staging)?;
     fs::set_permissions(staging, fs::Permissions::from_mode(0o700))?;
-    for entry in &entries {
+    for entry in &plan.entries {
         let destination = staging.join(&entry.relative_path);
         if let Some(parent) = destination.parent() {
             let mut builder = fs::DirBuilder::new();
@@ -346,15 +370,7 @@ fn stage_ordered_sources(
         symlink(&entry.target, &destination)?;
     }
     sync_tree(staging)?;
-    let tree_digest = digest_entries(&entries);
-    let plan = ActivationPlan {
-        tree_digest,
-        output_roots,
-        entries,
-        collisions,
-    };
-    verify_activation(staging, &plan)?;
-    Ok(plan)
+    verify_activation(staging, plan)
 }
 
 fn walk_output(
@@ -492,6 +508,9 @@ pub fn inspect_staged_activation(
 }
 
 fn scan_forest(tree: &Path) -> Result<Vec<ForestEntry>, ActivationError> {
+    if !fs::symlink_metadata(tree)?.file_type().is_dir() {
+        return Err(ActivationError::UnsafePath);
+    }
     fn visit(
         root: &Path,
         relative: &Path,
@@ -554,6 +573,45 @@ mod tests {
     use super::*;
     use std::str::FromStr;
     use tempfile::TempDir;
+
+    #[test]
+    fn read_only_planning_checks_the_same_collisions_as_materialization() {
+        let temp = TempDir::new().unwrap();
+        let mut sources = Vec::new();
+        for name in ["a", "b"] {
+            let source = temp.path().join(name);
+            fs::create_dir_all(source.join("bin")).unwrap();
+            fs::write(source.join("bin/demo"), name).unwrap();
+            sources.push((store(name), source, None, None));
+        }
+        assert!(matches!(
+            plan_ordered_sources(&sources, CollisionPolicy::Abort),
+            Err(ActivationError::Collision)
+        ));
+        let plan = plan_ordered_sources(&sources, CollisionPolicy::KeepFirst).unwrap();
+        assert_eq!(plan.collisions().len(), 1);
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
+        let stage = temp.path().join("stage");
+        materialize_activation(&stage, &plan).unwrap();
+        verify_activation(&stage, &plan).unwrap();
+        assert_eq!(
+            plan.tree_digest(),
+            inspect_staged_activation(&stage, plan.output_roots().to_vec())
+                .unwrap()
+                .tree_digest()
+        );
+    }
+
+    #[test]
+    fn verification_refuses_a_symlink_in_place_of_the_forest_root() {
+        let temp = TempDir::new().unwrap();
+        let real = temp.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let plan = inspect_staged_activation(&real, vec![]).unwrap();
+        let alias = temp.path().join("alias");
+        symlink(&real, &alias).unwrap();
+        assert!(verify_recorded_activation(&alias, plan.tree_digest(), 0, &[]).is_err());
+    }
 
     fn store(name: &str) -> StorePath {
         StorePath::new(&format!(
@@ -654,12 +712,8 @@ mod tests {
             ),
         ];
         sort_bound_sources(&mut sources);
-        let plan = stage_ordered_sources(
-            &temp.path().join("stage"),
-            &sources,
-            CollisionPolicy::KeepLast,
-        )
-        .unwrap();
+        let plan = plan_ordered_sources(&sources, CollisionPolicy::KeepLast).unwrap();
+        materialize_activation(&temp.path().join("stage"), &plan).unwrap();
         let collision = &plan.collisions()[0];
         assert_eq!(
             collision

@@ -1,0 +1,1026 @@
+{
+  "source_commit": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "release": "v0.1.0-alpha.54",
+  "vm": "pkg-onboarding-20260926",
+  "platform": "macOS 15.7.7 arm64",
+  "time_zone": "UTC",
+  "case_count": 101,
+  "assessment_counts": {
+    "completed": 89,
+    "expected_refusal_or_cancellation": 10,
+    "expected_reboot_disconnect": 1,
+    "known_alpha54_startup_failure": 1
+  },
+  "cases": [
+    {
+      "case": "01-fresh-install",
+      "command": "curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/spa5k/pkg/main/install.sh -o \"$HOME/pkg-install.sh\" && /bin/sh \"$HOME/pkg-install.sh\"",
+      "started": "2026-09-25T22:06:42.538847+00:00",
+      "seconds": 116.08,
+      "exit_code": 0,
+      "output_sha256": "28c2aa9c437ed37a3d3c5b68aa93addf3f2e2c955666d6ea97859a3e68f53b93",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "02-guide",
+      "command": "pkg",
+      "started": "2026-09-25T22:08:57.386533+00:00",
+      "seconds": 0.15,
+      "exit_code": 0,
+      "output_sha256": "84d190355da8c2d7636ec5886936ed6cbe38caa4c1c8f98076bec30e5631cebc",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "03-shell-setup",
+      "command": "eval \"$(pkg shellenv)\"; printf '%s\\n' 'eval \"$(pkg shellenv)\"' >> ~/.zshrc; command -v pkg; pkg --version; pkg doctor",
+      "started": "2026-09-25T22:08:57.591164+00:00",
+      "seconds": 0.69,
+      "exit_code": 0,
+      "output_sha256": "de7436e0d711177b42789ca3fbd758b20e070c8898b21a43ae5cd66e5c952208",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "04-empty-list",
+      "command": "pkg list",
+      "started": "2026-09-25T22:08:58.309395+00:00",
+      "seconds": 0.18,
+      "exit_code": 0,
+      "output_sha256": "c1ddc108cfcc0773f3d9749113fb86155b3a640884fc1100c9a5424554d5507e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "05-empty-outdated",
+      "command": "pkg outdated",
+      "started": "2026-09-25T22:08:58.516835+00:00",
+      "seconds": 0.12,
+      "exit_code": 0,
+      "output_sha256": "c1ddc108cfcc0773f3d9749113fb86155b3a640884fc1100c9a5424554d5507e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "06-empty-history",
+      "command": "pkg history",
+      "started": "2026-09-25T22:08:58.661897+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "8fc4dc33c9593ddc7cce2c358dff90e4440c75dfb06b5ed4dd19bceba123c833",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "07-search",
+      "command": "pkg search ripgrep",
+      "started": "2026-09-25T22:08:58.794091+00:00",
+      "seconds": 0.14,
+      "exit_code": 0,
+      "output_sha256": "92783b23fccee9983a04b2fdbf6d67fab313ced60a3251d400c24e7625066758",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "08-info",
+      "command": "pkg info ripgrep",
+      "started": "2026-09-25T22:08:58.962356+00:00",
+      "seconds": 0.13,
+      "exit_code": 0,
+      "output_sha256": "59b7bf686dbc7812f1d5cc37d4abe00b6444d4580cb9986ba460c74e66cd4db8",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "09-install-preview",
+      "command": "pkg install ripgrep --dry-run",
+      "started": "2026-09-25T22:08:59.119828+00:00",
+      "seconds": 31.84,
+      "exit_code": 0,
+      "output_sha256": "6a7f442cb009801f0185bd51684da3d0b23e7d7770e30ce94b283909a38b94dd",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "10-install-ripgrep",
+      "command": "pkg install ripgrep",
+      "started": "2026-09-25T22:09:40.304385+00:00",
+      "seconds": 6.48,
+      "exit_code": 0,
+      "output_sha256": "a94b8aaea9a6a616539354ca16d5148b6b45e1b56f1ecaa58795d9110e5df02d",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-repair",
+      "command": "pkg repair --help",
+      "started": "2026-09-25T22:09:56.503585+00:00",
+      "seconds": 0.2,
+      "exit_code": 0,
+      "output_sha256": "49067ad1020c64ff89ef6fbe89a7c31bdb17bb6064cff984862bfcf9814da3eb",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-history",
+      "command": "pkg history --help",
+      "started": "2026-09-25T22:09:56.733497+00:00",
+      "seconds": 0.14,
+      "exit_code": 0,
+      "output_sha256": "c8c986197f1ce7613739434a4d69bfdda13ac35d8994dbff5d000e623f7ea370",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-gc",
+      "command": "pkg gc --help",
+      "started": "2026-09-25T22:09:56.895674+00:00",
+      "seconds": 0.13,
+      "exit_code": 0,
+      "output_sha256": "b3ad75b5744fb46e9ad5f33f0eaecd972823b438567fda3b86c3e3c4a9419995",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-completion",
+      "command": "pkg completion --help",
+      "started": "2026-09-25T22:09:57.057915+00:00",
+      "seconds": 0.16,
+      "exit_code": 0,
+      "output_sha256": "272d6544e5cba2001a2cca281bd08fc72ac7a67bd724b891cb25641a36e2900e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-rollback",
+      "command": "pkg rollback --help",
+      "started": "2026-09-25T22:09:57.376692+00:00",
+      "seconds": 0.25,
+      "exit_code": 0,
+      "output_sha256": "267f8b21ac33e5e4a560a0c90a7d2fbcbe40b69dadd0f2f43f7d3db76506a077",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-system-uninstall",
+      "command": "pkg system uninstall --help",
+      "started": "2026-09-25T22:09:57.656808+00:00",
+      "seconds": 0.1,
+      "exit_code": 0,
+      "output_sha256": "7c601353213b57a5e170dd88dbc5879aec873f1f56077c894f4e00a08ecd59b7",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "11-run-ripgrep",
+      "command": "rg --version; printf \"red\\nblue\\n\" | rg blue",
+      "started": "2026-09-25T22:10:18.398381+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "da5f2551d4ea5b8942a2fe54dd54029584b4757158813c3b3f064a99e4b7d4c0",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "12-installed-details",
+      "command": "pkg list --size --with-outputs",
+      "started": "2026-09-25T22:10:18.529330+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "cf99b048653a060ea47cdaf1c6f225ef7958b5fbc4c75c50b6a7948a92aab94c",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "13-missing-info",
+      "command": "pkg info package-that-does-not-exist-20260926",
+      "started": "2026-09-25T22:10:18.656249+00:00",
+      "seconds": 0.1,
+      "exit_code": 64,
+      "output_sha256": "2d18c0fc97b26b93d9bdf7d0ee6d03f744f6c5b64a2046e21008694f684cda92",
+      "expected_exit_code": 64,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "14-missing-remove",
+      "command": "pkg remove package-that-does-not-exist-20260926",
+      "started": "2026-09-25T22:10:18.780051+00:00",
+      "seconds": 0.1,
+      "exit_code": 64,
+      "output_sha256": "837929f46de354927a3d57562d5f9952964da564bca9031f63383570304a3fd0",
+      "expected_exit_code": 64,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "15-pin",
+      "command": "pkg pin ripgrep",
+      "started": "2026-09-25T22:10:18.897800+00:00",
+      "seconds": 0.26,
+      "exit_code": 0,
+      "output_sha256": "5ec6da3a696ce08db1a5f012b560e7c11a4fcd6202f54f095cbdb68887dd8be7",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "16-pinned-list",
+      "command": "pkg list",
+      "started": "2026-09-25T22:10:19.173951+00:00",
+      "seconds": 0.09,
+      "exit_code": 0,
+      "output_sha256": "0cd58d10f38d3d9521665340b93c2801ea211c7e58809a022230cec1b4a3a2bb",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "17-update",
+      "command": "pkg update",
+      "started": "2026-09-25T22:10:19.289564+00:00",
+      "seconds": 2.39,
+      "exit_code": 0,
+      "output_sha256": "01ef6c9bac7134d98f25ff542448c60d572b78add86582302de0d673397ecd9e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "18-outdated",
+      "command": "pkg outdated",
+      "started": "2026-09-25T22:10:21.707528+00:00",
+      "seconds": 0.1,
+      "exit_code": 0,
+      "output_sha256": "914b4bd9d50f727c0f3294d1e07fad22126881098ad6a8e4b3498cf7ad98362f",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "19-upgrade-pinned",
+      "command": "pkg upgrade --all --dry-run",
+      "started": "2026-09-25T22:10:21.828478+00:00",
+      "seconds": 0.1,
+      "exit_code": 0,
+      "output_sha256": "b72c17cdcfafe7dff1010cc4b1afd7106e414442ec48cf8bc1c07016a535619f",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "20-unpin",
+      "command": "pkg unpin ripgrep",
+      "started": "2026-09-25T22:10:21.948399+00:00",
+      "seconds": 0.23,
+      "exit_code": 0,
+      "output_sha256": "26c0b87a33f807493ac35b462fab570710a905b8a2e0aa66e2883afdd3961b9b",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "21-upgrade-preview",
+      "command": "pkg upgrade ripgrep --dry-run",
+      "started": "2026-09-25T22:10:22.199539+00:00",
+      "seconds": 1.79,
+      "exit_code": 0,
+      "output_sha256": "6a7f442cb009801f0185bd51684da3d0b23e7d7770e30ce94b283909a38b94dd",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "22-install-fzf",
+      "command": "pkg install fzf",
+      "started": "2026-09-25T22:10:40.675983+00:00",
+      "seconds": 16.72,
+      "exit_code": 0,
+      "output_sha256": "86359d9886aa477484102ec246e00cba6a4bf2377c7a211e0306c1cbcab83336",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "23-remove-cancel",
+      "command": "pkg remove fzf",
+      "started": "2026-09-25T22:13:10.508770+00:00",
+      "seconds": 10.16,
+      "exit_code": 75,
+      "output_sha256": "a99beb4ea30f2637ec7c0bddb72610ffb2bc0f98ee277e257cf1c9d2306e200a",
+      "expected_exit_code": 75,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "24-remove-approve",
+      "command": "pkg uninstall fzf",
+      "started": "2026-09-25T22:13:20.835301+00:00",
+      "seconds": 8.93,
+      "exit_code": 0,
+      "output_sha256": "52a7c2b5171a669f61969921168d628efef4ecfc2d9ac85c3224b2b82334ee66",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "25-rollback-approve",
+      "command": "pkg rollback",
+      "started": "2026-09-25T22:13:29.847783+00:00",
+      "seconds": 16.83,
+      "exit_code": 0,
+      "output_sha256": "80f42744462ca0601d00b359f7f0d3e3476898269d511730dab001296a47dd6b",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "26-restored-command",
+      "command": "fzf --version; printf \"apple\\nbanana\\n\" | fzf --filter banana",
+      "started": "2026-09-25T22:13:46.811737+00:00",
+      "seconds": 0.15,
+      "exit_code": 0,
+      "output_sha256": "cb0f6e52e9f2642715725448a83b2d7fa909949f3ea249586ca7bd23110f728b",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "27-history",
+      "command": "pkg history",
+      "started": "2026-09-25T22:13:46.987640+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "4a51da9ec493c716f5e18f844c54fa11627385d82a3ea2bd8d2cb83d487cfd79",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "28-history-detail",
+      "command": "pkg history gen-0004",
+      "started": "2026-09-25T22:13:47.119283+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "4e50eab15e57048b7b17ea26078b8c7453003b788d247d2a5ff2c48667e3889e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "29-history-diff",
+      "command": "pkg history --diff gen-0004 gen-0005",
+      "started": "2026-09-25T22:13:47.249454+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "1116047a439c69d7086794d0d099f89f0f3336d0105b2da04472fffb55c57bb5",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "30-repair-verify",
+      "command": "pkg repair --verify-only",
+      "started": "2026-09-25T22:13:47.382570+00:00",
+      "seconds": 8.46,
+      "exit_code": 0,
+      "output_sha256": "3c8a634203c68ebfb55829d691e505e825a25d1b79c9d34f38c4230c6dc47d62",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "31-repair-preview",
+      "command": "pkg repair --dry-run",
+      "started": "2026-09-25T22:13:55.861499+00:00",
+      "seconds": 7.36,
+      "exit_code": 0,
+      "output_sha256": "2a73831ab84a38ba65c420c33df46cee22ec4c6afffb57f79dac7610a250d6ee",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "32-gc-preview",
+      "command": "pkg gc --dry-run",
+      "started": "2026-09-25T22:14:03.245631+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "25d8cd0d7272ec3ecc01d8f8605c6d257a5f7c320c07b4547df04170af0fbc97",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "33-active-prune-refusal",
+      "command": "pkg history --delete gen-0006 --yes",
+      "started": "2026-09-25T22:14:03.373327+00:00",
+      "seconds": 0.12,
+      "exit_code": 64,
+      "output_sha256": "0a6567b5f114a7b6858b671a0985ee3704e19128f765ff99bb30fb68a93b5882",
+      "expected_exit_code": 64,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "34-json-list",
+      "command": "pkg list --json",
+      "started": "2026-09-25T22:14:03.509124+00:00",
+      "seconds": 0.09,
+      "exit_code": 0,
+      "output_sha256": "425af5d2a90950a66451dab1d8059c1b58a6bff79b9118d1aa7732cf993f4583",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "35-jsonl-list",
+      "command": "pkg list --jsonl",
+      "started": "2026-09-25T22:14:03.623298+00:00",
+      "seconds": 0.1,
+      "exit_code": 0,
+      "output_sha256": "7dbb8194a4048ff769f6f584ac8bc175a459acc1fc0daf601e8bdad944aae7a9",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "36-quiet-list",
+      "command": "pkg list --quiet",
+      "started": "2026-09-25T22:14:03.742940+00:00",
+      "seconds": 0.09,
+      "exit_code": 0,
+      "output_sha256": "999af6fc7803e044fdc09d2365a52c45328b9b8875e11c24a093dbc6e09fbc4e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "37-name-only",
+      "command": "pkg list --name-only",
+      "started": "2026-09-25T22:14:03.856547+00:00",
+      "seconds": 0.09,
+      "exit_code": 0,
+      "output_sha256": "1e743d735842dd3ff476a08d11eecd4fe15e847cb817f8b82c7452288a328348",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "38-narrow-output",
+      "command": "stty cols 40 rows 24; pkg list --size --with-outputs",
+      "started": "2026-09-25T22:14:03.970281+00:00",
+      "seconds": 0.1,
+      "exit_code": 0,
+      "output_sha256": "70c5561b3b09ce02a41b649623585f8b73f906748b58a80c2a258ce400c6bd4e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "39-completion",
+      "command": "pkg completion zsh > \"$HOME/_pkg\"; /bin/zsh -n \"$HOME/_pkg\"; pkg completion bash > \"$HOME/pkg.bash\"; /bin/bash -n \"$HOME/pkg.bash\"",
+      "started": "2026-09-25T22:14:04.090244+00:00",
+      "seconds": 0.09,
+      "exit_code": 0,
+      "output_sha256": "803039be39a2c2663618d5f97a3343d6cd42c98d80aa54488a086c3231375e79",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "40-public-flake",
+      "command": "pkg install \"github:casey/just#default\"",
+      "started": "2026-09-25T22:15:52.932372+00:00",
+      "seconds": 93.35,
+      "exit_code": 75,
+      "output_sha256": "493c4ced813a39d901fbe71d99a4f84fc0cec1fe2aa973913924bbca13b5c111",
+      "expected_exit_code": 75,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "41-build-cancel-state",
+      "command": "pkg list; command -v just || test $? -eq 1",
+      "started": "2026-09-25T22:17:26.490585+00:00",
+      "seconds": 0.16,
+      "exit_code": 0,
+      "output_sha256": "999af6fc7803e044fdc09d2365a52c45328b9b8875e11c24a093dbc6e09fbc4e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-search",
+      "command": "pkg search --help",
+      "started": "2026-09-25T22:18:51.895071+00:00",
+      "seconds": 0.22,
+      "exit_code": 0,
+      "output_sha256": "e089fa9efe78a145b4c4b55c4ca3877bde5e3d1af61df9da3081ad7ef704330f",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-info",
+      "command": "pkg info --help",
+      "started": "2026-09-25T22:18:52.154711+00:00",
+      "seconds": 0.13,
+      "exit_code": 0,
+      "output_sha256": "a0977def6de376168bea970fa36ecf92bf7ee2ff057a25045469c3f433c9829d",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-install",
+      "command": "pkg install --help",
+      "started": "2026-09-25T22:18:52.308107+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "a17e58a9742beb1aca293c7c2af69ef0a25b336a1c91a91e3d3cf19df950e298",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-list",
+      "command": "pkg list --help",
+      "started": "2026-09-25T22:18:52.446367+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "c6ba10d846f70c2667a483b23212bacc661d3e2121f99fedcc7c99538efd2fd7",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-remove",
+      "command": "pkg remove --help",
+      "started": "2026-09-25T22:18:52.581950+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "e2669daea43e59af159f841b81b4e972524fd3d32bb58b4e0e861a90d6975890",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-uninstall",
+      "command": "pkg uninstall --help",
+      "started": "2026-09-25T22:18:52.714284+00:00",
+      "seconds": 0.12,
+      "exit_code": 0,
+      "output_sha256": "e2669daea43e59af159f841b81b4e972524fd3d32bb58b4e0e861a90d6975890",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-outdated",
+      "command": "pkg outdated --help",
+      "started": "2026-09-25T22:18:52.853919+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "cb6b3daa0b9d78d471005f2c5d5e1bd8ffcee737278b2c092dec849ed0f7b9c8",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-update",
+      "command": "pkg update --help",
+      "started": "2026-09-25T22:18:52.999481+00:00",
+      "seconds": 0.12,
+      "exit_code": 0,
+      "output_sha256": "b1e9f634bc0b6ad2141c748cfe69645eea276f03ba6d6508fb8cdd18c666c499",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-upgrade",
+      "command": "pkg upgrade --help",
+      "started": "2026-09-25T22:18:53.145649+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "6af43720a5bf06a8e55325418b14d48858c7c189108c3ccf40a1757b403a5df3",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-pin",
+      "command": "pkg pin --help",
+      "started": "2026-09-25T22:18:53.285328+00:00",
+      "seconds": 0.13,
+      "exit_code": 0,
+      "output_sha256": "c7bce46374fcbcc590a4e6036ffb0f168d9511d4ab6c9b0b96baedf19a4b1917",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-unpin",
+      "command": "pkg unpin --help",
+      "started": "2026-09-25T22:18:53.445740+00:00",
+      "seconds": 0.18,
+      "exit_code": 0,
+      "output_sha256": "fcd81c29cce9671146247b078619479daaa7856e6db43eef820bb8f5cd8f0128",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-doctor",
+      "command": "pkg doctor --help",
+      "started": "2026-09-25T22:18:53.677393+00:00",
+      "seconds": 0.25,
+      "exit_code": 0,
+      "output_sha256": "10b9b98ba9f7968869612a42b27061f04d56b65c8218c19612ccdecfb52ccc19",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-shellenv",
+      "command": "pkg shellenv --help",
+      "started": "2026-09-25T22:18:53.976629+00:00",
+      "seconds": 0.19,
+      "exit_code": 0,
+      "output_sha256": "07ff4819efc2e6ba1d8114e0b8600d84df6e1c3bff23e74cf99b835a26aaffd2",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "help-system",
+      "command": "pkg system --help",
+      "started": "2026-09-25T22:18:54.215381+00:00",
+      "seconds": 0.23,
+      "exit_code": 0,
+      "output_sha256": "30b1280e3097a6feab7b6f4bda6449959e5b296696629ea832659351bd4e3c71",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "42-build-approve",
+      "command": "pkg install \"github:casey/just#default\"",
+      "started": "2026-09-25T22:17:26.719231+00:00",
+      "seconds": 191.53,
+      "exit_code": 0,
+      "output_sha256": "e7dd10ae20ce18d2b235b0969b3447ee511fd081d7ea784ca6f124724ffcfa6e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "43-run-just",
+      "command": "just --version; printf 'hello:\\n    @echo onboarded\\n' > \"$HOME/justfile\"; just --justfile \"$HOME/justfile\" hello",
+      "started": "2026-09-25T22:21:33.556837+00:00",
+      "seconds": 0.13,
+      "exit_code": 0,
+      "output_sha256": "929203ac8428106e400d5b4256e175bd6143bd2636bf1d897e63dc1896c2f5fc",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "44-public-source-list",
+      "command": "pkg list --size --with-outputs",
+      "started": "2026-09-25T22:21:33.711884+00:00",
+      "seconds": 0.14,
+      "exit_code": 0,
+      "output_sha256": "139e25e5084dbc715a6efa7eea5b1a89dec3948a3cb7d26e8928713aa1cac8b9",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "45-public-short-pin",
+      "command": "pkg pin just",
+      "started": "2026-09-25T22:21:33.869477+00:00",
+      "seconds": 0.29,
+      "exit_code": 0,
+      "output_sha256": "94b66096497a39d7f45b56c5d3b65d4d08a9733edf30e70bcf466e2e5b04eb21",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "46-public-outdated",
+      "command": "pkg outdated",
+      "started": "2026-09-25T22:21:34.182657+00:00",
+      "seconds": 0.13,
+      "exit_code": 0,
+      "output_sha256": "76db7de2cbaad3e7de9318e896cc918f220f9e7d6f3d340bbdeaaa3d126279a4",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "47-public-short-unpin",
+      "command": "pkg unpin just",
+      "started": "2026-09-25T22:21:34.328892+00:00",
+      "seconds": 0.27,
+      "exit_code": 0,
+      "output_sha256": "147faea8bee195a7483e48b7ab5765b128e474a20aab60c6d39b53d252788321",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "48-catalog-upgrade",
+      "command": "pkg upgrade ripgrep --yes",
+      "started": "2026-09-25T22:21:34.619229+00:00",
+      "seconds": 4.15,
+      "exit_code": 0,
+      "output_sha256": "f933a179372bdf9c92f04249e3000a32f0a1ce7be0ac98653a205bcd250fe109",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "49-usage-error",
+      "command": "pkg install",
+      "started": "2026-09-25T22:21:38.792658+00:00",
+      "seconds": 0.08,
+      "exit_code": 2,
+      "output_sha256": "1e4b5077d5826b940473c7566576344c8a8906482ff6a2d978df8868f403e1cb",
+      "expected_exit_code": 2,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "50-local-source-refusal",
+      "command": "pkg install \"path:/tmp\" --dry-run",
+      "started": "2026-09-25T22:21:38.897868+00:00",
+      "seconds": 0.1,
+      "exit_code": 2,
+      "output_sha256": "b8add7338f78f38fc32368b7acdabcd938fab0512ae81b0e16d9bb57f9bd2e2e",
+      "expected_exit_code": 2,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "51-noninteractive-remove",
+      "command": "pkg remove ripgrep </dev/null",
+      "started": "2026-09-25T22:21:39.013535+00:00",
+      "seconds": 0.14,
+      "exit_code": 68,
+      "output_sha256": "791c99afff25e879c6abcf4336a8c3136b3f300a130b1899ea7110d8b0dc5dde",
+      "expected_exit_code": 68,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "52-machine-error",
+      "command": "pkg remove package-that-does-not-exist-20260926 --json",
+      "started": "2026-09-25T22:21:39.170019+00:00",
+      "seconds": 0.1,
+      "exit_code": 64,
+      "output_sha256": "0b776766204ca184ea1482c6bcbbfab7a7801af693b4bf8e2514e988f0a548a8",
+      "expected_exit_code": 64,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "53-color-narrow",
+      "command": "export TERM=xterm-256color; unset CI NO_COLOR; stty cols 40 rows 24; pkg list --size --with-outputs",
+      "started": "2026-09-25T22:21:39.287597+00:00",
+      "seconds": 0.11,
+      "exit_code": 0,
+      "output_sha256": "121b3894bdec20ec47d4df12634f6c1e44bcbdbc084cf6178991a129f266ea96",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "54-repair-actual",
+      "command": "pkg repair --yes",
+      "started": "2026-09-25T22:21:39.413102+00:00",
+      "seconds": 8.6,
+      "exit_code": 0,
+      "output_sha256": "f19f135408279d49338bf437770db9292bbad09898c15d8275a278e9c070db3d",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "55-prune-preview",
+      "command": "pkg history --delete gen-0001 --dry-run",
+      "started": "2026-09-25T22:21:48.031776+00:00",
+      "seconds": 0.1,
+      "exit_code": 0,
+      "output_sha256": "43839b59a65cce7406393cc62ec827f0aed6cda599dac07e0cb3a6eb19b54fdf",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "56-prune-old",
+      "command": "pkg history --delete gen-0001 --yes",
+      "started": "2026-09-25T22:21:48.149040+00:00",
+      "seconds": 0.15,
+      "exit_code": 0,
+      "output_sha256": "b7f9814dfca3fecaf1581cae316908c0cc945ebe17a5be816761f60f065f8bfe",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "57-gc-retain-preview",
+      "command": "pkg gc --keep-generations 3 --dry-run",
+      "started": "2026-09-25T22:21:48.323782+00:00",
+      "seconds": 0.09,
+      "exit_code": 0,
+      "output_sha256": "25d8cd0d7272ec3ecc01d8f8605c6d257a5f7c320c07b4547df04170af0fbc97",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "58-gc-retain",
+      "command": "pkg gc --keep-generations 3 --yes",
+      "started": "2026-09-25T22:21:48.438648+00:00",
+      "seconds": 10.73,
+      "exit_code": 0,
+      "output_sha256": "7922f3ea29f107c182934437d3a514c5c1cc6e5ec764dc49ec703149293d6060",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "59-after-gc",
+      "command": "pkg history; pkg list; fzf --version; rg --version; just --version",
+      "started": "2026-09-25T22:21:59.203970+00:00",
+      "seconds": 0.19,
+      "exit_code": 0,
+      "output_sha256": "d2143723cd2f5d6df053ca2d627dd46d1a466e6852d7f627bc66193adf27e7b5",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "60-support",
+      "command": "pkg doctor --support",
+      "started": "2026-09-25T22:21:59.419134+00:00",
+      "seconds": 0.86,
+      "exit_code": 0,
+      "output_sha256": "9313dc58223e9eae8064147e0f1da0da8f3d4a934ccddca3a5651e845dda9c6f",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "61-repeat-setup",
+      "command": "/bin/sh \"$HOME/pkg-install.sh\"",
+      "started": "2026-09-25T22:22:20.658661+00:00",
+      "seconds": 41.23,
+      "exit_code": 0,
+      "output_sha256": "afe386c3f81c1162b27c3aac74461514b435efde148d531988afb3df270b428c",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "62-repeat-state",
+      "command": "pkg doctor; pkg list; just --version; fzf --version; rg --version",
+      "started": "2026-09-25T22:23:30.869842+00:00",
+      "seconds": 0.94,
+      "exit_code": 0,
+      "output_sha256": "ef0379daa486ddd0464cbc3ca1a655bc4f50f04f880c47d49d6d715dafeb2cb3",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "63-gc-policy-preview",
+      "command": "pkg gc --keep-generations 3 --max-age-days 0 --dry-run",
+      "started": "2026-09-25T22:23:31.837232+00:00",
+      "seconds": 0.14,
+      "exit_code": 0,
+      "output_sha256": "ce1eb9f1af21e95138db5e275dc765eb852a6159fe58254bd7158e15cfc68c9e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "64-gc-policy-apply",
+      "command": "pkg gc --keep-generations 3 --max-age-days 0 --yes",
+      "started": "2026-09-25T22:23:32.006732+00:00",
+      "seconds": 1.09,
+      "exit_code": 0,
+      "output_sha256": "1f5ce18d06863f39d94665ca0c98ea30e65330429022e00929e882a28d39cd32",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "65-retained-history",
+      "command": "pkg history",
+      "started": "2026-09-25T22:23:33.119906+00:00",
+      "seconds": 0.15,
+      "exit_code": 0,
+      "output_sha256": "17982d678795be05ab698fadf80642d5f9b6a0ebb6f94bf03ef4f5a4b486371c",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "66-json-doctor",
+      "command": "pkg doctor --json",
+      "started": "2026-09-25T22:23:33.290018+00:00",
+      "seconds": 0.58,
+      "exit_code": 0,
+      "output_sha256": "f9d5f1920d0590498c10a98f3c125757581e67dcc91a26bff1c4bfd27e12515e",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "67-system-preview",
+      "command": "sudo -n pkg system uninstall --dry-run",
+      "started": "2026-09-25T22:23:33.896117+00:00",
+      "seconds": 6.85,
+      "exit_code": 0,
+      "output_sha256": "b2bf624ff647fc1bf728a705013ee834d44c671f7037ee3476267cbae258558b",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "68-json-system-refusal",
+      "command": "sudo -n pkg system uninstall --json --yes",
+      "started": "2026-09-25T22:23:40.803190+00:00",
+      "seconds": 0.12,
+      "exit_code": 78,
+      "output_sha256": "ba76ee502b1ba1ce9769c4a6a6637f30d56aa27c8f9f0652c2e67b0ea3dd588e",
+      "expected_exit_code": 78,
+      "assessment": "expected_refusal_or_cancellation"
+    },
+    {
+      "case": "69-before-reboot",
+      "command": "pkg list --json; sysctl -n kern.bootsessionuuid; shasum -a 256 /usr/local/bin/pkg; sudo -n shasum -a 256 /nix/receipt.json /nix/nix-installer",
+      "started": "2026-09-25T22:23:53.902086+00:00",
+      "seconds": 0.33,
+      "exit_code": 0,
+      "output_sha256": "84e3052f3e401d2dac51dac17860dd3187d850c9874f4cd31e45fb84bdbb2e57",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "70-system-json-preview",
+      "command": "sudo -n pkg system uninstall --dry-run --json",
+      "started": "2026-09-25T22:24:08.397255+00:00",
+      "seconds": 4.91,
+      "exit_code": 0,
+      "output_sha256": "dd23594f7c06f6f846f439e76ceaa3bf7fa0791685414a548a626de92afac703",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "71-reboot",
+      "command": "sudo -n shutdown -r now",
+      "started": "2026-09-25T22:24:21.083020+00:00",
+      "seconds": 0.69,
+      "exit_code": 255,
+      "output_sha256": "1db2896eb79cb139a54c88fe5bc69bf149c85327fcf9423311744268cb171040",
+      "expected_exit_code": 255,
+      "assessment": "expected_reboot_disconnect"
+    },
+    {
+      "case": "72-after-reboot-doctor",
+      "command": "pkg doctor",
+      "started": "2026-09-25T22:24:55.266021+00:00",
+      "seconds": 0.41,
+      "exit_code": 74,
+      "output_sha256": "1e292fb437e1df4d3170f4e1fde815976d58b4652491fb0150729a96b0a8e1fb",
+      "expected_exit_code": 74,
+      "assessment": "known_alpha54_startup_failure"
+    },
+    {
+      "case": "73-after-reboot-state",
+      "command": "pkg list --json; sysctl -n kern.bootsessionuuid; shasum -a 256 /usr/local/bin/pkg; sudo -n shasum -a 256 /nix/receipt.json /nix/nix-installer; fzf --version; rg --version; just --version",
+      "started": "2026-09-25T22:24:55.764496+00:00",
+      "seconds": 0.61,
+      "exit_code": 0,
+      "output_sha256": "5a595f25598d506a2b036eed7f3ea537955c182b748ff067902f8f0eb2a1cb0c",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "74-after-reboot-retry",
+      "command": "pkg doctor",
+      "started": "2026-09-25T22:25:11.480178+00:00",
+      "seconds": 1.12,
+      "exit_code": 0,
+      "output_sha256": "5eeb9c74cab84d5d00396e314caa5307588076922e103a97f07070905a36ce56",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "75-system-remove",
+      "command": "sudo -n pkg system uninstall",
+      "started": "2026-09-25T22:25:31.108314+00:00",
+      "seconds": 57.07,
+      "exit_code": 0,
+      "output_sha256": "fa5dd65ac1b7aaa5e621432ff5d695b0e430a4f0c67b4f39718a7dec400d9504",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "76-removal-absence",
+      "command": "test ! -e /usr/local/bin/pkg && sudo -n test ! -e /opt/pkg && test ! -e /nix/receipt.json && test ! -e /nix/nix-installer && echo PRODUCT_AND_VENDOR_RECEIPT_ABSENT; ls -ld /nix; cat ~/.zshrc",
+      "started": "2026-09-25T22:26:40.635963+00:00",
+      "seconds": 0.23,
+      "exit_code": 0,
+      "output_sha256": "8694c95827f1780b75fc94fe9e278ee8e2737659f493deb77d3567272c2b8efa",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "77-reinstall",
+      "command": "/bin/sh \"$HOME/pkg-install.sh\"",
+      "started": "2026-09-25T22:26:40.962766+00:00",
+      "seconds": 116.7,
+      "exit_code": 0,
+      "output_sha256": "ec626fbb83fbad11321938fb787c22fc810a44ee416200357a92ca53be2c985a",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "78-reinstalled-health",
+      "command": "pkg doctor; pkg list",
+      "started": "2026-09-25T22:30:19.301801+00:00",
+      "seconds": 1.05,
+      "exit_code": 0,
+      "output_sha256": "60b79285c052fd8f53ac816d2011a99bbcb03f90404aec2df47335fd0a4e1809",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "79-verify-only",
+      "command": " /bin/sh \"$HOME/pkg-install.sh\" --verify-only",
+      "started": "2026-09-25T22:30:20.372210+00:00",
+      "seconds": 1.43,
+      "exit_code": 0,
+      "output_sha256": "7e9a25f3fb4093b6ab14831a896a7baa44f6d074728d9780d9113c7067a11a39",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "80-json-install",
+      "command": "pkg install fzf --json",
+      "started": "2026-09-25T22:30:21.826160+00:00",
+      "seconds": 37.45,
+      "exit_code": 0,
+      "output_sha256": "3bf8d0de3415bb1d9b73973bd1002c961c5e482574b304b29d8f837aae405209",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    },
+    {
+      "case": "81-reinstalled-use",
+      "command": "set -e; fzf --version; printf \"apple\\nbanana\\n\" | fzf --filter banana; eval \"$(pkg shellenv)\"; eval \"$(pkg shellenv)\"; pkg doctor; /bin/bash --noprofile --norc -c 'eval \"$(/usr/local/bin/pkg shellenv)\"; fzf --version'",
+      "started": "2026-09-25T22:30:59.306434+00:00",
+      "seconds": 0.89,
+      "exit_code": 0,
+      "output_sha256": "9ced20e01cc127522f409e8e6e436d460ccb9f163ee6107eeba884eaee83f2e1",
+      "expected_exit_code": 0,
+      "assessment": "completed"
+    }
+  ]
+}

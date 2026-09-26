@@ -121,7 +121,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain, local checks, and
 review rules.
 
 The [plan index](plans/README.md) identifies the one active
-[stacked-PR implementation plan](plans/determinate-nix-stacked-prs.md). The
+[active implementation plan](plans/determinate-nix-stacked-prs.md). The
 earlier custom Base Nix design is archived and is not normative.
 
 ## License

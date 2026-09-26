@@ -1,0 +1,4 @@
+b486b3f6e6b88316a0d2f2ca38512d7678bccbe9d9f73a3cbd871c94f11bdb64  /opt/pkg/bin/pkg-nix-broker
+0c6d44a2eb824fa3a4979f49dd6208736f80f79572902c8b0c0f6bb8825c43e2  /opt/pkg/bin/pkg-root-helper
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  published alpha.54 CLI
+110ad367bdf72a21555269534ca6a24c78a1daf494f5f9781a30597218a63ef9  local main CLI

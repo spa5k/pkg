@@ -584,7 +584,7 @@ mod command_views {
     fn build_previews_show_targets_and_do_not_invent_unknown_estimates() {
         let text = output(
             "install",
-            &json!({"dryRun":true, "preflight":{
+            &json!({"dryRun":true, "deferredChecks":["new-output-collisions"], "preflight":{
                 "targets":[{"packageName":"just", "version":"1.58.0", "localBuildRequired":true}],
                 "estimates":{"approxNewDiskBytes":null, "minimumFreeDiskBytes":8589934592_u64}
             }}),
@@ -597,6 +597,7 @@ mod command_views {
             "unknown",
             "8.0 GiB",
             "No changes were applied.",
+            "The preview does not confirm activation.",
         ] {
             assert!(text.contains(value), "{text}");
         }

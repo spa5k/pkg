@@ -1,0 +1,112 @@
+CASE 001-public-baseline
+$ pkg --version; pkg doctor --json; pkg list --json
+pkg 0.1.0-alpha.54
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+Shared connection to 192.168.64.30 closed.
+
+Exit: 0
+
+CASE 002-install-fixed-broker
+$ sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker; sudo -n cp -p /opt/pkg/bin/pkg-nix-broker /tmp/pkg-nix-broker-alpha54; sudo -n launchctl bootout system/org.pkg.nix-broker && sudo -n cp /tmp/pkg-nix-broker-fixed /opt/pkg/bin/pkg-nix-broker && sudo -n launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist && sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker
+b486b3f6e6b88316a0d2f2ca38512d7678bccbe9d9f73a3cbd871c94f11bdb64  /opt/pkg/bin/pkg-nix-broker
+71c36f6f46713c13c7826acc34b0b7de10d78b9a4da9594c63a6dee174d913d3  /opt/pkg/bin/pkg-nix-broker
+Shared connection to 192.168.64.30 closed.
+
+Exit: 0
+
+CASE 003
+$ pkg doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+Shared connection to 192.168.64.30 closed.
+
+Exit: 0
+
+CASE 004
+$ pkg remove fzf
+Package  Version  Pinned
+fzf      0.46.0   yes
+
+
+Remove these packages? [y/N] y
+Package  Version  Pinned
+fzf      0.46.0   yes
+
+Generation: gen-0012
+Packages removed. Your package environment is ready.
+Shared connection to 192.168.64.30 closed.
+
+Exit: 0
+
+CASE 005
+$ pkg doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+Shared connection to 192.168.64.30 closed.
+
+Exit: 0
+
+CASE 006
+$ pkg list --json && pkg rollback --yes --json && pkg list --json && fzf --version
+{"command":"list","entries":[{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+{"command":"rollback","generation":"gen-0013","ok":true,"packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"fzf","selector":"fzf"}],"packageCount":3,"schemaVersion":1,"sourceGeneration":"gen-0012","targetGeneration":"gen-0011"}
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+0.46.0 (0.46.0)
+Shared connection to 192.168.64.30 closed.
+
+Exit: 0
+
+CASE 007
+$ pkg install hello --on-collision keep-first
+Checking package sources...
+Package source ready.
+Saving the new package environment...
+Package environment saved.
+Activating packages...
+Packages are ready to use.
+Activated generation gen-0014
+Package  Version  Outputs
+hello    2.12.1   out
+
+Generation: gen-0014
+Installed 1 package from the trusted cache. Ready to use.
+Shared connection to 192.168.64.30 closed.
+
+Exit: 0
+
+CASE 008
+$ pkg doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+Shared connection to 192.168.64.30 closed.
+
+Exit: 0
+
+CASE 009
+$ hello && pkg remove hello
+Hello, world!
+Package  Version
+hello    2.12.1
+
+
+Remove these packages? [y/N] n
+error[CANCELLED]: operation cancelled
+hint: no new changes were started
+Shared connection to 192.168.64.30 closed.
+
+Exit: 75
+
+CASE 010
+$ pkg list --json && pkg history --json && pkg doctor --json && sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper && shasum -a 256 /usr/local/bin/pkg && sw_vers && uname -m
+{"command":"list","entries":[{"name":"fzf","pinned":true,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"hello","pinned":false,"selector":"hello","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"2.12.1"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+{"command":"history","entries":[{"active":true,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-26T08:56:20Z","id":"gen-0014","operation":"install","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"2.12.1","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"hello","selector":"hello"}],"packages":null,"parent":"gen-0013"},{"active":false,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-26T08:55:46Z","id":"gen-0013","operation":"rollback","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0012"},{"active":false,"changes":{"added":0,"changed":0,"removed":1},"createdAt":"2026-09-26T08:55:12Z","id":"gen-0012","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["man","out"],"beforePinned":true,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"removed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0011"},{"active":false,"changes":{"added":3,"changed":0,"removed":0},"createdAt":"2026-09-26T07:47:30Z","id":"gen-0011","operation":"rollback","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"fzf","selector":"fzf"},{"afterOutputs":["doc","man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"1.25.2","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"just"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","afterVersion":"1.58.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"github:casey/just#default"}],"packages":null,"parent":"gen-0010"},{"active":false,"changes":{"added":0,"changed":0,"removed":3},"createdAt":"2026-09-26T07:47:28Z","id":"gen-0010","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["man","out"],"beforePinned":true,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"removed","name":"fzf","selector":"fzf"},{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["doc","man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"1.25.2","kind":"removed","name":"just","selector":"just"},{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["out"],"beforePinned":false,"beforeRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","beforeVersion":"1.58.0","kind":"removed","name":"just","selector":"github:casey/just#default"}],"packages":null,"parent":"gen-0009"},{"active":false,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-26T07:47:27Z","id":"gen-0009","operation":"pin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0008"},{"active":false,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-26T07:47:26Z","id":"gen-0008","operation":"unpin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":true,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0007"},{"active":false,"changes":{"added":0,"changed":0,"removed":1},"createdAt":"2026-09-26T07:45:46Z","id":"gen-0007","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"13.0.0","kind":"removed","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0006"},{"active":false,"changes":{"added":2,"changed":0,"removed":0},"createdAt":"2026-09-25T22:46:56Z","id":"gen-0006","operation":"install","packageChanges":[{"afterOutputs":["doc","man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"1.25.2","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"just"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","afterVersion":"1.58.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"github:casey/just#default"}],"packages":null,"parent":"gen-0005"},{"active":false,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-25T22:41:48Z","id":"gen-0005","operation":"rollback","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0004"},{"active":false,"changes":{"added":0,"changed":0,"removed":1},"createdAt":"2026-09-25T22:41:48Z","id":"gen-0004","operation":"remove","packageChanges":[{"afterOutputs":[],"afterPinned":null,"afterRevision":null,"afterVersion":null,"beforeOutputs":["out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"13.0.0","kind":"removed","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0003"},{"active":false,"changes":{"added":1,"changed":0,"removed":0},"createdAt":"2026-09-25T22:41:10Z","id":"gen-0003","operation":"install","packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"}],"packages":null,"parent":"gen-0002"},{"active":false,"changes":{"added":0,"changed":1,"removed":0},"createdAt":"2026-09-25T22:40:29Z","id":"gen-0002","operation":"pin","packageChanges":[{"afterOutputs":["man","out"],"afterPinned":true,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"0.46.0","beforeOutputs":["man","out"],"beforePinned":false,"beforeRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","beforeVersion":"0.46.0","kind":"changed","name":"fzf","selector":"fzf"}],"packages":null,"parent":"gen-0001"},{"active":false,"changes":null,"createdAt":"2026-09-25T22:30:59Z","id":"gen-0001","operation":"install","packageChanges":null,"packages":[{"name":"fzf","pinned":false,"selector":"fzf","version":"0.46.0"}],"parent":null}],"ok":true,"schemaVersion":1}
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+71c36f6f46713c13c7826acc34b0b7de10d78b9a4da9594c63a6dee174d913d3  /opt/pkg/bin/pkg-nix-broker
+0c6d44a2eb824fa3a4979f49dd6208736f80f79572902c8b0c0f6bb8825c43e2  /opt/pkg/bin/pkg-root-helper
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  /usr/local/bin/pkg
+ProductName:		macOS
+ProductVersion:		15.7.7
+BuildVersion:		24G720
+arm64
+Shared connection to 192.168.64.30 closed.
+
+Exit: 0
+

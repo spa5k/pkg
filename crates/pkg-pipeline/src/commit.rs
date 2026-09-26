@@ -121,6 +121,8 @@ pub enum CommitError {
     ActivatedNeedsRecovery,
     /// The caller did not transfer an exclusive state-mutation lease.
     LeaseRequired,
+    /// Another generation must be reconciled before a new one can be prepared.
+    PendingRecovery,
 }
 
 impl fmt::Display for CommitError {
@@ -180,6 +182,28 @@ pub fn load_retained_history(
     lease: &StateLease,
 ) -> Result<History, CommitError> {
     let (snapshots, active) = load_retained_snapshots(layout, lease)?;
+    let snapshots = snapshots
+        .into_iter()
+        .filter_map(|snapshot| {
+            journal_has_status(
+                layout,
+                lease,
+                snapshot.generation().operation().op_id(),
+                "commit",
+                "committed",
+            )
+            .map(|committed| committed.then_some(snapshot))
+            .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // An active but unfinished generation needs forward recovery, not a
+    // completed-history entry or a rollback/GC plan built from partial state.
+    if active
+        .as_ref()
+        .is_some_and(|id| !snapshots.iter().any(|s| s.generation().id() == id.as_str()))
+    {
+        return Err(CommitError::PendingRecovery);
+    }
     History::new(snapshots, active.as_ref().map(GenerationId::as_str))
         .map_err(|_| CommitError::InvalidCandidate)
 }
@@ -255,8 +279,71 @@ pub fn pending_install_generation(
     pending_generation(layout, lease, is_install_operation)
 }
 
-/// Returns the sole aborted install generation whose discard is not terminal.
-pub fn pending_install_discard_generation(
+/// Requires completed generation transactions before another state mutation.
+///
+/// # Errors
+/// Returns an error for an invalid lease or state, or an unfinished generation
+/// that must be recovered before preparing, repairing, or pruning state.
+pub fn ensure_recovered_state(layout: &StateLayout, lease: &StateLease) -> Result<(), CommitError> {
+    if pending_generation(layout, lease, |_| true)?.is_some()
+        || pending_discard_generation(layout, lease)?.is_some()
+    {
+        return Err(CommitError::PendingRecovery);
+    }
+    Ok(())
+}
+
+/// Identifies an unactivated attempt bypassed by a newer committed sibling.
+///
+/// Older CLIs could commit a different operation from the same parent without
+/// recovering this attempt. It must be discarded root-last, never activated
+/// over the newer committed state. Other divergent histories remain refused.
+///
+/// # Errors
+/// Returns an error for an invalid lease, invalid state, multiple pending
+/// generations, or divergence without a proved committed sibling.
+pub fn superseded_pending_generation(
+    layout: &StateLayout,
+    lease: &StateLease,
+) -> Result<Option<GenerationId>, CommitError> {
+    if !lease.authorizes(layout, LeaseMode::Exclusive) {
+        return Err(CommitError::LeaseRequired);
+    }
+    let Some(pending_id) = pending_generation(layout, lease, |_| true)? else {
+        return Ok(None);
+    };
+    let pending = load_generation_snapshot(layout, &pending_id)?;
+    let active = load_active_snapshot(layout, lease)?;
+    if active.as_ref().map(|s| s.generation().id()) == Some(pending_id.as_str())
+        || active.as_ref().map(|s| s.generation().id()) == pending.generation().parent()
+    {
+        return Ok(None);
+    }
+    let active = active.ok_or(CommitError::InvalidCandidate)?;
+    if !strictly_newer(active.generation().id(), pending_id.as_str())
+        || active.generation().parent() != pending.generation().parent()
+        || !journal_has_status(
+            layout,
+            lease,
+            active.generation().operation().op_id(),
+            "commit",
+            "committed",
+        )?
+        || journal_has_status(
+            layout,
+            lease,
+            pending.generation().operation().op_id(),
+            "activate",
+            "activated",
+        )?
+    {
+        return Err(CommitError::InvalidCandidate);
+    }
+    Ok(Some(pending_id))
+}
+
+/// Returns the sole aborted generation whose discard is not terminal.
+pub fn pending_discard_generation(
     layout: &StateLayout,
     lease: &StateLease,
 ) -> Result<Option<GenerationId>, CommitError> {
@@ -286,7 +373,9 @@ pub fn pending_install_discard_generation(
                 if fields
                     .get("operationKind")
                     .and_then(Value::as_str)
-                    .is_some_and(is_install_operation)
+                    .is_some_and(|kind| {
+                        is_install_operation(kind) || is_resumable_state_operation(kind)
+                    })
                 {
                     aborted.insert(key);
                 }
@@ -729,6 +818,9 @@ impl PreparedGeneration {
             return Err(CommitError::LeaseRequired);
         }
         layout.validate().map_err(|_| CommitError::StateIo)?;
+        // Recovery and acquisition can release the lease before preparation.
+        // Recheck here so a concurrent interrupted command cannot be bypassed.
+        ensure_recovered_state(&layout, &lease)?;
         validate_plan(&candidate, &plan)?;
         let root = layout.state_root();
         validate_directory(&root.join("generations"))?;
@@ -1416,6 +1508,7 @@ fn discard_generation_paths(root: &Path, generation: &Generation) -> Result<(), 
     }
     for path in [
         root.join(format!("activations/{}.staging", generation.id())),
+        root.join(format!("activations/{}.repair", generation.id())),
         root.join(generation.activation().tree_path()),
     ] {
         match fs::symlink_metadata(&path) {

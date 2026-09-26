@@ -182,6 +182,7 @@ pub enum OperationStatus {
 #[derive(Debug, Clone)]
 struct OperationRecord {
     owner_uid: u32,
+    owner_connection: Arc<()>,
     kind: BrokerOperationKind,
     status: OperationStatus,
     expires_at: Instant,
@@ -489,6 +490,7 @@ impl InProcessBroker {
             broker: Arc::clone(self),
             epoch,
             uid: peer.authenticated_uid,
+            connection: Arc::new(()),
         })
     }
 
@@ -538,12 +540,14 @@ impl InProcessBroker {
     }
 }
 
-/// Authenticated CLI-to-broker session bound to one uid and broker epoch.
+/// Authenticated connection bound to one uid and broker epoch.
+/// Clones share disconnect ownership; a fresh connection has its own identity.
 #[derive(Clone)]
 pub struct AuthenticatedCaller {
     broker: Arc<InProcessBroker>,
     epoch: u64,
     uid: u32,
+    connection: Arc<()>,
 }
 
 impl fmt::Debug for AuthenticatedCaller {
@@ -1584,8 +1588,9 @@ impl AuthenticatedCaller {
         self.finish(handle, OperationStatus::Cancelled)
     }
 
-    /// Simulates CLI disconnect: every running operation owned by this caller
-    /// is cancelled and all of its admission is released.
+    /// Cancels this connection's running operations on CLI disconnect.
+    /// Other connections for the same uid retain their operations and admission.
+    /// Explicit handle reconciliation remains uid-bound across connections.
     pub fn disconnect(&self) -> Result<(), BrokerError> {
         let mut state = self.broker.lock();
         self.check_epoch(&state)?;
@@ -1593,7 +1598,8 @@ impl AuthenticatedCaller {
             .operations
             .iter()
             .filter(|(_, record)| {
-                record.owner_uid == self.uid && record.status == OperationStatus::Running
+                Arc::ptr_eq(&record.owner_connection, &self.connection)
+                    && record.status == OperationStatus::Running
             })
             .map(|(handle, _)| handle.clone())
             .collect::<Vec<_>>();
@@ -1652,6 +1658,7 @@ impl AuthenticatedCaller {
             handle.clone(),
             OperationRecord {
                 owner_uid: self.uid,
+                owner_connection: Arc::clone(&self.connection),
                 kind,
                 status: OperationStatus::Running,
                 expires_at,

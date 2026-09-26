@@ -1,0 +1,14 @@
+{
+  "vm": {
+    "Accessed": "2026-09-26T10:20:19Z",
+    "Size": 34,
+    "Source": "local",
+    "Disk": 100,
+    "State": "stopped",
+    "Name": "pkg-bug02-final-20260926",
+    "Running": false
+  },
+  "current_generation": "gen-0031",
+  "command": "tart stop pkg-bug02-final-20260926",
+  "exit_code": 0
+}

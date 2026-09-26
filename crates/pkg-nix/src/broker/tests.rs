@@ -309,6 +309,71 @@ fn caller_identity_is_transport_bound() {
 }
 
 #[test]
+fn disconnect_preserves_other_connections_for_the_same_uid() {
+    for kind in BrokerOperationKind::ALL {
+        let broker = InProcessBroker::new().unwrap();
+        let owner = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = owner.begin(kind).unwrap();
+        match kind {
+            BrokerOperationKind::Build => {
+                owner.acquire_build(&handle).unwrap();
+                owner.acquire_gc_inhibit(&handle).unwrap();
+            }
+            BrokerOperationKind::Activate => {
+                owner.acquire_gc_inhibit(&handle).unwrap();
+            }
+            BrokerOperationKind::Gc => owner.acquire_gc(&handle).unwrap(),
+            _ => {}
+        }
+        let observer = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let check = observer.begin(BrokerOperationKind::Doctor).unwrap();
+        observer.complete(&check).unwrap();
+        let before = broker.admission_snapshot();
+
+        observer.disconnect().unwrap();
+
+        assert_eq!(
+            owner.poll(&handle).unwrap(),
+            OperationStatus::Running,
+            "{kind:?}"
+        );
+        assert!(!operation_cancellation(&broker, &handle).is_cancelled());
+        assert_eq!(broker.admission_snapshot(), before);
+        // Clones belong to the original connection and must still clean it up.
+        owner.clone().disconnect().unwrap();
+        assert_eq!(owner.poll(&handle).unwrap(), OperationStatus::Cancelled);
+        let after = broker.admission_snapshot();
+        assert!(!after.build_held());
+        assert!(!after.gc_held());
+        assert_eq!(after.gc_inhibitor_count(), 0);
+    }
+}
+
+#[test]
+fn fresh_same_uid_connection_can_explicitly_reconcile_an_operation() {
+    let broker = InProcessBroker::new().unwrap();
+    let owner = broker
+        .connect(InProcessCallerPeer::authenticated(1001))
+        .unwrap();
+    let reconnect = broker
+        .connect(InProcessCallerPeer::authenticated(1001))
+        .unwrap();
+    let handle = owner.begin(BrokerOperationKind::Activate).unwrap();
+    assert_eq!(reconnect.poll(&handle).unwrap(), OperationStatus::Running);
+    reconnect.complete(&handle).unwrap();
+    assert_eq!(owner.poll(&handle).unwrap(), OperationStatus::Completed);
+    let handle = owner.begin(BrokerOperationKind::Activate).unwrap();
+    owner.acquire_gc_inhibit(&handle).unwrap();
+    reconnect.cancel(&handle).unwrap();
+    assert_eq!(owner.poll(&handle).unwrap(), OperationStatus::Cancelled);
+    assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+}
+
+#[test]
 fn build_and_gc_admission_release_on_cancel_and_disconnect() {
     let broker = InProcessBroker::new().unwrap();
     let caller = broker

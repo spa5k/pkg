@@ -1,0 +1,52 @@
+CASE 001
+$ /tmp/pkg-bug05-fixed install ripgrep --dry-run --json
+{"command":"install","dryRun":true,"ok":true,"preflight":{"approvalRequired":false,"build":{"count":0,"hasFixedOutput":false,"names":[]},"buildPlanDigest":"sha256:1616540f149905eb2ec489acc7e9ee8db29a5de3ba72eaf706ab015cf0aa8466","cache":{"knownContentBytes":0,"knownDownloadBytes":0},"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null,"minimumFreeDiskBytes":5368709120},"platform":{"arch":"arm64","os":"macos"},"policyVersion":1,"purpose":"build","readiness":{"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","notice":"macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.","perBuildResourceCap":false},"sandboxed":true},"targets":[{"localBuildRequired":false,"outputsToInstall":["out"],"packageName":"ripgrep","selector":"ripgrep","version":"13.0.0"}],"unknownLocalOutputs":0},"schemaVersion":1}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 002
+$ /tmp/pkg-bug05-fixed install fzf --dry-run --json
+{"command":"install","dryRun":true,"ok":true,"preflight":{"approvalRequired":false,"build":{"count":0,"hasFixedOutput":false,"names":[]},"buildPlanDigest":"sha256:1922d69c9041390a4af6906164b63d30b818e1e2946abe614de5accc98e9ceff","cache":{"knownContentBytes":0,"knownDownloadBytes":0},"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null,"minimumFreeDiskBytes":5368709120},"platform":{"arch":"arm64","os":"macos"},"policyVersion":1,"purpose":"build","readiness":{"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","notice":"macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.","perBuildResourceCap":false},"sandboxed":true},"targets":[{"localBuildRequired":false,"outputsToInstall":["man","out"],"packageName":"fzf","selector":"fzf","version":"0.46.0"}],"unknownLocalOutputs":0},"schemaVersion":1}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 003
+$ shasum -a 256 "$HOME/Library/Application Support/pkg/journal/journal.ndjson" "$HOME/Library/Application Support/pkg/manifest.json" "$HOME/Library/Application Support/pkg/lock.json" && readlink "$HOME/Library/Application Support/pkg/current" && /tmp/pkg-bug06-fixed install ripgrep --dry-run --json
+24078ccdc3edb42ebb22f4b0e5bb4228cbed06ba9b1f3bc3803c45c39a07e0c4  /Users/admin/Library/Application Support/pkg/journal/journal.ndjson
+d6c7abf67897094063f722e7e34803b45fa9529dd95a05a4a1dbf80c686ebffe  /Users/admin/Library/Application Support/pkg/manifest.json
+cb6278a3b81fdcbdac6fe7fda4d02af6371cc0692494f7c60e2d416e7dc9daeb  /Users/admin/Library/Application Support/pkg/lock.json
+activations/gen-0027
+{"schemaVersion":1,"ok":false,"command":"install","error":{"symbol":"PREFLIGHT_FAIL","code":65,"message":"ripgrep is already installed","hint":"use `pkg upgrade` to update an installed package"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 65
+
+CASE 004
+$ /tmp/pkg-bug06-fixed install fzf --dry-run --json
+{"schemaVersion":1,"ok":false,"command":"install","error":{"symbol":"STAGE_COLLISION","code":71,"message":"the installed outputs conflict under the requested collision policy","hint":"remove a conflicting package or select an explicit --on-collision policy"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 71
+
+CASE 005
+$ /tmp/pkg-bug06-fixed install fzf --dry-run --on-collision keep-first --json && /tmp/pkg-bug06-fixed install fzf --dry-run --on-collision keep-first --no-color && shasum -a 256 "$HOME/Library/Application Support/pkg/journal/journal.ndjson" "$HOME/Library/Application Support/pkg/manifest.json" "$HOME/Library/Application Support/pkg/lock.json" && readlink "$HOME/Library/Application Support/pkg/current" && shasum -a 256 /tmp/pkg-bug06-fixed
+{"basedOnGeneration":"gen-0027","checked":["installed-selectors","installed-output-collisions"],"command":"install","deferredChecks":["new-output-collisions","final-state-revalidation"],"dryRun":true,"ok":true,"preflight":{"approvalRequired":false,"build":{"count":0,"hasFixedOutput":false,"names":[]},"buildPlanDigest":"sha256:6f60884bf398c13684c578bf043e21331e047781e99598b5015492ec7a84950a","cache":{"knownContentBytes":0,"knownDownloadBytes":0},"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null,"minimumFreeDiskBytes":5368709120},"platform":{"arch":"arm64","os":"macos"},"policyVersion":1,"purpose":"build","readiness":{"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","notice":"macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.","perBuildResourceCap":false},"sandboxed":true},"targets":[{"localBuildRequired":false,"outputsToInstall":["man","out"],"packageName":"fzf","selector":"fzf","version":"0.46.0"}],"unknownLocalOutputs":0},"schemaVersion":1}
+Package  Version  Source
+fzf      0.46.0   Available output
+Estimated new disk use: unknown
+Free disk needed to start: 5.0 GiB
+Build estimates are approximate. A build can need more space.
+
+Preview generation: gen-0027
+Pending checks: New output collisions and final state validation require acquisition. The preview does not confirm activation.
+Preview: No changes were applied.
+24078ccdc3edb42ebb22f4b0e5bb4228cbed06ba9b1f3bc3803c45c39a07e0c4  /Users/admin/Library/Application Support/pkg/journal/journal.ndjson
+d6c7abf67897094063f722e7e34803b45fa9529dd95a05a4a1dbf80c686ebffe  /Users/admin/Library/Application Support/pkg/manifest.json
+cb6278a3b81fdcbdac6fe7fda4d02af6371cc0692494f7c60e2d416e7dc9daeb  /Users/admin/Library/Application Support/pkg/lock.json
+activations/gen-0027
+fd60c971e349392cf158d5db5326b4dad9e04f5d2621d3dc50b0c34d875989c8  /tmp/pkg-bug06-fixed
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0

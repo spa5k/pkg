@@ -1,0 +1,4 @@
+   Compiling pkg-nix v0.1.0-alpha.54 (/Users/pacific/Developer/pkg/crates/pkg-nix)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.11s
+Different UID disconnect: (Running, true); expected (Running, true)
+Same UID, separate connection disconnect: (Running, true); expected (Running, true)

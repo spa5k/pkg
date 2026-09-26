@@ -155,7 +155,23 @@ prints names only, including on a terminal.
 The same layout applies across the command tree. Wide terminals show tables;
 small terminals show labeled cards. Long values wrap within the terminal width.
 Previews show the planned targets and state that no changes were applied.
+Install previews check installed selectors and available installed-output conflicts.
+New-output collisions and final state validation wait until acquisition.
 Install and rollback results identify the saved environment. History includes
 pin and output changes even when package versions match.
 
+If a command fails after activation, the error identifies the generation that
+needs recovery. Do not repeat the package change. Resolve the state write
+failure, then run `pkg repair --yes`. JSON and JSONL include `error.recovery`
+with `generation` and `outcome`. An `applied` outcome confirms the current
+switch. An `uncertain` outcome means the switch may have completed. Both require
+forward recovery before another change.
+
 The public installer selects alpha.54.
+
+`install --keep-going` and `upgrade --keep-going` are currently refused.
+Omit this option. An install stops at the first failure and does not commit a
+partial package set.
+
+`remove --orphan-check` is currently refused. Omit this option. After removal,
+use `pkg gc --dry-run` to inspect retained generations and GC candidates.

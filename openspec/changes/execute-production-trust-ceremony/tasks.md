@@ -1,50 +1,40 @@
-# Tasks: Production trust ceremony
+# Remaining tasks: production trust
 
-> Blocked by: `add-deterministic-verification-suite`, `improve-cli-ux`, `improve-install-ux`
-> all landed and green for two consecutive weeks.
+Updated 26 September 2026. Scope: TRUST-01 in the
+[active plan](../../../plans/determinate-nix-stacked-prs.md).
+The current [runbook](../../../docs/ops/production-release.md) owns operator inputs.
 
-## 1. Key ceremony
+## Already delivered
 
-- [ ] 1.1 Acquire two encrypted USB media and a hardware token; record custody plan
-- [ ] 1.2 Air-gapped ceremony: generate root key, record steps/participants/fingerprint in the
-      ceremony record; Shamir-split the passphrase between two custodians
-- [ ] 1.3 Generate 5 online keys; distribute per design D3; add threshold metadata (3-of-5)
-- [ ] 1.4 Sign and publish root v1 to a staging location; verify client threshold enforcement
-      with the existing TUF tests
-- [ ] 1.5 Pre-sign root v2 (rotation escrow) and store per runbook
+Provider-backed signing interfaces, test-key TUF transaction checks,
+`packaging/macos/notarize.py`, exact-release lifecycle helpers, and the initial
+production runbook exist. Do not create duplicate helpers or runbooks.
+CLI and installer UX work has shipped; the superseded proposals are not blockers.
 
-## 2. Channel hosting
+## Key custody and hosting
 
-- [ ] 2.1 DNSSEC on kelv.dev; create `channel.kelv.dev` pointing at object storage
-- [ ] 2.2 TLS cert, bucket immutability policy, CDN with 1h TTL; 7-day timestamp validity
-- [ ] 2.3 Publish root v1 + initial metadata; smoke-verify with the product client against
-      production for the first time
-- [ ] 2.4 Update product channel constant in a feature flag (`--channel` default flips to
-      production); retire every proof-grade URL from shipped artifacts
+- [ ] Verify production domain control, storage immutability, and deployment access.
+- [ ] Approve root/role thresholds, independent custody and recovery owners, and the online signing provider.
+- [ ] Generate the root offline and retain only public metadata and ceremony evidence in the repository.
+- [ ] Configure provider identities and least-privilege signing access.
+- [ ] Prove below-threshold refusal, root/online-key rotation, and revoked-signer refusal on staging.
+- [ ] Prove metadata expiry refusal and refresh before expiry; review CDN cache policy.
+- [ ] Wire the compiled production root and selected channel into reviewed production builds.
 
-## 3. Apple Developer ID
+## Apple signing
 
-- [ ] 3.1 Enroll Apple Developer Program (long pole — start immediately)
-- [ ] 3.2 Create Developer ID Application cert; store in vault
-- [ ] 3.3 Release workflow: `productsign`, `notarytool` submit/wait/staple; fail release on
-      notarization failure
-- [ ] 3.4 Clean-Mac Gatekeeper verification; `spctl -a -vv` transcript archived as evidence
+- [ ] Supply Application and Installer identities for the same Apple team and notarization access.
+- [ ] Run the existing signing/notarization helper against final command binaries and package assets.
+- [ ] Update the installer renderer and asset inventory for production filenames together.
+- [ ] Retain submission IDs, hashes, stapling, and clean-Mac Gatekeeper evidence for actual downloads.
 
-## 4. Production release
+## Final proof and operations
 
-- [ ] 4.1 Build release pair under production root; SHA256SUMS + sigstore bundles
-- [ ] 4.2 Publish to channel; verify remote from a network-clean VM
-- [ ] 4.3 Add install/uninstall scripts as channel targets; wire `kelv.dev/install.sh`
-      redirect
+- [ ] Accept complete assurance results, including the planned two-week scheduled-check observation period.
+- [ ] Prepare and test exact production install/upgrade/reboot/removal inputs on native hosts.
+- [ ] Verify published root and targets independently from another host.
+- [ ] Complete provider-specific signing, custody, rotation, refresh, compromise, and higher-sequence rollback procedures in the existing runbook.
+- [ ] Record owner/reviewer go-live approval and public evidence before announcing production readiness.
 
-## 5. Re-proof and go-live
-
-- [ ] 5.1 Dispatch repeat-run proof against production channel + notarized package
-- [ ] 5.2 Archive evidence to DN-16 standard (run ID, transcripts, verdicts)
-- [ ] 5.3 Runbook review; go/no-go recorded; tag the release on `main`
-
-## 6. Ops runbook
-
-- [ ] 6.1 `docs/ops/trust-runbook.md`: custody, signing steps, rotation schedule, compromise
-      response, channel rollback
-- [ ] 6.2 Calendar: annual root review, quarterly online-key rotation drill
+No production input is treated as supplied because a local preflight or alpha
+release passed. No release is part of the current onboarding audit.

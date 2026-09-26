@@ -1,0 +1,33 @@
+{
+  "toolchain": "1.96.1",
+  "cli_tests_passed": 180,
+  "checks": [
+    {
+      "command": "cargo test --locked -p pkg-cli --lib",
+      "exit_code": 0,
+      "log_sha256": "b2be40b6e6bb448cf265ac64e74c0cda8291d87373a31d818adb555dce2d3267"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+      "exit_code": 0,
+      "log_sha256": "b0931af76b172ddd6769154760b91eaa04fdd4c3461fe5aa06ca5103dadbc767"
+    },
+    {
+      "command": "BASE_REF=origin/main tools/quality/quality-gate.sh check",
+      "exit_code": 0,
+      "log_sha256": "8f218fac95fae8f8b692a99f2e3c361396c6ba348b0e6cbf1ea29712fab90ee2"
+    },
+    {
+      "command": "RUSTDOCFLAGS=\"-D warnings\" cargo doc --workspace --all-features --no-deps --locked",
+      "exit_code": 0,
+      "log_sha256": "5a5772ea8b6bd61f40c3caca78e24625252f047b0227c75b43677cf970bb7d14"
+    },
+    {
+      "command": "cargo build --workspace --all-targets --all-features --locked",
+      "exit_code": 0,
+      "log_sha256": "8f6765faf87079179ca60773da6bf6f41f52f0d2ae4424d957e81665f0f3fad9"
+    }
+  ],
+  "unchanged_dependency_checks": "../2026-09-26-bug03-fix/checks.json",
+  "format_and_diff_check": "passed"
+}

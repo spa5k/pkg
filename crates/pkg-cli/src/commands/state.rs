@@ -142,6 +142,7 @@ pub fn remove_state(
     state: LifecycleState,
     args: &RemoveArgs,
 ) -> Result<LifecycleEdit, CommandError> {
+    require_supported_remove_options(args)?;
     let labels = package_labels(&state);
     let targets = resolve_targets(&state, args.packages())?;
     let packages = installed_packages(&state, &targets)?;
@@ -162,7 +163,6 @@ pub fn remove_state(
         Map::from_iter([
             ("removed".into(), json!(names)),
             ("packages".into(), packages),
-            ("orphanCheckRequested".into(), json!(args.orphan_check())),
         ]),
         vec![],
     )?;
@@ -172,6 +172,17 @@ pub fn remove_state(
             .with_package_labels(labels)
             .map_err(|_| state_error())?,
     })
+}
+
+pub(crate) fn require_supported_remove_options(args: &RemoveArgs) -> Result<(), CommandError> {
+    if args.orphan_check() {
+        return Err(CommandError::new(
+            ExitCode::Config,
+            "--orphan-check is not supported for remove",
+            "omit --orphan-check; use `pkg gc --dry-run` after removal to inspect retained generations and GC candidates",
+        ));
+    }
+    Ok(())
 }
 
 /// Applies an atomic pin/unpin edit in memory; the caller commits a fresh generation.

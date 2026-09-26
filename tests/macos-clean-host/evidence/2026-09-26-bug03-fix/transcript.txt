@@ -1,0 +1,118 @@
+CASE 001
+$ pkg list --json && rg --version && pkg doctor --json && sw_vers
+{"command":"list","entries":[{"name":"hello","pinned":false,"selector":"hello","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"2.12.1"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"},{"name":"ripgrep","pinned":true,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+ProductName:		macOS
+ProductVersion:		15.7.7
+BuildVersion:		24G720
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 002
+$ pkg_audit_state="$HOME/Library/Application Support/pkg"; test -L "$pkg_audit_state/current/bin/rg" && readlink "$pkg_audit_state/current/bin/rg" && rm "$pkg_audit_state/current/bin/rg"; command -v rg
+/nix/store/f76a7hjfggs8a9lgipdzxdmf3az129wp-ripgrep-13.0.0/bin/rg
+Shared connection to 192.168.64.32 closed.
+
+EXIT 1
+
+CASE 003
+$ /tmp/pkg-bug03-fixed doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"fail","detail":"the active package links or generation state could not be verified","hint":"wait for any active operation, then run `pkg repair --yes`"},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"needs_attention"}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 78
+
+CASE 004
+$ /tmp/pkg-bug03-fixed repair --verify-only --json
+{"schemaVersion":1,"ok":false,"command":"repair","error":{"symbol":"VERIFY_FAIL","code":70,"message":"the generation activation links are damaged or could not be restored","hint":"run `pkg repair --yes` to rebuild links from verified package state"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 70
+
+CASE 005
+$ /tmp/pkg-bug03-fixed repair --yes --json && rg --version && /tmp/pkg-bug03-fixed doctor --json && /tmp/pkg-bug03-fixed repair --verify-only --json
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"activationStatus":"repaired","command":"repair","damagedPathCount":0,"generation":"gen-0018","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"repaired-activation","verificationScope":["activation-links","store-closure"],"verifyOnly":false}
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0018","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":true}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 006
+$ pkg_audit_state="$HOME/Library/Application Support/pkg"; test -L "$pkg_audit_state/activations/gen-0017/bin/rg" && rm "$pkg_audit_state/activations/gen-0017/bin/rg" && /tmp/pkg-bug03-fixed repair gen-0017 --verify-only --json
+{"schemaVersion":1,"ok":false,"command":"repair","error":{"symbol":"VERIFY_FAIL","code":70,"message":"the generation activation links are damaged or could not be restored","hint":"run `pkg repair --yes` to rebuild links from verified package state"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 70
+
+CASE 007
+$ /tmp/pkg-bug03-fixed repair gen-0017 --yes --json && /tmp/pkg-bug03-fixed repair gen-0017 --verify-only --json && readlink "$HOME/Library/Application Support/pkg/current" && rg --version
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"activationStatus":"repaired","command":"repair","damagedPathCount":0,"generation":"gen-0017","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"repaired-activation","verificationScope":["activation-links","store-closure"],"verifyOnly":false}
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0017","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":true}
+activations/gen-0018
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE case008
+$ test -L "$HOME/Library/Application Support/pkg/current/bin/rg" && rm "$HOME/Library/Application Support/pkg/current/bin/rg" && /tmp/pkg-bug03-fixed doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"fail","detail":"the active package links or generation state could not be verified","hint":"wait for any active operation, then run `pkg repair --yes`"},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"needs_attention"}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 78
+
+CASE case009
+$ /tmp/pkg-bug03-fixed repair --verify-only --json
+{"schemaVersion":1,"ok":false,"command":"repair","error":{"symbol":"VERIFY_FAIL","code":70,"message":"the generation activation links are damaged or could not be restored","hint":"run `pkg repair --yes` to rebuild links from verified package state"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 70
+
+CASE case010
+$ /tmp/pkg-bug03-fixed repair --yes --json && rg --version && /tmp/pkg-bug03-fixed doctor --json && /tmp/pkg-bug03-fixed repair --verify-only --json
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"activationStatus":"repaired","command":"repair","damagedPathCount":0,"generation":"gen-0018","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"repaired-activation","verificationScope":["activation-links","store-closure"],"verifyOnly":false}
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0018","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":true}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE case011
+$ test -d "$HOME/Library/Application Support/pkg/activations/gen-0018" && mv "$HOME/Library/Application Support/pkg/activations/gen-0018" "$HOME/Library/Application Support/pkg/activations/gen-0018.repair" && /tmp/pkg-bug03-fixed repair --yes --json && test ! -e "$HOME/Library/Application Support/pkg/activations/gen-0018.repair" && readlink "$HOME/Library/Application Support/pkg/current" && rg --version && /tmp/pkg-bug03-fixed doctor --json && shasum -a 256 /tmp/pkg-bug03-fixed /usr/local/bin/pkg /usr/local/libexec/pkg-nix-broker /usr/local/libexec/pkg-root-helper
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"activationStatus":"repaired","command":"repair","damagedPathCount":0,"generation":"gen-0018","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"repaired-activation","verificationScope":["activation-links","store-closure"],"verifyOnly":false}
+activations/gen-0018
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+2cd12dabae35f521c0fc34e2f3b94721d0b16fe01144fe4f5d257b85da9776bc  /tmp/pkg-bug03-fixed
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  /usr/local/bin/pkg
+shasum: /usr/local/libexec/pkg-nix-broker: No such file or directory
+shasum: /usr/local/libexec/pkg-root-helper: No such file or directory
+Shared connection to 192.168.64.32 closed.
+
+EXIT 1
+
+CASE case012
+$ sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper && shasum -a 256 /usr/local/bin/pkg /tmp/pkg-bug03-fixed && /tmp/pkg-bug03-fixed list --json && readlink "$HOME/Library/Application Support/pkg/current"
+b486b3f6e6b88316a0d2f2ca38512d7678bccbe9d9f73a3cbd871c94f11bdb64  /opt/pkg/bin/pkg-nix-broker
+0c6d44a2eb824fa3a4979f49dd6208736f80f79572902c8b0c0f6bb8825c43e2  /opt/pkg/bin/pkg-root-helper
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  /usr/local/bin/pkg
+2cd12dabae35f521c0fc34e2f3b94721d0b16fe01144fe4f5d257b85da9776bc  /tmp/pkg-bug03-fixed
+{"command":"list","entries":[{"name":"hello","pinned":false,"selector":"hello","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"2.12.1"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"just","pinned":false,"selector":"just","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"1.25.2"},{"name":"ripgrep","pinned":true,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+activations/gen-0018
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0

@@ -1,0 +1,1281 @@
+Published alpha.54 user-path evidence. ANSI, CR, bell, and SSH close messages removed.
+Help-only output is not included. Durations include prompt response time.
+
+CASE 01-fresh-install
+UTC 2026-09-25T22:06:42.538847+00:00
+$ curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/spa5k/pkg/main/install.sh -o "$HOME/pkg-install.sh" && /bin/sh "$HOME/pkg-install.sh"
+pkg 0.1.0-alpha.54 · macOS Apple silicon
+
+  Downloading pkg-0.1.0-alpha.54-preview.pkg...
+  [ok] Verified pkg-0.1.0-alpha.54-preview.pkg
+  Downloading install-preview.sh...
+  [ok] Verified install-preview.sh
+  Install log: /var/folders/9m/b94f0mqn0d327g6_m6p0x0br0000gn/T//pkg-install-log.wPWF24NM
+  Administrator access is needed to set up pkg.
+Checking the downloaded pkg installer...
+Install log: /var/folders/9m/b94f0mqn0d327g6_m6p0x0br0000gn/T//pkg-install-log.4gHXe2
+Administrator access is needed to set up pkg.
+Allow the macOS system configuration prompt if it appears.
+Password:
+pkg setup — 0.1.0-alpha.54
+Downloading and verifying the release. This can take a few minutes...
+Checking this Mac...
+Preparing pkg files and folders...
+Preparing the package and build engine...
+Installing Determinate Nix. This can take a few minutes. Please keep this window open.
+Determinate Nix installation completed.
+Installing pkg commands and services...
+Verifying the installed files...
+Checking the package engine...
+Saving the installation record...
+pkg is installed.
+pkg setup completed.
+
+Next steps:
+  eval "$(/usr/local/bin/pkg shellenv)"
+  pkg doctor
+  pkg install fzf
+
+For future zsh sessions, add eval "$(/usr/local/bin/pkg shellenv)" to ~/.zshrc.
+For Bash, add the same line to your shell startup file.
+  Checking the installation...
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[ok] shell.raw_nix: raw Nix commands are not visible on PATH
+[ok] state.permissions: the per-user state root has not been created yet
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+  [ok] pkg is ready.
+
+Open a new terminal, or run:
+  eval "$(/usr/local/bin/pkg shellenv)"
+
+Start here:
+  pkg search ripgrep
+  pkg install ripgrep
+  pkg list
+
+Run this same installer command when you want to update pkg.
+Exit 0 | 116.08 seconds | completed
+
+CASE 02-guide
+UTC 2026-09-25T22:08:57.386533+00:00
+$ pkg
+pkg  0.1.0-alpha.54
+Find, install, and manage command-line tools.
+
+Find packages
+  search       Find packages in the verified catalog
+  info         Show package details and available versions
+
+Manage packages
+  install      Install packages. Download first; build locally when needed
+  list         List your installed packages
+  remove       Remove packages from your active environment
+  uninstall    Remove packages from your active environment
+  outdated     Show packages with available updates
+  update       Refresh the package catalog without changing installed packages
+  upgrade      Update selected packages, or use --all
+  pin          Keep packages at their current versions
+  unpin        Allow pinned packages to receive updates
+
+Manage your environment
+  history      Show or prune saved package environments
+  rollback     Restore a previous package environment
+  gc           Free disk space used by old package environments
+  repair       Check installed packages and repair damaged files
+
+Set up and diagnose
+  doctor       Check your installation and show how to fix problems
+  shellenv     Print shell setup for Bash or zsh: eval "$(pkg shellenv)"
+  completion   Generate shell completions
+  system       Manage the pkg installation on this computer
+
+
+Usage: pkg [OPTIONS] <COMMAND>
+
+Options (all commands):
+      --json      Print the final result as JSON
+      --jsonl     Print progress and the final result as JSON Lines
+  -q, --quiet     Show only the final result
+  -v, --verbose   Show operation details
+      --no-color  Use static output without color or animation
+  -y, --yes       Accept prompts and local build plans
+      --dry-run   Preview changes without applying them
+  -h, --help      Print help (see more with '--help')
+  -V, --version   Print version
+
+
+Start here:
+  pkg search ripgrep
+  pkg install ripgrep
+  pkg list
+  pkg update
+  pkg upgrade --all
+
+Use pkg <command> --help for options and examples.
+Use pkg <command> --dry-run to preview changes.
+Exit 0 | 0.15 seconds | completed
+
+CASE 03-shell-setup
+UTC 2026-09-25T22:08:57.591164+00:00
+$ eval "$(pkg shellenv)"; printf '%s\n' 'eval "$(pkg shellenv)"' >> ~/.zshrc; command -v pkg; pkg --version; pkg doctor
+/usr/local/bin/pkg
+pkg 0.1.0-alpha.54
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root has not been created yet
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+Exit 0 | 0.69 seconds | completed
+
+CASE 04-empty-list
+UTC 2026-09-25T22:08:58.309395+00:00
+$ pkg list
+No packages are installed. Use pkg install <package> to get started.
+Exit 0 | 0.18 seconds | completed
+
+CASE 05-empty-outdated
+UTC 2026-09-25T22:08:58.516835+00:00
+$ pkg outdated
+No packages are installed. Use pkg install <package> to get started.
+Exit 0 | 0.12 seconds | completed
+
+CASE 06-empty-history
+UTC 2026-09-25T22:08:58.661897+00:00
+$ pkg history
+0 generations retained.
+Exit 0 | 0.11 seconds | completed
+
+CASE 07-search
+UTC 2026-09-25T22:08:58.794091+00:00
+$ pkg search ripgrep
+Package                                                    Version        Status  Description
+ripgrep                                                    13.0.0         ready   A utility that combines the usability of The Silver Searcher with the raw speed of grep
+emacsPackages.ripgrep                                      20220520.1410  ready   -
+ripgrep-all                                                1.0.0-alpha.5  ready   Ripgrep, but also search in PDFs, E-Books, Office documents, zip, tar.gz, and more
+emacsPackages.projectile-ripgrep                           20221013.541   ready   -
+repgrep                                                    0.14.3         ready   An interactive replacer for ripgrep that makes it easy to find and replace across files on the command line
+vgrep                                                      2.7.0          ready   User-friendly pager for grep/git-grep/ripgrep
+matrix-synapse-plugins.matrix-http-rendezvous-synapse      0.1.12         ready   Implementation of MSC3886: Simple rendezvous capability
+matrix-synapse-plugins.matrix-synapse-ldap3                0.2.2          ready   LDAP3 auth provider for Synapse
+matrix-synapse-plugins.matrix-synapse-mjolnir-antispam     1.6.4          broken  AntiSpam / Banlist plugin to be used with mjolnir
+matrix-synapse-plugins.matrix-synapse-pam                  0.1.3          ready   PAM auth provider for the Synapse Matrix server
+matrix-synapse-plugins.matrix-synapse-s3-storage-provider  1.2.1          ready   Synapse storage provider to fetch and store media in Amazon S3
+perl536Packages.DistZillaPluginReadmeAnyFromPod            0.163250       ready   Automatically convert POD to a README in any format for Dist::Zilla
+perl536Packages.DistZillaPluginReadmeMarkdownFromPod       0.141140       ready   Automatically convert POD to a README.mkdn for Dist::Zilla
+perl538Packages.DistZillaPluginReadmeAnyFromPod            0.163250       ready   Automatically convert POD to a README in any format for Dist::Zilla
+perl538Packages.DistZillaPluginReadmeMarkdownFromPod       0.141140       ready   Automatically convert POD to a README.mkdn for Dist::Zilla
+perlPackages.DistZillaPluginReadmeAnyFromPod               0.163250       ready   Automatically convert POD to a README in any format for Dist::Zilla
+perlPackages.DistZillaPluginReadmeMarkdownFromPod          0.141140       ready   Automatically convert POD to a README.mkdn for Dist::Zilla
+postgresql12JitPackages.pg_repack                          1.4.8          ready   Reorganize tables in PostgreSQL databases with minimal locks
+postgresql12JitPackages.repmgr                             5.4.1          ready   Replication manager for PostgreSQL cluster
+postgresql13JitPackages.pg_repack                          1.4.8          ready   Reorganize tables in PostgreSQL databases with minimal locks
+postgresql13JitPackages.repmgr                             5.4.1          ready   Replication manager for PostgreSQL cluster
+postgresql14JitPackages.pg_repack                          1.4.8          ready   Reorganize tables in PostgreSQL databases with minimal locks
+postgresql14JitPackages.repmgr                             5.4.1          ready   Replication manager for PostgreSQL cluster
+postgresql15JitPackages.pg_repack                          1.4.8          ready   Reorganize tables in PostgreSQL databases with minimal locks
+postgresql15JitPackages.repmgr                             5.4.1          ready   Replication manager for PostgreSQL cluster
+
+25 packages found.
+Catalog updated: 2026-09-25T00:00:00Z
+Exit 0 | 0.14 seconds | completed
+
+CASE 08-info
+UTC 2026-09-25T22:08:58.962356+00:00
+$ pkg info ripgrep
+ripgrep 13.0.0
+  Description: A utility that combines the usability of The Silver Searcher with the raw speed of grep
+  Homepage: https://github.com/BurntSushi/ripgrep
+  License: MIT, Unlicense
+  Outputs: out
+  Available: yes
+  Broken: no
+
+1 package inspected.
+Exit 0 | 0.13 seconds | completed
+
+CASE 09-install-preview
+UTC 2026-09-25T22:08:59.119828+00:00
+$ pkg install ripgrep --dry-run
+Package  Version  Source
+ripgrep  13.0.0   Available output
+Estimated new disk use: unknown
+Free disk needed to start: 5.0 GiB
+Build estimates are approximate. A build can need more space.
+
+Preview: No changes were applied.
+Exit 0 | 31.84 seconds | completed
+
+CASE 10-install-ripgrep
+UTC 2026-09-25T22:09:40.304385+00:00
+$ pkg install ripgrep
+Checking package sources...
+Downloading ripgrep...
+Downloading ripgrep: 100% (2.1 MiB / 2.1 MiB)
+Package source ready.
+Saving the new package environment...
+Package environment saved.
+Activating packages...
+Packages are ready to use.
+Activated generation gen-0001
+Package  Version  Outputs
+ripgrep  13.0.0   out
+
+Generation: gen-0001
+Installed 1 package from the trusted cache. Ready to use.
+Exit 0 | 6.48 seconds | completed
+
+CASE 11-run-ripgrep
+UTC 2026-09-25T22:10:18.398381+00:00
+$ rg --version; printf "red\nblue\n" | rg blue
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+blue
+Exit 0 | 0.11 seconds | completed
+
+CASE 12-installed-details
+UTC 2026-09-25T22:10:18.529330+00:00
+$ pkg list --size --with-outputs
+Package  Version  Outputs  Size
+ripgrep  13.0.0   out      9.4 MiB
+
+Size is the primary output closure, including shared dependencies.
+
+Installed packages: 1.
+Exit 0 | 0.11 seconds | completed
+
+CASE 13-missing-info
+UTC 2026-09-25T22:10:18.656249+00:00
+$ pkg info package-that-does-not-exist-20260926
+error[RESOLVE_FAILED]: package was not found in the verified index
+hint: run `pkg search` or `pkg update` and try again
+Exit 64 | 0.1 seconds | expected_refusal_or_cancellation
+
+CASE 14-missing-remove
+UTC 2026-09-25T22:10:18.780051+00:00
+$ pkg remove package-that-does-not-exist-20260926
+error[RESOLVE_FAILED]: package 'package-that-does-not-exist-20260926' is not installed
+hint: run `pkg list` to see installed names and selectors
+Exit 64 | 0.1 seconds | expected_refusal_or_cancellation
+
+CASE 15-pin
+UTC 2026-09-25T22:10:18.897800+00:00
+$ pkg pin ripgrep
+Package  Version  Pinned
+ripgrep  13.0.0   yes
+
+Generation: gen-0002
+1 package pinned.
+Exit 0 | 0.26 seconds | completed
+
+CASE 16-pinned-list
+UTC 2026-09-25T22:10:19.173951+00:00
+$ pkg list
+Package  Version  Pinned
+ripgrep  13.0.0   yes
+
+Installed packages: 1.
+Exit 0 | 0.09 seconds | completed
+
+CASE 17-update
+UTC 2026-09-25T22:10:19.289564+00:00
+$ pkg update
+Catalog sequence: 54
+Catalog updated: no
+Channel metadata is current at sequence 54.
+Exit 0 | 2.39 seconds | completed
+
+CASE 18-outdated
+UTC 2026-09-25T22:10:21.707528+00:00
+$ pkg outdated
+0 packages outdated.
+Exit 0 | 0.1 seconds | completed
+
+CASE 19-upgrade-pinned
+UTC 2026-09-25T22:10:21.828478+00:00
+$ pkg upgrade --all --dry-run
+Kept pinned: ripgrep
+Plan: No eligible package changed.
+Preview: No changes were applied.
+Exit 0 | 0.1 seconds | completed
+
+CASE 20-unpin
+UTC 2026-09-25T22:10:21.948399+00:00
+$ pkg unpin ripgrep
+Package  Version
+ripgrep  13.0.0
+
+Generation: gen-0003
+1 package unpinned.
+Exit 0 | 0.23 seconds | completed
+
+CASE 21-upgrade-preview
+UTC 2026-09-25T22:10:22.199539+00:00
+$ pkg upgrade ripgrep --dry-run
+Package  Version  Source
+ripgrep  13.0.0   Available output
+Estimated new disk use: unknown
+Free disk needed to start: 5.0 GiB
+Build estimates are approximate. A build can need more space.
+
+Preview: No changes were applied.
+Exit 0 | 1.79 seconds | completed
+
+CASE 22-install-fzf
+UTC 2026-09-25T22:10:40.675983+00:00
+$ pkg install fzf
+Checking package sources...
+Downloading fzf...
+Downloading fzf: 100% (14.9 MiB / 14.9 MiB)
+Package source ready.
+Saving the new package environment...
+Package environment saved.
+Activating packages...
+Packages are ready to use.
+Activated generation gen-0004
+Package  Version  Outputs
+fzf      0.46.0   man, out
+
+Generation: gen-0004
+Installed 1 package from the trusted cache. Ready to use.
+Exit 0 | 16.72 seconds | completed
+
+CASE 23-remove-cancel
+UTC 2026-09-25T22:13:10.508770+00:00
+$ pkg remove fzf
+Package  Version
+fzf      0.46.0
+
+
+Remove these packages? [y/N]
+error[CANCELLED]: operation cancelled
+hint: no new changes were started
+Exit 75 | 10.16 seconds | expected_refusal_or_cancellation
+
+CASE 24-remove-approve
+UTC 2026-09-25T22:13:20.835301+00:00
+$ pkg uninstall fzf
+Package  Version
+fzf      0.46.0
+
+
+Remove these packages? [y/N] y
+Package  Version
+fzf      0.46.0
+
+Generation: gen-0005
+Packages removed. Your package environment is ready.
+Exit 0 | 8.93 seconds | completed
+
+CASE 25-rollback-approve
+UTC 2026-09-25T22:13:29.847783+00:00
+$ pkg rollback
+Package  Change
+fzf      Added 0.46.0
+
+From: gen-0005
+Target environment: gen-0004
+Packages: 2
+
+Restore this package environment? [y/N] y
+Package  Change
+fzf      Added 0.46.0
+
+From: gen-0005
+Target environment: gen-0004
+Packages: 2
+Generation: gen-0006
+Restored the package environment from gen-0004.
+Exit 0 | 16.83 seconds | completed
+
+CASE 26-restored-command
+UTC 2026-09-25T22:13:46.811737+00:00
+$ fzf --version; printf "apple\nbanana\n" | fzf --filter banana
+0.46.0 (0.46.0)
+banana
+Exit 0 | 0.15 seconds | completed
+
+CASE 27-history
+UTC 2026-09-25T22:13:46.987640+00:00
+$ pkg history
+Generation         Created               Operation  Changes
+gen-0006 (active)  2026-09-25T22:13:30Z  rollback   fzf: Added 0.46.0
+gen-0005           2026-09-25T22:13:21Z  remove     fzf: Removed 0.46.0
+gen-0004           2026-09-25T22:10:57Z  install    fzf: Added 0.46.0
+gen-0003           2026-09-25T22:10:22Z  unpin      ripgrep: 13.0.0; pinned: yes → no
+gen-0002           2026-09-25T22:10:19Z  pin        ripgrep: 13.0.0; pinned: no → yes
+gen-0001           2026-09-25T22:09:46Z  install    Initial environment: ripgrep 13.0.0
+
+6 generations retained.
+Exit 0 | 0.11 seconds | completed
+
+CASE 28-history-detail
+UTC 2026-09-25T22:13:47.119283+00:00
+$ pkg history gen-0004
+Package  Version
+ripgrep  13.0.0
+fzf      0.46.0
+
+Created: 2026-09-25T22:10:57Z
+Operation: install
+Generation: gen-0004
+2 packages in gen-0004.
+Exit 0 | 0.11 seconds | completed
+
+CASE 29-history-diff
+UTC 2026-09-25T22:13:47.249454+00:00
+$ pkg history --diff gen-0004 gen-0005
+Package  Change   Before  After
+fzf      removed  0.46.0  -
+
+1 generation change.
+Exit 0 | 0.11 seconds | completed
+
+CASE 30-repair-verify
+UTC 2026-09-25T22:13:47.382570+00:00
+$ pkg repair --verify-only
+Damaged paths: 0
+Generation: gen-0006
+The generation is clean.
+Exit 0 | 8.46 seconds | completed
+
+CASE 31-repair-preview
+UTC 2026-09-25T22:13:55.861499+00:00
+$ pkg repair --dry-run
+Damaged paths: 0
+Generation: gen-0006
+Preview: No changes were applied.
+Exit 0 | 7.36 seconds | completed
+
+CASE 32-gc-preview
+UTC 2026-09-25T22:14:03.245631+00:00
+$ pkg gc --dry-run
+Estimated space to free: 0 B
+Preview: No changes were applied.
+Exit 0 | 0.11 seconds | completed
+
+CASE 33-active-prune-refusal
+UTC 2026-09-25T22:14:03.373327+00:00
+$ pkg history --delete gen-0006 --yes
+error[RESOLVE_FAILED]: the active generation cannot be deleted
+hint: roll back or activate another generation first
+Exit 64 | 0.12 seconds | expected_refusal_or_cancellation
+
+CASE 34-json-list
+UTC 2026-09-25T22:14:03.509124+00:00
+$ pkg list --json
+{"command":"list","entries":[{"name":"fzf","pinned":false,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"ripgrep","pinned":false,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+Exit 0 | 0.09 seconds | completed
+
+CASE 35-jsonl-list
+UTC 2026-09-25T22:14:03.623298+00:00
+$ pkg list --jsonl
+{"name":"fzf","pinned":false,"schemaVersion":1,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","type":"installed_package","version":"0.46.0"}
+{"name":"ripgrep","pinned":false,"schemaVersion":1,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","type":"installed_package","version":"13.0.0"}
+{"command":"list","entries":[{"name":"fzf","pinned":false,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"ripgrep","pinned":false,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1,"type":"result"}
+Exit 0 | 0.1 seconds | completed
+
+CASE 36-quiet-list
+UTC 2026-09-25T22:14:03.742940+00:00
+$ pkg list --quiet
+Package  Version
+fzf      0.46.0
+ripgrep  13.0.0
+
+Installed packages: 2.
+Exit 0 | 0.09 seconds | completed
+
+CASE 37-name-only
+UTC 2026-09-25T22:14:03.856547+00:00
+$ pkg list --name-only
+fzf
+ripgrep
+Exit 0 | 0.09 seconds | completed
+
+CASE 38-narrow-output
+UTC 2026-09-25T22:14:03.970281+00:00
+$ stty cols 40 rows 24; pkg list --size --with-outputs
+Package  Version  Outputs   Size
+fzf      0.46.0   man, out  95.0 MiB
+ripgrep  13.0.0   out       9.4 MiB
+
+Size is the primary output closure, including shared dependencies.
+
+Installed packages: 2.
+Exit 0 | 0.1 seconds | completed
+
+CASE 39-completion
+UTC 2026-09-25T22:14:04.090244+00:00
+$ pkg completion zsh > "$HOME/_pkg"; /bin/zsh -n "$HOME/_pkg"; pkg completion bash > "$HOME/pkg.bash"; /bin/bash -n "$HOME/pkg.bash"
+
+Exit 0 | 0.09 seconds | completed
+
+CASE 40-public-flake
+UTC 2026-09-25T22:15:52.932372+00:00
+$ pkg install "github:casey/just#default"
+Checking package sources...
+Package source ready.
+Checking build dependencies and cached downloads...
+Build plan ready.
+Local build required.
+
+  Package              Version        Outputs
+  just                 1.58.0         out
+
+Target: macos arm64
+Isolation: sandbox
+Time estimate: unknown
+New disk estimate: unknown
+Free disk needed to start: 8.9 GiB
+The build can need more disk space.
+
+The build is sandboxed. Estimates are approximate.
+
+Build the missing packages locally? [y/N]
+error[CANCELLED]: operation cancelled
+hint: no new changes were started
+Exit 75 | 93.35 seconds | expected_refusal_or_cancellation
+
+CASE 41-build-cancel-state
+UTC 2026-09-25T22:17:26.490585+00:00
+$ pkg list; command -v just || test $? -eq 1
+Package  Version
+fzf      0.46.0
+ripgrep  13.0.0
+
+Installed packages: 2.
+Exit 0 | 0.16 seconds | completed
+
+CASE 42-build-approve
+UTC 2026-09-25T22:17:26.719231+00:00
+$ pkg install "github:casey/just#default"
+Checking package sources...
+Package source ready.
+Checking build dependencies and cached downloads...
+Build plan ready.
+Local build required.
+
+  Package              Version        Outputs
+  just                 1.58.0         out
+
+Target: macos arm64
+Isolation: sandbox
+Time estimate: unknown
+New disk estimate: unknown
+Free disk needed to start: 8.9 GiB
+The build can need more disk space.
+
+The build is sandboxed. Estimates are approximate.
+
+Build the missing packages locally? [y/N] y
+Preparing the approved build...
+Building just 1.58.0...
+Building: 1%
+Building: 10%
+Building: 20%
+Building: 30%
+Building: 40%
+Building: 50%
+Building: 60%
+Building: 71%
+Building: 80%
+Building: 91%
+Building: 100%
+Local build complete.
+Saving the new package environment...
+Package environment saved.
+Activating packages...
+Packages are ready to use.
+Activated generation gen-0007
+Package  Version  Outputs
+just     1.58.0   out
+
+Generation: gen-0007
+Installed 1 package using a local build. Ready to use.
+Exit 0 | 191.53 seconds | completed
+
+CASE 43-run-just
+UTC 2026-09-25T22:21:33.556837+00:00
+$ just --version; printf 'hello:\n    @echo onboarded\n' > "$HOME/justfile"; just --justfile "$HOME/justfile" hello
+just 1.58.0
+onboarded
+Exit 0 | 0.13 seconds | completed
+
+CASE 44-public-source-list
+UTC 2026-09-25T22:21:33.711884+00:00
+$ pkg list --size --with-outputs
+Package  Version  Outputs   Size
+fzf      0.46.0   man, out  95.0 MiB
+just     1.58.0   out       48.5 MiB
+ripgrep  13.0.0   out       9.4 MiB
+
+just: github:casey/just#default
+Size is the primary output closure, including shared dependencies.
+
+Installed packages: 3.
+Exit 0 | 0.14 seconds | completed
+
+CASE 45-public-short-pin
+UTC 2026-09-25T22:21:33.869477+00:00
+$ pkg pin just
+Package  Version  Pinned
+just     1.58.0   yes
+just: github:casey/just#default
+
+Generation: gen-0008
+1 package pinned.
+Exit 0 | 0.29 seconds | completed
+
+CASE 46-public-outdated
+UTC 2026-09-25T22:21:34.182657+00:00
+$ pkg outdated
+0 packages outdated. 1 public flake source not checked. Use pkg upgrade to check and install source updates.
+Exit 0 | 0.13 seconds | completed
+
+CASE 47-public-short-unpin
+UTC 2026-09-25T22:21:34.328892+00:00
+$ pkg unpin just
+Package  Version
+just     1.58.0
+just: github:casey/just#default
+
+Generation: gen-0009
+1 package unpinned.
+Exit 0 | 0.27 seconds | completed
+
+CASE 48-catalog-upgrade
+UTC 2026-09-25T22:21:34.619229+00:00
+$ pkg upgrade ripgrep --yes
+Checking package sources...
+Package source ready.
+No eligible package changed.
+Exit 0 | 4.15 seconds | completed
+
+CASE 49-usage-error
+UTC 2026-09-25T22:21:38.792658+00:00
+$ pkg install
+error: the following required arguments were not provided:
+  <PACKAGES>...
+
+Usage: pkg install <PACKAGES>...
+
+For more information, try '--help'.
+Exit 2 | 0.08 seconds | expected_refusal_or_cancellation
+
+CASE 50-local-source-refusal
+UTC 2026-09-25T22:21:38.897868+00:00
+$ pkg install "path:/tmp" --dry-run
+error[USAGE]: a package selector or output name is invalid
+hint: use a package name or a quoted public GitHub flake reference; output names use letters, numbers, dots, dashes, and underscores
+Exit 2 | 0.1 seconds | expected_refusal_or_cancellation
+
+CASE 51-noninteractive-remove
+UTC 2026-09-25T22:21:39.013535+00:00
+$ pkg remove ripgrep </dev/null
+error[ACQUIRE_NEEDS_APPROVAL]: this operation requires confirmation
+hint: run interactively or pass `--yes` after reviewing a dry run
+Exit 68 | 0.14 seconds | expected_refusal_or_cancellation
+
+CASE 52-machine-error
+UTC 2026-09-25T22:21:39.170019+00:00
+$ pkg remove package-that-does-not-exist-20260926 --json
+{"schemaVersion":1,"ok":false,"command":"remove","error":{"symbol":"RESOLVE_FAILED","code":64,"message":"package 'package-that-does-not-exist-20260926' is not installed","hint":"run `pkg list` to see installed names and selectors"}}
+Exit 64 | 0.1 seconds | expected_refusal_or_cancellation
+
+CASE 53-color-narrow
+UTC 2026-09-25T22:21:39.287597+00:00
+$ export TERM=xterm-256color; unset CI NO_COLOR; stty cols 40 rows 24; pkg list --size --with-outputs
+pkg · list
+
+  fzf
+  Version: 0.46.0
+  Outputs: man, out
+  Size: 95.0 MiB
+
+  just
+  Version: 1.58.0
+  Outputs: out
+  Size: 48.5 MiB
+
+  ripgrep
+  Version: 13.0.0
+  Outputs: out
+  Size: 9.4 MiB
+
+just: github:casey/just#default
+Size is the primary output closure,
+including shared dependencies.
+
+✓ Installed packages: 3.
+Exit 0 | 0.11 seconds | completed
+
+CASE 54-repair-actual
+UTC 2026-09-25T22:21:39.413102+00:00
+$ pkg repair --yes
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+Damaged paths: 0
+Generation: gen-0009
+The generation is clean.
+Exit 0 | 8.6 seconds | completed
+
+CASE 55-prune-preview
+UTC 2026-09-25T22:21:48.031776+00:00
+$ pkg history --delete gen-0001 --dry-run
+Generation: gen-0001
+Preview: No changes were applied.
+Exit 0 | 0.1 seconds | completed
+
+CASE 56-prune-old
+UTC 2026-09-25T22:21:48.149040+00:00
+$ pkg history --delete gen-0001 --yes
+Generation: gen-0001
+Generation gen-0001 pruned.
+Exit 0 | 0.15 seconds | completed
+
+CASE 57-gc-retain-preview
+UTC 2026-09-25T22:21:48.323782+00:00
+$ pkg gc --keep-generations 3 --dry-run
+Estimated space to free: 0 B
+Preview: No changes were applied.
+Exit 0 | 0.09 seconds | completed
+
+CASE 58-gc-retain
+UTC 2026-09-25T22:21:48.438648+00:00
+$ pkg gc --keep-generations 3 --yes
+Collected store paths: 2282
+Space freed: 0 B
+Pruned 0 generations; collected 2282 store paths.
+Exit 0 | 10.73 seconds | completed
+
+CASE 59-after-gc
+UTC 2026-09-25T22:21:59.203970+00:00
+$ pkg history; pkg list; fzf --version; rg --version; just --version
+Generation         Created               Operation  Changes
+gen-0009 (active)  2026-09-25T22:21:34Z  unpin      just: 1.58.0; pinned: yes → no
+gen-0008           2026-09-25T22:21:34Z  pin        just: 1.58.0; pinned: no → yes
+gen-0007           2026-09-25T22:20:38Z  install    just: Added 1.58.0
+gen-0006           2026-09-25T22:13:30Z  rollback   fzf: Added 0.46.0
+gen-0005           2026-09-25T22:13:21Z  remove     fzf: Removed 0.46.0
+gen-0004           2026-09-25T22:10:57Z  install    fzf: Added 0.46.0
+gen-0003           2026-09-25T22:10:22Z  unpin      ripgrep: 13.0.0; pinned: yes → no
+gen-0002           2026-09-25T22:10:19Z  pin        Previous generation not retained. Saved: ripgrep 13.0.0
+
+8 generations retained.
+Package  Version
+fzf      0.46.0
+just     1.58.0
+ripgrep  13.0.0
+
+just: github:casey/just#default
+Installed packages: 3.
+0.46.0 (0.46.0)
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+just 1.58.0
+Exit 0 | 0.19 seconds | completed
+
+CASE 60-support
+UTC 2026-09-25T22:21:59.419134+00:00
+$ pkg doctor --support
+{
+  "schemaVersion": 1,
+  "type": "support_bundle",
+  "cliVersion": "0.1.0-alpha.54",
+  "platform": {
+    "os": "macOS",
+    "architecture": "arm64"
+  },
+  "channel": {
+    "policyVersion": null,
+    "sequence": null,
+    "expiresAt": null,
+    "verification": "pass"
+  },
+  "managedRuntime": {
+    "version": null,
+    "verification": "pass"
+  },
+  "index": {
+    "verification": "deferred"
+  },
+  "doctor": [
+    {
+      "id": "host.system",
+      "status": "pass"
+    },
+    {
+      "id": "shell.path",
+      "status": "pass"
+    },
+    {
+      "id": "shell.raw_nix",
+      "status": "warning"
+    },
+    {
+      "id": "state.permissions",
+      "status": "pass"
+    },
+    {
+      "id": "nix.unmanaged",
+      "status": "pass"
+    },
+    {
+      "id": "runtime.managed",
+      "status": "pass"
+    },
+    {
+      "id": "channel.signed",
+      "status": "pass"
+    }
+  ],
+  "operations": [
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "failure"
+    },
+    {
+      "phase": "command",
+      "outcome": "failure"
+    },
+    {
+      "phase": "command",
+      "outcome": "failure"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    },
+    {
+      "phase": "command",
+      "outcome": "failure"
+    },
+    {
+      "phase": "command",
+      "outcome": "success"
+    }
+  ],
+  "state": {
+    "exists": true,
+    "private": true,
+    "mode": 448,
+    "bytes": 103378,
+    "scanComplete": true
+  },
+  "privacy": {
+    "previewOnly": true,
+    "uploaded": false,
+    "packageNamesIncluded": false
+  }
+}
+Exit 0 | 0.86 seconds | completed
+
+CASE 61-repeat-setup
+UTC 2026-09-25T22:22:20.658661+00:00
+$ /bin/sh "$HOME/pkg-install.sh"
+pkg 0.1.0-alpha.54 · macOS Apple silicon
+
+  Downloading pkg-0.1.0-alpha.54-preview.pkg...
+  [ok] Verified pkg-0.1.0-alpha.54-preview.pkg
+  Downloading install-preview.sh...
+  [ok] Verified install-preview.sh
+  Install log: /var/folders/9m/b94f0mqn0d327g6_m6p0x0br0000gn/T//pkg-install-log.wTDW6BPU
+  Administrator access is needed to set up pkg.
+Checking the downloaded pkg installer...
+Install log: /var/folders/9m/b94f0mqn0d327g6_m6p0x0br0000gn/T//pkg-install-log.1kmeVH
+Administrator access is needed to set up pkg.
+Allow the macOS system configuration prompt if it appears.
+Password:
+pkg setup — 0.1.0-alpha.54
+Downloading and verifying the release. This can take a few minutes...
+Checking this Mac...
+Preparing pkg files and folders...
+Preparing the package and build engine...
+Installing pkg commands and services...
+Verifying the installed files...
+Checking the package engine...
+Saving the installation record...
+pkg is installed.
+pkg setup completed.
+
+Next steps:
+  eval "$(/usr/local/bin/pkg shellenv)"
+  pkg doctor
+  pkg install fzf
+
+For future zsh sessions, add eval "$(/usr/local/bin/pkg shellenv)" to ~/.zshrc.
+For Bash, add the same line to your shell startup file.
+  Checking the installation...
+[ok] host.system: macOS arm64
+[!] shell.path: the active generation bin directory appears more than once on PATH
+    hint: remove duplicate pkg shell snippets
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+  [ok] pkg is ready.
+
+Open a new terminal, or run:
+  eval "$(/usr/local/bin/pkg shellenv)"
+
+Start here:
+  pkg search ripgrep
+  pkg install ripgrep
+  pkg list
+
+Run this same installer command when you want to update pkg.
+Exit 0 | 41.23 seconds | completed
+
+CASE 62-repeat-state
+UTC 2026-09-25T22:23:30.869842+00:00
+$ pkg doctor; pkg list; just --version; fzf --version; rg --version
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+Package  Version
+fzf      0.46.0
+just     1.58.0
+ripgrep  13.0.0
+
+just: github:casey/just#default
+Installed packages: 3.
+just 1.58.0
+0.46.0 (0.46.0)
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+Exit 0 | 0.94 seconds | completed
+
+CASE 63-gc-policy-preview
+UTC 2026-09-25T22:23:31.837232+00:00
+$ pkg gc --keep-generations 3 --max-age-days 0 --dry-run
+Generations to delete: gen-0002, gen-0003, gen-0004, gen-0005
+Estimated space to free: 0 B
+Preview: No changes were applied.
+Exit 0 | 0.14 seconds | completed
+
+CASE 64-gc-policy-apply
+UTC 2026-09-25T22:23:32.006732+00:00
+$ pkg gc --keep-generations 3 --max-age-days 0 --yes
+Deleted generations: gen-0002, gen-0003, gen-0004, gen-0005
+Collected store paths: 0
+Space freed: 0 B
+Pruned 4 generations; collected 0 store paths.
+Exit 0 | 1.09 seconds | completed
+
+CASE 65-retained-history
+UTC 2026-09-25T22:23:33.119906+00:00
+$ pkg history
+Generation         Created               Operation  Changes
+gen-0009 (active)  2026-09-25T22:21:34Z  unpin      just: 1.58.0; pinned: yes → no
+gen-0008           2026-09-25T22:21:34Z  pin        just: 1.58.0; pinned: no → yes
+gen-0007           2026-09-25T22:20:38Z  install    just: Added 1.58.0
+gen-0006           2026-09-25T22:13:30Z  rollback   Previous generation not retained. Saved: ripgrep 13.0.0, fzf 0.46.0
+
+4 generations retained.
+Exit 0 | 0.15 seconds | completed
+
+CASE 66-json-doctor
+UTC 2026-09-25T22:23:33.290018+00:00
+$ pkg doctor --json
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+Exit 0 | 0.58 seconds | completed
+
+CASE 67-system-preview
+UTC 2026-09-25T22:23:33.896117+00:00
+$ sudo -n pkg system uninstall --dry-run
+Scope: pkg and its managed Nix installation will be removed.
+Preview: No changes were applied.
+Exit 0 | 6.85 seconds | completed
+
+CASE 68-json-system-refusal
+UTC 2026-09-25T22:23:40.803190+00:00
+$ sudo -n pkg system uninstall --json --yes
+{"schemaVersion":1,"ok":false,"command":"system uninstall","error":{"symbol":"CONFIG","code":78,"message":"live uninstall requires plain output","hint":"remove --json or --jsonl, or use --dry-run"}}
+Exit 78 | 0.12 seconds | expected_refusal_or_cancellation
+
+CASE 69-before-reboot
+UTC 2026-09-25T22:23:53.902086+00:00
+$ pkg list --json; sysctl -n kern.bootsessionuuid; shasum -a 256 /usr/local/bin/pkg; sudo -n shasum -a 256 /nix/receipt.json /nix/nix-installer
+{"command":"list","entries":[{"name":"fzf","pinned":false,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"ripgrep","pinned":false,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+4563CD11-4BB0-4125-BAA8-32446DEF64C2
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  /usr/local/bin/pkg
+d7c9336a64c6411395188e787f7a11327d4d3c40060ac4d99115c1d3fae96a4d  /nix/receipt.json
+90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b  /nix/nix-installer
+Exit 0 | 0.33 seconds | completed
+
+CASE 70-system-json-preview
+UTC 2026-09-25T22:24:08.397255+00:00
+$ sudo -n pkg system uninstall --dry-run --json
+{"actions":28,"command":"system uninstall","ok":true,"schemaVersion":1,"status":"planned"}
+Exit 0 | 4.91 seconds | completed
+
+CASE 71-reboot
+UTC 2026-09-25T22:24:21.083020+00:00
+$ sudo -n shutdown -r now
+Shutdown NOW!
+
+*** FINAL System shutdown message from admin@Manageds-Virtual-Machine.local **
+*
+
+System going down IMMEDIATELY
+
+
+
+System shutdown time has arrived
+Exit 255 | 0.69 seconds | expected_reboot_disconnect
+
+CASE 72-after-reboot-doctor
+UTC 2026-09-25T22:24:55.266021+00:00
+$ pkg doctor
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[x] nix.unmanaged: the host could not be proven free of unmanaged Nix (18 signals)
+    hint: do not remove anything; rerun the full read-only scan with the privileged installer/helper
+[x] runtime.managed: the private broker health check did not complete
+    hint: run `pkg doctor` again; restart the managed runtime if the failure persists
+[x] channel.signed: the private broker health check did not complete
+    hint: run `pkg doctor` again; restart the managed runtime if the failure persists
+overall: Nix ownership unknown
+Exit 74 | 0.41 seconds | known_alpha54_startup_failure
+
+CASE 73-after-reboot-state
+UTC 2026-09-25T22:24:55.764496+00:00
+$ pkg list --json; sysctl -n kern.bootsessionuuid; shasum -a 256 /usr/local/bin/pkg; sudo -n shasum -a 256 /nix/receipt.json /nix/nix-installer; fzf --version; rg --version; just --version
+{"command":"list","entries":[{"name":"fzf","pinned":false,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","version":"1.58.0"},{"name":"ripgrep","pinned":false,"selector":"ripgrep","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"13.0.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}
+686F2539-60CA-4A8A-94A7-FD866143C55F
+f5ed9404307f8c448c00e7e5e5ad80dd19a490ab3ac1b0e7e77787e4d8b3925d  /usr/local/bin/pkg
+d7c9336a64c6411395188e787f7a11327d4d3c40060ac4d99115c1d3fae96a4d  /nix/receipt.json
+90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b  /nix/nix-installer
+0.46.0 (0.46.0)
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+just 1.58.0
+Exit 0 | 0.61 seconds | completed
+
+CASE 74-after-reboot-retry
+UTC 2026-09-25T22:25:11.480178+00:00
+$ pkg doctor
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+Exit 0 | 1.12 seconds | completed
+
+CASE 75-system-remove
+UTC 2026-09-25T22:25:31.108314+00:00
+$ sudo -n pkg system uninstall
+Uninstall pkg and its managed Nix installation? [y/N] y
+ INFO nix-installer v3.22.1
+[NOTE] Telemetry is disabled, which makes it harder to build great software. We don't collect much, so please turn it back on: https://dtr.mn/telemetry
+ INFO nix-installer v3.22.1
+[NOTE] Telemetry is disabled, which makes it harder to build great software. We don't collect much, so please turn it back on: https://dtr.mn/telemetry
+ INFO Revert: Remove directory `/nix/temp-install-dir`
+ INFO Revert: Configure the Determinate Nix daemon
+ INFO Revert: Configuring zsh to support using Nix in non-interactive shells
+ INFO Revert: Configure Nix
+ INFO Revert: Configure Time Machine exclusions
+ INFO Revert: Create build users (UID 351-382) and group (GID 350)
+ INFO Revert: Provision Nix
+ INFO Revert: Create an encrypted APFS volume `Nix Store` for Nix on `disk2` and add it to `/etc/fstab` mounting on `/nix`
+ INFO Revert: Install Determinate Nixd
+Nix was uninstalled successfully!
+Exit 0 | 57.07 seconds | completed
+
+CASE 76-removal-absence
+UTC 2026-09-25T22:26:40.635963+00:00
+$ test ! -e /usr/local/bin/pkg && sudo -n test ! -e /opt/pkg && test ! -e /nix/receipt.json && test ! -e /nix/nix-installer && echo PRODUCT_AND_VENDOR_RECEIPT_ABSENT; ls -ld /nix; cat ~/.zshrc
+/Users/admin/.zshrc:1: command not found: pkg
+PRODUCT_AND_VENDOR_RECEIPT_ABSENT
+drwxr-xr-x  2 root  wheel  64 Sep 25 22:24 /nix
+eval "$(pkg shellenv)"
+Exit 0 | 0.23 seconds | completed
+
+CASE 77-reinstall
+UTC 2026-09-25T22:26:40.962766+00:00
+$ /bin/sh "$HOME/pkg-install.sh"
+/Users/admin/.zshrc:1: command not found: pkg
+
+pkg 0.1.0-alpha.54 · macOS Apple silicon
+
+  Downloading pkg-0.1.0-alpha.54-preview.pkg...
+  [ok] Verified pkg-0.1.0-alpha.54-preview.pkg
+  Downloading install-preview.sh...
+  [ok] Verified install-preview.sh
+  Install log: /var/folders/9m/b94f0mqn0d327g6_m6p0x0br0000gn/T//pkg-install-log.v7Ih1SpT
+  Administrator access is needed to set up pkg.
+Checking the downloaded pkg installer...
+Install log: /var/folders/9m/b94f0mqn0d327g6_m6p0x0br0000gn/T//pkg-install-log.koipqE
+Administrator access is needed to set up pkg.
+Allow the macOS system configuration prompt if it appears.
+Password:
+pkg setup — 0.1.0-alpha.54
+Downloading and verifying the release. This can take a few minutes...
+Checking this Mac...
+Preparing pkg files and folders...
+Preparing the package and build engine...
+Installing Determinate Nix. This can take a few minutes. Please keep this window open.
+Determinate Nix installation completed.
+Installing pkg commands and services...
+Verifying the installed files...
+Checking the package engine...
+Saving the installation record...
+pkg is installed.
+pkg setup completed.
+
+Next steps:
+  eval "$(/usr/local/bin/pkg shellenv)"
+  pkg doctor
+  pkg install fzf
+
+For future zsh sessions, add eval "$(/usr/local/bin/pkg shellenv)" to ~/.zshrc.
+For Bash, add the same line to your shell startup file.
+  Checking the installation...
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[ok] shell.raw_nix: raw Nix commands are not visible on PATH
+[ok] state.permissions: the per-user state root has not been created yet
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+  [ok] pkg is ready.
+
+Open a new terminal, or run:
+  eval "$(/usr/local/bin/pkg shellenv)"
+
+Start here:
+  pkg search ripgrep
+  pkg install ripgrep
+  pkg list
+
+Run this same installer command when you want to update pkg.
+Exit 0 | 116.7 seconds | completed
+
+CASE 78-reinstalled-health
+UTC 2026-09-25T22:30:19.301801+00:00
+$ pkg doctor; pkg list
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root has not been created yet
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+No packages are installed. Use pkg install <package> to get started.
+Exit 0 | 1.05 seconds | completed
+
+CASE 79-verify-only
+UTC 2026-09-25T22:30:20.372210+00:00
+$  /bin/sh "$HOME/pkg-install.sh" --verify-only
+pkg 0.1.0-alpha.54 · macOS Apple silicon
+
+  Downloading pkg-0.1.0-alpha.54-preview.pkg...
+  [ok] Verified pkg-0.1.0-alpha.54-preview.pkg
+  Downloading install-preview.sh...
+  [ok] Verified install-preview.sh
+  [ok] Downloads verified. No changes were made.
+Exit 0 | 1.43 seconds | completed
+
+CASE 80-json-install
+UTC 2026-09-25T22:30:21.826160+00:00
+$ pkg install fzf --json
+{"added":[{"outputs":["man","out"],"package":"fzf","selector":"fzf","version":"0.46.0"}],"command":"install","generation":{"id":"gen-0001","parent":null},"ok":true,"opId":"op_63b86b841a82966a907a3364ed968de2","schemaVersion":1}
+Exit 0 | 37.45 seconds | completed
+
+CASE 81-reinstalled-use
+UTC 2026-09-25T22:30:59.306434+00:00
+$ set -e; fzf --version; printf "apple\nbanana\n" | fzf --filter banana; eval "$(pkg shellenv)"; eval "$(pkg shellenv)"; pkg doctor; /bin/bash --noprofile --norc -c 'eval "$(/usr/local/bin/pkg shellenv)"; fzf --version'
+0.46.0 (0.46.0)
+banana
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+0.46.0 (0.46.0)
+Exit 0 | 0.89 seconds | completed

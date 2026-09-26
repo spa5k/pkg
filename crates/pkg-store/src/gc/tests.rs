@@ -72,6 +72,15 @@ fn root_removal_authority_requires_root_last_state_and_refuses_active() {
 
     delete_user_generation(layout.state_root(), layout.owner_uid(), retired.as_str()).unwrap();
     assert_eq!(authorize_generation_root_removal(&layout, &retired), Ok(()));
+    let repair_backup = layout.state_root().join("activations/gen-0001.repair");
+    fs::create_dir(&repair_backup).unwrap();
+    assert_eq!(
+        authorize_generation_root_removal(&layout, &retired),
+        Err(GcError::PruneNotAuthorized)
+    );
+    delete_user_generation(layout.state_root(), layout.owner_uid(), retired.as_str()).unwrap();
+    assert!(!repair_backup.exists());
+    assert_eq!(authorize_generation_root_removal(&layout, &retired), Ok(()));
 }
 
 #[test]

@@ -1,0 +1,128 @@
+{
+  "source_base": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "patch_scope": "cumulative runtime changes BUG-01 through BUG-03",
+  "source_patch_sha256": "dfe48cf4ad4a8611b6081c3cb4940888bfec84289a465ed342fb0f9c5c73be30",
+  "final_cli_sha256": "2cd12dabae35f521c0fc34e2f3b94721d0b16fe01144fe4f5d257b85da9776bc",
+  "cases": [
+    {
+      "case": "001",
+      "command": "pkg list --json && rg --version && pkg doctor --json && sw_vers",
+      "started": "2026-09-26T09:37:13.717367+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 1.77,
+      "exit_code": 0,
+      "output_sha256": "729cecba139a7cc01dc605e45255acb46a4dabc8e4b891220afb7cdbddf8219f",
+      "cli_build": "development"
+    },
+    {
+      "case": "002",
+      "command": "pkg_audit_state=\"$HOME/Library/Application Support/pkg\"; test -L \"$pkg_audit_state/current/bin/rg\" && readlink \"$pkg_audit_state/current/bin/rg\" && rm \"$pkg_audit_state/current/bin/rg\"; command -v rg",
+      "started": "2026-09-26T09:38:11.885267+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.14,
+      "exit_code": 1,
+      "output_sha256": "6854711de9ca481dc6d81f5141e0993d04e33745044c997dbb90d8349cb898e4",
+      "cli_build": "development"
+    },
+    {
+      "case": "003",
+      "command": "/tmp/pkg-bug03-fixed doctor --json",
+      "started": "2026-09-26T09:38:12.108122+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 1.33,
+      "exit_code": 78,
+      "output_sha256": "d3317eabb56f0d3c5a0145933e62e55465d7479c550940d4329e2713060c17f4",
+      "cli_build": "development"
+    },
+    {
+      "case": "004",
+      "command": "/tmp/pkg-bug03-fixed repair --verify-only --json",
+      "started": "2026-09-26T09:38:13.273232+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.57,
+      "exit_code": 70,
+      "output_sha256": "3fee7481cd94da76890919b0393fef46b07528548e43d30e150ea2c7850e47e2",
+      "cli_build": "development"
+    },
+    {
+      "case": "005",
+      "command": "/tmp/pkg-bug03-fixed repair --yes --json && rg --version && /tmp/pkg-bug03-fixed doctor --json && /tmp/pkg-bug03-fixed repair --verify-only --json",
+      "started": "2026-09-26T09:38:31.946420+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 12.05,
+      "exit_code": 0,
+      "output_sha256": "abb9caf0726937e1be7c33561570633e65ca2a620536bd76d5851a02231426d9",
+      "cli_build": "development"
+    },
+    {
+      "case": "006",
+      "command": "pkg_audit_state=\"$HOME/Library/Application Support/pkg\"; test -L \"$pkg_audit_state/activations/gen-0017/bin/rg\" && rm \"$pkg_audit_state/activations/gen-0017/bin/rg\" && /tmp/pkg-bug03-fixed repair gen-0017 --verify-only --json",
+      "started": "2026-09-26T09:39:37.705346+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 1.06,
+      "exit_code": 70,
+      "output_sha256": "3fee7481cd94da76890919b0393fef46b07528548e43d30e150ea2c7850e47e2",
+      "cli_build": "development"
+    },
+    {
+      "case": "007",
+      "command": "/tmp/pkg-bug03-fixed repair gen-0017 --yes --json && /tmp/pkg-bug03-fixed repair gen-0017 --verify-only --json && readlink \"$HOME/Library/Application Support/pkg/current\" && rg --version",
+      "started": "2026-09-26T09:40:21.842452+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 11.38,
+      "exit_code": 0,
+      "output_sha256": "a8163759dc5dc49354c6489a91086987c8d493b8f8e0a35642e85436059e1b4b",
+      "cli_build": "development"
+    },
+    {
+      "case": "case008",
+      "command": "test -L \"$HOME/Library/Application Support/pkg/current/bin/rg\" && rm \"$HOME/Library/Application Support/pkg/current/bin/rg\" && /tmp/pkg-bug03-fixed doctor --json",
+      "started": "2026-09-26T09:45:52.765644+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 1.76,
+      "exit_code": 78,
+      "output_sha256": "d3317eabb56f0d3c5a0145933e62e55465d7479c550940d4329e2713060c17f4",
+      "cli_build": "final"
+    },
+    {
+      "case": "case009",
+      "command": "/tmp/pkg-bug03-fixed repair --verify-only --json",
+      "started": "2026-09-26T09:46:16.358286+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.66,
+      "exit_code": 70,
+      "output_sha256": "3fee7481cd94da76890919b0393fef46b07528548e43d30e150ea2c7850e47e2",
+      "cli_build": "final"
+    },
+    {
+      "case": "case010",
+      "command": "/tmp/pkg-bug03-fixed repair --yes --json && rg --version && /tmp/pkg-bug03-fixed doctor --json && /tmp/pkg-bug03-fixed repair --verify-only --json",
+      "started": "2026-09-26T09:46:25.247706+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 11.34,
+      "exit_code": 0,
+      "output_sha256": "abb9caf0726937e1be7c33561570633e65ca2a620536bd76d5851a02231426d9",
+      "cli_build": "final"
+    },
+    {
+      "case": "case011",
+      "command": "test -d \"$HOME/Library/Application Support/pkg/activations/gen-0018\" && mv \"$HOME/Library/Application Support/pkg/activations/gen-0018\" \"$HOME/Library/Application Support/pkg/activations/gen-0018.repair\" && /tmp/pkg-bug03-fixed repair --yes --json && test ! -e \"$HOME/Library/Application Support/pkg/activations/gen-0018.repair\" && readlink \"$HOME/Library/Application Support/pkg/current\" && rg --version && /tmp/pkg-bug03-fixed doctor --json && shasum -a 256 /tmp/pkg-bug03-fixed /usr/local/bin/pkg /usr/local/libexec/pkg-nix-broker /usr/local/libexec/pkg-root-helper",
+      "started": "2026-09-26T09:46:37.466785+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 6.78,
+      "exit_code": 1,
+      "output_sha256": "4cbb9d5a75030f8cc143e53925acb5c0f3bc23a4a57e3632814ddfccd35baab6",
+      "cli_build": "final"
+    },
+    {
+      "case": "case012",
+      "command": "sudo -n shasum -a 256 /opt/pkg/bin/pkg-nix-broker /opt/pkg/bin/pkg-root-helper && shasum -a 256 /usr/local/bin/pkg /tmp/pkg-bug03-fixed && /tmp/pkg-bug03-fixed list --json && readlink \"$HOME/Library/Application Support/pkg/current\"",
+      "started": "2026-09-26T09:47:18.961367+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 0.57,
+      "exit_code": 0,
+      "output_sha256": "0795f7201f2aa75da97fdc5d9ea42f52b640768c2b644f7716d84aeffc285f81",
+      "cli_build": "final"
+    }
+  ]
+}

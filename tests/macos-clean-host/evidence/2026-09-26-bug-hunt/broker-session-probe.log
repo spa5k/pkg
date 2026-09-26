@@ -1,0 +1,12 @@
+Reproducer runner output. Repository path normalized to <repo>.
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.27s
+Different UID disconnect: (Running, true); expected (Running, true)
+Same UID, separate connection disconnect: (Cancelled, false); expected (Running, true)
+
+thread 'main' (44550214) panicked at <repo>/tests/macos-clean-host/evidence/2026-09-26-bug-hunt/broker_session_probe.rs:29:5:
+assertion `left == right` failed: Closing a separate doctor connection must not cancel the build connection
+  left: (Cancelled, false)
+ right: (Running, true)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+Exit code: 101 (expected while BUG-01 is unfixed)

@@ -1,0 +1,42 @@
+CASE 001
+$ /tmp/pkg-bug03-fixed unpin ripgrep --json && /tmp/pkg-bug03-fixed remove hello just "github:casey/just#default" ripgrep --yes --json && /tmp/pkg-bug03-fixed list --json && /tmp/pkg-bug03-fixed repair --verify-only --json
+{"changed":["sel_125b090add36b9958bd9191344ac61b1_0"],"command":"unpin","generation":"gen-0019","ok":true,"packages":[{"name":"ripgrep","pinned":false,"selector":"ripgrep","version":"13.0.0"}],"schemaVersion":1,"unchanged":[]}
+{"command":"remove","generation":"gen-0020","ok":true,"orphanCheckRequested":false,"packages":[{"name":"ripgrep","pinned":false,"selector":"ripgrep","version":"13.0.0"},{"name":"hello","pinned":false,"selector":"hello","version":"2.12.1"},{"name":"just","pinned":false,"selector":"just","version":"1.25.2"},{"name":"just","pinned":false,"selector":"github:casey/just#default","version":"1.58.0"}],"removed":["sel_125b090add36b9958bd9191344ac61b1_0","sel_7db6fbf9a973f77ee5c082fa75fabf41_0","sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0","sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"],"schemaVersion":1}
+{"command":"list","entries":[],"nameOnly":false,"ok":true,"schemaVersion":1}
+{"schemaVersion":1,"ok":false,"command":"repair","error":{"symbol":"PERMISSION","code":77,"message":"the privileged repair helper refused the operation","hint":"run `pkg doctor` to inspect helper readiness"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 77
+
+CASE 002
+$ /tmp/pkg-bug04-fixed repair --verify-only --json && /tmp/pkg-bug04-fixed repair --yes --json && /tmp/pkg-bug04-fixed doctor --json && /tmp/pkg-bug04-fixed rollback --yes --json && rg --version && hello && /tmp/pkg-bug04-fixed repair --verify-only --json
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0020","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":true}
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0020","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":false}
+{"schemaVersion":1,"checks":[{"id":"host.system","status":"pass","detail":"macOS arm64","hint":null},{"id":"shell.path","status":"pass","detail":"the active generation bin directory is on PATH","hint":null},{"id":"shell.raw_nix","status":"warning","detail":"a raw Nix command is visible on PATH","hint":"this is a UX warning only; pkg does not trust commands found on PATH"},{"id":"state.permissions","status":"pass","detail":"the per-user state root is a private directory","hint":null},{"id":"state.activation","status":"pass","detail":"the active package links match the committed generation; store contents are not checked","hint":null},{"id":"nix.unmanaged","status":"pass","detail":"no unmanaged Nix signals were detected","hint":null},{"id":"runtime.managed","status":"pass","detail":"managed Nix 2.35.2 answered through the private broker","hint":null},{"id":"channel.signed","status":"pass","detail":"the private broker authenticated its signed channel and native index at startup","hint":null}],"overall":"healthy"}
+{"command":"rollback","generation":"gen-0021","ok":true,"packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"2.12.1","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"hello","selector":"hello"},{"afterOutputs":["doc","man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"1.25.2","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"just"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","afterVersion":"1.58.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"github:casey/just#default"}],"packageCount":4,"schemaVersion":1,"sourceGeneration":"gen-0020","targetGeneration":"gen-0019"}
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+Hello, world!
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0021","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":true}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
+
+CASE 003
+$ /tmp/pkg-bug04-fixed repair gen-0020 --verify-only --json && /tmp/pkg-bug04-fixed repair gen-0020 --yes --json && /tmp/pkg-bug04-fixed remove hello just "github:casey/just#default" ripgrep --yes --json && /tmp/pkg-bug04-fixed repair --verify-only --json && /tmp/pkg-bug04-fixed repair --yes --json && /tmp/pkg-bug04-fixed rollback --yes --json && rg --version && hello && shasum -a 256 /tmp/pkg-bug04-fixed
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0020","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":true}
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0020","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":false}
+{"command":"remove","generation":"gen-0022","ok":true,"orphanCheckRequested":false,"packages":[{"name":"ripgrep","pinned":false,"selector":"ripgrep","version":"13.0.0"},{"name":"hello","pinned":false,"selector":"hello","version":"2.12.1"},{"name":"just","pinned":false,"selector":"just","version":"1.25.2"},{"name":"just","pinned":false,"selector":"github:casey/just#default","version":"1.58.0"}],"removed":["sel_125b090add36b9958bd9191344ac61b1_0","sel_7db6fbf9a973f77ee5c082fa75fabf41_0","sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_0","sel_e1be0e7c4ca6f37a29241c3fd0f8f2bf_1"],"schemaVersion":1}
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0022","nonAtomic":false,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":true}
+Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+{"activationStatus":"verified","command":"repair","damagedPathCount":0,"generation":"gen-0022","nonAtomic":true,"ok":true,"schemaVersion":1,"status":"clean","verificationScope":["activation-links","store-closure"],"verifyOnly":false}
+{"command":"rollback","generation":"gen-0023","ok":true,"packageChanges":[{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"13.0.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"ripgrep","selector":"ripgrep"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"2.12.1","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"hello","selector":"hello"},{"afterOutputs":["doc","man","out"],"afterPinned":false,"afterRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","afterVersion":"1.25.2","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"just"},{"afterOutputs":["out"],"afterPinned":false,"afterRevision":"3095fc171a1369505e0c6a2fd30616e5ff46c139","afterVersion":"1.58.0","beforeOutputs":[],"beforePinned":null,"beforeRevision":null,"beforeVersion":null,"kind":"added","name":"just","selector":"github:casey/just#default"}],"packageCount":4,"schemaVersion":1,"sourceGeneration":"gen-0022","targetGeneration":"gen-0021"}
+ripgrep 13.0.0
+-SIMD -AVX (compiled)
+Hello, world!
+c9fcc722e8df9eb0cb84e8b68bb93fd250d89b85fa3953ada5e0ecafa23e87c5  /tmp/pkg-bug04-fixed
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0

@@ -1,0 +1,49 @@
+{
+  "toolchain": "1.96.1",
+  "workspace_tests": {
+    "passed": 1231,
+    "failed": 0,
+    "ignored": 5
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked --workspace",
+      "exit_code": 0,
+      "log_sha256": "67efb127e60a66fbeb17057b848128754fd370e234846b89336d814c0e7faa83"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+      "exit_code": 0,
+      "log_sha256": "3f089536a2cfed16ef30045589f6cc74b054782f2f520ada1d1f05c7b9040e17"
+    },
+    {
+      "command": "RUSTDOCFLAGS=\"-D warnings\" cargo doc --workspace --all-features --no-deps --locked",
+      "exit_code": 0,
+      "log_sha256": "8089d4474b0c488cf0d8c68349351cba223be992275fdf41c67c7744915f2e2d"
+    },
+    {
+      "command": "cargo build --workspace --all-targets --all-features --locked",
+      "exit_code": 0,
+      "log_sha256": "4787a7fa904723bca23104ce0038476e38d3291e65ed1f147d4ef2d6bb21ef46"
+    },
+    {
+      "command": "BASE_REF=origin/main tools/quality/quality-gate.sh check",
+      "exit_code": 0,
+      "log_sha256": "8f218fac95fae8f8b692a99f2e3c361396c6ba348b0e6cbf1ea29712fab90ee2"
+    },
+    {
+      "command": "cargo deny --locked check",
+      "exit_code": 0,
+      "log_sha256": "32af4a5c11b6f23bf09153d0aec7204a3c084ffc78d5ee253bf1e4b0bc062df7"
+    },
+    {
+      "command": "cargo audit",
+      "exit_code": 0,
+      "log_sha256": "d2e6300602624cdf41059c9b62e034a06d5a3ba80b099a8bb22fd4e25249e337"
+    },
+    {
+      "command": "cargo fmt --all --check",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "source_base": "4ab212196956f9c53313fcd14521f737a84e98f0",
+  "patch_scope": "cumulative runtime BUG-01 through BUG-05",
+  "patch_sha256": "27a6a52132b621b4b8bf51a68f87095b5499587c017925b7282b77d338c77083",
+  "final_cli_sha256": "244a9f49ff5339d986d0dc5f404463a931c8fa19d95ec4a872f9ef17b1093775",
+  "cases": [
+    {
+      "case": "001",
+      "command": "/tmp/pkg-bug04-fixed pin ripgrep --json && mv \"$HOME/Library/Application Support/pkg/lock.json\" \"$HOME/Library/Application Support/pkg/lock.json.bug05\" && mkdir \"$HOME/Library/Application Support/pkg/lock.json\" && /tmp/pkg-bug04-fixed unpin ripgrep --json",
+      "started": "2026-09-26T09:57:17.313147+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 5.52,
+      "exit_code": 73,
+      "output_sha256": "3c8393e090e84eea2a55ef34e1f0b237286ccb6888d0f8d25c83a2b67fc6e73e",
+      "build": "before BUG-05"
+    },
+    {
+      "case": "002",
+      "command": "readlink \"$HOME/Library/Application Support/pkg/current\" && /tmp/pkg-bug04-fixed list --json && rmdir \"$HOME/Library/Application Support/pkg/lock.json\" && mv \"$HOME/Library/Application Support/pkg/lock.json.bug05\" \"$HOME/Library/Application Support/pkg/lock.json\" && /tmp/pkg-bug04-fixed repair --yes --json && /tmp/pkg-bug04-fixed pin ripgrep --json",
+      "started": "2026-09-26T09:57:42.819537+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 8.32,
+      "exit_code": 0,
+      "output_sha256": "a7ba44463db8ff29acda9bce91a38e9d06f9f0d795623cb8752f6c52334fdb9b",
+      "build": "before BUG-05"
+    },
+    {
+      "case": "003",
+      "command": "mv \"$HOME/Library/Application Support/pkg/lock.json\" \"$HOME/Library/Application Support/pkg/lock.json.bug05\" && mkdir \"$HOME/Library/Application Support/pkg/lock.json\" && /tmp/pkg-bug05-fixed unpin ripgrep --json",
+      "started": "2026-09-26T09:59:02.459606+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 2.7,
+      "exit_code": 73,
+      "output_sha256": "cc52b2ae0203e39b1a4fb64533cd7cd90ed15920051bf5fbb08b4d82617bb245",
+      "build": "final"
+    },
+    {
+      "case": "004",
+      "command": "/tmp/pkg-bug05-fixed repair --yes --json",
+      "started": "2026-09-26T09:59:16.818660+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 2.11,
+      "exit_code": 73,
+      "output_sha256": "953a74c2491c9109e18822981514dbbfcd322221a7012b94dcbe2391b1784e40",
+      "build": "final"
+    },
+    {
+      "case": "005",
+      "command": "readlink \"$HOME/Library/Application Support/pkg/current\" && /tmp/pkg-bug05-fixed list --json && rmdir \"$HOME/Library/Application Support/pkg/lock.json\" && mv \"$HOME/Library/Application Support/pkg/lock.json.bug05\" \"$HOME/Library/Application Support/pkg/lock.json\" && /tmp/pkg-bug05-fixed repair --yes --json && readlink \"$HOME/Library/Application Support/pkg/current\" && /tmp/pkg-bug05-fixed repair --verify-only --json && rg --version && /tmp/pkg-bug05-fixed doctor --json && shasum -a 256 /tmp/pkg-bug05-fixed",
+      "started": "2026-09-26T09:59:34.468350+00:00",
+      "vm": "pkg-bug02-final-20260926",
+      "seconds": 12.35,
+      "exit_code": 0,
+      "output_sha256": "9fdfcbda7dd350262ceaffaa4eafab123bdf6e1ec26548624d92fcff93ad04a2",
+      "build": "final"
+    }
+  ]
+}

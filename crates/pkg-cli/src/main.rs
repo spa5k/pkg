@@ -287,6 +287,8 @@ fn run_doctor(cli: &Cli, args: &DoctorArgs) -> ProcessExitCode {
         .and_then(std::ffi::OsStr::to_str)
         .map_or(RawNixVisibility::Unknown, observe_raw_nix_visibility);
     inputs.expected_state_uid = Some(Uid::effective().as_raw());
+    inputs.activation =
+        pkg_cli::commands::doctor::observe_activation(&location, Uid::effective().as_raw());
     let (managed_runtime, channel, managed_ownership) = observe_production_subsystems(|| {
         if !cli.json() && !cli.jsonl() && !cli.quiet() && !args.support() {
             let _ = pkg_cli::presentation::Style::stderr(cli.no_color()).text(

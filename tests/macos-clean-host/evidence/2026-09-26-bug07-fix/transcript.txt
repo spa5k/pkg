@@ -1,0 +1,104 @@
+CASE 001
+$ /tmp/pkg-bug07-fixed install no-such-one no-such-two --keep-going --yes --json
+{"schemaVersion":1,"ok":false,"command":"install","error":{"symbol":"CONFIG","code":78,"message":"--keep-going is not supported for install","hint":"remove --keep-going; installation stops at the first failure and commits no partial package set"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 78
+
+CASE 002
+$ /tmp/pkg-bug07-fixed install no-such-one no-such-two --keep-going --dry-run --json
+{"schemaVersion":1,"ok":false,"command":"install","error":{"symbol":"CONFIG","code":78,"message":"--keep-going is not supported for install","hint":"remove --keep-going; installation stops at the first failure and commits no partial package set"}}
+Shared connection to 192.168.64.32 closed.
+
+EXIT 78
+
+CASE 003
+$ /tmp/pkg-bug07-fixed install --help && shasum -a 256 "$HOME/Library/Application Support/pkg/journal/journal.ndjson" && readlink "$HOME/Library/Application Support/pkg/current" && shasum -a 256 /tmp/pkg-bug07-fixed
+Install packages. Download first; build locally when needed
+
+Usage: pkg-bug07-fixed install [OPTIONS] <PACKAGES>...
+
+Arguments:
+  <PACKAGES>...
+          Package names or public GitHub flakes (quote
+          github:owner/repo#package)
+
+Options:
+      --with-outputs <OUTPUTS>
+          Select explicit package outputs (comma-delimited; repeatable)
+
+      --on-collision <ON_COLLISION>
+          Choose how to handle file name conflicts
+
+          Possible values:
+          - abort:      Refuse activation when a relative path has multiple
+            providers
+          - keep-first: Keep the first deterministic provider for each colliding
+            path
+          - keep-last:  Keep the last deterministic provider for each colliding
+            path
+          
+          [default: abort]
+
+      --keep-going
+          Not available; requests with this option are refused
+
+      --channel <ID>
+          Select a signed channel by product identifier
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Output:
+      --json
+          Print the final result as JSON
+
+      --jsonl
+          Print progress and the final result as JSON Lines
+
+  -q, --quiet
+          Show only the final result
+
+  -v, --verbose
+          Show operation details
+
+      --no-color
+          Use static output without color or animation
+
+Advanced:
+      --config <PATH>
+          Override the product configuration file
+
+      --state <DIR>
+          Use another package state directory
+
+      --profile <PROFILE>
+          Select a profile (currently only `default`)
+          
+          [default: default]
+          [possible values: default]
+
+Safety:
+  -y, --yes
+          Accept prompts and local build plans
+
+      --dry-run
+          Preview changes without applying them
+
+Examples:
+  pkg install ripgrep fzf
+  pkg install ripgrep --dry-run
+  pkg install 'github:casey/just#default'
+
+A missing download requires a local build. Review the build plan before
+approval.
+Public GitHub flakes are supported on macOS.
+24078ccdc3edb42ebb22f4b0e5bb4228cbed06ba9b1f3bc3803c45c39a07e0c4  /Users/admin/Library/Application Support/pkg/journal/journal.ndjson
+activations/gen-0027
+15a3270d476f15683687df5eb5a6c1c7860f8aa4b6506c459f4eabfdaab1477f  /tmp/pkg-bug07-fixed
+Shared connection to 192.168.64.32 closed.
+
+EXIT 0
