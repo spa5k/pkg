@@ -73,14 +73,17 @@ Remaining code-quality work:
 
 ### INSTALL-01: verify macOS command access
 
-- **Purpose:** prevent installer completion when the invoking user cannot run pkg.
-- **Owns:** macOS wrapper command checks, useful failure logs, and regression proof.
+- **Purpose:** check installation state, request administrator access clearly,
+  and prevent completion when the invoking user cannot run a healthy pkg.
+- **Owns:** macOS wrapper path and approval checks, complete bootstrap failure
+  logs, troubleshooting guidance, and regression proof.
 - **Depends:** current `main` and the published alpha.56 package.
 - **Tests & gates:** real package expansion and signature checks; missing,
-  non-executable, blocked-parent, and launch-failure cases; native failed and
-  healthy controls; G-LINT; docs links; E and A review.
-- **Rollback:** revert the wrapper and test changes. No permission or user-state
-  migration is included.
+  non-executable, blocked or unsafe parent, and launch-failure cases; native
+  approval, cancellation, no-terminal, and healthy controls; final version and
+  health failure logs; G-LINT; docs links; E and A review.
+- **Rollback:** revert the wrapper, bootstrap template, docs, and tests. No
+  permission or user-state migration is included.
 
 The [command-access proof](../tests/macos-clean-host/INSTALL-COMMAND-ACCESS-2026-09-27.md)
 records the alpha.56 false-success reproduction and candidate correction.

@@ -104,6 +104,55 @@ class InstallScriptTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(self.marker.exists())
 
+    def test_saved_log_retains_failures_after_the_installer_returns(self):
+        cli = self.bin / "pkg"
+        original = cli.read_bytes()
+        cases = [
+            ("missing", "missing or cannot be executed", None, None),
+            ("launch", "could not start", '#!/bin/sh\necho "launch denied" >&2; exit 73\n', None),
+            ("version", "not the requested release", '#!/bin/sh\necho "pkg wrong-version"\n', None),
+            ("health", "health check failed", None, "78"),
+        ]
+        for name, diagnostic, source, health in cases:
+            with self.subTest(case=name):
+                cli.write_bytes(original)
+                cli.chmod(0o700)
+                if name == "missing":
+                    cli.unlink()
+                elif source:
+                    cli.write_text(source)
+                previous = set(self.work.glob("pkg-install-log.*"))
+                result = self.run_script(**({"PKG_TEST_HEALTH": health} if health else {}))
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(diagnostic, result.stderr)
+                self.assertNotIn("pkg is ready", result.stdout)
+                logs = set(self.work.glob("pkg-install-log.*")) - previous
+                self.assertEqual(len(logs), 1)
+                log = logs.pop()
+                self.assertIn(diagnostic, log.read_text())
+                self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+                if name == "launch":
+                    self.assertIn("launch denied", log.read_text())
+                if name == "health":
+                    self.assertIn("health check reached", log.read_text())
+
+    def test_health_status_write_failure_cannot_report_ready(self):
+        # Cause a real filesystem write failure at the process-status boundary.
+        # tee can still succeed, so its exit status cannot prove doctor passed.
+        (self.bin / "pkg").write_text(
+            '#!/bin/sh\n'
+            'if [ "$1" = --version ]; then echo "pkg 0.1.0-alpha.49"; exit 0; fi\n'
+            'for setup in "$TMPDIR"/pkg-install.*; do mkdir "$setup/health-status"; done\n'
+            'echo "health check failed before status could be saved"; exit 78\n'
+        )
+        result = self.run_script()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("pkg is ready", result.stdout)
+        self.assertIn("Could not read the health check result", result.stderr)
+        logs = list(self.work.glob("pkg-install-log.*"))
+        self.assertEqual(len(logs), 1)
+        self.assertIn("Could not read the health check result", logs[0].read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
