@@ -1,0 +1,2 @@
+parent File drop: still locked while forked child retains description
+after child exit: immediately acquired

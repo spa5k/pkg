@@ -1,0 +1,200 @@
+[
+  {
+    "check": "Download v0.1.0-alpha.56 pkg-install-x86_64-linux",
+    "status": "passed",
+    "seconds": 0.99,
+    "log": "01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-install-x86_64-linux",
+    "status": "passed",
+    "seconds": 0.41,
+    "log": "02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log"
+  },
+  {
+    "check": "Download v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg",
+    "status": "passed",
+    "seconds": 0.67,
+    "log": "03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg",
+    "status": "passed",
+    "seconds": 0.27,
+    "log": "04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log"
+  },
+  {
+    "check": "Download v0.1.0-alpha.56 install-preview.sh",
+    "status": "passed",
+    "seconds": 0.66,
+    "log": "05-download-v0-1-0-alpha-56-install-preview-sh.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 install-preview.sh",
+    "status": "passed",
+    "seconds": 0.36,
+    "log": "06-verify-v0-1-0-alpha-56-install-preview-sh.log"
+  },
+  {
+    "check": "Download v0.1.0-alpha.56 pkg-aarch64-darwin",
+    "status": "passed",
+    "seconds": 0.84,
+    "log": "07-download-v0-1-0-alpha-56-pkg-aarch64-darwin.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-aarch64-darwin",
+    "status": "passed",
+    "seconds": 0.28,
+    "log": "08-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log"
+  },
+  {
+    "check": "Download v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin",
+    "status": "passed",
+    "seconds": 0.83,
+    "log": "09-download-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin",
+    "status": "passed",
+    "seconds": 0.3,
+    "log": "10-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log"
+  },
+  {
+    "check": "Download v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin",
+    "status": "passed",
+    "seconds": 0.75,
+    "log": "11-download-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin",
+    "status": "passed",
+    "seconds": 0.28,
+    "log": "12-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log"
+  },
+  {
+    "check": "Fresh installation",
+    "status": "passed",
+    "seconds": 88.41,
+    "log": "13-fresh-installation.log"
+  },
+  {
+    "check": "Installed release bytes",
+    "status": "passed",
+    "seconds": 0.33,
+    "log": "14-installed-release-bytes.log"
+  },
+  {
+    "check": "Install cached package",
+    "status": "passed",
+    "seconds": 48.91,
+    "log": "15-install-cached-package.log"
+  },
+  {
+    "check": "Run installed package",
+    "status": "passed",
+    "seconds": 0.02,
+    "log": "16-run-installed-package.log"
+  },
+  {
+    "check": "Record Nix identity",
+    "status": "passed",
+    "seconds": 0.44,
+    "log": "17-record-nix-identity.log"
+  },
+  {
+    "check": "Installed release bytes",
+    "status": "passed",
+    "seconds": 0.23,
+    "log": "18-installed-release-bytes.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-install-x86_64-linux",
+    "status": "passed",
+    "seconds": 0.96,
+    "log": "19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg",
+    "status": "passed",
+    "seconds": 0.39,
+    "log": "20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 install-preview.sh",
+    "status": "passed",
+    "seconds": 0.43,
+    "log": "21-verify-v0-1-0-alpha-56-install-preview-sh.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-aarch64-darwin",
+    "status": "passed",
+    "seconds": 0.39,
+    "log": "22-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin",
+    "status": "passed",
+    "seconds": 0.35,
+    "log": "23-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log"
+  },
+  {
+    "check": "Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin",
+    "status": "passed",
+    "seconds": 0.59,
+    "log": "24-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log"
+  },
+  {
+    "check": "Product upgrade",
+    "status": "passed",
+    "seconds": 9.1,
+    "log": "25-product-upgrade.log"
+  },
+  {
+    "check": "Installed release bytes",
+    "status": "passed",
+    "seconds": 0.2,
+    "log": "26-installed-release-bytes.log"
+  },
+  {
+    "check": "Check Nix identity",
+    "status": "passed",
+    "seconds": 0.39,
+    "log": "27-check-nix-identity.log"
+  },
+  {
+    "check": "Retained package",
+    "status": "passed",
+    "seconds": 0.05,
+    "log": "28-retained-package.log"
+  },
+  {
+    "check": "Repeat installer",
+    "status": "passed",
+    "seconds": 8.63,
+    "log": "29-repeat-installer.log"
+  },
+  {
+    "check": "Record build disk space",
+    "status": "passed",
+    "seconds": 0.01,
+    "log": "30-record-build-disk-space.log"
+  },
+  {
+    "check": "Record build system load",
+    "status": "passed",
+    "seconds": 0.01,
+    "log": "31-record-build-system-load.log"
+  },
+  {
+    "check": "Build public flake",
+    "status": "failed",
+    "seconds": 0.6,
+    "log": "32-build-public-flake.log"
+  },
+  {
+    "check": "Lifecycle validation",
+    "status": "failed",
+    "seconds": 0,
+    "log": "See process error"
+  }
+]

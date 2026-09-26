@@ -1,0 +1,127 @@
+[
+  {
+    "path": "metadata/1.root.json",
+    "length": 1659,
+    "sha256": "2f54413cd26fd913067c6aceba21191b45bad0122296669c647009765b6787cc"
+  },
+  {
+    "path": "metadata/56.snapshot.json",
+    "length": 619,
+    "sha256": "9648ed0e918e45eb0d2975772d33be19e3945ae0dff86ed493768d2cb180931b"
+  },
+  {
+    "path": "metadata/56.targets.json",
+    "length": 4087,
+    "sha256": "d86fb3a0354303df6eef91e4ed2759f9fa533365828b2154a53e85805f73ee6c"
+  },
+  {
+    "path": "metadata/timestamp.json",
+    "length": 620,
+    "sha256": "7e061ef79b13eb2b7f6e5f59d06ae21245b6a48619e41781920c4ea54b1e2a3c"
+  },
+  {
+    "path": "release-manifest.json",
+    "length": 6366,
+    "sha256": "f49719a19ded0f9583d1e83b033279587c016cd5232d50e01fc64fb69d7e7721"
+  },
+  {
+    "path": "root.json",
+    "length": 1659,
+    "sha256": "2f54413cd26fd913067c6aceba21191b45bad0122296669c647009765b6787cc"
+  },
+  {
+    "path": "signing-audit.ndjson",
+    "length": 263,
+    "sha256": "f0b4b9d42aa535e199d2b620a76702966ce40c8e956bb10054e7a95d91b68293"
+  },
+  {
+    "path": "targets/1a75b354d8b7b4a7a4e2a2a278111c3c4bc14b037ea55c993662a0b81e5f3aac.installer/x86_64-linux/pkg-root-helper",
+    "length": 3245480,
+    "sha256": "1a75b354d8b7b4a7a4e2a2a278111c3c4bc14b037ea55c993662a0b81e5f3aac"
+  },
+  {
+    "path": "targets/29688d58102038d89c2d1cdb900ef225bc407d45810d21a825b61935ae6b3c11.index/56/x86_64-linux.json.br",
+    "length": 2973638,
+    "sha256": "29688d58102038d89c2d1cdb900ef225bc407d45810d21a825b61935ae6b3c11"
+  },
+  {
+    "path": "targets/2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464.nix/2.34.8/x86_64-linux.tar.xz",
+    "length": 25349172,
+    "sha256": "2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464"
+  },
+  {
+    "path": "targets/3282044b73ecfad82d41458eebc724a48961c639ff9cb07303fbd7e5618ded34.nix/2.34.8/aarch64-darwin.assets.json",
+    "length": 504274,
+    "sha256": "3282044b73ecfad82d41458eebc724a48961c639ff9cb07303fbd7e5618ded34"
+  },
+  {
+    "path": "targets/36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89.determinate/3.22.1/LICENSE",
+    "length": 26434,
+    "sha256": "36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89"
+  },
+  {
+    "path": "targets/3a82918028ed830b06921b35775aa5ca7e13857104f79fa192b3704db9b5f712.descriptor.json",
+    "length": 1602,
+    "sha256": "3a82918028ed830b06921b35775aa5ca7e13857104f79fa192b3704db9b5f712"
+  },
+  {
+    "path": "targets/62486720ac0c28bd9b07c9b112f882f1c68a5833fe8395eced7ff1e6cdb9b8b5.installer/x86_64-linux/pkg-nix-broker",
+    "length": 15018112,
+    "sha256": "62486720ac0c28bd9b07c9b112f882f1c68a5833fe8395eced7ff1e6cdb9b8b5"
+  },
+  {
+    "path": "targets/7034b0dcd7746f67790a478f8c3dd568bbfdc7a5e5928f21a6cb7c7fe6a676c8.index/56/aarch64-darwin.json.br",
+    "length": 2782000,
+    "sha256": "7034b0dcd7746f67790a478f8c3dd568bbfdc7a5e5928f21a6cb7c7fe6a676c8"
+  },
+  {
+    "path": "targets/768cb5674e1fb77bbfedb2e6dd0b7d16796a3c2257c7dfbeee00dc048136531f.installer/aarch64-darwin/pkg-nix-broker",
+    "length": 12027184,
+    "sha256": "768cb5674e1fb77bbfedb2e6dd0b7d16796a3c2257c7dfbeee00dc048136531f"
+  },
+  {
+    "path": "targets/90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b.determinate/3.22.1/nix-installer-aarch64-darwin",
+    "length": 58427232,
+    "sha256": "90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b"
+  },
+  {
+    "path": "targets/97d1730a1ccc247a3a4b2a0063c40fa5909ddd378e204dbfa5919e4b9d6d21ec.installer/aarch64-darwin/pkg-root-helper",
+    "length": 2782624,
+    "sha256": "97d1730a1ccc247a3a4b2a0063c40fa5909ddd378e204dbfa5919e4b9d6d21ec"
+  },
+  {
+    "path": "targets/9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179.determinate/3.22.1/nix-installer-aarch64-linux",
+    "length": 69625424,
+    "sha256": "9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179"
+  },
+  {
+    "path": "targets/9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c.determinate/3.22.1/nix-installer-x86_64-linux",
+    "length": 74918096,
+    "sha256": "9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c"
+  },
+  {
+    "path": "targets/a432289269a475958685033020799f21533574c6468acd7538c4cd84acc36a50.nix/2.34.8/x86_64-linux.assets.json",
+    "length": 533618,
+    "sha256": "a432289269a475958685033020799f21533574c6468acd7538c4cd84acc36a50"
+  },
+  {
+    "path": "targets/ab7f3bb52422074e3a9a8bb1a13ef5bc793a92856c151293f53faab2a90176ee.installer/x86_64-linux/pkg",
+    "length": 17499984,
+    "sha256": "ab7f3bb52422074e3a9a8bb1a13ef5bc793a92856c151293f53faab2a90176ee"
+  },
+  {
+    "path": "targets/ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf.nix/2.34.8/aarch64-darwin.tar.xz",
+    "length": 18030620,
+    "sha256": "ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf"
+  },
+  {
+    "path": "targets/bb915cd992bc665e98632ef789292bd36f93e0e53ca675881ee4f266e1f78299.installer/aarch64-darwin/pkg",
+    "length": 14100832,
+    "sha256": "bb915cd992bc665e98632ef789292bd36f93e0e53ca675881ee4f266e1f78299"
+  },
+  {
+    "path": "targets/e946ce0920e1ac0a76281d1d0d24b5ddb0fa1807f5317d1545130fe8a04ff084.determinate/3.22.1/nix-installer-v3.22.1.tar.gz",
+    "length": 214322,
+    "sha256": "e946ce0920e1ac0a76281d1d0d24b5ddb0fa1807f5317d1545130fe8a04ff084"
+  }
+]

@@ -1,0 +1,6 @@
+Closed channel archive: 25 unique regular files; no links, traversal, or extra files; all hashes and bytes match.
+Cosign: 15 of 15 verified against exact alpha.56 workflow identity and GitHub OIDC issuer.
+All 18 TUF targets match signed lengths, digests, release card, and staged bytes. All six installer payloads and both binary archives match Cosign-verified individual assets.
+Descriptor binds the unchanged Nixpkgs pin, Nix runtime, and sequence 56 indexes: 64,412 macOS records and 69,517 Linux records.
+Bootstrap exactly matches the tagged template with verified asset pins. Both signed wrapper setup lines have the executable guard.
+{"source": "23a2de23eaaa61e1e10af4a52c1e83dbb24b13c4", "tag": "v0.1.0-alpha.56", "archiveSha256": "fb1144d97ba7d9f58ea7c869028ea47e30d3aa92769be15eb3f3945772daa4ba", "rootSha256": "2f54413cd26fd913067c6aceba21191b45bad0122296669c647009765b6787cc", "files": 25, "cosignAssets": 15, "tufTargets": 18, "indexes": {"aarch64-darwin": 64412, "x86_64-linux": 69517}, "status": "verified", "limit": "Artifact review only. Final CI, native upgrade/reboot/removal, and public download checks remain release conditions."}

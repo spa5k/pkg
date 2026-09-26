@@ -1,0 +1,14 @@
+Checking package sources...
+Downloading fzf...
+Downloading fzf: 100% (35.1 MiB / 35.1 MiB)
+Package source ready.
+Saving the new package environment...
+Package environment saved.
+Activating packages...
+Packages are ready to use.
+Activated generation gen-0001
+Package  Version  Outputs
+fzf      0.46.0   man, out
+
+Generation: gen-0001
+Installed 1 package from the trusted cache. Ready to use.

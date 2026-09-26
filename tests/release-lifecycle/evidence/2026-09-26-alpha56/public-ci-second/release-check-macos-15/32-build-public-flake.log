@@ -1,0 +1,3 @@
+Checking package sources...
+error[RESOLVE_FAILED]: the public package could not be fetched or evaluated
+hint: check the repository, package output, network access, and committed flake.lock; inputs must use locked remote sources

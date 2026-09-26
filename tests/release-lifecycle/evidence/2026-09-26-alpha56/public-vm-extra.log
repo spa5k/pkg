@@ -1,0 +1,7 @@
+Running: Run public built package
+PASS: Run public built package (0.01s)
+Running: Verify public build
+PASS: Verify public build (8.28s)
+Running: Public build health with configured PATH
+PASS: Public build health with configured PATH (0.52s)
+PASS: public just execution, repair, and configured-shell health

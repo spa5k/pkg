@@ -1,0 +1,1 @@
+{"collectedPathCount":1929,"command":"gc","freedBytes":null,"ok":true,"prunedGenerations":["gen-0001","gen-0002","gen-0003","gen-0004"],"recoveredGenerations":[],"retention":{"alwaysKeepActive":true,"keepRetiredGenerations":3,"maxAgeDays":0,"pruneRule":"outside-count-and-older-than-age"},"schemaVersion":1}

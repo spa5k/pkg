@@ -1,0 +1,28 @@
+Checking package sources...
+Package source ready.
+Checking build dependencies and cached downloads...
+Build plan ready.
+Preparing the approved build...
+Building just 1.58.0...
+Building: 1%
+Building: 10%
+Building: 20%
+Building: 30%
+Building: 40%
+Building: 50%
+Building: 60%
+Building: 70%
+Building: 80%
+Building: 90%
+Building: 100%
+Local build complete.
+Saving the new package environment...
+Package environment saved.
+Activating packages...
+Packages are ready to use.
+Activated generation gen-0002
+Package  Version  Outputs
+just     1.58.0   out
+
+Generation: gen-0002
+Installed 1 package using a local build. Ready to use.

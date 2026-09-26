@@ -1,0 +1,19 @@
+{
+  "startedAt": "2026-09-26T11:43:51.784543+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "runs": [
+    {
+      "name": "fork",
+      "exitCode": 0,
+      "stdout": "parent File drop: still locked while forked child retains description\nafter child exit: immediately acquired\n",
+      "stderr": ""
+    },
+    {
+      "name": "spawn",
+      "exitCode": 0,
+      "stdout": "attempts=82878 spawned=821 transient_drop_conflicts=35 longest=255.042\u00b5s\n",
+      "stderr": ""
+    }
+  ]
+}

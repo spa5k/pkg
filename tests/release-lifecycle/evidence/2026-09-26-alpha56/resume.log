@@ -1,0 +1,11 @@
+      "IOPlatformUUID" = "50DCC3EF-6AD8-5EAA-AC56-451AD340113C"
+2557FEFA-290B-4C4C-8891-5FAAAA5C21DA
+Running: Installed release bytes
+PASS: Installed release bytes (0.2s)
+Running: Health after reboot
+PASS: Health after reboot (1.35s)
+Running: Package after reboot
+PASS: Package after reboot (0.13s)
+Running: Built package after reboot
+PASS: Built package after reboot (0.05s)
+PASS: completed selected phase. See checkpoint.json for reboot status.

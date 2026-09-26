@@ -1,0 +1,44 @@
+[
+  {
+    "check": "Remove public package",
+    "status": "passed",
+    "seconds": 0.33,
+    "log": "01-remove-public-package.log"
+  },
+  {
+    "check": "Check package removal",
+    "status": "passed",
+    "seconds": 0.03,
+    "log": "02-check-package-removal.log"
+  },
+  {
+    "check": "Rollback public package",
+    "status": "passed",
+    "seconds": 0.28,
+    "log": "03-rollback-public-package.log"
+  },
+  {
+    "check": "Run restored public package",
+    "status": "passed",
+    "seconds": 0.02,
+    "log": "04-run-restored-public-package.log"
+  },
+  {
+    "check": "Run retained public build",
+    "status": "passed",
+    "seconds": 0.02,
+    "log": "05-run-retained-public-build.log"
+  },
+  {
+    "check": "Verify restored package files",
+    "status": "passed",
+    "seconds": 8.83,
+    "log": "06-verify-restored-package-files.log"
+  },
+  {
+    "check": "Final public lifecycle health",
+    "status": "passed",
+    "seconds": 0.58,
+    "log": "07-final-public-lifecycle-health.log"
+  }
+]

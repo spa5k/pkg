@@ -1,0 +1,4 @@
+/usr/local/bin/pkg: OK
+/opt/pkg/bin/pkg-nix-broker: OK
+/opt/pkg/bin/pkg-root-helper: OK
+PASS: preserve alpha54-to-alpha55 evidence and record exact alpha55 baseline for alpha56

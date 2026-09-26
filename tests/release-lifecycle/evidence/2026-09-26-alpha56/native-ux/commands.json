@@ -1,0 +1,183 @@
+[
+  {
+    "case": "uninstall-human",
+    "command": [
+      "sudo",
+      "/usr/local/bin/pkg",
+      "system",
+      "uninstall",
+      "--dry-run"
+    ],
+    "exit": 0,
+    "seconds": 103.02,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "uninstall-json",
+    "command": [
+      "sudo",
+      "/usr/local/bin/pkg",
+      "system",
+      "uninstall",
+      "--dry-run",
+      "--json"
+    ],
+    "exit": 0,
+    "seconds": 4.64,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "preview-human",
+    "command": [
+      "/usr/local/bin/pkg",
+      "install",
+      "ripgrep",
+      "--dry-run"
+    ],
+    "exit": 0,
+    "seconds": 5.74,
+    "firstNoticeSeconds": 0.02
+  },
+  {
+    "case": "preview-json",
+    "command": [
+      "/usr/local/bin/pkg",
+      "install",
+      "ripgrep",
+      "--dry-run",
+      "--json"
+    ],
+    "exit": 0,
+    "seconds": 2.9,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "preview-jsonl",
+    "command": [
+      "/usr/local/bin/pkg",
+      "install",
+      "ripgrep",
+      "--dry-run",
+      "--jsonl"
+    ],
+    "exit": 0,
+    "seconds": 3.54,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "preview-quiet",
+    "command": [
+      "/usr/local/bin/pkg",
+      "install",
+      "ripgrep",
+      "--dry-run",
+      "--quiet"
+    ],
+    "exit": 0,
+    "seconds": 3.58,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "upgrade-preview",
+    "command": [
+      "/usr/local/bin/pkg",
+      "upgrade",
+      "--all",
+      "--dry-run"
+    ],
+    "exit": 0,
+    "seconds": 3.64,
+    "firstNoticeSeconds": 0.019
+  },
+  {
+    "case": "retention-human",
+    "command": [
+      "/usr/local/bin/pkg",
+      "gc",
+      "--dry-run",
+      "--keep-generations",
+      "3"
+    ],
+    "exit": 0,
+    "seconds": 0.03,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "retention-json",
+    "command": [
+      "/usr/local/bin/pkg",
+      "gc",
+      "--dry-run",
+      "--keep-generations",
+      "3",
+      "--max-age-days",
+      "0",
+      "--json"
+    ],
+    "exit": 0,
+    "seconds": 0.03,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "gc-json",
+    "command": [
+      "/usr/local/bin/pkg",
+      "gc",
+      "--keep-generations",
+      "3",
+      "--max-age-days",
+      "0",
+      "--yes",
+      "--json"
+    ],
+    "exit": 0,
+    "seconds": 8.28,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "gc-human",
+    "command": [
+      "/usr/local/bin/pkg",
+      "gc",
+      "--keep-generations",
+      "3",
+      "--max-age-days",
+      "0",
+      "--yes"
+    ],
+    "exit": 0,
+    "seconds": 0.77,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "history",
+    "command": [
+      "/usr/local/bin/pkg",
+      "history"
+    ],
+    "exit": 0,
+    "seconds": 0.02,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "repair",
+    "command": [
+      "/usr/local/bin/pkg",
+      "repair",
+      "--verify-only"
+    ],
+    "exit": 0,
+    "seconds": 9.07,
+    "firstNoticeSeconds": null
+  },
+  {
+    "case": "doctor",
+    "command": [
+      "/usr/local/bin/pkg",
+      "doctor"
+    ],
+    "exit": 0,
+    "seconds": 0.62,
+    "firstNoticeSeconds": null
+  }
+]

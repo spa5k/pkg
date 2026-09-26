@@ -1,0 +1,1 @@
+{"command":"list","entries":[{"name":"fzf","pinned":false,"selector":"fzf","sourceRevision":"a62e6edd6d5e1fa0329b8653c801147986f8d446","version":"0.46.0"},{"name":"just","pinned":false,"selector":"github:casey/just#default","sourceRevision":"5d5742cbcc50f19c99c356bc7e085acaa5f4665d","version":"1.58.0"}],"nameOnly":false,"ok":true,"schemaVersion":1}

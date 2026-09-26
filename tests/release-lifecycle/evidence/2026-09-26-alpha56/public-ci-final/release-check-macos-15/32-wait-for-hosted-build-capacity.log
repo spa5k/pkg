@@ -1,0 +1,5 @@
+one-minute load=3.01; logical CPUs=3; ready samples=0/3
+one-minute load=2.55; logical CPUs=3; ready samples=1/3
+one-minute load=2.26; logical CPUs=3; ready samples=2/3
+one-minute load=2.29; logical CPUs=3; ready samples=3/3
+PASS: hosted fixture has spare capacity; product admission checks remain enabled

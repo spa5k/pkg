@@ -1,0 +1,968 @@
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	﻿2026-09-26T11:43:33.6659110Z Current runner version: '2.337.0'
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6673590Z ##[group]Runner Image Provisioner
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6674110Z Hosted Compute Agent
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6674550Z Version: 20260828.587
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6675000Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6675520Z Build Date: 2026-08-28T16:44:25Z
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6676020Z Worker ID: {f8f6c97e-c01e-40c7-b8fd-82ec71ed86a5}
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6676490Z Azure Region: westus
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6676850Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6677660Z ##[group]Operating System
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6678150Z macOS
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6678480Z 15.7.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6678790Z 24G830
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6679180Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6679580Z ##[group]Runner Image
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6679960Z Image: macos-15-arm64
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6680390Z Version: 20260907.0337.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6681090Z Included Software: https://github.com/actions/runner-images/blob/macos-15-arm64/20260907.0337/images/macos/macos-15-arm64-Readme.md
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6682160Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-15-arm64%2F20260907.0337
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6682780Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6683570Z ##[group]GITHUB_TOKEN Permissions
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6684580Z Contents: read
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6685000Z Metadata: read
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6685340Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6686580Z Secret source: Actions
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6687230Z Cache mode: write
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6687720Z Prepare workflow directory
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6945080Z Prepare all required actions
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.6981660Z Getting action download info
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:33.9649530Z Download action repository 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' (SHA:de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Set up job	2026-09-26T11:43:34.4252680Z Complete job name: G-HERMETIC-MACOS (probe, log-evidence lane)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	﻿2026-09-26T11:43:34.4704860Z ##[group]Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4705650Z with:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4705990Z   persist-credentials: false
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4706360Z   repository: spa5k/pkg
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4709100Z   token: ***
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4709400Z   ssh-strict: true
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4709710Z   ssh-user: git
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4710040Z   clean: true
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4710370Z   sparse-checkout-cone-mode: true
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4710770Z   fetch-depth: 1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4711130Z   fetch-tags: false
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4711750Z   show-progress: true
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4712180Z   lfs: false
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4712490Z   submodules: false
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4712840Z   set-safe-directory: true
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4713470Z env:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4713850Z   RUSTUP_TOOLCHAIN: 1.96.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4714210Z   CARGO_TERM_COLOR: always
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.4714570Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.7777470Z Syncing repository: spa5k/pkg
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.7779990Z ##[group]Getting Git version info
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.7780850Z Working directory is '/Users/runner/work/pkg/pkg'
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.7782610Z [command]/opt/homebrew/bin/git version
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8282270Z git version 2.55.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8294710Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8301620Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/1eeae231-9478-49a9-993f-2de84f17ef79/.gitconfig'
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8307830Z Temporarily overriding HOME='/Users/runner/work/_temp/1eeae231-9478-49a9-993f-2de84f17ef79' before making global git config changes
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8309350Z Adding repository directory to the temporary git global config as a safe directory
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8311400Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/pkg/pkg
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8409920Z Deleting the contents of '/Users/runner/work/pkg/pkg'
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8412420Z ##[group]Initializing the repository
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8418580Z [command]/opt/homebrew/bin/git init /Users/runner/work/pkg/pkg
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8609400Z hint: Using 'master' as the name for the initial branch. This default branch name
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8612010Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8613720Z hint: to use in all of your new repositories, which will suppress this warning,
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8614500Z hint: call:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8614940Z hint:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8615400Z hint: 	git config --global init.defaultBranch <name>
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8616020Z hint:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8616500Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8617280Z hint: 'development'. The just-created branch can be renamed via this command:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8617970Z hint:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8618350Z hint: 	git branch -m <name>
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8618750Z hint:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8619420Z hint: Disable this message with "git config set advice.defaultBranchName false"
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8620280Z Initialized empty Git repository in /Users/runner/work/pkg/pkg/.git/
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8621830Z [command]/opt/homebrew/bin/git remote add origin https://github.com/spa5k/pkg
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8684600Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8685420Z ##[group]Disabling automatic garbage collection
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8686900Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8742440Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8743240Z ##[group]Setting up auth
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8758910Z Removing SSH command configuration
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8759670Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.8800360Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.9733740Z Removing HTTP extra header
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.9737390Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:34.9788370Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.0397110Z Removing includeIf entries pointing to credentials config files
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.0400280Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.0447000Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.1301160Z [command]/opt/homebrew/bin/git config --file /Users/runner/work/_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.1507870Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/pkg/pkg/.git.path /Users/runner/work/_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.1561130Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.1608520Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.1663010Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.1709170Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.1709850Z ##[group]Fetching the repository
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:35.1714200Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +e57ec8fdb0014a6913745f89368298dc31e810f1:refs/remotes/pull/64/merge
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.0050120Z From https://github.com/spa5k/pkg
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.0051540Z  * [new ref]         e57ec8fdb0014a6913745f89368298dc31e810f1 -> pull/64/merge
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.0053930Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.0056540Z ##[group]Determining the checkout info
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.0057410Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.0057950Z [command]/opt/homebrew/bin/git sparse-checkout disable
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.0128300Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.0187460Z ##[group]Checking out the ref
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.0189560Z [command]/opt/homebrew/bin/git checkout --progress --force refs/remotes/pull/64/merge
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.1864850Z HEAD is now at e57ec8f Merge 26e5e15e3cdf8481dc37cd7151a39531ab150e09 into 23a2de23eaaa61e1e10af4a52c1e83dbb24b13c4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.1895590Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.1966110Z [command]/opt/homebrew/bin/git log -1 --format=%H
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.2022840Z e57ec8fdb0014a6913745f89368298dc31e810f1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.2029080Z ##[group]Removing auth
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.2030150Z Removing SSH command configuration
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.2031560Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.2080180Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.2660110Z Removing HTTP extra header
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.2662170Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.2708350Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3583980Z Removing includeIf entries pointing to credentials config files
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3586900Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3589420Z includeif.gitdir:/Users/runner/work/pkg/pkg/.git.path
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3591100Z includeif.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3592610Z includeif.gitdir:/github/workspace/.git.path
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3593930Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3597030Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/pkg/pkg/.git.path
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3599300Z /Users/runner/work/_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3603560Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/pkg/pkg/.git.path /Users/runner/work/_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3701440Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3742910Z /Users/runner/work/_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3748090Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3795090Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3834510Z /github/runner_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3839500Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3886220Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3927730Z /github/runner_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3936300Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.3980420Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.4549380Z Removing credentials config '/Users/runner/work/_temp/git-credentials-6c9bb6fe-6f07-484d-aff1-5154563521a0.config'
+G-HERMETIC-MACOS (probe, log-evidence lane)	Checkout	2026-09-26T11:43:36.4553040Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	﻿2026-09-26T11:43:36.4721220Z ##[group]Run set -euo pipefail
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4722060Z ^[[36;1mset -euo pipefail^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4722790Z ^[[36;1mexpected="${RUSTUP_TOOLCHAIN}"^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4723840Z ^[[36;1mchannel="$(grep -E '^channel[[:space:]]*=' rust-toolchain.toml \^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4725120Z ^[[36;1m           | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4726240Z ^[[36;1mif [ -z "$channel" ]; then^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4727310Z ^[[36;1m  echo "::error::could not parse channel from rust-toolchain.toml" >&2^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4728380Z ^[[36;1m  exit 1^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4728950Z ^[[36;1mfi^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4729580Z ^[[36;1mif [ "$channel" != "$expected" ]; then^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4730800Z ^[[36;1m  echo "::error::rust-toolchain.toml channel '$channel' != expected '$expected'" >&2^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4732020Z ^[[36;1m  exit 1^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4732590Z ^[[36;1mfi^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4733350Z ^[[36;1mrustup toolchain install "$channel" --profile minimal^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4734350Z ^[[36;1mrustc --version^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4735000Z ^[[36;1mcargo --version^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4775960Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4776890Z env:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4777460Z   RUSTUP_TOOLCHAIN: 1.96.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4778120Z   CARGO_TERM_COLOR: always
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.4778770Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.5458300Z info: syncing channel updates for 1.96.1-aarch64-apple-darwin
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.7798580Z info: latest update on 2026-06-30 for version 1.96.1 (31fca3adb 2026-06-26)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:36.7803350Z info: downloading 3 components
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:43.7825480Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:43.8530570Z info: self-update is disabled for this build of rustup
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:43.8531170Z   1.96.1-aarch64-apple-darwin installed - rustc 1.96.1 (31fca3adb 2026-06-26)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:43.8532120Z info: any updates to rustup will need to be fetched with your system package manager
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:43.8532450Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:43.8774240Z rustc 1.96.1 (31fca3adb 2026-06-26)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Install and verify pinned Rust toolchain	2026-09-26T11:43:43.9277120Z cargo 1.96.1 (356927216 2026-06-26)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	﻿2026-09-26T11:43:43.9363540Z ##[group]Run tools/verify/run-hermetic.sh
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:43.9363830Z ^[[36;1mtools/verify/run-hermetic.sh^[[0m
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:43.9396050Z shell: /bin/bash -e {0}
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:43.9396200Z env:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:43.9396350Z   RUSTUP_TOOLCHAIN: 1.96.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:43.9396530Z   CARGO_TERM_COLOR: always
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:43.9396710Z ##[endgroup]
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:43.9820960Z ==> ambient-time audit (all wall-clock families)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:44.1668790Z     clean
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:44.1769310Z ==> temp-root audit (production code must not use the ambient temp dir)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:44.3344790Z     clean
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:44.4278770Z ^[[1m^[[92m    Updating^[[0m crates.io index
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.2224180Z ^[[1m^[[92m Downloading^[[0m crates ...
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3108750Z ^[[1m^[[92m  Downloaded^[[0m serde v1.0.229
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3190230Z ^[[1m^[[92m  Downloaded^[[0m zerofrom-derive v0.1.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3216760Z ^[[1m^[[92m  Downloaded^[[0m utf8_iter v1.0.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3237080Z ^[[1m^[[92m  Downloaded^[[0m untrusted v0.7.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3272040Z ^[[1m^[[92m  Downloaded^[[0m unarray v0.1.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3291450Z ^[[1m^[[92m  Downloaded^[[0m itoa v1.0.18
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3323310Z ^[[1m^[[92m  Downloaded^[[0m untrusted v0.9.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3380460Z ^[[1m^[[92m  Downloaded^[[0m cpufeatures v0.3.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3419310Z ^[[1m^[[92m  Downloaded^[[0m futures-core v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3491900Z ^[[1m^[[92m  Downloaded^[[0m plotters-svg v0.3.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3517430Z ^[[1m^[[92m  Downloaded^[[0m core-foundation v0.10.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.3683720Z ^[[1m^[[92m  Downloaded^[[0m thiserror v2.0.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.4298220Z ^[[1m^[[92m  Downloaded^[[0m hex v0.4.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.4444490Z ^[[1m^[[92m  Downloaded^[[0m generic-array v0.14.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.4585250Z ^[[1m^[[92m  Downloaded^[[0m atomic-waker v1.1.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.4922620Z ^[[1m^[[92m  Downloaded^[[0m httparse v1.10.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.5050480Z ^[[1m^[[92m  Downloaded^[[0m base64 v0.22.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.5183730Z ^[[1m^[[92m  Downloaded^[[0m http v1.5.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.5297500Z ^[[1m^[[92m  Downloaded^[[0m tinyvec v1.12.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.5713520Z ^[[1m^[[92m  Downloaded^[[0m unicode-normalization v0.1.25
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.5814480Z ^[[1m^[[92m  Downloaded^[[0m portable-atomic v1.14.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.5981770Z ^[[1m^[[92m  Downloaded^[[0m lzma-rust2 v0.18.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.6154620Z ^[[1m^[[92m  Downloaded^[[0m simd_cesu8 v1.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.6263760Z ^[[1m^[[92m  Downloaded^[[0m wasm-bindgen-futures v0.4.77
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.6320200Z ^[[1m^[[92m  Downloaded^[[0m tower-service v0.3.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.6376630Z ^[[1m^[[92m  Downloaded^[[0m wasm-streams v0.5.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.6745710Z ^[[1m^[[92m  Downloaded^[[0m futures-channel v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.6806440Z ^[[1m^[[92m  Downloaded^[[0m tower-http v0.6.11
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.7030410Z ^[[1m^[[92m  Downloaded^[[0m cpufeatures v0.2.17
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.7076520Z ^[[1m^[[92m  Downloaded^[[0m digest v0.10.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.7128280Z ^[[1m^[[92m  Downloaded^[[0m async-trait v0.1.92
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.7525730Z ^[[1m^[[92m  Downloaded^[[0m defmt v1.1.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.7631680Z ^[[1m^[[92m  Downloaded^[[0m futures v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.7739490Z ^[[1m^[[92m  Downloaded^[[0m tokio v1.53.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:45.9265740Z ^[[1m^[[92m  Downloaded^[[0m winapi v0.3.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.0477330Z ^[[1m^[[92m  Downloaded^[[0m jiff-core v0.1.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.0549990Z ^[[1m^[[92m  Downloaded^[[0m jiff v0.2.35
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.0784710Z ^[[1m^[[92m  Downloaded^[[0m aho-corasick v1.1.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.0883850Z ^[[1m^[[92m  Downloaded^[[0m futures-task v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.1282010Z ^[[1m^[[92m  Downloaded^[[0m futures-macro v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.1318580Z ^[[1m^[[92m  Downloaded^[[0m wasm-bindgen-shared v0.2.127
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.1344170Z ^[[1m^[[92m  Downloaded^[[0m openssl-probe v0.2.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.1369880Z ^[[1m^[[92m  Downloaded^[[0m wasm-bindgen-macro-support v0.2.127
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.1404960Z ^[[1m^[[92m  Downloaded^[[0m bumpalo v3.20.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.1456010Z ^[[1m^[[92m  Downloaded^[[0m combine v4.6.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.1553740Z ^[[1m^[[92m  Downloaded^[[0m tar v0.4.46
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.1606280Z ^[[1m^[[92m  Downloaded^[[0m bstr v1.13.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.1734430Z ^[[1m^[[92m  Downloaded^[[0m reqwest v0.13.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2241260Z ^[[1m^[[92m  Downloaded^[[0m regex-syntax v0.8.11
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2357350Z ^[[1m^[[92m  Downloaded^[[0m filetime v0.2.29
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2390300Z ^[[1m^[[92m  Downloaded^[[0m wasm-bindgen-macro v0.2.127
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2411140Z ^[[1m^[[92m  Downloaded^[[0m windows_i686_gnu v0.52.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2585220Z ^[[1m^[[92m  Downloaded^[[0m http-body-util v0.1.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2628280Z ^[[1m^[[92m  Downloaded^[[0m windows_i686_msvc v0.52.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2750670Z ^[[1m^[[92m  Downloaded^[[0m sha2 v0.10.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2801970Z ^[[1m^[[92m  Downloaded^[[0m async-recursion v1.1.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2876630Z ^[[1m^[[92m  Downloaded^[[0m futures-executor v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.2902560Z ^[[1m^[[92m  Downloaded^[[0m globset v0.4.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.3275820Z ^[[1m^[[92m  Downloaded^[[0m rustls v0.23.45
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.3640530Z ^[[1m^[[92m  Downloaded^[[0m pem v3.0.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.3671150Z ^[[1m^[[92m  Downloaded^[[0m hyper-rustls v0.27.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.3698430Z ^[[1m^[[92m  Downloaded^[[0m windows_x86_64_gnu v0.52.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.3890060Z ^[[1m^[[92m  Downloaded^[[0m regex-automata v0.4.18
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.4420910Z ^[[1m^[[92m  Downloaded^[[0m libc v0.2.189
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.5712930Z ^[[1m^[[92m  Downloaded^[[0m block-buffer v0.10.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.5733190Z ^[[1m^[[92m  Downloaded^[[0m ring v0.17.14
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:46.6756670Z ^[[1m^[[92m  Downloaded^[[0m web-sys v0.3.104
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.0727440Z ^[[1m^[[92m  Downloaded^[[0m version_check v0.9.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.0752630Z ^[[1m^[[92m  Downloaded^[[0m crypto-common v0.1.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.0771600Z ^[[1m^[[92m  Downloaded^[[0m dyn-clone v1.0.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.0798990Z ^[[1m^[[92m  Downloaded^[[0m brotli v8.0.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.1334940Z ^[[1m^[[92m  Downloaded^[[0m windows_aarch64_msvc v0.52.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.1463630Z ^[[1m^[[92m  Downloaded^[[0m windows_x86_64_msvc v0.52.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.1575830Z ^[[1m^[[92m  Downloaded^[[0m futures-io v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.1592570Z ^[[1m^[[92m  Downloaded^[[0m tracing v0.1.44
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.1811630Z ^[[1m^[[92m  Downloaded^[[0m nix v0.31.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.2306540Z ^[[1m^[[92m  Downloaded^[[0m windows_x86_64_gnullvm v0.52.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.2389190Z ^[[1m^[[92m  Downloaded^[[0m zerocopy v0.8.55
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.3019870Z ^[[1m^[[92m  Downloaded^[[0m windows_aarch64_gnullvm v0.52.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.3099630Z ^[[1m^[[92m  Downloaded^[[0m windows_i686_gnullvm v0.52.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.3181880Z ^[[1m^[[92m  Downloaded^[[0m unicode-width v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.3240270Z ^[[1m^[[92m  Downloaded^[[0m time v0.3.55
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.3761680Z ^[[1m^[[92m  Downloaded^[[0m rustix v1.1.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.4575390Z ^[[1m^[[92m  Downloaded^[[0m aws-lc-rs v1.18.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.4740350Z ^[[1m^[[92m  Downloaded^[[0m quick-xml v0.41.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.5159190Z ^[[1m^[[92m  Downloaded^[[0m proptest v1.11.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.5320530Z ^[[1m^[[92m  Downloaded^[[0m syn v3.0.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.5472700Z ^[[1m^[[92m  Downloaded^[[0m brotli-decompressor v5.0.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.5840260Z ^[[1m^[[92m  Downloaded^[[0m clap_builder v4.6.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.5938120Z ^[[1m^[[92m  Downloaded^[[0m rayon v1.12.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.6092200Z ^[[1m^[[92m  Downloaded^[[0m regex v1.13.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.6735260Z ^[[1m^[[92m  Downloaded^[[0m syn v2.0.119
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.6902470Z ^[[1m^[[92m  Downloaded^[[0m tower v0.5.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.7062920Z ^[[1m^[[92m  Downloaded^[[0m jiff-tzdb v0.1.8
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.7356920Z ^[[1m^[[92m  Downloaded^[[0m portable-atomic-util v0.2.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.7449590Z ^[[1m^[[92m  Downloaded^[[0m hashbrown v0.17.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.7528370Z ^[[1m^[[92m  Downloaded^[[0m itertools v0.13.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.7642320Z ^[[1m^[[92m  Downloaded^[[0m plotters v0.3.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.8082080Z ^[[1m^[[92m  Downloaded^[[0m criterion v0.8.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.8219850Z ^[[1m^[[92m  Downloaded^[[0m jiff-static v0.2.35
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.8235130Z ^[[1m^[[92m  Downloaded^[[0m jiff-tzdb-platform v0.1.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.8254700Z ^[[1m^[[92m  Downloaded^[[0m tinyvec_macros v0.1.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.8269410Z ^[[1m^[[92m  Downloaded^[[0m olpc-cjson v0.1.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.8287680Z ^[[1m^[[92m  Downloaded^[[0m semver v1.0.28
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.8323770Z ^[[1m^[[92m  Downloaded^[[0m rustc_version v0.4.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.8345410Z ^[[1m^[[92m  Downloaded^[[0m simdutf8 v0.1.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:47.8381810Z ^[[1m^[[92m  Downloaded^[[0m winapi-i686-pc-windows-gnu v0.4.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.2111160Z ^[[1m^[[92m  Downloaded^[[0m thiserror-impl v2.0.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.2136360Z ^[[1m^[[92m  Downloaded^[[0m hyper v1.11.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.2244700Z ^[[1m^[[92m  Downloaded^[[0m winapi-x86_64-pc-windows-gnu v0.4.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.5899200Z ^[[1m^[[92m  Downloaded^[[0m indexmap v2.14.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.5958600Z ^[[1m^[[92m  Downloaded^[[0m rand v0.9.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.6299830Z ^[[1m^[[92m  Downloaded^[[0m zerocopy-derive v0.8.55
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.6462820Z ^[[1m^[[92m  Downloaded^[[0m tokio-rustls v0.26.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.6493440Z ^[[1m^[[92m  Downloaded^[[0m jni-sys-macros v0.4.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.6504520Z ^[[1m^[[92m  Downloaded^[[0m jni-sys v0.4.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.6519440Z ^[[1m^[[92m  Downloaded^[[0m subtle v2.6.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.6537680Z ^[[1m^[[92m  Downloaded^[[0m typenum v1.20.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.6587290Z ^[[1m^[[92m  Downloaded^[[0m windows-sys v0.61.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.7953120Z ^[[1m^[[92m  Downloaded^[[0m hyper-util v0.1.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.8073410Z ^[[1m^[[92m  Downloaded^[[0m futures-util v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.8584990Z ^[[1m^[[92m  Downloaded^[[0m windows-sys v0.52.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:48.9947940Z ^[[1m^[[92m  Downloaded^[[0m jni v0.22.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.0055060Z ^[[1m^[[92m  Downloaded^[[0m exacl v0.13.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.0140330Z ^[[1m^[[92m  Downloaded^[[0m webpki-root-certs v1.0.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.0169210Z ^[[1m^[[92m  Downloaded^[[0m serde_json v1.0.151
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.0557350Z ^[[1m^[[92m  Downloaded^[[0m tokio-util v0.7.19
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.0688990Z ^[[1m^[[92m  Downloaded^[[0m icu_properties_data v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.0903380Z ^[[1m^[[92m  Downloaded^[[0m zerovec v0.11.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1003710Z ^[[1m^[[92m  Downloaded^[[0m try-lock v0.2.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1023290Z ^[[1m^[[92m  Downloaded^[[0m http-body v1.1.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1040120Z ^[[1m^[[92m  Downloaded^[[0m sync_wrapper v1.0.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1051160Z ^[[1m^[[92m  Downloaded^[[0m tower-layer v0.3.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1065590Z ^[[1m^[[92m  Downloaded^[[0m jni-macros v0.22.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1091070Z ^[[1m^[[92m  Downloaded^[[0m js-sys v0.3.104
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1128530Z ^[[1m^[[92m  Downloaded^[[0m r-efi v6.0.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1209030Z ^[[1m^[[92m  Downloaded^[[0m getrandom v0.4.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1271450Z ^[[1m^[[92m  Downloaded^[[0m clap_complete v4.6.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1575360Z ^[[1m^[[92m  Downloaded^[[0m uuid v1.24.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1624910Z ^[[1m^[[92m  Downloaded^[[0m plist v1.10.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1698230Z ^[[1m^[[92m  Downloaded^[[0m half v2.7.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1740050Z ^[[1m^[[92m  Downloaded^[[0m anstream v1.0.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.1767780Z ^[[1m^[[92m  Downloaded^[[0m clap v4.6.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.2190240Z ^[[1m^[[92m  Downloaded^[[0m crossbeam-epoch v0.9.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.2233890Z ^[[1m^[[92m  Downloaded^[[0m rayon-core v1.13.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.2292770Z ^[[1m^[[92m  Downloaded^[[0m const-oid v0.10.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.2328610Z ^[[1m^[[92m  Downloaded^[[0m digest v0.11.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.2364820Z ^[[1m^[[92m  Downloaded^[[0m autocfg v1.5.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.2395490Z ^[[1m^[[92m  Downloaded^[[0m linux-raw-sys v0.12.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4049580Z ^[[1m^[[92m  Downloaded^[[0m num-traits v0.2.19
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4094100Z ^[[1m^[[92m  Downloaded^[[0m ryu-js v1.0.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4159730Z ^[[1m^[[92m  Downloaded^[[0m memchr v2.8.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4255020Z ^[[1m^[[92m  Downloaded^[[0m wasip2 v1.0.4+wasi-0.2.12
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4307270Z ^[[1m^[[92m  Downloaded^[[0m tough v0.24.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4455140Z ^[[1m^[[92m  Downloaded^[[0m icu_collections v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4547960Z ^[[1m^[[92m  Downloaded^[[0m idna v1.1.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4593360Z ^[[1m^[[92m  Downloaded^[[0m bitflags v1.3.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4640220Z ^[[1m^[[92m  Downloaded^[[0m defmt-macros v1.1.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4698340Z ^[[1m^[[92m  Downloaded^[[0m ipnet v2.12.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4722900Z ^[[1m^[[92m  Downloaded^[[0m tracing-core v0.1.36
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4760650Z ^[[1m^[[92m  Downloaded^[[0m slab v0.4.12
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4777450Z ^[[1m^[[92m  Downloaded^[[0m wasm-bindgen v0.2.127
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4819190Z ^[[1m^[[92m  Downloaded^[[0m rustls-native-certs v0.8.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4839030Z ^[[1m^[[92m  Downloaded^[[0m fs_extra v1.3.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4861410Z ^[[1m^[[92m  Downloaded^[[0m find-msvc-tools v0.1.10
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4884650Z ^[[1m^[[92m  Downloaded^[[0m jobserver v0.1.35
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4915260Z ^[[1m^[[92m  Downloaded^[[0m listenfd v1.0.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4940660Z ^[[1m^[[92m  Downloaded^[[0m deranged v0.5.8
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4957810Z ^[[1m^[[92m  Downloaded^[[0m time-macros v0.2.32
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.4990990Z ^[[1m^[[92m  Downloaded^[[0m anes v0.1.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5031070Z ^[[1m^[[92m  Downloaded^[[0m ciborium v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5069260Z ^[[1m^[[92m  Downloaded^[[0m anstyle-parse v1.0.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5090810Z ^[[1m^[[92m  Downloaded^[[0m anstyle-query v1.1.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5105800Z ^[[1m^[[92m  Downloaded^[[0m anstyle-wincon v3.0.11
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5123910Z ^[[1m^[[92m  Downloaded^[[0m colorchoice v1.0.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5138730Z ^[[1m^[[92m  Downloaded^[[0m anstyle v1.0.14
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5159140Z ^[[1m^[[92m  Downloaded^[[0m strsim v0.11.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5177770Z ^[[1m^[[92m  Downloaded^[[0m clap_derive v4.6.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5729660Z ^[[1m^[[92m  Downloaded^[[0m criterion-plot v0.8.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5759040Z ^[[1m^[[92m  Downloaded^[[0m oorandom v11.1.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5771410Z ^[[1m^[[92m  Downloaded^[[0m page_size v0.6.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5784560Z ^[[1m^[[92m  Downloaded^[[0m either v1.17.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5804850Z ^[[1m^[[92m  Downloaded^[[0m crossbeam-utils v0.8.22
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5851010Z ^[[1m^[[92m  Downloaded^[[0m tinytemplate v1.2.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5874190Z ^[[1m^[[92m  Downloaded^[[0m hybrid-array v0.4.14
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5909850Z ^[[1m^[[92m  Downloaded^[[0m sha2 v0.11.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5965650Z ^[[1m^[[92m  Downloaded^[[0m ppv-lite86 v0.2.21
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.5983230Z ^[[1m^[[92m  Downloaded^[[0m rand_core v0.9.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.6002910Z ^[[1m^[[92m  Downloaded^[[0m serde_json_canonicalizer v0.3.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.6349690Z ^[[1m^[[92m  Downloaded^[[0m shlex v2.0.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.6368340Z ^[[1m^[[92m  Downloaded^[[0m cc v1.4.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.6409690Z ^[[1m^[[92m  Downloaded^[[0m rustls-webpki v0.103.15
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.6454880Z ^[[1m^[[92m  Downloaded^[[0m security-framework v3.7.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.6518470Z ^[[1m^[[92m  Downloaded^[[0m pin-project v1.1.13
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7025210Z ^[[1m^[[92m  Downloaded^[[0m snafu v0.8.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7128350Z ^[[1m^[[92m  Downloaded^[[0m r-efi v5.3.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7205030Z ^[[1m^[[92m  Downloaded^[[0m wit-bindgen v0.57.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7261190Z ^[[1m^[[92m  Downloaded^[[0m bytes v1.12.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7309540Z ^[[1m^[[92m  Downloaded^[[0m mio v1.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7400960Z ^[[1m^[[92m  Downloaded^[[0m typed-path v0.9.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7495890Z ^[[1m^[[92m  Downloaded^[[0m icu_normalizer_data v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7522500Z ^[[1m^[[92m  Downloaded^[[0m icu_normalizer v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7886480Z ^[[1m^[[92m  Downloaded^[[0m icu_locale_core v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.7996010Z ^[[1m^[[92m  Downloaded^[[0m zerotrie v0.2.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8049580Z ^[[1m^[[92m  Downloaded^[[0m icu_properties v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8079100Z ^[[1m^[[92m  Downloaded^[[0m url v2.5.8
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8112360Z ^[[1m^[[92m  Downloaded^[[0m defmt-parser v1.0.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8126540Z ^[[1m^[[92m  Downloaded^[[0m want v0.3.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8140610Z ^[[1m^[[92m  Downloaded^[[0m rustversion v1.0.23
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8768690Z ^[[1m^[[92m  Downloaded^[[0m log v0.4.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8810440Z ^[[1m^[[92m  Downloaded^[[0m schannel v0.1.29
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8839190Z ^[[1m^[[92m  Downloaded^[[0m rustls-platform-verifier-android v0.1.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8853890Z ^[[1m^[[92m  Downloaded^[[0m cmake v0.1.58
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8874240Z ^[[1m^[[92m  Downloaded^[[0m pkg-config v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8898220Z ^[[1m^[[92m  Downloaded^[[0m scopeguard v1.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8914920Z ^[[1m^[[92m  Downloaded^[[0m memoffset v0.9.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8933650Z ^[[1m^[[92m  Downloaded^[[0m equivalent v1.0.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8949520Z ^[[1m^[[92m  Downloaded^[[0m num-conv v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8962920Z ^[[1m^[[92m  Downloaded^[[0m time-core v0.1.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.8978820Z ^[[1m^[[92m  Downloaded^[[0m alloc-no-stdlib v2.0.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9004370Z ^[[1m^[[92m  Downloaded^[[0m alloc-stdlib v0.2.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9028840Z ^[[1m^[[92m  Downloaded^[[0m crunchy v0.2.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9034930Z ^[[1m^[[92m  Downloaded^[[0m ciborium-ll v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9051480Z ^[[1m^[[92m  Downloaded^[[0m is_terminal_polyfill v1.70.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9121690Z ^[[1m^[[92m  Downloaded^[[0m utf8parse v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9138590Z ^[[1m^[[92m  Downloaded^[[0m clap_lex v1.1.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9431200Z ^[[1m^[[92m  Downloaded^[[0m terminal_size v0.4.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9450630Z ^[[1m^[[92m  Downloaded^[[0m cast v0.3.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9466210Z ^[[1m^[[92m  Downloaded^[[0m crossbeam-deque v0.8.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9488890Z ^[[1m^[[92m  Downloaded^[[0m core-foundation-sys v0.8.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9543440Z ^[[1m^[[92m  Downloaded^[[0m rustls-platform-verifier v0.7.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9599430Z ^[[1m^[[92m  Downloaded^[[0m getrandom v0.3.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9651600Z ^[[1m^[[92m  Downloaded^[[0m bitflags v2.13.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9723340Z ^[[1m^[[92m  Downloaded^[[0m tempfile v3.27.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9761590Z ^[[1m^[[92m  Downloaded^[[0m pin-project-lite v0.2.17
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9855890Z ^[[1m^[[92m  Downloaded^[[0m socket2 v0.6.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9880640Z ^[[1m^[[92m  Downloaded^[[0m litemap v0.8.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9912130Z ^[[1m^[[92m  Downloaded^[[0m icu_provider v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9949140Z ^[[1m^[[92m  Downloaded^[[0m yoke v0.8.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9973320Z ^[[1m^[[92m  Downloaded^[[0m zerovec-derive v0.11.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:49.9993020Z ^[[1m^[[92m  Downloaded^[[0m smallvec v1.15.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0020650Z ^[[1m^[[92m  Downloaded^[[0m serde_core v1.0.229
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0057250Z ^[[1m^[[92m  Downloaded^[[0m proc-macro2 v1.0.107
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0394510Z ^[[1m^[[92m  Downloaded^[[0m unicode-ident v1.0.24
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0432670Z ^[[1m^[[92m  Downloaded^[[0m serde_derive v1.0.229
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0477910Z ^[[1m^[[92m  Downloaded^[[0m dunce v1.0.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0490340Z ^[[1m^[[92m  Downloaded^[[0m cfg_aliases v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0503020Z ^[[1m^[[92m  Downloaded^[[0m powerfmt v0.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0517170Z ^[[1m^[[92m  Downloaded^[[0m alloca v0.4.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0535580Z ^[[1m^[[92m  Downloaded^[[0m ciborium-io v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0547910Z ^[[1m^[[92m  Downloaded^[[0m once_cell_polyfill v1.70.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0561310Z ^[[1m^[[92m  Downloaded^[[0m plotters-backend v0.3.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0578270Z ^[[1m^[[92m  Downloaded^[[0m block-buffer v0.12.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0594830Z ^[[1m^[[92m  Downloaded^[[0m crypto-common v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0614940Z ^[[1m^[[92m  Downloaded^[[0m rand_chacha v0.9.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0628480Z ^[[1m^[[92m  Downloaded^[[0m getrandom v0.2.17
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0677850Z ^[[1m^[[92m  Downloaded^[[0m rustls-pki-types v1.15.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0715120Z ^[[1m^[[92m  Downloaded^[[0m snafu-derive v0.8.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0730930Z ^[[1m^[[92m  Downloaded^[[0m once_cell v1.21.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0766730Z ^[[1m^[[92m  Downloaded^[[0m same-file v1.0.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0789840Z ^[[1m^[[92m  Downloaded^[[0m zeroize v1.9.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0811200Z ^[[1m^[[92m  Downloaded^[[0m wasi v0.11.1+wasi-snapshot-preview1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0835720Z ^[[1m^[[92m  Downloaded^[[0m walkdir v2.5.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0864410Z ^[[1m^[[92m  Downloaded^[[0m tinystr v0.8.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0893230Z ^[[1m^[[92m  Downloaded^[[0m writeable v0.6.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0920580Z ^[[1m^[[92m  Downloaded^[[0m displaydoc v0.2.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0954150Z ^[[1m^[[92m  Downloaded^[[0m yoke-derive v0.8.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0969880Z ^[[1m^[[92m  Downloaded^[[0m synstructure v0.13.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.0982900Z ^[[1m^[[92m  Downloaded^[[0m quote v1.0.47
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1030250Z ^[[1m^[[92m  Downloaded^[[0m windows-targets v0.52.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1041320Z ^[[1m^[[92m  Downloaded^[[0m security-framework-sys v2.17.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1074880Z ^[[1m^[[92m  Downloaded^[[0m zmij v1.0.23
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1101240Z ^[[1m^[[92m  Downloaded^[[0m pin-project-internal v1.1.13
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1124590Z ^[[1m^[[92m  Downloaded^[[0m fastrand v2.5.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1144760Z ^[[1m^[[92m  Downloaded^[[0m cfg-if v1.0.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1162290Z ^[[1m^[[92m  Downloaded^[[0m winapi-util v0.1.11
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1181890Z ^[[1m^[[92m  Downloaded^[[0m potential_utf v0.1.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1195760Z ^[[1m^[[92m  Downloaded^[[0m idna_adapter v1.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1208190Z ^[[1m^[[92m  Downloaded^[[0m rand_xorshift v0.4.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1222770Z ^[[1m^[[92m  Downloaded^[[0m serde_plain v1.0.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1244730Z ^[[1m^[[92m  Downloaded^[[0m stable_deref_trait v1.2.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1257130Z ^[[1m^[[92m  Downloaded^[[0m heck v0.5.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1276290Z ^[[1m^[[92m  Downloaded^[[0m errno v0.3.14
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1300180Z ^[[1m^[[92m  Downloaded^[[0m futures-sink v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1310940Z ^[[1m^[[92m  Downloaded^[[0m form_urlencoded v1.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1323900Z ^[[1m^[[92m  Downloaded^[[0m zerofrom v0.1.8
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1337170Z ^[[1m^[[92m  Downloaded^[[0m tokio-macros v2.7.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1351910Z ^[[1m^[[92m  Downloaded^[[0m windows-link v0.2.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1362760Z ^[[1m^[[92m  Downloaded^[[0m percent-encoding v2.3.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.1513570Z ^[[1m^[[92m  Downloaded^[[0m aws-lc-sys v0.44.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.5753690Z error: sandbox-exec cannot run on this host; cannot deny networking
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.5754050Z ==> network denial: none
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.5754300Z warning: running WITHOUT network denial (set STRICT=1 in CI)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.8055910Z ^[[1m^[[92m   Compiling^[[0m proc-macro2 v1.0.107
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.8056330Z ^[[1m^[[92m   Compiling^[[0m unicode-ident v1.0.24
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:50.8056630Z ^[[1m^[[92m   Compiling^[[0m quote v1.0.47
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:51.1982090Z ^[[1m^[[92m   Compiling^[[0m libc v0.2.189
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:53.3375870Z ^[[1m^[[92m   Compiling^[[0m memchr v2.8.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:53.8382640Z ^[[1m^[[92m   Compiling^[[0m syn v2.0.119
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:53.8414780Z ^[[1m^[[92m   Compiling^[[0m syn v3.0.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:53.8833220Z ^[[1m^[[92m   Compiling^[[0m cfg-if v1.0.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:54.1146640Z ^[[1m^[[92m   Compiling^[[0m bitflags v2.13.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:54.5256140Z ^[[1m^[[92m   Compiling^[[0m jobserver v0.1.35
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:54.7104190Z ^[[1m^[[92m   Compiling^[[0m shlex v2.0.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:54.7821890Z ^[[1m^[[92m   Compiling^[[0m itoa v1.0.18
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:54.8606410Z ^[[1m^[[92m   Compiling^[[0m find-msvc-tools v0.1.10
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:54.9816360Z ^[[1m^[[92m   Compiling^[[0m cc v1.4.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:55.8966110Z ^[[1m^[[92m   Compiling^[[0m synstructure v0.13.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:55.9916940Z ^[[1m^[[92m   Compiling^[[0m serde_core v1.0.229
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:56.2448310Z ^[[1m^[[92m   Compiling^[[0m stable_deref_trait v1.2.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:56.2801750Z ^[[1m^[[92m   Compiling^[[0m typenum v1.20.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:56.7903340Z ^[[1m^[[92m   Compiling^[[0m zerofrom-derive v0.1.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:56.9275900Z ^[[1m^[[92m   Compiling^[[0m yoke-derive v0.8.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:57.4709270Z ^[[1m^[[92m   Compiling^[[0m zerofrom v0.1.8
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:57.5372650Z ^[[1m^[[92m   Compiling^[[0m futures-core v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:57.5417970Z ^[[1m^[[92m   Compiling^[[0m yoke v0.8.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:57.5888030Z ^[[1m^[[92m   Compiling^[[0m serde v1.0.229
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:57.6395960Z ^[[1m^[[92m   Compiling^[[0m pin-project-lite v0.2.17
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:57.6699450Z ^[[1m^[[92m   Compiling^[[0m zerovec-derive v0.11.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:57.7491610Z ^[[1m^[[92m   Compiling^[[0m serde_derive v1.0.229
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:57.8397460Z ^[[1m^[[92m   Compiling^[[0m displaydoc v0.2.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:58.2140010Z ^[[1m^[[92m   Compiling^[[0m cmake v0.1.58
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:58.2441010Z ^[[1m^[[92m   Compiling^[[0m zerovec v0.11.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:58.4041030Z ^[[1m^[[92m   Compiling^[[0m fs_extra v1.3.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:58.5303780Z ^[[1m^[[92m   Compiling^[[0m zmij v1.0.23
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:58.5467290Z ^[[1m^[[92m   Compiling^[[0m pkg-config v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:58.6621960Z ^[[1m^[[92m   Compiling^[[0m dunce v1.0.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:58.6908120Z ^[[1m^[[92m   Compiling^[[0m getrandom v0.3.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:58.8430560Z ^[[1m^[[92m   Compiling^[[0m bytes v1.12.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:58.8530800Z ^[[1m^[[92m   Compiling^[[0m aws-lc-sys v0.44.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:59.2039450Z ^[[1m^[[92m   Compiling^[[0m futures-sink v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:59.2342600Z ^[[1m^[[92m   Compiling^[[0m zeroize v1.9.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:59.3175330Z ^[[1m^[[92m   Compiling^[[0m serde_json v1.0.151
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:59.4188530Z ^[[1m^[[92m   Compiling^[[0m version_check v0.9.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:59.5904150Z ^[[1m^[[92m   Compiling^[[0m generic-array v0.14.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:59.8003580Z ^[[1m^[[92m   Compiling^[[0m futures-channel v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:59.9003240Z ^[[1m^[[92m   Compiling^[[0m tinystr v0.8.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:43:59.9983280Z ^[[1m^[[92m   Compiling^[[0m tokio-macros v2.7.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:00.4041490Z ^[[1m^[[92m   Compiling^[[0m mio v1.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:00.7685900Z ^[[1m^[[92m   Compiling^[[0m socket2 v0.6.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:01.0127410Z ^[[1m^[[92m   Compiling^[[0m litemap v0.8.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:01.0425480Z ^[[1m^[[92m   Compiling^[[0m smallvec v1.15.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:01.0979400Z ^[[1m^[[92m   Compiling^[[0m once_cell v1.21.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:01.1549130Z ^[[1m^[[92m   Compiling^[[0m aws-lc-rs v1.18.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:01.1918100Z ^[[1m^[[92m   Compiling^[[0m regex-syntax v0.8.11
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:01.3121070Z ^[[1m^[[92m   Compiling^[[0m writeable v0.6.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:01.4228030Z ^[[1m^[[92m   Compiling^[[0m icu_locale_core v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:02.1629430Z ^[[1m^[[92m   Compiling^[[0m tokio v1.53.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:03.9456670Z ^[[1m^[[92m   Compiling^[[0m potential_utf v0.1.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:04.0620820Z ^[[1m^[[92m   Compiling^[[0m zerotrie v0.2.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:04.3536160Z ^[[1m^[[92m   Compiling^[[0m futures-macro v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:05.0436830Z ^[[1m^[[92m   Compiling^[[0m utf8_iter v1.0.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:05.1130120Z ^[[1m^[[92m   Compiling^[[0m icu_properties_data v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:05.2632370Z ^[[1m^[[92m   Compiling^[[0m futures-io v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:05.3552990Z ^[[1m^[[92m   Compiling^[[0m core-foundation-sys v0.8.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:05.5203830Z ^[[1m^[[92m   Compiling^[[0m slab v0.4.12
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:05.6548020Z ^[[1m^[[92m   Compiling^[[0m icu_normalizer_data v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:05.7807570Z ^[[1m^[[92m   Compiling^[[0m rustix v1.1.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:06.0942890Z ^[[1m^[[92m   Compiling^[[0m futures-task v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:06.2412240Z ^[[1m^[[92m   Compiling^[[0m futures-util v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:09.0314490Z ^[[1m^[[92m   Compiling^[[0m icu_collections v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:09.3556910Z ^[[1m^[[92m   Compiling^[[0m icu_provider v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:09.4975130Z ^[[1m^[[92m   Compiling^[[0m http v1.5.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:09.6155140Z ^[[1m^[[92m   Compiling^[[0m errno v0.3.14
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:09.7171780Z ^[[1m^[[92m   Compiling^[[0m log v0.4.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:09.8706840Z ^[[1m^[[92m   Compiling^[[0m untrusted v0.7.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:10.5312490Z ^[[1m^[[92m   Compiling^[[0m http-body v1.1.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:10.8119480Z ^[[1m^[[92m   Compiling^[[0m security-framework-sys v2.17.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:10.9377090Z ^[[1m^[[92m   Compiling^[[0m core-foundation v0.10.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:11.2173950Z ^[[1m^[[92m   Compiling^[[0m block-buffer v0.10.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:11.2850240Z ^[[1m^[[92m   Compiling^[[0m crypto-common v0.1.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:11.3626960Z ^[[1m^[[92m   Compiling^[[0m rustls-pki-types v1.15.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:11.5875440Z ^[[1m^[[92m   Compiling^[[0m percent-encoding v2.3.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:11.6791200Z ^[[1m^[[92m   Compiling^[[0m rustls v0.23.45
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:11.7194140Z ^[[1m^[[92m   Compiling^[[0m untrusted v0.9.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:11.7780160Z ^[[1m^[[92m   Compiling^[[0m httparse v1.10.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:11.7812680Z ^[[1m^[[92m   Compiling^[[0m jiff-core v0.1.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:11.9578390Z ^[[1m^[[92m   Compiling^[[0m heck v0.5.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:12.0945860Z ^[[1m^[[92m   Compiling^[[0m digest v0.10.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:12.1894740Z ^[[1m^[[92m   Compiling^[[0m security-framework v3.7.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:12.7188300Z ^[[1m^[[92m   Compiling^[[0m jiff v0.2.35
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:13.5439050Z ^[[1m^[[92m   Compiling^[[0m icu_normalizer v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:14.0302590Z ^[[1m^[[92m   Compiling^[[0m icu_properties v2.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:15.0226350Z ^[[1m^[[92m   Compiling^[[0m cpufeatures v0.2.17
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:15.0772260Z ^[[1m^[[92m   Compiling^[[0m tower-service v0.3.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:15.1110520Z ^[[1m^[[92m   Compiling^[[0m ryu-js v1.0.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:15.3064580Z ^[[1m^[[92m   Compiling^[[0m subtle v2.6.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:15.3839430Z ^[[1m^[[92m   Compiling^[[0m base64 v0.22.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:15.5882760Z ^[[1m^[[92m   Compiling^[[0m try-lock v0.2.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:15.6251140Z ^[[1m^[[92m   Compiling^[[0m want v0.3.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:15.7001030Z ^[[1m^[[92m   Compiling^[[0m serde_json_canonicalizer v0.3.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:15.9920430Z ^[[1m^[[92m   Compiling^[[0m sha2 v0.10.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:16.1869970Z ^[[1m^[[92m   Compiling^[[0m idna_adapter v1.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:16.2521780Z ^[[1m^[[92m   Compiling^[[0m tracing-core v0.1.36
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:16.4455330Z ^[[1m^[[92m   Compiling^[[0m aho-corasick v1.1.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:16.7558060Z ^[[1m^[[92m   Compiling^[[0m atomic-waker v1.1.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:16.8146000Z ^[[1m^[[92m   Compiling^[[0m hyper v1.11.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:17.8707190Z ^[[1m^[[92m   Compiling^[[0m regex-automata v0.4.18
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:18.0562520Z ^[[1m^[[92m   Compiling^[[0m tracing v0.1.44
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:18.1787180Z ^[[1m^[[92m   Compiling^[[0m idna v1.1.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:18.9025130Z ^[[1m^[[92m   Compiling^[[0m form_urlencoded v1.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:18.9971050Z ^[[1m^[[92m   Compiling^[[0m sync_wrapper v1.0.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:19.0398500Z ^[[1m^[[92m   Compiling^[[0m ipnet v2.12.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:19.5077370Z ^[[1m^[[92m   Compiling^[[0m tower-layer v0.3.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:19.6031270Z ^[[1m^[[92m   Compiling^[[0m tinyvec_macros v0.1.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:19.6335620Z ^[[1m^[[92m   Compiling^[[0m tinyvec v1.12.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:20.0361290Z ^[[1m^[[92m   Compiling^[[0m tower v0.5.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:20.4125610Z ^[[1m^[[92m   Compiling^[[0m hyper-util v0.1.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:21.3985150Z ^[[1m^[[92m   Compiling^[[0m url v2.5.8
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:21.7940170Z ^[[1m^[[92m   Compiling^[[0m pkg-core v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-core)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:22.2290330Z ^[[1m^[[92m   Compiling^[[0m pin-project-internal v1.1.13
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:23.0271600Z ^[[1m^[[92m   Compiling^[[0m same-file v1.0.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:23.1045950Z ^[[1m^[[92m   Compiling^[[0m walkdir v2.5.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:23.3555030Z ^[[1m^[[92m   Compiling^[[0m pin-project v1.1.13
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:23.3965610Z ^[[1m^[[92m   Compiling^[[0m tower-http v0.6.11
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:23.7361750Z ^[[1m^[[92m   Compiling^[[0m unicode-normalization v0.1.25
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:24.1038770Z ^[[1m^[[92m   Compiling^[[0m snafu-derive v0.8.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:25.3745480Z ^[[1m^[[92m   Compiling^[[0m http-body-util v0.1.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:25.5503060Z ^[[1m^[[92m   Compiling^[[0m futures-executor v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:25.7462460Z ^[[1m^[[92m   Compiling^[[0m tokio-util v0.7.19
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:26.0701260Z ^[[1m^[[92m   Compiling^[[0m bstr v1.13.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:26.3782750Z ^[[1m^[[92m   Compiling^[[0m fastrand v2.5.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:26.5085250Z ^[[1m^[[92m   Compiling^[[0m tempfile v3.27.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:26.8354680Z ^[[1m^[[92m   Compiling^[[0m globset v0.4.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:27.0032420Z ^[[1m^[[92m   Compiling^[[0m futures v0.3.33
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:27.0558600Z ^[[1m^[[92m   Compiling^[[0m snafu v0.8.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:27.3828410Z ^[[1m^[[92m   Compiling^[[0m olpc-cjson v0.1.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:27.4898600Z ^[[1m^[[92m   Compiling^[[0m pem v3.0.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:27.7146600Z ^[[1m^[[92m   Compiling^[[0m serde_plain v1.0.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:27.8449880Z ^[[1m^[[92m   Compiling^[[0m async-recursion v1.1.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:27.8769800Z ^[[1m^[[92m   Compiling^[[0m async-trait v0.1.92
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:28.3285890Z ^[[1m^[[92m   Compiling^[[0m typed-path v0.9.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:28.6754600Z ^[[1m^[[92m   Compiling^[[0m hex v0.4.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:28.8149050Z ^[[1m^[[92m   Compiling^[[0m dyn-clone v1.0.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:28.8708520Z ^[[1m^[[92m   Compiling^[[0m hybrid-array v0.4.14
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:29.2695790Z ^[[1m^[[92m   Compiling^[[0m block-buffer v0.12.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:29.3355180Z ^[[1m^[[92m   Compiling^[[0m crypto-common v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:29.3952050Z ^[[1m^[[92m   Compiling^[[0m const-oid v0.10.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:29.5050240Z ^[[1m^[[92m   Compiling^[[0m cpufeatures v0.3.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:29.5465470Z ^[[1m^[[92m   Compiling^[[0m filetime v0.2.29
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:29.6451560Z ^[[1m^[[92m   Compiling^[[0m tar v0.4.46
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:30.1048410Z ^[[1m^[[92m   Compiling^[[0m digest v0.11.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:30.1975590Z ^[[1m^[[92m   Compiling^[[0m sha2 v0.11.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:30.4751130Z ^[[1m^[[92m   Compiling^[[0m alloc-no-stdlib v2.0.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:30.5294540Z ^[[1m^[[92m   Compiling^[[0m alloc-stdlib v0.2.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:30.6323480Z ^[[1m^[[92m   Compiling^[[0m brotli-decompressor v5.0.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:30.9707190Z ^[[1m^[[92m   Compiling^[[0m lzma-rust2 v0.18.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:31.6905070Z ^[[1m^[[92m   Compiling^[[0m autocfg v1.5.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:31.9157150Z ^[[1m^[[92m   Compiling^[[0m brotli v8.0.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:32.4800660Z ^[[1m^[[92m   Compiling^[[0m zerocopy v0.8.55
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:32.7336870Z ^[[1m^[[92m   Compiling^[[0m utf8parse v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:32.7698800Z ^[[1m^[[92m   Compiling^[[0m anstyle-parse v1.0.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:32.8721760Z ^[[1m^[[92m   Compiling^[[0m memoffset v0.9.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:32.9729490Z ^[[1m^[[92m   Compiling^[[0m zerocopy-derive v0.8.55
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.1743290Z ^[[1m^[[92m   Compiling^[[0m anstyle-query v1.1.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.2788060Z ^[[1m^[[92m   Compiling^[[0m anstyle v1.0.14
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.4210970Z ^[[1m^[[92m   Compiling^[[0m is_terminal_polyfill v1.70.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.4362150Z ^[[1m^[[92m   Compiling^[[0m colorchoice v1.0.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.4623540Z ^[[1m^[[92m   Compiling^[[0m cfg_aliases v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.4812190Z ^[[1m^[[92m   Compiling^[[0m anstream v1.0.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.4959910Z ^[[1m^[[92m   Compiling^[[0m nix v0.31.3
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.8126680Z ^[[1m^[[92m   Compiling^[[0m terminal_size v0.4.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.9060350Z ^[[1m^[[92m   Compiling^[[0m equivalent v1.0.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:34.9538480Z ^[[1m^[[92m   Compiling^[[0m exacl v0.13.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:35.1348340Z ^[[1m^[[92m   Compiling^[[0m deranged v0.5.8
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:35.9670140Z ^[[1m^[[92m   Compiling^[[0m clap_lex v1.1.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:36.1098190Z ^[[1m^[[92m   Compiling^[[0m num-conv v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:36.1814770Z ^[[1m^[[92m   Compiling^[[0m time-core v0.1.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:36.3129160Z ^[[1m^[[92m   Compiling^[[0m powerfmt v0.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:36.4244890Z ^[[1m^[[92m   Compiling^[[0m strsim v0.11.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:36.8290850Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.17.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:37.3119920Z ^[[1m^[[92m   Compiling^[[0m indexmap v2.14.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:37.8008130Z ^[[1m^[[92m   Compiling^[[0m clap_builder v4.6.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:37.9240170Z ^[[1m^[[92m   Compiling^[[0m time v0.3.55
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:40.1920950Z ^[[1m^[[92m   Compiling^[[0m pkg-macos-security v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-macos-security)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:40.5443530Z ^[[1m^[[92m   Compiling^[[0m clap_derive v4.6.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:41.4997700Z ^[[1m^[[92m   Compiling^[[0m quick-xml v0.41.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:41.5266100Z ^[[1m^[[92m   Compiling^[[0m scopeguard v1.2.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:41.5637710Z ^[[1m^[[92m   Compiling^[[0m uuid v1.24.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:42.5365720Z ^[[1m^[[92m   Compiling^[[0m plist v1.10.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:42.5914600Z ^[[1m^[[92m   Compiling^[[0m clap v4.6.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:43.2629590Z ^[[1m^[[92m   Compiling^[[0m num-traits v0.2.19
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:43.3836320Z ^[[1m^[[92m   Compiling^[[0m listenfd v1.0.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:44.0655300Z ^[[1m^[[92m   Compiling^[[0m crossbeam-utils v0.8.22
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:44.0964070Z ^[[1m^[[92m   Compiling^[[0m crossbeam-epoch v0.9.20
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:44.2146760Z ^[[1m^[[92m   Compiling^[[0m crossbeam-deque v0.8.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:44.3620670Z ^[[1m^[[92m   Compiling^[[0m rand_core v0.9.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:44.4919850Z ^[[1m^[[92m   Compiling^[[0m either v1.17.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:44.6100210Z ^[[1m^[[92m   Compiling^[[0m rayon-core v1.13.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:44.7282990Z ^[[1m^[[92m   Compiling^[[0m clap_complete v4.6.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:44.9125650Z ^[[1m^[[92m   Compiling^[[0m half v2.7.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:45.1171880Z ^[[1m^[[92m   Compiling^[[0m alloca v0.4.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:45.3057280Z ^[[1m^[[92m   Compiling^[[0m plotters-backend v0.3.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:45.3550250Z ^[[1m^[[92m   Compiling^[[0m ciborium-io v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:45.3976650Z ^[[1m^[[92m   Compiling^[[0m unicode-width v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:45.5265950Z ^[[1m^[[92m   Compiling^[[0m plotters-svg v0.3.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:45.5950280Z ^[[1m^[[92m   Compiling^[[0m ciborium-ll v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:46.3353510Z ^[[1m^[[92m   Compiling^[[0m itertools v0.13.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:46.8008360Z ^[[1m^[[92m   Compiling^[[0m ppv-lite86 v0.2.21
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:46.9908850Z ^[[1m^[[92m   Compiling^[[0m cast v0.3.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:47.1113970Z ^[[1m^[[92m   Compiling^[[0m rand_chacha v0.9.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:47.4762900Z ^[[1m^[[92m   Compiling^[[0m criterion-plot v0.8.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:47.5201400Z ^[[1m^[[92m   Compiling^[[0m rayon v1.12.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:47.8355210Z ^[[1m^[[92m   Compiling^[[0m ciborium v0.2.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:48.2407530Z ^[[1m^[[92m   Compiling^[[0m plotters v0.3.7
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:48.9286340Z ^[[1m^[[92m   Compiling^[[0m rand_xorshift v0.4.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:48.9624900Z ^[[1m^[[92m   Compiling^[[0m rand v0.9.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:48.9868380Z ^[[1m^[[92m   Compiling^[[0m regex v1.13.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:49.2855910Z ^[[1m^[[92m   Compiling^[[0m tinytemplate v1.2.1
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:49.2929620Z ^[[1m^[[92m   Compiling^[[0m page_size v0.6.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:49.3316830Z ^[[1m^[[92m   Compiling^[[0m unarray v0.1.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:49.3702790Z ^[[1m^[[92m   Compiling^[[0m anes v0.1.6
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:49.5543990Z ^[[1m^[[92m   Compiling^[[0m oorandom v11.1.5
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:49.6144280Z ^[[1m^[[92m   Compiling^[[0m criterion v0.8.2
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:44:49.6868670Z ^[[1m^[[92m   Compiling^[[0m proptest v1.11.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:10.1135790Z ^[[1m^[[92m   Compiling^[[0m rustls-webpki v0.103.15
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:13.5284830Z ^[[1m^[[92m   Compiling^[[0m tokio-rustls v0.26.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:13.5390110Z ^[[1m^[[92m   Compiling^[[0m rustls-platform-verifier v0.7.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:13.9941960Z ^[[1m^[[92m   Compiling^[[0m hyper-rustls v0.27.9
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:14.3934400Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.13.4
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:16.0331180Z ^[[1m^[[92m   Compiling^[[0m tough v0.24.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:18.5721360Z ^[[1m^[[92m   Compiling^[[0m pkg-channel v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-channel)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:20.2252260Z ^[[1m^[[92m   Compiling^[[0m pkg-nix v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-nix)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:20.7448060Z ^[[1m^[[92m   Compiling^[[0m pkg-index v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-index)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:33.0960750Z ^[[1m^[[92m   Compiling^[[0m pkg-testkit v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-testkit)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:35.0454800Z ^[[1m^[[92m   Compiling^[[0m pkg-store v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-store)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:37.1616540Z ^[[1m^[[92m   Compiling^[[0m pkg-resolver v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-resolver)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:37.5695070Z ^[[1m^[[92m   Compiling^[[0m pkg-pipeline v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-pipeline)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:41.7428960Z ^[[1m^[[92m   Compiling^[[0m pkg-installer v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-installer)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:43.1779730Z ^[[1m^[[92m   Compiling^[[0m pkg-release v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/tools/release)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:45:49.5116450Z ^[[1m^[[92m   Compiling^[[0m pkg-cli v0.1.0-alpha.56 (/Users/runner/work/pkg/pkg/crates/pkg-cli)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:17.9039240Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 2m 27s
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:17.9646430Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/pkg_channel-d2b268fee14b0329)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:17.9861010Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:17.9861490Z running 14 tests
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:17.9927990Z test policy::tests::versions_and_hashes_are_canonical ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0016390Z test policy::tests::repository_urls_require_canonical_https ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0057030Z test state::tests::interrupted_first_refresh_marker_allows_retry_but_not_state_deletion ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0122100Z test state::tests::malformed_permissive_and_symlinked_state_fail_closed ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0173670Z test state::tests::legacy_seed_is_only_accepted_for_established_markerless_state ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0178760Z test tuf::tests::datastore_has_exactly_one_cross_process_writer ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0223360Z test state::tests::exact_state_round_trips_and_replaces_atomically ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0261630Z test tuf::tests::established_tuf_datastore_without_rollback_memory_is_not_first_run ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0660530Z test tuf::tests::descriptor_freshness_refuses_the_exact_expiry_instant ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0718240Z test tuf::tests::host_index_is_returned_only_from_the_authenticated_repository_view ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0794220Z test tuf::tests::semantic_tampering_fails_closed_after_tuf_authentication ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0832860Z test tuf::tests::signed_fixture_loads_and_same_descriptor_is_unchanged ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0893990Z test tuf::tests::refresh_reads_time_only_through_the_injected_clock ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0921780Z test tuf::tests::refresh_bundle_keeps_descriptor_and_host_index_in_one_tuf_view ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0922260Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0922570Z test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0922920Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0926670Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/pkg_cli-2cdb85b7342235fc)
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0974620Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.0977690Z running 191 tests
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1007050Z test broker::tests::build_preparation_refusal_is_typed_and_keeps_the_connection_usable ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1010020Z test broker::tests::build_progress_is_streamed_before_a_typed_refusal ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1011260Z test broker::tests::build_refusal_is_typed_and_keeps_the_connection_usable ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1015540Z test broker::tests::channel_refresh_refusal_is_typed_and_keeps_the_connection_usable ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1018710Z test broker::tests::cache_acquisition_refusal_is_typed_and_keeps_the_connection_usable ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1030850Z test broker::tests::channel_refresh_round_trips_a_sanitized_report ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1045050Z test broker::tests::explicit_gc_admission_round_trips ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1074630Z test broker::tests::contradictory_download_progress_poisons_the_connection ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1083900Z test broker::tests::mismatched_response_poisoning_prevents_stream_reuse ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1089790Z test broker::tests::regressing_build_progress_poisons_the_connection ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1090840Z test broker::tests::repair_generation_round_trips_only_path_free_intent_and_count ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1119590Z test broker::tests::root_attestation_refusal_is_typed_and_keeps_the_connection_usable ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1125250Z test broker::tests::root_publication_refusal_is_typed_and_keeps_the_connection_usable ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1153520Z test broker::tests::root_removal_refusal_is_typed_and_keeps_the_connection_usable ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1154590Z test broker::tests::broker_nix_adapter_proxies_safe_calls_and_refuses_build ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1155340Z test broker::tests::real_transport_round_trips_all_exposed_typed_calls_and_cleanup ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1155950Z test cli::tests::gc_accepts_zero_retention_values ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1156410Z test cli::tests::clap_contract_is_internally_consistent ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1156930Z test cli::tests::global_flags_work_after_the_subcommand ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1157520Z test cli::tests::collision_and_repair_grammars_fail_closed ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1158050Z test cli::tests::help_lists_every_v1_verb_and_no_internal_surface ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1159140Z test cli::tests::output_and_verbosity_modes_are_exclusive_usage_errors ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1159700Z test cli::tests::upgrade_requires_explicit_scope_and_forbids_mixed_scope ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1160310Z test commands::doctor::probe::tests::adapter_refusal_cancels_without_retrying ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.1175300Z test cli::tests::minimal_invocations_cover_every_command ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.2641040Z test commands::doctor::probe::tests::disconnected_probe_retries_with_a_fresh_session ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.2731070Z test commands::doctor::probe::tests::delayed_socket_startup_waits_once_and_recovers ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.2734610Z test commands::doctor::probe::tests::failed_completion_discards_successful_ownership ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.2742000Z test commands::doctor::probe::tests::inaccessible_endpoint_does_not_wait_or_retry ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.2745730Z test commands::doctor::probe::tests::invalid_or_uncorrelated_reply_is_final ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.2750030Z test commands::doctor::probe::tests::negative_ownership_is_final ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.2754350Z test commands::doctor::probe::tests::ownership_refusal_stays_final_when_completion_disconnects ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.2760820Z test commands::doctor::probe::tests::ready_broker_completes_without_startup_waiting ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3007420Z test commands::doctor::probe::tests::absent_service_exhausts_one_budget_without_claiming_health ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3009840Z test commands::doctor::tests::completed_broker_probe_proves_runtime_and_startup_trust ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3016310Z test commands::doctor::tests::deferred_required_checks_cannot_claim_health ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3024350Z test commands::doctor::tests::healthy_report_is_versioned_and_exits_zero ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3029750Z test commands::doctor::tests::inactive_classifier_adds_no_row_and_path_warning_does_not_fail_doctor ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3048770Z test commands::doctor::tests::incomplete_broker_probe_fails_both_dependent_checks_without_detail ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3049780Z test commands::doctor::tests::installed_nix_classifier_is_closed_and_fail_closed ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3050380Z test commands::doctor::tests::installed_state_and_raw_nix_are_separate_doctor_rows ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3051080Z test commands::doctor::tests::jsonl_has_versioned_rows_and_one_terminal_result ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3051740Z test commands::doctor::tests::permissive_state_directory_fails_closed ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3052330Z test commands::doctor::tests::shadowed_commands_are_reported_as_a_bounded_warning ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3053140Z test commands::doctor::tests::subsystem_details_cross_the_same_public_redaction_boundary ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3053710Z test commands::doctor::tests::unauthenticated_ownership_claim_never_advises_removal ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3054290Z test commands::doctor::tests::unmanaged_signal_has_priority_and_never_lists_raw_paths ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3122540Z test commands::execute::tests::core_engine_routes_every_variant_and_preserves_global_policy ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3219100Z test commands::execute::tests::dispatches_every_engine_command_without_reparsing ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3282730Z test commands::execute::tests::failed_jsonl_stream_and_operation_log_share_the_exact_terminal_record ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3285000Z test commands::execute::tests::human_search_lists_packages_and_catalog_time ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3321320Z test commands::execute::tests::install_progress_stream_and_human_lines_match_v1_goldens ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3330280Z test commands::execute::tests::jsonl_records_are_versioned_and_end_in_one_terminal_result ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3634230Z test commands::execute::tests::operation_log_is_byte_identical_in_every_output_mode ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3688820Z test commands::execute::tests::preview_notice_uses_only_human_stderr ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3689570Z test commands::execute::tests::public_flake_intent_can_be_shown_without_allowing_raw_source_diagnostics ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3690880Z test commands::execute::tests::public_result_rejects_private_runtime_material_and_reserved_fields ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3691560Z test commands::execute::tests::public_result_requires_null_for_absent_optional_values ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3732640Z test commands::execute::tests::terminal_journal_fault_does_not_report_a_committed_success_as_failure ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3734020Z test commands::execute::tests::terminal_search_preserves_broken_status_and_stale_catalog_notes ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3746490Z test commands::execute::tests::unsafe_log_directory_returns_a_stable_public_error_before_engine_entry ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3759850Z test commands::execute::tests::unsafe_operation_log_stops_the_engine_before_mutation ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3761130Z test commands::human::changes::tests::change_labels_preserve_versions_and_nonversion_changes ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3762500Z test commands::human::command_views::applied_catalog_refresh_is_not_reported_as_an_available_update ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3765890Z test commands::human::command_views::build_previews_show_targets_and_do_not_invent_unknown_estimates ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3767340Z test commands::human::command_views::catalog_previews_retain_the_check_result ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3768490Z test commands::human::command_views::labels_survive_summary_changes_without_changing_machine_ids ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3804070Z test commands::human::command_views::mutation_previews_never_claim_a_completed_action ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3808770Z test commands::human::command_views::results_show_the_packages_environments_and_disk_values ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3811590Z test commands::human::tests::history_outdated_and_info_show_the_data_needed_for_the_next_command ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3813270Z test commands::human::tests::history_shows_pin_and_output_changes_even_when_versions_match ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3814390Z test commands::human::tests::installed_packages_show_selectors_versions_and_requested_details ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3815130Z test commands::human::tests::names_only_can_be_used_in_a_pipeline ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3821400Z test commands::local::tests::activation_error_keeps_the_forward_recovery_decision ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.3914430Z test commands::local::tests::alternate_state_roots_are_read_only_for_broker_backed_mutations ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4200350Z test commands::local::tests::attestation_failure_reconciles_cancelled_activate_then_discards_with_gc ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4205120Z test commands::local::tests::build_preview_distinguishes_unknown_disk_use_from_the_start_threshold ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4205760Z test commands::local::tests::byte_estimates_use_small_human_units ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4222110Z test commands::local::tests::cache_hit_uses_the_closed_acquire_protocol_and_returns_evidence ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4258400Z test commands::local::tests::cache_miss_uses_one_digest_bound_build_and_returns_local_evidence ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4260190Z test commands::local::tests::cancel_operation_falls_back_to_a_fresh_connection ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4263050Z test commands::local::tests::cancel_operation_rejects_running_after_failed_reconciliation ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4264340Z test commands::local::tests::cancel_operation_returns_false_when_fresh_poll_transport_fails ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4267830Z test commands::local::tests::catalog_info_renders_only_product_metadata ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4272530Z test commands::local::tests::catalog_outdated_uses_one_closed_resolve_transaction ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4276990Z test commands::local::tests::catalog_search_runs_one_closed_resolve_transaction ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4277620Z test commands::local::tests::channel_refresh_failure_classes_keep_stable_exit_codes ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4279750Z test commands::local::tests::channel_refresh_runs_one_authenticated_transaction ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4949440Z test commands::doctor::probe::tests::elapsed_session_budget_cannot_start_another_call ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4952130Z test commands::local::tests::complete_operation_preserves_error_when_reconciled_cancelled ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4954080Z test commands::local::tests::complete_operation_reconciles_completed_on_fresh_connection ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4956630Z test commands::local::tests::complete_operation_retries_complete_after_poll_failure ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.4960040Z test commands::local::tests::complete_operation_retries_complete_without_cancelling_applied_work ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.5596770Z test commands::local::tests::doctor_and_verify_only_repair_detect_a_missing_activation_link ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.5664100Z test commands::local::tests::common_recovery_commits_install_then_resumes_an_interrupted_remove ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.5665230Z test commands::local::tests::empty_catalog_outdated_skips_broker_access ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.6079160Z test commands::local::tests::doctor_defers_activation_verification_while_another_mutation_holds_the_lease ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.6365520Z test commands::local::tests::empty_package_queries_succeed_but_corrupt_active_state_is_not_hidden ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.6385010Z test commands::local::tests::failed_execution_preserves_real_build_progress ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.6386490Z test commands::local::tests::gc_result_preserves_unknown_measurement_and_effective_retention ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.6490420Z Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.6722330Z Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7044360Z test commands::local::tests::empty_generation_repair_validates_state_without_requesting_helper_roots ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7172930Z test commands::local::tests::gc_wait_does_not_hold_the_local_state_lease ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7175580Z test commands::local::tests::human_build_preview_explains_the_decision_without_private_nix_details ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7292660Z test commands::local::tests::initialized_empty_state_reports_no_active_generation ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7308580Z test commands::local::tests::install_argument_widening_is_refused_before_broker_access ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7317800Z test commands::local::tests::install_arguments_become_closed_current_channel_selectors ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7339230Z test commands::local::tests::install_collision_policy_reaches_the_state_boundary ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7343220Z test commands::local::tests::install_failure_diagnosis_lists_ambiguous_catalog_ids ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7344050Z test commands::local::tests::install_failures_name_the_failed_step_and_next_action ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7403400Z test commands::local::tests::generic_resume_failure_preserves_first_error_and_cancels_running_activate ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7452440Z test commands::local::tests::install_keep_going_is_refused_before_any_broker_request ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7472360Z test commands::local::tests::install_preview_uses_the_outer_public_schema ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7477300Z test commands::local::tests::install_success_names_a_local_build_in_the_human_result ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7479490Z test commands::local::tests::install_success_output_matches_the_v1_golden ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7483910Z test commands::local::tests::install_success_preserves_an_unknown_version_as_null ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7538980Z test commands::local::tests::local_install_reports_each_build_preparation_refusal_and_cancels ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.7616570Z test commands::local::tests::missing_state_is_initialized_as_empty_history ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8035180Z Warning: repair is non-atomic. Affected commands can be temporarily unavailable.
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8107010Z test commands::local::tests::install_preview_refuses_installed_selectors_and_pending_recovery_without_writes ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8109210Z test commands::local::tests::mutation_identity_helpers_are_canonical_and_overflow_safe ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8120010Z test commands::local::tests::no_build_stops_after_cache_miss_without_opening_build_authority ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8121920Z test commands::local::tests::outdated_attributes_are_exact_and_fail_closed ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8145470Z test commands::local::tests::mutating_repair_keeps_the_exclusive_state_lease ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8228580Z test commands::local::tests::remove_orphan_check_is_refused_before_recovery_or_target_selection ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8707770Z test commands::local::tests::repair_begin_failure_holds_the_lease_through_failure_and_releases_after ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8708570Z test commands::local::tests::repeated_install_is_not_reported_as_state_corruption ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8732890Z test commands::local::tests::resource_refusal_does_not_claim_a_build_started ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:18.8735040Z test commands::local::tests::upgrade_re_resolves_attributes_inside_the_broker ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0867290Z test commands::doctor::probe::tests::stalled_reply_at_any_stage_uses_the_session_deadline ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0870110Z test commands::query::tests::absent_catalog_text_is_null_and_ambiguity_lists_safe_ids ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0895450Z test commands::query::tests::default_info_is_offline_and_exact_remains_engine_bound ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0911350Z test commands::query::tests::offline_search_maps_verified_index_to_product_fields ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0913970Z test commands::query::tests::outdated_preserves_unknown_versions_as_null ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0914760Z test commands::query::tests::outdated_refuses_catalog_identity_or_sequence_drift ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0916340Z test commands::query::tests::outdated_reports_all_version_kinds_and_revision_only_changes ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0935770Z test commands::state::tests::ambiguous_or_partly_missing_requests_fail_atomically_with_choices ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0967030Z test commands::state::tests::empty_history_is_offline_but_delete_stays_engine_bound ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.0974350Z test commands::state::tests::exact_catalog_selector_wins_over_an_installed_flake_name ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1039930Z test commands::state::tests::history_and_rollback_preserve_package_versions_sources_and_pin_changes ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1063910Z test commands::state::tests::installed_flake_names_resolve_uniquely_without_changing_saved_intent ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1093250Z test commands::state::tests::invalid_installed_names_cannot_emit_terminal_controls ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1105410Z test commands::state::tests::list_maps_active_state_without_private_identity ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1116430Z test commands::state::tests::list_outdated_uses_catalog_results_and_keeps_name_only_output ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1137880Z test commands::state::tests::remove_and_pin_use_core_atomic_lifecycle_editors ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1139410Z test commands::uninstall::tests::absent_install_keeps_shell_cleanup_guidance ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1140420Z test commands::uninstall::tests::paths_are_redacted_but_product_paths_remain_reviewable ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1319750Z test completion::tests::every_supported_shell_receives_nonempty_static_completion_source ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1332950Z test crash::tests::crash_record_is_allowlisted_and_excludes_sensitive_runtime_data ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1333810Z test crash::tests::operation_id_rejects_path_like_or_unbounded_values ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1334970Z test exit::tests::codes_and_symbols_are_unique_and_stable ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1340930Z test log::tests::existing_permissive_directory_is_rejected_without_chmod ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1675570Z test log::tests::log_is_private_structured_and_rotates_with_allowlisted_fields ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1720840Z test log::tests::public_operation_log_is_private_append_only_and_rejects_unsafe_records ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1756520Z test log::tests::public_operation_log_refuses_symlink_hardlink_and_permissive_file_without_mutation ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1771450Z test log::tests::public_operation_log_refuses_torn_existing_tail ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1775160Z test log::tests::redactor_golden_removes_known_and_structural_secrets_and_controls ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1777470Z test path::tests::explicit_roots_are_absolute_alternates ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1777940Z test path::tests::missing_system_home_fails_without_an_environment_fallback ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1798720Z test path::tests::path_observation_counts_managed_commands_shadowed_earlier ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1800770Z test path::tests::path_observation_uses_exact_components_only ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1802370Z test path::tests::production_uses_system_home_not_a_spoofed_environment_home ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1804020Z test path::tests::raw_nix_hidden_without_an_executable_in_absolute_readable_dirs ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1805750Z test path::tests::raw_nix_unknown_for_invalid_empty_path ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1806990Z test path::tests::raw_nix_unknown_for_relative_path_entries ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.1809130Z test path::tests::raw_nix_unknown_for_unreadable_directory_entries ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2017380Z test path::tests::raw_nix_visible_through_an_absolute_readable_directory ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2355440Z test commands::local::tests::verify_only_repair_allows_state_mutation_and_blocks_selected_history_prune_until_finish ... FAILED
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2358720Z test path::tests::snippets_are_dynamic_idempotent_and_never_expose_managed_nix ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2396270Z test presentation::table::tests::narrow_and_wide_layouts_keep_all_data_and_fit_display_cells ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2397780Z test presentation::tests::redirected_and_color_disabled_output_never_has_ansi ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2402940Z test progress::live::tests::actual_percentage_has_a_bar_but_never_claims_installation_success ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2404940Z test progress::live::tests::known_downloads_show_bytes_and_unknown_downloads_have_no_percentage_or_timer ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2405770Z test progress::live::tests::progress_replaces_one_line_and_stops_before_the_prompt ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2407580Z test progress::live::tests::unknown_work_has_no_invented_percent ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2408710Z test progress::tests::build_preparation_failures_explain_the_next_step ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2409540Z test progress::tests::build_without_version_has_valid_json_and_plain_text ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2410140Z test progress::tests::download_progress_shows_known_byte_counts ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2411020Z test progress::tests::human_progress_uses_product_language ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2412650Z test progress::tests::invalid_progress_and_private_identities_fail_closed ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2414440Z test progress::tests::live_output_preserves_refusals_and_collisions_without_success_marks ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2416790Z test progress::tests::records_are_versioned_newline_terminated_and_product_owned ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2419730Z test progress::tests::repeated_human_percentages_do_not_hide_machine_progress ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2421420Z test support::tests::missing_state_is_reported_without_exposing_its_path ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2422660Z test support::tests::preview_is_stable_and_projects_away_private_log_fields ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2464370Z test telemetry::tests::enabled_snapshot_contains_only_fixed_aggregate_dimensions ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2470990Z test telemetry::tests::telemetry_is_disabled_by_default_and_writes_nothing ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2476440Z test ux::tests::human_error_goes_only_to_stderr ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2478000Z test ux::tests::json_is_one_versioned_document_and_jsonl_is_one_terminal_record ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2479280Z test ux::tests::non_terminal_never_uses_color_or_prompts ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2480730Z test ux::tests::raw_managed_runtime_identities_are_redacted_at_the_public_error_boundary ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.2532530Z test commands::local::tests::post_activation_write_failures_report_applied_state_and_recover_forward ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3029200Z test path::tests::repeated_shell_setup_keeps_one_manpath_entry_and_preserves_system_defaults ... ok
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3029700Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3029880Z failures:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3030080Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3030520Z ---- commands::local::tests::verify_only_repair_allows_state_mutation_and_blocks_selected_history_prune_until_finish stdout ----
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3031270Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3031890Z thread 'commands::local::tests::verify_only_repair_allows_state_mutation_and_blocks_selected_history_prune_until_finish' (59413) panicked at crates/pkg-cli/src/commands/local/tests.rs:1040:75:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3032700Z called `Result::unwrap()` on an `Err` value: Locked
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3033160Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3033590Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3033600Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3033650Z failures:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3034180Z ^[[1m^[[91merror^[[0m: test failed, to rerun pass `-p pkg-cli --lib`
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3034730Z     commands::local::tests::verify_only_repair_allows_state_mutation_and_blocks_selected_history_prune_until_finish
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3035110Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3035700Z test result: FAILED. 190 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3036050Z 
+G-HERMETIC-MACOS (probe, log-evidence lane)	Full hermetic run (probe; denial evidence in the log)	2026-09-26T11:46:19.3194010Z ##[error]Process completed with exit code 101.
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	﻿2026-09-26T11:46:19.3399140Z Post job cleanup.
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.7279860Z [command]/opt/homebrew/bin/git version
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.7554690Z git version 2.55.0
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.7578500Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/de5fcf8c-76c7-4971-8882-f7b4af17ea28/.gitconfig'
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.7588690Z Temporarily overriding HOME='/Users/runner/work/_temp/de5fcf8c-76c7-4971-8882-f7b4af17ea28' before making global git config changes
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.7590490Z Adding repository directory to the temporary git global config as a safe directory
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.7591900Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/pkg/pkg
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.7738290Z Removing SSH command configuration
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.7739950Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.7881960Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.8986230Z Removing HTTP extra header
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.8990500Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:19.9055060Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:20.0511170Z Removing includeIf entries pointing to credentials config files
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:20.0512070Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+G-HERMETIC-MACOS (probe, log-evidence lane)	Post Checkout	2026-09-26T11:46:20.0608170Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+G-HERMETIC-MACOS (probe, log-evidence lane)	Complete job	﻿2026-09-26T11:46:20.2437250Z Cleaning up orphan processes

@@ -1,0 +1,19 @@
+{
+  "files": [
+    "Scripts",
+    "PackageInfo",
+    "Scripts/postinstall",
+    "Scripts/pkg-install"
+  ],
+  "codesignExit": 0,
+  "codesignOutput": "/var/folders/bf/42lp61cd7kj2tvpg1m33jryh0000gn/T/pkg-review-package-rwlluymc/expanded/Scripts/pkg-install: valid on disk\n/var/folders/bf/42lp61cd7kj2tvpg1m33jryh0000gn/T/pkg-review-package-rwlluymc/expanded/Scripts/pkg-install: satisfies its Designated Requirement\n",
+  "embeddedSha256": "793028e7580ab89d8ce7d80a7596e8708352be14e6804672bd7c373734ca76d7",
+  "standaloneSha256": "251b89a6f2c56872a8e32fc9229a0605b0496c281902628f60d6af7d60d14101",
+  "packageInfo": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<pkg-info overwrite-permissions=\"true\" relocatable=\"false\" identifier=\"org.pkg.installer.preview\" postinstall-action=\"none\" version=\"0.1.0-alpha.56\" format-version=\"2\" generator-version=\"InstallCmds-860.14 (24G830)\" auth=\"root\">\n    <bundle-version/>\n    <upgrade-bundle/>\n    <update-bundle/>\n    <atomic-update-bundle/>\n    <strict-identifier/>\n    <relocate/>\n    <scripts>\n        <postinstall file=\"./postinstall\" timeout=\"600\"/>\n    </scripts>\n</pkg-info>",
+  "embeddedCodeDisplay": "Executable=/private/var/folders/bf/42lp61cd7kj2tvpg1m33jryh0000gn/T/pkg-review-package-4om36dfr/expanded/Scripts/pkg-install\nIdentifier=pkg-install-555549446c343cc3e8c23e4588d4ba297d9c7b6d\nFormat=Mach-O thin (arm64)\nCodeDirectory v=20500 size=83541 flags=0x10002(adhoc,runtime) hashes=2604+2 location=embedded\nVersionPlatform=1\nVersionMin=720896\nVersionSDK=984320\nHash type=sha256 size=32\nCandidateCDHash sha256=85011a1f11359890343d0b1495fa2accd6d38d34\nCandidateCDHashFull sha256=85011a1f11359890343d0b1495fa2accd6d38d3446a050eb966e48fdaf23e388\nHash choices=sha256\nCMSDigest=85011a1f11359890343d0b1495fa2accd6d38d3446a050eb966e48fdaf23e388\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=8060928\nExecutable Segment flags=0x1\nPage size=4096\nCDHash=85011a1f11359890343d0b1495fa2accd6d38d34\nSignature=adhoc\nInfo.plist=not bound\nTeamIdentifier=not set\nRuntime Version=15.5.0\nSealed Resources=none\nInternal requirements count=0 size=12\n",
+  "standaloneCodeDisplay": "Executable=/private/var/folders/bf/42lp61cd7kj2tvpg1m33jryh0000gn/T/pkg-review-package-4om36dfr/pkg-install-aarch64-darwin\nIdentifier=pkg-install-aarch64-darwin-555549446c343cc3e8c23e4588d4ba297d9c7b6d\nFormat=Mach-O thin (arm64)\nCodeDirectory v=20500 size=83556 flags=0x10002(adhoc,runtime) hashes=2604+2 location=embedded\nVersionPlatform=1\nVersionMin=720896\nVersionSDK=984320\nHash type=sha256 size=32\nCandidateCDHash sha256=1cb316eb1baf5d05d610dbd8f8e4245d679d7252\nCandidateCDHashFull sha256=1cb316eb1baf5d05d610dbd8f8e4245d679d725271714c94d595a46d641e5952\nHash choices=sha256\nCMSDigest=1cb316eb1baf5d05d610dbd8f8e4245d679d725271714c94d595a46d641e5952\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=8060928\nExecutable Segment flags=0x1\nPage size=4096\nCDHash=1cb316eb1baf5d05d610dbd8f8e4245d679d7252\nSignature=adhoc\nInfo.plist=not bound\nTeamIdentifier=not set\nRuntime Version=15.5.0\nSealed Resources=none\nInternal requirements count=0 size=12\n",
+  "unsignedBytesEqual": true,
+  "unsignedEmbeddedSha256": "05383b62fff54c540256fd025530b42ddd122515ae740ac479b75aa81fb4d2a8",
+  "unsignedStandaloneSha256": "05383b62fff54c540256fd025530b42ddd122515ae740ac479b75aa81fb4d2a8",
+  "postinstallMatchesTag": true
+}

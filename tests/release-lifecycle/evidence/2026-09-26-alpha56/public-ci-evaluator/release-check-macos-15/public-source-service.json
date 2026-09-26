@@ -1,0 +1,13 @@
+{
+  "url": "https://api.github.com/repos/casey/just/commits/HEAD",
+  "status": 200,
+  "headers": {
+    "x-ratelimit-limit": "60",
+    "x-ratelimit-remaining": "14",
+    "x-ratelimit-reset": "1790427863",
+    "x-ratelimit-resource": "core",
+    "retry-after": null
+  },
+  "sha": "5d5742cbcc50f19c99c356bc7e085acaa5f4665d",
+  "message": null
+}

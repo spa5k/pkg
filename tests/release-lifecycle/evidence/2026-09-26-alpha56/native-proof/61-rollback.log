@@ -1,0 +1,8 @@
+Package  Change
+fzf      Added 0.46.0
+
+From: gen-0007
+Target environment: gen-0006
+Packages: 2
+Generation: gen-0008
+Restored the package environment from gen-0006.

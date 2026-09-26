@@ -1,24 +1,22 @@
 # Active implementation plan
 
-Status: alpha product. Reviewed on 26 September 2026. The nine bug fixes are
-committed in `538cdbe`; the six UX fixes are committed in `03c4e3a`.
-Alpha.56 publication is in progress. The exact alpha.55 check found an old
-macOS wrapper startup message. Alpha.55 remains unpublished; its signed assets
-and deployed sequence 55 are retained unchanged. Alpha.56 also makes the Linux
-profile MANPATH setup idempotent.
+Status: alpha product. Reviewed on 26 September 2026. Alpha.56 is public.
+The nine bug fixes, six UX fixes, and final shell corrections are merged and
+released. [Release proof](../tests/release-lifecycle/ALPHA-56-2026-09-26.md)
+records the exact source, signed files, and native/public checks.
 The filename is retained for existing links. The original four-PR migration
 stack is complete. New work branches from current `main`.
 
 ## Current state
 
-- The Determinate migration and the Linux and Apple Silicon macOS cutovers are
-  complete. [Completed work](completed-alpha-work.md) records the evidence.
-- [Alpha.54](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.54) is the
-  current public release. Alpha.53 remains an unpublished candidate.
-- PUBLIC-23 merged in [PR #61](https://github.com/spa5k/pkg/pull/61). Its bounded
-  startup check is on `main`, but it is not in alpha.54.
-- The owner resumed alpha release work on 26 September. Alpha.56 will include
-  PUBLIC-23, the nine bug fixes, and the six UX fixes after the release gates.
+- The Determinate migration and both platform cutovers are complete.
+  [Completed work](completed-alpha-work.md) records their evidence.
+- [Alpha.56](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.56) is current.
+  Alpha.53 and alpha.55 remain unpublished candidates.
+- Alpha.56 includes PUBLIC-23 from [PR #61](https://github.com/spa5k/pkg/pull/61),
+  nine bugs from [PR #62](https://github.com/spa5k/pkg/pull/62), six UX fixes from
+  [PR #63](https://github.com/spa5k/pkg/pull/63), and the final shell corrections
+  from [PR #65](https://github.com/spa5k/pkg/pull/65).
 - Production trust is not active. The alpha uses a test root and ad-hoc macOS
   signing. Tooling readiness does not mean production readiness.
 
@@ -28,12 +26,12 @@ removed; their replacements are in the completed-work record and Git history.
 
 ## Remaining work
 
-### QUALITY-01: onboarding and code-quality follow-up
+### QUALITY-01: measured code-quality follow-up
 
 - **Purpose:** test the public user path and keep one measured quality backlog.
 - **Owns:** disposable-VM onboarding evidence, issue #4, lint measurements,
   and consistent plans. Runtime fixes need a separate implementation change.
-- **Depends:** current `main` and the published alpha.54 assets.
+- **Depends:** current `main` and the published alpha.56 assets.
 - **Tests & gates:** fresh install; shell setup; help; cached and public-source
   packages; preview and approval; errors; pinning; upgrades; history; rollback;
   repair; cleanup; repeat setup; reboot; system removal; current quality gate;
@@ -54,11 +52,12 @@ prove every interruption or security boundary.
 
 The [fix status and evidence](../tests/macos-clean-host/BUG-FIXES-2026-09-26.md)
 link the nine separate implementation checkpoints and the final combined checks.
-Independent E and A source reviews found no concrete defects. Native Linux
-validation remains a merge gate. VERIFY-01 owns the remaining cross-platform
-and wider interruption matrix; do not recreate the regressions already added.
+Independent E and A source reviews found no remaining defects. Native Linux
+source validation and fresh public platform checks passed. VERIFY-01 owns the
+remaining cross-platform and wider interruption matrix; do not recreate the regressions already added.
 
-The six onboarding UX findings are implemented in `03c4e3a`.
+The six onboarding UX findings are implemented in `03c4e3a`, with final shell
+corrections in `23a2de2`. Both are released in alpha.56.
 [UX verification](../tests/macos-clean-host/UX-FIXES-2026-09-26.md) records their
 tests and VM checks. They are not additional open implementation tasks.
 
@@ -90,6 +89,18 @@ The latest inspected [nightly run](https://github.com/spa5k/pkg/actions/runs/361
 was cancelled; its fault and real-Nix jobs were skipped. This is separate from
 passing main CI and the historical DN-16 proof.
 
+Two macOS CI attempts exposed transient test lock inheritance during concurrent
+shell spawning. The unchanged commit passed a justified rerun and 30 local CLI
+suite repetitions. Isolate shell-spawning tests from immediate lease-reacquisition
+tests. Preserve immediate refusal checks while a lease is active. Do not add
+production retry behavior to hide this test race. The release proof retains
+these failures and the diagnosis. [PR #66](https://github.com/spa5k/pkg/pull/66)
+added bounded broker-stage capture to public macOS CI.
+[PR #67](https://github.com/spa5k/pkg/pull/67) added a tested capacity wait for
+hosted macOS builds. The final public checks passed. The release proof retains
+the earlier unexplained source-resolution failures; a later pass does not
+explain them. These fixture changes are complete.
+
 The [verification tasks](../openspec/changes/add-deterministic-verification-suite/tasks.md)
 list the remaining work. Clock injection, hermetic checks, basic CLI process
 tests, and the Linux clean-host workflow already exist. Do not recreate them.
@@ -115,18 +126,6 @@ separate Apple Application and Installer identities from the same team.
 The [production tasks](../openspec/changes/execute-production-trust-ceremony/tasks.md)
 contain only the remaining activation work. Signing helpers and the initial
 runbook already exist.
-
-### RELEASE-NEXT: alpha.56 publication
-
-- **Purpose:** publish PUBLIC-23 and the confirmed bug and UX fixes.
-- **Owns:** version metadata, signed alpha assets, channel sequence 56, public
-  installation instructions, and exact-release lifecycle evidence.
-- **Depends:** reviewed source changes and passing CI for the final source.
-- **Tests & gates:** signed native builds; authenticated channel and artifact
-  verification; native macOS alpha.54-to-alpha.55-to-alpha.56 upgrade on the same VM;
-  reboot; package workflows; removal; fresh public Linux and macOS checks.
-- **Rollback:** publish a higher channel sequence with prior approved content.
-  Never replay older metadata. Keep the alpha test root separate from production.
 
 ## Supported scope and deferred features
 

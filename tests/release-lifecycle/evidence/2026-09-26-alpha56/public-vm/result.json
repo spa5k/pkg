@@ -1,0 +1,8 @@
+{
+  "status": "passed",
+  "sourceUrl": "https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.56/install.sh",
+  "installerSha256": "f2411bdc25db7e90f5fd2d79022cd9f2767a6ca8af7944b3bcdf6a4b0e5e598c",
+  "anonymous": true,
+  "checks": 11,
+  "scope": "Fresh public reinstall after complete removal. No reboot in this phase."
+}

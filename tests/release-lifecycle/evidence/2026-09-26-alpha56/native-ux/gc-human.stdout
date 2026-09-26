@@ -1,0 +1,4 @@
+Collected store paths: 0
+Space freed: unknown
+Retention: Keep the active generation, the newest 3 retired generations, and all generations no older than 0 days. Delete only generations outside both protections.
+Pruned 0 generations; collected 0 store paths.

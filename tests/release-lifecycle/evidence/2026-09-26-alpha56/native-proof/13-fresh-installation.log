@@ -1,0 +1,54 @@
+
+pkg 0.1.0-alpha.54 · macOS Apple silicon
+
+  Downloading pkg-0.1.0-alpha.54-preview.pkg...
+  [ok] Verified pkg-0.1.0-alpha.54-preview.pkg
+  Downloading install-preview.sh...
+  [ok] Verified install-preview.sh
+  Install log: /var/folders/9m/b94f0mqn0d327g6_m6p0x0br0000gn/T//pkg-install-log.VxwSJKGy
+  Administrator access is needed to set up pkg.
+Checking the downloaded pkg installer...
+Install log: /var/folders/9m/b94f0mqn0d327g6_m6p0x0br0000gn/T//pkg-install-log.WJiJqz
+Administrator access is needed to set up pkg.
+Allow the macOS system configuration prompt if it appears.
+pkg setup — 0.1.0-alpha.54
+Downloading and verifying the release. This can take a few minutes...
+Checking this Mac...
+Preparing pkg files and folders...
+Preparing the package and build engine...
+Installing Determinate Nix. This can take a few minutes. Please keep this window open.
+Determinate Nix installation completed.
+Installing pkg commands and services...
+Verifying the installed files...
+Checking the package engine...
+Saving the installation record...
+pkg is installed.
+pkg setup completed.
+
+Next steps:
+  eval "$(/usr/local/bin/pkg shellenv)"
+  pkg doctor
+  pkg install fzf
+
+For future zsh sessions, add eval "$(/usr/local/bin/pkg shellenv)" to ~/.zshrc.
+For Bash, add the same line to your shell startup file.
+  Checking the installation...
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[ok] shell.raw_nix: raw Nix commands are not visible on PATH
+[ok] state.permissions: the per-user state root has not been created yet
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+  [ok] pkg is ready.
+
+Open a new terminal, or run:
+  [ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"
+
+Start here:
+  pkg search ripgrep
+  pkg install ripgrep
+  pkg list
+
+Run this same installer command when you want to update pkg.

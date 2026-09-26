@@ -1,0 +1,14 @@
+[
+  {
+    "shell": "/bin/bash",
+    "startup": "/Users/admin/.bash_profile",
+    "command": ". /Users/admin/.bash_profile; . /Users/admin/.bash_profile; /usr/local/bin/pkg --version; printf '%s\\n' \"$PATH\" | /usr/bin/awk -F: '{n=0;for(i=1;i<=NF;i++)if($i ~ /pkg\\/current\\/bin$/)n++;if(n != 1)exit 1;print \"managed PATH entries:\",n}'",
+    "exit": 0
+  },
+  {
+    "shell": "/bin/zsh",
+    "startup": "/Users/admin/.zshrc",
+    "command": ". /Users/admin/.zshrc; . /Users/admin/.zshrc; /usr/local/bin/pkg --version; printf '%s\\n' \"$PATH\" | /usr/bin/awk -F: '{n=0;for(i=1;i<=NF;i++)if($i ~ /pkg\\/current\\/bin$/)n++;if(n != 1)exit 1;print \"managed PATH entries:\",n}'",
+    "exit": 0
+  }
+]

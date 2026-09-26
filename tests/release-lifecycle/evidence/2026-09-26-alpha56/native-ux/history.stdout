@@ -1,0 +1,7 @@
+Generation         Created               Operation  Changes
+gen-0008 (active)  2026-09-26T11:54:06Z  rollback   fzf: Added 0.46.0
+gen-0007           2026-09-26T11:54:05Z  remove     fzf: Removed 0.46.0
+gen-0006           2026-09-26T11:54:05Z  install    just: Added 1.58.0
+gen-0005           2026-09-26T11:44:18Z  remove     Previous generation not retained. Saved: fzf 0.46.0
+
+4 generations retained.

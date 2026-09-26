@@ -1,0 +1,572 @@
+Installation and daily use (macos-15)	Set up job	﻿2026-09-26T12:06:57.5826860Z Current runner version: '2.337.0'
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5884790Z ##[group]Runner Image Provisioner
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5885540Z Hosted Compute Agent
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5885930Z Version: 20260828.587
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5886370Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5887050Z Build Date: 2026-08-28T16:44:25Z
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5887660Z Worker ID: {5d0c16b0-0284-4df3-ba43-abd2294ae627}
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5888230Z Azure Region: westus
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5888610Z ##[endgroup]
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5889900Z ##[group]Operating System
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5890300Z macOS
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5890840Z 15.7.9
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5891320Z 24G830
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5891760Z ##[endgroup]
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5892240Z ##[group]Runner Image
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5892770Z Image: macos-15-arm64
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5893290Z Version: 20260907.0337.1
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5894190Z Included Software: https://github.com/actions/runner-images/blob/macos-15-arm64/20260907.0337/images/macos/macos-15-arm64-Readme.md
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5895420Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-15-arm64%2F20260907.0337
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5897530Z ##[endgroup]
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5898360Z ##[group]GITHUB_TOKEN Permissions
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5899940Z Contents: read
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5900420Z Metadata: read
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5908770Z ##[endgroup]
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5911280Z Secret source: Actions
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5912050Z Cache mode: write
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.5912660Z Prepare workflow directory
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.6754320Z Prepare all required actions
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.6828180Z Getting action download info
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:57.8901810Z Download action repository 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' (SHA:de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:58.5797430Z Download action repository 'sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6' (SHA:6f9f17788090df1f26f669e9d70d6ae9567deba6)
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:58.9874800Z Download action repository 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' (SHA:043fb46d1a93c77aae656e7c1c64a875d1fc6a0a)
+Installation and daily use (macos-15)	Set up job	2026-09-26T12:06:59.2028050Z Complete job name: Installation and daily use (macos-15)
+Installation and daily use (macos-15)	Checkout	﻿2026-09-26T12:06:59.2573210Z ##[group]Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2574020Z with:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2574400Z   persist-credentials: false
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2574820Z   repository: spa5k/pkg
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2577700Z   token: ***
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2578060Z   ssh-strict: true
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2578420Z   ssh-user: git
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2578760Z   clean: true
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2579120Z   sparse-checkout-cone-mode: true
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2579540Z   fetch-depth: 1
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2579890Z   fetch-tags: false
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2580250Z   show-progress: true
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2580640Z   lfs: false
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2580990Z   submodules: false
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2581360Z   set-safe-directory: true
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2581880Z env:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2584740Z   GH_TOKEN: ***
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2585180Z   FROM_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2585610Z   TO_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.2586040Z ##[endgroup]
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.7545280Z Syncing repository: spa5k/pkg
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.7549150Z ##[group]Getting Git version info
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.7550030Z Working directory is '/Users/runner/work/pkg/pkg'
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.7551230Z [command]/opt/homebrew/bin/git version
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8143570Z git version 2.55.0
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8158640Z ##[endgroup]
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8172100Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/b6cd9bef-53be-469f-86dd-ff6b2601f07a/.gitconfig'
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8176060Z Temporarily overriding HOME='/Users/runner/work/_temp/b6cd9bef-53be-469f-86dd-ff6b2601f07a' before making global git config changes
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8178080Z Adding repository directory to the temporary git global config as a safe directory
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8179230Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/pkg/pkg
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8282780Z Deleting the contents of '/Users/runner/work/pkg/pkg'
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8285490Z ##[group]Initializing the repository
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8289390Z [command]/opt/homebrew/bin/git init /Users/runner/work/pkg/pkg
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8531940Z hint: Using 'master' as the name for the initial branch. This default branch name
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8533040Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8534510Z hint: to use in all of your new repositories, which will suppress this warning,
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8535700Z hint: call:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8537420Z hint:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8538970Z hint: 	git config --global init.defaultBranch <name>
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8540930Z hint:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8541690Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8544840Z hint: 'development'. The just-created branch can be renamed via this command:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8545710Z hint:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8546160Z hint: 	git branch -m <name>
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8546620Z hint:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8547200Z hint: Disable this message with "git config set advice.defaultBranchName false"
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8548050Z Initialized empty Git repository in /Users/runner/work/pkg/pkg/.git/
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8550290Z [command]/opt/homebrew/bin/git remote add origin https://github.com/spa5k/pkg
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8717450Z ##[endgroup]
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8723740Z ##[group]Disabling automatic garbage collection
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8724930Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8779880Z ##[endgroup]
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8781110Z ##[group]Setting up auth
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8783190Z Removing SSH command configuration
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8785550Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.8871290Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.9697130Z Removing HTTP extra header
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.9699820Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:06:59.9760070Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.2113900Z Removing includeIf entries pointing to credentials config files
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.2220820Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.2530560Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.3952420Z [command]/opt/homebrew/bin/git config --file /Users/runner/work/_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.4133920Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/pkg/pkg/.git.path /Users/runner/work/_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.4233980Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.4244680Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.4252290Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.4257700Z ##[endgroup]
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.4259160Z ##[group]Fetching the repository
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:00.4261840Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +2ab283578d504c302ec23ac7ea916e178b0c0d6c:refs/remotes/origin/main
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6669860Z From https://github.com/spa5k/pkg
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6674850Z  * [new ref]         2ab283578d504c302ec23ac7ea916e178b0c0d6c -> origin/main
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6680250Z [command]/opt/homebrew/bin/git branch --list --remote origin/main
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6741930Z   origin/main
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6747550Z [command]/opt/homebrew/bin/git rev-parse refs/remotes/origin/main
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6801980Z 2ab283578d504c302ec23ac7ea916e178b0c0d6c
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6804930Z ##[endgroup]
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6806050Z ##[group]Determining the checkout info
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6807410Z ##[endgroup]
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6808690Z [command]/opt/homebrew/bin/git sparse-checkout disable
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6888120Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6951630Z ##[group]Checking out the ref
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.6953530Z [command]/opt/homebrew/bin/git checkout --progress --force -B main refs/remotes/origin/main
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.8044570Z Switched to a new branch 'main'
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.8106820Z branch 'main' set up to track 'origin/main'.
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.8119230Z ##[endgroup]
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.8315770Z [command]/opt/homebrew/bin/git log -1 --format=%H
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.8487330Z 2ab283578d504c302ec23ac7ea916e178b0c0d6c
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.8507050Z ##[group]Removing auth
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.8508160Z Removing SSH command configuration
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.8517640Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:01.8747940Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.0821660Z Removing HTTP extra header
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.0923390Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.1231960Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2267580Z Removing includeIf entries pointing to credentials config files
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2277480Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2284540Z includeif.gitdir:/Users/runner/work/pkg/pkg/.git.path
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2286070Z includeif.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2289330Z includeif.gitdir:/github/workspace/.git.path
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2292100Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2304720Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/pkg/pkg/.git.path
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2340850Z /Users/runner/work/_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2392260Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/pkg/pkg/.git.path /Users/runner/work/_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2417020Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2472320Z /Users/runner/work/_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2478790Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2546710Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2599850Z /github/runner_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2609540Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2674540Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2728050Z /github/runner_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2733280Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.2799860Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.3797440Z Removing credentials config '/Users/runner/work/_temp/git-credentials-09d0ab60-a479-4108-b8d8-e4ec875d4fd4.config'
+Installation and daily use (macos-15)	Checkout	2026-09-26T12:07:02.3801400Z ##[endgroup]
+Installation and daily use (macos-15)	Install Cosign	﻿2026-09-26T12:07:02.4146780Z ##[group]Run sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4147140Z with:
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4147280Z   cosign-release: v3.0.6
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4147450Z   install-dir: $HOME/.cosign
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4147630Z   use-sudo: false
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4147760Z env:
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4149830Z   GH_TOKEN: ***
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4150000Z   FROM_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4150190Z   TO_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4150360Z ##[endgroup]
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4216390Z ##[start-action display=Run #!/bin/bash;id=__sigstore_cosign-installer.__run]
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4256240Z ##[group]Run #!/bin/bash
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4257080Z ^[[36;1m#!/bin/bash^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4257420Z ^[[36;1m# Substitute environment variables in install-dir input^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4257850Z ^[[36;1minstall_dir=$(envsubst <<<"${input_install_dir}")^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4258090Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4258240Z ^[[36;1m# cosign install script^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4258550Z ^[[36;1mshopt -s expand_aliases^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4258790Z ^[[36;1mif [ -z "$NO_COLOR" ]; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4259070Z ^[[36;1m  alias log_info="echo -e \"\033[1;32mINFO\033[0m:\""^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4259460Z ^[[36;1m  alias log_error="echo -e \"\033[1;31mERROR\033[0m:\""^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4259800Z ^[[36;1melse^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4260010Z ^[[36;1m  alias log_info="echo \"INFO:\""^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4260270Z ^[[36;1m  alias log_error="echo \"ERROR:\""^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4260480Z ^[[36;1mfi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4260610Z ^[[36;1mset -e^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4260760Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4260980Z ^[[36;1mCURL_RETRIES=3^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4261220Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4261400Z ^[[36;1m# This function helps compare versions.^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4261680Z ^[[36;1m# Returns 0 if version1 >= version2, 1 otherwise.^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4261970Z ^[[36;1m# Usage: is_version_ge "3.0.0" "$version_num"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4262210Z ^[[36;1mis_version_ge() {^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4262470Z ^[[36;1m    [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" == "$1" ]^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4262740Z ^[[36;1m}^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4262870Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4263090Z ^[[36;1m# Check for unsupported old versions (anything below v2.0.0)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4263430Z ^[[36;1mif [[ "${input_cosign_release}" != "main" ]]; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4263750Z ^[[36;1m  # Extract version without 'v' prefix for comparison^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4264040Z ^[[36;1m  version_num="${input_cosign_release}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4264290Z ^[[36;1m  version_num="${version_num#v}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4264490Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4266300Z ^[[36;1m  # Check if version is less than v2.0.0^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4268130Z ^[[36;1m  if ! is_version_ge "2.0.0" "$version_num"; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4268490Z ^[[36;1m    log_error "cosign versions below v2.0.0 are no longer supported."^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4268870Z ^[[36;1m    log_error "Requested version: ${input_cosign_release}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4269240Z ^[[36;1m    log_error "Please use cosign v2.6.0 or later."^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4269750Z ^[[36;1m    log_error "See https://github.com/sigstore/cosign/releases for available versions."^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4270150Z ^[[36;1m    exit 1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4270340Z ^[[36;1m  fi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4270490Z ^[[36;1mfi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4270620Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4270770Z ^[[36;1mmkdir -p "${install_dir}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4271000Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4271220Z ^[[36;1mif [[ "${input_cosign_release}" == "main" ]]; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4271590Z ^[[36;1m  log_info "installing cosign via 'go install' from its main version"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4271930Z ^[[36;1m  GOBIN=$(go env GOPATH)/bin^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4272310Z ^[[36;1m  go install github.com/sigstore/cosign/v3/cmd/cosign@main^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4272680Z ^[[36;1m  ln -s "$GOBIN/cosign" "${install_dir}/cosign"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4273420Z ^[[36;1m  exit 0^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4273600Z ^[[36;1mfi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4273730Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4273900Z ^[[36;1mshaprog() {^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4274180Z ^[[36;1m  case ${runner_os} in^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4274420Z ^[[36;1m    Linux|linux)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4274610Z ^[[36;1m      sha256sum "$1" | cut -d' ' -f1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4274840Z ^[[36;1m      ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4275000Z ^[[36;1m    macOS|macos)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4275190Z ^[[36;1m      shasum -a256 "$1" | cut -d' ' -f1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4275430Z ^[[36;1m      ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4276240Z ^[[36;1m    Windows|windows)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4276940Z ^[[36;1m      powershell -command "(Get-FileHash $1 -Algorithm SHA256 | Select-Object -ExpandProperty Hash).ToLower()"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4277470Z ^[[36;1m      ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4277620Z ^[[36;1m    *)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4277860Z ^[[36;1m      log_error "unsupported OS ${runner_os}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4278150Z ^[[36;1m      exit 1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4278300Z ^[[36;1m      ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4278470Z ^[[36;1m  esac^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4278600Z ^[[36;1m}^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4278730Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4279310Z ^[[36;1m## curl -sL https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign_checksums.txt |\^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4280080Z ^[[36;1m##   gawk 'match($2,/^cosign-([[:alnum:]]+)-([[:alnum:]]+)(\.[[:alnum:]]+)?$/,a){printf "bootstrap_%s_%s_sha=\"%s\"\n",a[1],a[2],$1}' |\^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4280600Z ^[[36;1m##   LANG=C sort^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4280800Z ^[[36;1mbootstrap_version='v3.0.6'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4281280Z ^[[36;1mbootstrap_darwin_amd64_sha="4c3e7af8372d3ca3296e62fa56f23fcbb5721cc6ac1827900d398f110d7cd280"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4281960Z ^[[36;1mbootstrap_darwin_arm64_sha="5fadd012ae6381a6a29ff86a7d39aa873878852f1073fc90b15995961ecfb084"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4282630Z ^[[36;1mbootstrap_linux_amd64_sha="c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4283280Z ^[[36;1mbootstrap_linux_arm64_sha="bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4283930Z ^[[36;1mbootstrap_linux_arm_sha="67bd25d32daff5664caf51208c95defcb2ad7ac1296f394fa677bb8bacee62f5"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4284610Z ^[[36;1mbootstrap_linux_ppc64le_sha="08c3e5e0a09c440f49e9a69d8639d37fbec522ec8c5c0ac805243b098e6ea512"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4285280Z ^[[36;1mbootstrap_linux_riscv64_sha="e25952e798958b0f9168d044153ccc353f5469ca4b71a1707dffad0534d27017"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4285940Z ^[[36;1mbootstrap_linux_s390x_sha="3cf4b769258ed9cc3c2a93268c0d5c1cc3fbd094af8df21035cbac8fb0d7c088"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4287300Z ^[[36;1mbootstrap_windows_amd64_sha="9b85a88ebff2d9dd30ff4984a6f61f2cedc232dd87d81fa7f2ff3c0ed96c241c"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4288230Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4288380Z ^[[36;1mcosign_executable_name=cosign^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4288600Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4288780Z ^[[36;1mtrap "popd >/dev/null" EXIT^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4289010Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4289160Z ^[[36;1mpushd "${install_dir}" > /dev/null^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4289450Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4289630Z ^[[36;1mcase ${runner_os} in^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4290110Z ^[[36;1m  Linux|linux)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4290420Z ^[[36;1m    case ${runner_arch} in^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4290660Z ^[[36;1m      X64|amd64)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4290930Z ^[[36;1m        bootstrap_filename='cosign-linux-amd64'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4291260Z ^[[36;1m        bootstrap_sha=${bootstrap_linux_amd64_sha}^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4291630Z ^[[36;1m        desired_cosign_filename='cosign-linux-amd64'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4291910Z ^[[36;1m        ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4292110Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4292260Z ^[[36;1m      ARM|arm)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4292490Z ^[[36;1m        bootstrap_filename='cosign-linux-arm'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4292830Z ^[[36;1m        bootstrap_sha=${bootstrap_linux_arm_sha}^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4293460Z ^[[36;1m        desired_cosign_filename='cosign-linux-arm'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4293730Z ^[[36;1m        ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4293910Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4294080Z ^[[36;1m      ARM64|arm64)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4294300Z ^[[36;1m        bootstrap_filename='cosign-linux-arm64'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4294640Z ^[[36;1m        bootstrap_sha=${bootstrap_linux_arm64_sha}^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4295000Z ^[[36;1m        desired_cosign_filename='cosign-linux-arm64'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4295300Z ^[[36;1m        ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4295460Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4295580Z ^[[36;1m      *)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4296160Z ^[[36;1m        log_error "unsupported architecture ${runner_arch}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4297290Z ^[[36;1m        exit 1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4297480Z ^[[36;1m        ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4297660Z ^[[36;1m    esac^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4297840Z ^[[36;1m    ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4297970Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4298110Z ^[[36;1m  macOS|macos)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4298320Z ^[[36;1m    case ${runner_arch} in^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4298560Z ^[[36;1m      X64|amd64)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4298800Z ^[[36;1m        bootstrap_filename='cosign-darwin-amd64'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4299300Z ^[[36;1m        bootstrap_sha=${bootstrap_darwin_amd64_sha}^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4299780Z ^[[36;1m        desired_cosign_filename='cosign-darwin-amd64'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4300170Z ^[[36;1m        ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4300370Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4300570Z ^[[36;1m      ARM64|arm64)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4300840Z ^[[36;1m        bootstrap_filename='cosign-darwin-arm64'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4301220Z ^[[36;1m        bootstrap_sha=${bootstrap_darwin_arm64_sha}^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4301560Z ^[[36;1m        desired_cosign_filename='cosign-darwin-arm64'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4301890Z ^[[36;1m        ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4302060Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4302350Z ^[[36;1m      *)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4302650Z ^[[36;1m        log_error "unsupported architecture ${runner_arch}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4302970Z ^[[36;1m        exit 1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4303180Z ^[[36;1m        ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4319640Z ^[[36;1m    esac^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4319850Z ^[[36;1m    ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4320010Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4320150Z ^[[36;1m  Windows|windows)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4320340Z ^[[36;1m    case ${runner_arch} in^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4320540Z ^[[36;1m      X64|amd64)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4320770Z ^[[36;1m        bootstrap_filename='cosign-windows-amd64.exe'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4321070Z ^[[36;1m        bootstrap_sha=${bootstrap_windows_amd64_sha}^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4321390Z ^[[36;1m        desired_cosign_filename='cosign-windows-amd64.exe'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4322040Z ^[[36;1m        cosign_executable_name=cosign.exe^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4322260Z ^[[36;1m        ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4322410Z ^[[36;1m      *)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4322620Z ^[[36;1m        log_error "unsupported architecture ${runner_arch}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4322890Z ^[[36;1m        exit 1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4323050Z ^[[36;1m        ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4323190Z ^[[36;1m    esac^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4323330Z ^[[36;1m    ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4323460Z ^[[36;1m  *)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4323640Z ^[[36;1m    log_error "unsupported os ${runner_os}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4323900Z ^[[36;1m    exit 1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4325000Z ^[[36;1m    ;;^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4325190Z ^[[36;1mesac^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4325340Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4325480Z ^[[36;1mSUDO=^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4325860Z ^[[36;1mif [[ "${input_use_sudo}" == "true" ]] && command -v sudo >/dev/null; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4326200Z ^[[36;1m  SUDO=sudo^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4326360Z ^[[36;1mfi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4326490Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4326710Z ^[[36;1mexpected_bootstrap_version_digest=${bootstrap_sha}^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4327560Z ^[[36;1mlog_info "Downloading bootstrap version '${bootstrap_version}' of cosign to verify version to be installed...\n      https://github.com/sigstore/cosign/releases/download/${bootstrap_version}/${bootstrap_filename}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4329030Z ^[[36;1m$SUDO curl --retry "${CURL_RETRIES}" -fsSL "https://github.com/sigstore/cosign/releases/download/${bootstrap_version}/${bootstrap_filename}" -o "${cosign_executable_name}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4329810Z ^[[36;1mshaBootstrap=$(shaprog "${cosign_executable_name}")^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4330270Z ^[[36;1mif [[ "$shaBootstrap" != "${expected_bootstrap_version_digest}" ]]; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4330690Z ^[[36;1m  log_error "Unable to validate cosign version: '${input_cosign_release}'"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4331000Z ^[[36;1m  exit 1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4331140Z ^[[36;1mfi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4331320Z ^[[36;1m$SUDO chmod +x "${cosign_executable_name}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4331540Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4331790Z ^[[36;1m# If the bootstrap and specified `cosign` releases are the same, we're done.^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4332200Z ^[[36;1mif [[ "${input_cosign_release}" == "${bootstrap_version}" ]]; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4332690Z ^[[36;1m  log_info "bootstrap version successfully verified and matches requested version so nothing else to do"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4333080Z ^[[36;1m  exit 0^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4333220Z ^[[36;1mfi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4333350Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4333570Z ^[[36;1msemver='^v([0-9]+\.){0,2}(\*|[0-9]+)(-?r?c?)(\.[0-9]+)$'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4333880Z ^[[36;1mif [[ "${input_cosign_release}" =~ $semver ]]; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4334230Z ^[[36;1m  log_info "Custom cosign version '${input_cosign_release}' requested"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4334520Z ^[[36;1melse^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4334810Z ^[[36;1m  log_error "Unable to validate requested cosign version: '${input_cosign_release}'"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4335160Z ^[[36;1m  exit 1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4335300Z ^[[36;1mfi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4335430Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4335570Z ^[[36;1m# Download custom cosign^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4336240Z ^[[36;1mlog_info "Downloading platform-specific version '${input_cosign_release}' of cosign...\n      https://github.com/sigstore/cosign/releases/download/${input_cosign_release}/${desired_cosign_filename}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4337410Z ^[[36;1m$SUDO curl --retry "${CURL_RETRIES}" -fsSL "https://github.com/sigstore/cosign/releases/download/${input_cosign_release}/${desired_cosign_filename}" -o "cosign_${input_cosign_release}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4338110Z ^[[36;1mshaCustom=$(shaprog "cosign_${input_cosign_release}");^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4338420Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4338590Z ^[[36;1m# same hash means it is the same release^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4338860Z ^[[36;1mif [[ "$shaCustom" != "$shaBootstrap" ]]; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4339870Z ^[[36;1m  log_info "Downloading cosign public key '${input_cosign_release}' of cosign...\n    https://raw.githubusercontent.com/sigstore/cosign/${input_cosign_release}/release/release-cosign.pub"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4341010Z ^[[36;1m  RELEASE_COSIGN_PUB_KEY=https://raw.githubusercontent.com/sigstore/cosign/${input_cosign_release}/release/release-cosign.pub^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4341850Z ^[[36;1m  RELEASE_COSIGN_PUB_KEY_SHA='f4cea466e5e887a45da5031757fa1d32655d83420639dc1758749b744179f126'^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4342360Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4342640Z ^[[36;1m  log_info "Verifying public key matches expected value"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4343110Z ^[[36;1m  $SUDO curl --retry "${CURL_RETRIES}" -fsSL "$RELEASE_COSIGN_PUB_KEY" -o public.key^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4343560Z ^[[36;1m  sha_fetched_key=$(shaprog public.key)^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4343930Z ^[[36;1m  if [[ "$sha_fetched_key" != "$RELEASE_COSIGN_PUB_KEY_SHA" ]]; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4344400Z ^[[36;1m    log_error "Fetched public key does not match expected digest, exiting"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4344710Z ^[[36;1m    exit 1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4344870Z ^[[36;1m  fi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4345040Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4345420Z ^[[36;1m  if is_version_ge "3.0.1" "$version_num"; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4345770Z ^[[36;1m    # we're trying to get something greater than or equal to v3.0.1^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4346240Z ^[[36;1m    keyless_signature_file=${desired_cosign_filename}.sigstore.json^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4347060Z ^[[36;1m    log_info "Downloading keyless verification bundle for platform-specific '${input_cosign_release}' of cosign...\n      https://github.com/sigstore/cosign/releases/download/${input_cosign_release}/${keyless_signature_file}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4348160Z ^[[36;1m    $SUDO curl --retry "${CURL_RETRIES}" -fsSLO "https://github.com/sigstore/cosign/releases/download/${input_cosign_release}/${keyless_signature_file}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4348680Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4348980Z ^[[36;1m    log_info "Using bootstrap cosign to verify keyless signature of desired cosign version"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4349950Z ^[[36;1m    "./${cosign_executable_name}" verify-blob --certificate-identity=keyless@projectsigstore.iam.gserviceaccount.com --certificate-oidc-issuer=https://accounts.google.com --bundle "${keyless_signature_file}" "cosign_${input_cosign_release}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4350740Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4350920Z ^[[36;1m    if is_version_ge "3.0.3" "$version_num"; then^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4351260Z ^[[36;1m      # we're trying to get something greater than or equal to v3.0.3^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4351640Z ^[[36;1m      kms_signature_file=${desired_cosign_filename}-kms.sigstore.json^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4352440Z ^[[36;1m      log_info "Downloading KMS verification bundle for platform-specific '${input_cosign_release}' of cosign...\n      https://github.com/sigstore/cosign/releases/download/${input_cosign_release}/${kms_signature_file}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4353510Z ^[[36;1m      $SUDO curl --retry "${CURL_RETRIES}" -fsSLO "https://github.com/sigstore/cosign/releases/download/${input_cosign_release}/${kms_signature_file}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4354110Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4354440Z ^[[36;1m      log_info "Using bootstrap cosign to verify signature of desired cosign version"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4355040Z ^[[36;1m      "./${cosign_executable_name}" verify-blob --key public.key --bundle "${kms_signature_file}" "cosign_${input_cosign_release}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4355510Z ^[[36;1m    fi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4355670Z ^[[36;1m  else^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4355900Z ^[[36;1m    signature_file=${desired_cosign_filename}.sig^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4356770Z ^[[36;1m    log_info "Downloading detached signature for platform-specific '${input_cosign_release}' of cosign...\n      https://github.com/sigstore/cosign/releases/download/${input_cosign_release}/${signature_file}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4358120Z ^[[36;1m    $SUDO curl --retry "${CURL_RETRIES}" -fsSLO "https://github.com/sigstore/cosign/releases/download/${input_cosign_release}/${signature_file}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4358670Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4358940Z ^[[36;1m    log_info "Using bootstrap cosign to verify signature of desired cosign version"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4359560Z ^[[36;1m    "./${cosign_executable_name}" verify-blob --key public.key --signature "${signature_file}" "cosign_${input_cosign_release}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4360330Z ^[[36;1m  fi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4360530Z ^[[36;1m^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4360730Z ^[[36;1m  $SUDO rm "${cosign_executable_name}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4361070Z ^[[36;1m  $SUDO mv "cosign_${input_cosign_release}" "${cosign_executable_name}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4361510Z ^[[36;1m  $SUDO chmod +x "${cosign_executable_name}"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4361770Z ^[[36;1m  log_info "Installation complete!"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4362030Z ^[[36;1mfi^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4427590Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4427930Z env:
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4430020Z   GH_TOKEN: ***
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4430200Z   FROM_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4430390Z   TO_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4430580Z   input_cosign_release: v3.0.6
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4431200Z   input_install_dir: $HOME/.cosign
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4431400Z   input_use_sudo: false
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4431570Z   runner_arch: ARM64
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4431740Z   runner_os: macOS
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.4431890Z ##[endgroup]
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.5073490Z ^[[1;32mINFO^[[0m: Downloading bootstrap version 'v3.0.6' of cosign to verify version to be installed...
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:02.5074270Z       https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-darwin-arm64
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6465860Z ^[[1;32mINFO^[[0m: bootstrap version successfully verified and matches requested version so nothing else to do
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6482550Z ##[end-action id=__sigstore_cosign-installer.__run;outcome=success;conclusion=success;duration_ms=2226]
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6487880Z ##[start-action display=Run envsubst <<<"${input_install_dir}" >> "$GITHUB_PATH";id=__sigstore_cosign-installer.__run_2]
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6527220Z ##[group]Run envsubst <<<"${input_install_dir}" >> "$GITHUB_PATH"
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6527820Z ^[[36;1menvsubst <<<"${input_install_dir}" >> "$GITHUB_PATH"^[[0m
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6590550Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6590900Z env:
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6593150Z   GH_TOKEN: ***
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6593360Z   FROM_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6593560Z   TO_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6593810Z   input_install_dir: $HOME/.cosign
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.6594040Z ##[endgroup]
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.7221400Z ##[end-action id=__sigstore_cosign-installer.__run_2;outcome=success;conclusion=success;duration_ms=71]
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.7226840Z ##[start-action display=Run $install_dir = $ExecutionContext.InvokeCommand.ExpandString("${env:input_install_dir}");id=__sigstore_cosign-installer.__run_3]
+Installation and daily use (macos-15)	Install Cosign	2026-09-26T12:07:04.7233480Z ##[end-action id=__sigstore_cosign-installer.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	﻿2026-09-26T12:07:04.7281090Z ##[group]Run python3 tests/release-lifecycle/prepare_host.py
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.7281550Z ^[[36;1mpython3 tests/release-lifecycle/prepare_host.py^[[0m
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.7324510Z shell: /bin/bash -e {0}
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.7324900Z env:
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.7327100Z   GH_TOKEN: ***
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.7327360Z   FROM_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.7327700Z   TO_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.7327960Z ##[endgroup]
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.9392130Z Before: /opt uid=0 gid=0 mode=0755
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.9392650Z Before: /usr/local uid=0 gid=0 mode=0755
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:04.9393030Z Before: /usr/local/bin uid=501 gid=80 mode=0775
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:05.0423550Z Ready: /opt uid=0 gid=0 mode=0755
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:05.0723880Z Ready: /usr/local uid=0 gid=0 mode=0755
+Installation and daily use (macos-15)	Prepare system-owned install directories on the disposable runner	2026-09-26T12:07:05.1919230Z Ready: /usr/local/bin uid=0 gid=0 mode=0755
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	﻿2026-09-26T12:07:05.2054860Z ##[group]Run python3 tests/release-lifecycle/check.py smoke --from-release "$FROM_RELEASE" --to-release "$TO_RELEASE" --work "$RUNNER_TEMP/pkg-release-proof" --confirm TEST-DISPOSABLE-HOST
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:05.2056300Z ^[[36;1mpython3 tests/release-lifecycle/check.py smoke --from-release "$FROM_RELEASE" --to-release "$TO_RELEASE" --work "$RUNNER_TEMP/pkg-release-proof" --confirm TEST-DISPOSABLE-HOST^[[0m
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:05.2096480Z shell: /bin/bash -e {0}
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:05.2096740Z env:
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:05.2098980Z   GH_TOKEN: ***
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:05.2099330Z   FROM_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:05.2099590Z   TO_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:05.2099870Z ##[endgroup]
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:05.4429820Z Running: Download v0.1.0-alpha.56 pkg-install-x86_64-linux
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:06.4620420Z PASS: Download v0.1.0-alpha.56 pkg-install-x86_64-linux (1.02s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:06.4621240Z Running: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:06.8055330Z PASS: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux (0.34s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:06.8056010Z Running: Download v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:07.8279270Z PASS: Download v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg (1.02s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:07.8280540Z Running: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:08.1278100Z PASS: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg (0.3s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:08.1327710Z Running: Download v0.1.0-alpha.56 install-preview.sh
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:08.8603970Z PASS: Download v0.1.0-alpha.56 install-preview.sh (0.73s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:08.8604400Z Running: Verify v0.1.0-alpha.56 install-preview.sh
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:09.1132740Z PASS: Verify v0.1.0-alpha.56 install-preview.sh (0.25s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:09.1234160Z Running: Download v0.1.0-alpha.56 pkg-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:10.4944680Z PASS: Download v0.1.0-alpha.56 pkg-aarch64-darwin (1.38s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:10.4996180Z Running: Verify v0.1.0-alpha.56 pkg-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:10.7410160Z PASS: Verify v0.1.0-alpha.56 pkg-aarch64-darwin (0.25s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:10.7420710Z Running: Download v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:11.6312500Z PASS: Download v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin (0.89s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:11.6313350Z Running: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:11.8152430Z PASS: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin (0.18s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:11.8153070Z Running: Download v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:12.6098630Z PASS: Download v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin (0.79s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:12.6167710Z Running: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:12.8856090Z PASS: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin (0.28s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:07:12.8987370Z Running: Fresh installation
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:08:37.8389630Z PASS: Fresh installation (84.93s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:08:37.8917280Z Running: Installed release bytes
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:08:38.2225540Z PASS: Installed release bytes (0.33s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:08:38.2325900Z Running: Install cached package
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:24.9882920Z PASS: Install cached package (46.76s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:24.9984770Z Running: Run installed package
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:25.0126930Z PASS: Run installed package (0.02s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:25.0127780Z Running: Record Nix identity
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:25.3955580Z PASS: Record Nix identity (0.38s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:25.4317250Z Running: Installed release bytes
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:25.6137060Z PASS: Installed release bytes (0.18s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:25.6176260Z Running: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:26.3619960Z PASS: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux (0.75s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:26.3620700Z Running: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:26.6208150Z PASS: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg (0.26s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:26.6211380Z Running: Verify v0.1.0-alpha.56 install-preview.sh
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:26.9864830Z PASS: Verify v0.1.0-alpha.56 install-preview.sh (0.36s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:26.9968820Z Running: Verify v0.1.0-alpha.56 pkg-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:27.3817540Z PASS: Verify v0.1.0-alpha.56 pkg-aarch64-darwin (0.39s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:27.3918830Z Running: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:27.6106990Z PASS: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin (0.23s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:27.6116240Z Running: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:27.8622290Z PASS: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin (0.25s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:27.8762560Z Running: Product upgrade
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:37.9493840Z PASS: Product upgrade (10.07s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:38.0018770Z Running: Installed release bytes
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:38.2409490Z PASS: Installed release bytes (0.24s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:38.2505620Z Running: Check Nix identity
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:38.6105990Z PASS: Check Nix identity (0.37s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:38.6210800Z Running: Retained package
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:38.6630400Z PASS: Retained package (0.05s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:38.6732220Z Running: Repeat installer
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:48.3719740Z PASS: Repeat installer (9.71s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:48.3722130Z Running: Record build disk space
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:48.4006930Z PASS: Record build disk space (0.03s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:48.4007670Z Running: Record build system load
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:48.4155910Z PASS: Record build system load (0.01s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:48.4156730Z Running: Build public flake
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:49.2646530Z FAIL: Command '['/usr/local/bin/pkg', 'install', 'github:casey/just#default', '-y']' returned non-zero exit status 64.
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:49.2647360Z FAIL: Build public flake (0.84s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:09:49.2834740Z ##[error]Process completed with exit code 1.
+Installation and daily use (macos-15)	Show results and proof scope	﻿2026-09-26T12:09:49.3057960Z ##[group]Run if [ -f "$RUNNER_TEMP/pkg-release-proof/summary.md" ]; then
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.3058990Z ^[[36;1mif [ -f "$RUNNER_TEMP/pkg-release-proof/summary.md" ]; then^[[0m
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.3059590Z ^[[36;1m  cat "$RUNNER_TEMP/pkg-release-proof/summary.md" >> "$GITHUB_STEP_SUMMARY"^[[0m
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.3060530Z ^[[36;1mfi^[[0m
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.3061570Z ^[[36;1mprintf '\nNative reboot is not performed on these hosted runners. Run the resume phase in the same disposable VM for reboot evidence.\n' >> "$GITHUB_STEP_SUMMARY"^[[0m
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.6367830Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.6368260Z env:
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.6371100Z   GH_TOKEN: ***
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.6371590Z   FROM_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.6371860Z   TO_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Show results and proof scope	2026-09-26T12:09:49.6372230Z ##[endgroup]
+Installation and daily use (macos-15)	Keep checks and logs	﻿2026-09-26T12:09:49.7863370Z ##[group]Run actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7863970Z with:
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7864370Z   name: release-check-macos-15
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7865070Z   path: /Users/runner/work/_temp/pkg-release-proof/*.log
+Installation and daily use (macos-15)	Keep checks and logs	/Users/runner/work/_temp/pkg-release-proof/*.json
+Installation and daily use (macos-15)	Keep checks and logs	/Users/runner/work/_temp/pkg-release-proof/summary.md
+Installation and daily use (macos-15)	Keep checks and logs	
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7865870Z   if-no-files-found: warn
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7866140Z   retention-days: 7
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7866510Z   compression-level: 6
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7866860Z   overwrite: false
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7895950Z   include-hidden-files: false
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7897440Z   archive: true
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7897910Z env:
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7900730Z   GH_TOKEN: ***
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7905100Z   FROM_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7907130Z   TO_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:49.7909170Z ##[endgroup]
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.3739270Z With the provided path, there will be 35 files uploaded
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.3740170Z Artifact name is valid!
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.3740680Z Root directory input is valid!
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.6781620Z Uploading artifact: release-check-macos-15.zip
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.6782330Z Beginning upload of artifact content to blob storage
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.7601830Z Uploaded bytes 11978
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.7773370Z Finished uploading artifact content to blob storage!
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.7775530Z SHA256 digest of uploaded artifact is d7390a774c4810fd8b16f1cfdfc3596e045aa8c93c3be3220a7a4af2ecf362e7
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.7776320Z Finalizing artifact upload
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.9708600Z Artifact release-check-macos-15 successfully finalized. Artifact ID 10905449703
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.9709900Z Artifact release-check-macos-15 has been successfully uploaded! Final size is 11978 bytes. Artifact ID is 10905449703
+Installation and daily use (macos-15)	Keep checks and logs	2026-09-26T12:09:50.9729280Z Artifact download URL: https://github.com/spa5k/pkg/actions/runs/36240904134/artifacts/10905449703
+Installation and daily use (macos-15)	Post Checkout	﻿2026-09-26T12:09:51.0018810Z Post job cleanup.
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.2234380Z [command]/opt/homebrew/bin/git version
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.2904310Z git version 2.55.0
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.2963920Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/22d27917-79d7-48b5-9cb3-cdd501280e48/.gitconfig'
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.2985730Z Temporarily overriding HOME='/Users/runner/work/_temp/22d27917-79d7-48b5-9cb3-cdd501280e48' before making global git config changes
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.2988060Z Adding repository directory to the temporary git global config as a safe directory
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.3008140Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/pkg/pkg
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.3207540Z Removing SSH command configuration
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.3208770Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.3349400Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.4631640Z Removing HTTP extra header
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.4641370Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.4701710Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.6142530Z Removing includeIf entries pointing to credentials config files
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.6175440Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Installation and daily use (macos-15)	Post Checkout	2026-09-26T12:09:51.6240920Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Installation and daily use (macos-15)	Complete job	﻿2026-09-26T12:09:51.7638500Z Cleaning up orphan processes

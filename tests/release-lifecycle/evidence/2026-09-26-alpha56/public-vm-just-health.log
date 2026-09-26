@@ -1,0 +1,15 @@
+just 1.58.0
+Damaged paths: 0
+Generation: gen-0002
+The generation links and store closure are verified.
+[ok] host.system: macOS arm64
+[x] shell.path: installed package commands are not on PATH
+    hint: add `[ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"` to your Bash or zsh settings, then open a new shell
+[!] shell.raw_nix: a raw Nix command is visible on PATH
+    hint: this is a UX warning only; pkg does not trust commands found on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[ok] state.activation: the active package links match the committed generation; store contents are not checked
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: needs attention

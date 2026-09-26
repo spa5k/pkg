@@ -1,0 +1,8 @@
+{
+  "from": "v0.1.0-alpha.54",
+  "intermediate": "v0.1.0-alpha.55",
+  "next": "v0.1.0-alpha.56",
+  "sameNixIdentity": true,
+  "intermediateRebootPerformed": false,
+  "installedBytesVerified": true
+}

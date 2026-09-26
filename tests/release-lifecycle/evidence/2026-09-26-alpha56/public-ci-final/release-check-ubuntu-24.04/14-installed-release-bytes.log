@@ -1,0 +1,3 @@
+/usr/local/bin/pkg: OK
+/opt/pkg/bin/pkg-nix-broker: OK
+/opt/pkg/bin/pkg-root-helper: OK

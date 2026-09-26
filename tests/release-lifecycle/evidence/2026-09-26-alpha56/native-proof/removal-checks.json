@@ -1,0 +1,45 @@
+{
+  "removedProductPaths": [
+    "/usr/local/bin/pkg",
+    "/private/etc/paths.d/pkg",
+    "/opt/pkg/bin/pkg-root-helper",
+    "/opt/pkg/bin/pkg-nix-broker",
+    "/Library/LaunchDaemons/org.pkg.root-helper.plist",
+    "/Library/LaunchDaemons/org.pkg.nix-broker.plist",
+    "/Library/Application Support/pkg/run/helper",
+    "/Library/Application Support/pkg/run/broker",
+    "/Library/Application Support/pkg/log/helper",
+    "/Library/Application Support/pkg/log/broker",
+    "/Library/Application Support/pkg/broker-home/channel",
+    "/private/var/db/pkg-source",
+    "/Library/Application Support/pkg/run",
+    "/Library/Application Support/pkg/log",
+    "/Library/Application Support/pkg/helper-home",
+    "/Library/Application Support/pkg/broker-home",
+    "/opt/pkg/bin",
+    "/Library/Application Support/pkg",
+    "/opt/pkg/uninstall/manifest.json",
+    "/opt/pkg/uninstall",
+    "/opt/pkg",
+    "/Users/admin/Library/Application Support/pkg"
+  ],
+  "services": [
+    {
+      "name": "org.pkg.nix-broker",
+      "exit": 113,
+      "stderr": "Bad request.\nCould not find service \"org.pkg.nix-broker\" in domain for system\n"
+    },
+    {
+      "name": "org.pkg.root-helper",
+      "exit": 113,
+      "stderr": "Bad request.\nCould not find service \"org.pkg.root-helper\" in domain for system\n"
+    }
+  ],
+  "brokerAccountAndGroupAbsent": true,
+  "nixReceiptAndInstallerAbsent": true,
+  "retainedCoordinationLock": {
+    "owner": 0,
+    "mode": "0o600"
+  },
+  "verified": true
+}

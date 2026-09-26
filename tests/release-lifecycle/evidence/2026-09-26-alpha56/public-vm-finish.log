@@ -1,0 +1,15 @@
+Running: Remove public package
+PASS: Remove public package (0.33s)
+Running: Check package removal
+PASS: Check package removal (0.03s)
+Running: Rollback public package
+PASS: Rollback public package (0.28s)
+Running: Run restored public package
+PASS: Run restored public package (0.02s)
+Running: Run retained public build
+PASS: Run retained public build (0.02s)
+Running: Verify restored package files
+PASS: Verify restored package files (8.83s)
+Running: Final public lifecycle health
+PASS: Final public lifecycle health (0.58s)
+PASS: public package removal, rollback, restored package use, repair, and doctor

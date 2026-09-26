@@ -1,0 +1,2 @@
+Filesystem   1024-blocks      Used Available Capacity iused     ifree %iused  Mounted on
+/dev/disk2s7   335032320    612740  43142556     2%   76149 431425560    0%   /nix

@@ -1,0 +1,3102 @@
+[
+  {
+    "path": "README.md",
+    "length": 4319,
+    "sha256": "3af286a7a26a61d68469b0a4b659f5ff3011bfffa30aa09ec8359bded89d471b"
+  },
+  {
+    "path": "artifact-review/package-inspection.json",
+    "length": 3432,
+    "sha256": "973efdb2b23ecf809f9a2b81c3165c93df1c0f557eaf46672c23b84950616163"
+  },
+  {
+    "path": "artifact-review/review.log",
+    "length": 1151,
+    "sha256": "75e8e2c6eca38ac845a86ddbb9a65f1343e097f25b6b049031447278d43dcd2a"
+  },
+  {
+    "path": "artifact-review/verify.py",
+    "length": 8150,
+    "sha256": "463fd9e7dadb362d0192d725e746a00252967782dfebe3aaeacaa5929fcb0f40"
+  },
+  {
+    "path": "capacity-ci.json",
+    "length": 4102,
+    "sha256": "66d7c68c9f59efe12573b474cb5d3f5c67d474d40bdadf2219e48f2223358e94"
+  },
+  {
+    "path": "capacity-tests.log",
+    "length": 1799,
+    "sha256": "0d8f50f68c591074ecf739882e1d0155989bfd762115cad9b2a7b0070f80412d"
+  },
+  {
+    "path": "channel-files.json",
+    "length": 5289,
+    "sha256": "bcfa6f20cc10733988395b7b3a19d0c67e2c14ad3b59e10ea68800d1e7fb6cf9"
+  },
+  {
+    "path": "channel-verification.json",
+    "length": 101,
+    "sha256": "48534e96dee3fb4054ceaf393a4d5db0331f239296761c355f67af8f30290051"
+  },
+  {
+    "path": "checks.log",
+    "length": 24,
+    "sha256": "6cb18e830d96f846569aea5b93e28b2da504b34d223459c7b5fc6fd1b89332f5"
+  },
+  {
+    "path": "cli-repeat/01.log",
+    "length": 18424,
+    "sha256": "4339d5fb39449a2169e5601d70ef2a644f57e28e68f26cb3eb3ba92619cdb3d5"
+  },
+  {
+    "path": "cli-repeat/02.log",
+    "length": 17620,
+    "sha256": "c5c68f52f16962ee54d921f89db2235d6615cef754dbf1d9d8a8d027a16770d8"
+  },
+  {
+    "path": "cli-repeat/03.log",
+    "length": 17620,
+    "sha256": "40168fb09c72f4936c5139c1dd2eb9fcc7026f3736171835579f5f7264f69bcd"
+  },
+  {
+    "path": "cli-repeat/04.log",
+    "length": 17620,
+    "sha256": "1011bca37e2052387c3e4b4fdc4765feba02ac1dc26c7ff8de8a38258f788e38"
+  },
+  {
+    "path": "cli-repeat/05.log",
+    "length": 17620,
+    "sha256": "12e5374cbf31bec8acaf46efdfd087c1ac7d1c9d9d8bf30c2201da9b3766ca80"
+  },
+  {
+    "path": "cli-repeat/06.log",
+    "length": 17620,
+    "sha256": "b47d0fb211e447fe1d9fc9df744cc8e24adf52401af1d0de6969e5df26813e32"
+  },
+  {
+    "path": "cli-repeat/07.log",
+    "length": 17620,
+    "sha256": "ec4e043c1a96eb09c5d615de0f3184797c2a9fa8e0006c35f85c08ed686f5fea"
+  },
+  {
+    "path": "cli-repeat/08.log",
+    "length": 17620,
+    "sha256": "76a5c0eae004e414176efac6e6a3bab73e324618b4ebfd522a59df1a29425cad"
+  },
+  {
+    "path": "cli-repeat/09.log",
+    "length": 17620,
+    "sha256": "d56ab9a890f392d4c9248138b5544d178d3c678f4bba8a5af4301884184cc1a1"
+  },
+  {
+    "path": "cli-repeat/10.log",
+    "length": 17620,
+    "sha256": "3c324feac8e8eb3b45700afb730ebec6cb1e0acfde8f5282e5ee408a02f8f603"
+  },
+  {
+    "path": "cli-repeat/11.log",
+    "length": 17620,
+    "sha256": "7d81423dda7ebfa2922c63a5930763b9520ff5d2c53c5f1dc9d0232fd844ec4e"
+  },
+  {
+    "path": "cli-repeat/12.log",
+    "length": 17620,
+    "sha256": "d7a21c31c2606110d69b802cfae9e18f47841d057388a0df59b2bc2640b57098"
+  },
+  {
+    "path": "cli-repeat/13.log",
+    "length": 17620,
+    "sha256": "3308319118f5977cf3cf0986512c733587dc93c78a173b2b53810c3765028c4c"
+  },
+  {
+    "path": "cli-repeat/14.log",
+    "length": 17620,
+    "sha256": "62723da507ecbb7b959fa07917dd3189cb635527f2a87453e85a3fc830ffaa16"
+  },
+  {
+    "path": "cli-repeat/15.log",
+    "length": 17620,
+    "sha256": "0ff00bdabcb29cd58c87f2af8734ef7fada663b77588fcc8c7e8a63dd2dee00c"
+  },
+  {
+    "path": "cli-repeat/16.log",
+    "length": 17620,
+    "sha256": "a95e5fd9a606ac0a413678593b6a8ec5dd35fcfe830590ce9f42b2b4665d6c61"
+  },
+  {
+    "path": "cli-repeat/17.log",
+    "length": 17620,
+    "sha256": "f8ab5e9b726d1f6f2e67bb9ffb74e81d5b5d927e609ece9979d095d44205b4f5"
+  },
+  {
+    "path": "cli-repeat/18.log",
+    "length": 17620,
+    "sha256": "c97bd61015dff06d121945fa1331ddfe7c07db115df57edddc30612fc8db5723"
+  },
+  {
+    "path": "cli-repeat/19.log",
+    "length": 17620,
+    "sha256": "564bfaaacae2aec46f718028b2da053f1af9fcff8b99ba021d7abb8f8d9be51c"
+  },
+  {
+    "path": "cli-repeat/20.log",
+    "length": 17620,
+    "sha256": "1397046db28d9b4bec3cbb559c167cbe51061e2c8286ddf849879c3249f7321a"
+  },
+  {
+    "path": "cli-repeat/21.log",
+    "length": 17620,
+    "sha256": "906b0ab5a5887a16fedda6f14ad997a02cdc65ef6ae4a4510db298a253ea6331"
+  },
+  {
+    "path": "cli-repeat/22.log",
+    "length": 17620,
+    "sha256": "c93cf94307a094cc972cebe3a6f09c56c410c360cf043b4753269fd5895d3c0e"
+  },
+  {
+    "path": "cli-repeat/23.log",
+    "length": 17620,
+    "sha256": "ebb410c810f0832499e6e087b33ed757f250c4d99bfab7ccd19b4efa50ad2639"
+  },
+  {
+    "path": "cli-repeat/24.log",
+    "length": 17620,
+    "sha256": "cec4e388e6fce177b2789dfa85915415e658f0077e277ef896a4684170150df5"
+  },
+  {
+    "path": "cli-repeat/25.log",
+    "length": 17620,
+    "sha256": "dd84c41bce4e9ea42bae89169c58bc0971b237bb3c3c5a5b0e8cdb2b5fbd6938"
+  },
+  {
+    "path": "cli-repeat/26.log",
+    "length": 17620,
+    "sha256": "9b9e2aa14703ce312d43c7884e4265faa5a3c78840d3b4d6af5bfce73492ced6"
+  },
+  {
+    "path": "cli-repeat/27.log",
+    "length": 17620,
+    "sha256": "492694c918a4f2af37ad9f01bfc2d0448218266b3b119ca994b62a90b388ac63"
+  },
+  {
+    "path": "cli-repeat/28.log",
+    "length": 17620,
+    "sha256": "37f39250fb7c801356ef4bab1122e5265b618e87fab54d81b0726086c4b1b2a4"
+  },
+  {
+    "path": "cli-repeat/29.log",
+    "length": 17620,
+    "sha256": "0a638b50d6add6997d6555d4ca4f60cfc19adc048189f2c0a34a77dcc6cbc243"
+  },
+  {
+    "path": "cli-repeat/30.log",
+    "length": 17620,
+    "sha256": "f331cce493c93395b0230261f2a37bdf8f8a28faf1f77a2572e67a4a70641570"
+  },
+  {
+    "path": "cli-repeat.log",
+    "length": 141,
+    "sha256": "eaaf014fff53ebd731cd260d990aff440956323e1f316c9691859c6e39248a3d"
+  },
+  {
+    "path": "diagnose_public_source.py",
+    "length": 1328,
+    "sha256": "e0901a053e61951e352d6fa34614f59cb57896a0808b080332267db153c8eb7c"
+  },
+  {
+    "path": "docs-hermetic-job.log",
+    "length": 173334,
+    "sha256": "779d72c017190e31f63240454d45219576b047a09efbef7921b422f701e39953"
+  },
+  {
+    "path": "draft-inventory.json",
+    "length": 67882,
+    "sha256": "629a97a8dfca78accd42dc15e3936e092e3fc5be145036582fce9ccdfd35e591"
+  },
+  {
+    "path": "draft_upgrade.py",
+    "length": 977,
+    "sha256": "7cf067f2e10f7a9f3490193f390fb5f37a0a73ea57c44ae10e5eff96df0fe8c3"
+  },
+  {
+    "path": "guarded_shells.py",
+    "length": 1883,
+    "sha256": "a9a3192bfeb028ff4c729bf72d0c27748f632ad9dbbf6cd770b4c1c8739644bb"
+  },
+  {
+    "path": "hermetic-job.log",
+    "length": 85280,
+    "sha256": "1286db3480b1ff765334d71bf1da43d7a775b84a789ade6c272c57b2ce022027"
+  },
+  {
+    "path": "intermediate-baseline.log",
+    "length": 177,
+    "sha256": "16cd1d26c5733407e5e3bbe836358ca55a1e3edd46c42a245c21f399d2c6a2d4"
+  },
+  {
+    "path": "native-proof/01-download-v0-1-0-alpha-54-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/02-verify-v0-1-0-alpha-54-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/03-download-v0-1-0-alpha-54-pkg-0-1-0-alpha-54-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/04-verify-v0-1-0-alpha-54-pkg-0-1-0-alpha-54-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/05-download-v0-1-0-alpha-54-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/06-verify-v0-1-0-alpha-54-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/07-download-v0-1-0-alpha-54-pkg-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/08-verify-v0-1-0-alpha-54-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/09-download-v0-1-0-alpha-54-pkg-nix-broker-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/10-verify-v0-1-0-alpha-54-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/11-download-v0-1-0-alpha-54-pkg-root-helper-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/12-verify-v0-1-0-alpha-54-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/13-fresh-installation.log",
+    "length": 2066,
+    "sha256": "eb2a163eee5e8bd159f6526484df35e77f11be453c16aeb8c55f3c0cd998b735"
+  },
+  {
+    "path": "native-proof/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "native-proof/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "f71026798b7b439fe788bdef86833e2732832dd3f4086d0b62b55351c7b00a8c"
+  },
+  {
+    "path": "native-proof/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "native-proof/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "a37f836e85e3c584b34f71140f010f711f459ace60f78f8cc5b8ebc1288d06ad"
+  },
+  {
+    "path": "native-proof/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "native-proof/19-verify-v0-1-0-alpha-55-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/20-verify-v0-1-0-alpha-55-pkg-0-1-0-alpha-55-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/21-verify-v0-1-0-alpha-55-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/22-verify-v0-1-0-alpha-55-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/23-verify-v0-1-0-alpha-55-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/24-verify-v0-1-0-alpha-55-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/25-product-upgrade-verified-draft-package-.log",
+    "length": 984,
+    "sha256": "c295234b6d7c7c31e5575331d9636c90552b4c8a7b16ed3e57d238b2058a2e8b"
+  },
+  {
+    "path": "native-proof/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "native-proof/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "a37f836e85e3c584b34f71140f010f711f459ace60f78f8cc5b8ebc1288d06ad"
+  },
+  {
+    "path": "native-proof/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "native-proof/29-repeat-installer-verified-draft-package-.log",
+    "length": 827,
+    "sha256": "7bc6cebac3198bd8d4098a9f6126c9655cf68e7ccaf496a84de76aefef1ed7aa"
+  },
+  {
+    "path": "native-proof/30-record-build-disk-space.log",
+    "length": 170,
+    "sha256": "0adfc01d6feed5ea545144abce875498271f9692defb1c2802430a3907de4133"
+  },
+  {
+    "path": "native-proof/31-record-build-system-load.log",
+    "length": 21,
+    "sha256": "21fdf9f600d171472017e3c1ae511a4766d297174cbbf25247b17503e9c3fc74"
+  },
+  {
+    "path": "native-proof/32-build-public-flake.log",
+    "length": 622,
+    "sha256": "3a924e13df4da1f686ca23c49f4d215b056ef8cbf22857f5f5636098a4487ecd"
+  },
+  {
+    "path": "native-proof/33-run-built-package.log",
+    "length": 12,
+    "sha256": "5f61500d03d8e5947e434b80f148a9d93c09293ab3186fd5fc5138e6ff8c03ea"
+  },
+  {
+    "path": "native-proof/34-remove-package.log",
+    "length": 108,
+    "sha256": "ef21a8c350f3c9a35b0e5a1e9baa9aaea2c7b9ecc6ff6c464076a03eaea62ebc"
+  },
+  {
+    "path": "native-proof/35-check-removal.log",
+    "length": 5,
+    "sha256": "0ee8fd0768a0e041f1f8a44e928cd9ea0cb2c706e8a28639fcb6a94ac51683a7"
+  },
+  {
+    "path": "native-proof/36-rollback.log",
+    "length": 164,
+    "sha256": "2d9675056caed63ee7de0e40a6d4783d1ae62d791ee18ba9ae16ce9b49675749"
+  },
+  {
+    "path": "native-proof/37-run-restored-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "native-proof/38-verify-package-files.log",
+    "length": 91,
+    "sha256": "73c50c624adb82341eb45bcc696728636ff2f54e208c0a5d07f8913139573bf5"
+  },
+  {
+    "path": "native-proof/39-final-health.log",
+    "length": 591,
+    "sha256": "84eb00a744c7c7d023544b0cb907917d13fa85a65f2f130f3f4a6a364d712213"
+  },
+  {
+    "path": "native-proof/40-prepare-next-upgrade-remove-existing-public-test-package.log",
+    "length": 140,
+    "sha256": "45278ae79424fe87829e5bd72fe4f97f03aadf807fd2fc7705579a9d4e971d26"
+  },
+  {
+    "path": "native-proof/41-check-next-upgrade-package-baseline.log",
+    "length": 4,
+    "sha256": "7d52fffcd8cf56b71b4b23ceba4f48682368b9ae608b574e267e44161458c6af"
+  },
+  {
+    "path": "native-proof/42-retained-package-before-alpha56.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "native-proof/43-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "native-proof/44-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/45-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/46-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/47-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/48-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/49-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "native-proof/50-product-upgrade-verified-draft-package-.log",
+    "length": 1046,
+    "sha256": "9b342f48fa54ee4c473a91f0e5f85b474a265c901574708f67e1aa4d95ba42e0"
+  },
+  {
+    "path": "native-proof/51-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "native-proof/52-check-nix-identity.log",
+    "length": 169,
+    "sha256": "a37f836e85e3c584b34f71140f010f711f459ace60f78f8cc5b8ebc1288d06ad"
+  },
+  {
+    "path": "native-proof/53-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "native-proof/54-repeat-installer-verified-draft-package-.log",
+    "length": 889,
+    "sha256": "9b93cc9baf1a55679a25375e1107afc8cbe95ddf7bbdcb88f44f9df86d4cb03c"
+  },
+  {
+    "path": "native-proof/55-record-build-disk-space.log",
+    "length": 170,
+    "sha256": "9b6c53c2e9bc986a5edaeb1bd26fdfe96457c6b5a6cd32d882b8e1b30f6d2be8"
+  },
+  {
+    "path": "native-proof/56-record-build-system-load.log",
+    "length": 21,
+    "sha256": "085b1c0e961b4220dd98de4814c57c3de045bd0ef4e6eb7d5d67949d1fe30f92"
+  },
+  {
+    "path": "native-proof/57-build-public-flake.log",
+    "length": 444,
+    "sha256": "a5ad5c018deb8a815a2d193512d8aeff077eb09282132383d50c57a9c3164522"
+  },
+  {
+    "path": "native-proof/58-run-built-package.log",
+    "length": 12,
+    "sha256": "5f61500d03d8e5947e434b80f148a9d93c09293ab3186fd5fc5138e6ff8c03ea"
+  },
+  {
+    "path": "native-proof/59-remove-package.log",
+    "length": 108,
+    "sha256": "36b36cae6c3711de829d0b8ac7f5adcd279c7f030784a170403985512749662b"
+  },
+  {
+    "path": "native-proof/60-check-removal.log",
+    "length": 5,
+    "sha256": "0ee8fd0768a0e041f1f8a44e928cd9ea0cb2c706e8a28639fcb6a94ac51683a7"
+  },
+  {
+    "path": "native-proof/61-rollback.log",
+    "length": 164,
+    "sha256": "9ba65eb86f2db76f713a6dbce59b2e014af4e6dfa45db7bd8a48d8542f2d1300"
+  },
+  {
+    "path": "native-proof/62-run-restored-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "native-proof/63-verify-package-files.log",
+    "length": 91,
+    "sha256": "35ca61d824de25cd4aa15524d04eb0fa0be7e87dc3b1abcc44e6a551d96b4c78"
+  },
+  {
+    "path": "native-proof/64-final-health.log",
+    "length": 591,
+    "sha256": "84eb00a744c7c7d023544b0cb907917d13fa85a65f2f130f3f4a6a364d712213"
+  },
+  {
+    "path": "native-proof/65-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "native-proof/66-health-after-reboot.log",
+    "length": 591,
+    "sha256": "84eb00a744c7c7d023544b0cb907917d13fa85a65f2f130f3f4a6a364d712213"
+  },
+  {
+    "path": "native-proof/67-package-after-reboot.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "native-proof/68-built-package-after-reboot.log",
+    "length": 12,
+    "sha256": "5f61500d03d8e5947e434b80f148a9d93c09293ab3186fd5fc5138e6ff8c03ea"
+  },
+  {
+    "path": "native-proof/alpha55-checkpoint-before56.json",
+    "length": 6845,
+    "sha256": "3267e50145edc31666dd56912771515dacddaf2b377917b72a11275a3359453f"
+  },
+  {
+    "path": "native-proof/bash_profile.before-fixture",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/checkpoint-before-reboot.json",
+    "length": 10918,
+    "sha256": "2e92ea203e198d6da676895b7a4690eeb205e3f9fa59399753c2a9a0a82e4cbf"
+  },
+  {
+    "path": "native-proof/checkpoint.json",
+    "length": 11557,
+    "sha256": "60db5520ceffbe3fe899fb3c22921472b1ca3dd7d19da7a8e326b12295e348c9"
+  },
+  {
+    "path": "native-proof/checks.json",
+    "length": 10518,
+    "sha256": "61b69a86eb2dcfcf1f4e600134577a8fffeaad1cd6af69ef7019a57c8e9e0dae"
+  },
+  {
+    "path": "native-proof/intermediate-baseline.json",
+    "length": 199,
+    "sha256": "15b449486a5b07cd80da526bdced830ba49ad0563869a1df103c9ec661e63fcd"
+  },
+  {
+    "path": "native-proof/removal-checks.json",
+    "length": 1490,
+    "sha256": "96880c02478151237c3b7b77c874c233ca4b0cf904bbfcd65e70313c0075e340"
+  },
+  {
+    "path": "native-proof/shell-after-bash.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/shell-after-bash.stdout",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/shell-after-zsh.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/shell-after-zsh.stdout",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/shell-after.json",
+    "length": 383,
+    "sha256": "0d4fe0bd39d1e9e6f71e75a540da3f939a1cdfc5d1850b7958c37549fceb4370"
+  },
+  {
+    "path": "native-proof/shell-before-bash.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/shell-before-bash.stdout",
+    "length": 43,
+    "sha256": "f888580794e2672c6a104b99322ab8ff22262a994ba20d29176f06359776dddd"
+  },
+  {
+    "path": "native-proof/shell-before-zsh.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-proof/shell-before-zsh.stdout",
+    "length": 43,
+    "sha256": "f888580794e2672c6a104b99322ab8ff22262a994ba20d29176f06359776dddd"
+  },
+  {
+    "path": "native-proof/shell-before.json",
+    "length": 697,
+    "sha256": "d333d08e0977c095c52d807d7af63d4d7b745b919ddc423f549d057edc6d1e96"
+  },
+  {
+    "path": "native-proof/summary.md",
+    "length": 4072,
+    "sha256": "d589cc63a00bdaf928148dfb1c0a7aae2e69dee5d2b0e45138f9b6a809fb7a68"
+  },
+  {
+    "path": "native-proof/zshrc.before-fixture",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/commands.json",
+    "length": 3111,
+    "sha256": "70083a915d35c34e9fb42dffaf55371517e1405cd10ea60b2204828db382b8d9"
+  },
+  {
+    "path": "native-ux/doctor.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/doctor.stdout",
+    "length": 591,
+    "sha256": "84eb00a744c7c7d023544b0cb907917d13fa85a65f2f130f3f4a6a364d712213"
+  },
+  {
+    "path": "native-ux/gc-human.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/gc-human.stdout",
+    "length": 258,
+    "sha256": "beb5f016c5d21e148cd7c5b2097e68ae275ccb333671df2f00da6c50ec495053"
+  },
+  {
+    "path": "native-ux/gc-json.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/gc-json.stdout",
+    "length": 308,
+    "sha256": "414be49438a045add01c0330948a82ea6e8a898b168984bc7114264245d34ddb"
+  },
+  {
+    "path": "native-ux/history.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/history.stdout",
+    "length": 402,
+    "sha256": "c98dff801d6b26c606e9add69e0337ea6389bad88febd7e34b08b25886fec0c5"
+  },
+  {
+    "path": "native-ux/preview-human.stderr",
+    "length": 74,
+    "sha256": "ff820088b1daa702c19effee0cad51c7876d85e5b4d7a1807eead96f22216f50"
+  },
+  {
+    "path": "native-ux/preview-human.stdout",
+    "length": 380,
+    "sha256": "bbac81e9da5a902547a58a4af27347d3e912c06e41525eb061aa7fd68fbac089"
+  },
+  {
+    "path": "native-ux/preview-json.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/preview-json.stdout",
+    "length": 1185,
+    "sha256": "d42a91abb85476eeecd00756146d8b0b1942e61cfc70f23a3eeb51b683a46120"
+  },
+  {
+    "path": "native-ux/preview-jsonl.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/preview-jsonl.stdout",
+    "length": 1201,
+    "sha256": "dd5920bc4499a02f84198643987df431f9e9019d6c8171fc59836c2481374135"
+  },
+  {
+    "path": "native-ux/preview-quiet.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/preview-quiet.stdout",
+    "length": 380,
+    "sha256": "bbac81e9da5a902547a58a4af27347d3e912c06e41525eb061aa7fd68fbac089"
+  },
+  {
+    "path": "native-ux/repair.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/repair.stdout",
+    "length": 91,
+    "sha256": "35ca61d824de25cd4aa15524d04eb0fa0be7e87dc3b1abcc44e6a551d96b4c78"
+  },
+  {
+    "path": "native-ux/retention-human.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/retention-human.stdout",
+    "length": 416,
+    "sha256": "c504358f386dd904624f32d467ee869b2610f69bd1cccaeab3648bcb150c90f5"
+  },
+  {
+    "path": "native-ux/retention-json.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/retention-json.stdout",
+    "length": 330,
+    "sha256": "7e29bc2a62d2f39a42ebc7e7882e2379f45f09f7cc1dbf102ef44f77953da5a6"
+  },
+  {
+    "path": "native-ux/uninstall-human.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/uninstall-human.stdout",
+    "length": 1784,
+    "sha256": "388445b9b5b9aadc6d169377bc4d407f2e831fc7503787f06e8ec8145c1c89c3"
+  },
+  {
+    "path": "native-ux/uninstall-json.stderr",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-ux/uninstall-json.stdout",
+    "length": 2511,
+    "sha256": "4da158c86b1021fc2219b184994108014197631865a48d3b38209f2f862e4f1a"
+  },
+  {
+    "path": "native-ux/upgrade-preview.stderr",
+    "length": 74,
+    "sha256": "ff820088b1daa702c19effee0cad51c7876d85e5b4d7a1807eead96f22216f50"
+  },
+  {
+    "path": "native-ux/upgrade-preview.stdout",
+    "length": 259,
+    "sha256": "32483a4ec268f9696b6cb039f17de1e6c950f7513c08df02a9ed8aaa3f05527a"
+  },
+  {
+    "path": "post-remove.log",
+    "length": 207,
+    "sha256": "51f07919d2e35f1e97ba7fdfa864eb138e94f48d7effc837f175f2828bb6aa3c"
+  },
+  {
+    "path": "post_remove.py",
+    "length": 1727,
+    "sha256": "98efce1535b92b661ae8263bd310bb784987c087c35abf35a1bdff837e886d79"
+  },
+  {
+    "path": "prepare-second-build.log",
+    "length": 412,
+    "sha256": "1b5ed8e51252b3f01b1a6adf8ac5f3c842a42a7123dd70b5ee8886abe059b0c6"
+  },
+  {
+    "path": "probe_source_metadata.py",
+    "length": 3848,
+    "sha256": "39ccbf46737cbee2c33c09b57383866a011b9a2a1a5835a07abfdae106631c3e"
+  },
+  {
+    "path": "public-channel-crypto.json",
+    "length": 101,
+    "sha256": "48534e96dee3fb4054ceaf393a4d5db0331f239296761c355f67af8f30290051"
+  },
+  {
+    "path": "public-check-ci.json",
+    "length": 4092,
+    "sha256": "7effb81509a1b5945786f4692f73a2434c3b75fd5653eff517e23bcf1b57c2a7"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/07-download-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/08-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/09-download-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/10-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/11-download-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/12-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/13-fresh-installation.log",
+    "length": 2185,
+    "sha256": "a4894e2203544974167f0d777cc8913be9bf4953301cba8db96eb9931055952b"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "f71026798b7b439fe788bdef86833e2732832dd3f4086d0b62b55351c7b00a8c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "cf609745ac58d4d23f1cad406659f323d29428be8e4b6c4e1375baf2d1cf559c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/22-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/23-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/24-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/25-product-upgrade.log",
+    "length": 2110,
+    "sha256": "bdbb634fc5509afa8d24eb228c001b0e655291e70051c1b4b944be77bbd6921f"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "cf609745ac58d4d23f1cad406659f323d29428be8e4b6c4e1375baf2d1cf559c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/29-repeat-installer.log",
+    "length": 2110,
+    "sha256": "ca6513a2b58a5f9ad9ab2b01e3151c5a5114bd9af58cb4c6c4717402085aecb9"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/30-record-build-disk-space.log",
+    "length": 172,
+    "sha256": "cd82baa4ec18aaa90023a061dd6fd45db9fdb35ce5825baf842e8173ad8c2352"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/31-record-build-system-load.log",
+    "length": 24,
+    "sha256": "87d92cdf104623779de2324c83ce86de66e49d58469c4e9a233cc090dd5fe81d"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/32-build-public-flake.log",
+    "length": 228,
+    "sha256": "9eeb8a6d36ac26004f2ab959c3933086311c31b6e2d7725f125f656ce6f7e9cb"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/broker-diagnostic.log",
+    "length": 46,
+    "sha256": "3b9befffcec97afd8a95bae9571d83cf505c01289e2011875a3d03189ccb183f"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/checkpoint.json",
+    "length": 3497,
+    "sha256": "7c2a1f12704b4996e30b487a4619a86e081d010192871492351801d37781a872"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/checks.json",
+    "length": 5368,
+    "sha256": "b56f0b504462d6389db60de3f62da303598cd32d0e2f4e06beecbfb7dc1422d4"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-macos-15/summary.md",
+    "length": 2199,
+    "sha256": "626612875ad5da0395891d9453c674070de7cb688d5e8c83d20114e269574efd"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/07-download-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/08-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/09-download-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/10-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/11-download-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/12-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/13-fresh-installation.log",
+    "length": 1344,
+    "sha256": "c5f6840c3e8fa6c2b8f3630adb5e2458b7584369572595c5e64bf858d3483e55"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "cb76a4882edd5b8352fd1503814ddfd741da9cc3883740b05f82a0bf4c9d9f6c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/22-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/23-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/24-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/25-product-upgrade.log",
+    "length": 1204,
+    "sha256": "230fa1f177d817883dc6b7505bba5a5a7c33cf3d666a7fbb52424e42a03ee4d7"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/29-repeat-installer.log",
+    "length": 1204,
+    "sha256": "cf1388e35dcbbf45ee79c50b1ededb5a3c0b1831b735c04857f92af40e86f30e"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/30-remove-package.log",
+    "length": 108,
+    "sha256": "efd5973c4b5b86217c25db87e77b45f12af86b4f578adc9120f10f1bf33ab085"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/31-check-removal.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/32-rollback.log",
+    "length": 164,
+    "sha256": "59f09bfbec79b83a8cb32e51dfc6139feb2cb29fb4293d73c05b54c9134b36a1"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/33-run-restored-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/34-verify-package-files.log",
+    "length": 91,
+    "sha256": "f5af2792979374cd4eabb7a6b9914976d114aa05fcc9ea9d0a4e737ba2affe4f"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/35-final-health.log",
+    "length": 592,
+    "sha256": "ba0b89824cfb6ce4046e7c90e198a317de3a00a1cff77073a00f624bcbc5c45c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/checkpoint.json",
+    "length": 6111,
+    "sha256": "f1f43a0df0bf30f3396d7d6e95eea7ed332ce0c898abd82a521d4915eb2d1c9b"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/checks.json",
+    "length": 5533,
+    "sha256": "44c3c66a09339ce323cc5e5a06cd31197017a62c990d18383e642788934d667c"
+  },
+  {
+    "path": "public-ci-diagnostic/release-check-ubuntu-24.04/summary.md",
+    "length": 2238,
+    "sha256": "2101d7932264b87dc22009e8911b199efc7be7b15669da960a6e6a35c0c8592c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/07-download-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/08-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/09-download-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/10-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/11-download-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/12-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/13-fresh-installation.log",
+    "length": 2185,
+    "sha256": "17862c19e706defa0d4aeea50413ef9f6f0d01d2d562ab070f9b26b3b5bd98b3"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "f71026798b7b439fe788bdef86833e2732832dd3f4086d0b62b55351c7b00a8c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "cf609745ac58d4d23f1cad406659f323d29428be8e4b6c4e1375baf2d1cf559c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/22-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/23-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/24-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/25-product-upgrade.log",
+    "length": 2110,
+    "sha256": "a7ae3a8d78e7fb87fb86a3bda5440e79eab41c6a5788d484ff811893d3db4e2d"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "cf609745ac58d4d23f1cad406659f323d29428be8e4b6c4e1375baf2d1cf559c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/29-repeat-installer.log",
+    "length": 2110,
+    "sha256": "5b6c2a81e7cc16caa263868308810a1120a8b4be6c62f27efe75f739a4689389"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/30-record-build-disk-space.log",
+    "length": 172,
+    "sha256": "f16c7d844c742542d6b8e1323c41613ce88d58efe2b9640fd51660b852fb662e"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/31-record-build-system-load.log",
+    "length": 23,
+    "sha256": "13941a0d3a47cc8a7f666d4449cc11c7413daa07dafdfaa6c3d6ff012089e2bc"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/32-build-public-flake.log",
+    "length": 336,
+    "sha256": "1fdc960c217659f9ebd90badd60d19eae8bde89182f8761bfbba32bbe1c19841"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/broker-diagnostic.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/checkpoint.json",
+    "length": 3497,
+    "sha256": "955c1b009fff157f5d75771dfe2470a42b091732a3adf72a01b5aa15b71fdbc4"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/checks.json",
+    "length": 5372,
+    "sha256": "b14cd8d39acef67a2d221f52f67c65894c5b867d11cde38b40e8bbe4aacd2fc0"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/public-source-service.json",
+    "length": 342,
+    "sha256": "84ad473d09a4061fcc1e4562161c05deaad0f3d95d2dd7115d1dd484bb39c5f9"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/source-metadata-probe.json",
+    "length": 2170,
+    "sha256": "87ea4efa6f22d645657eeaa4f18fff805b7f70c07cfe8115d85ce40675e844fc"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-macos-15/summary.md",
+    "length": 2203,
+    "sha256": "46f9d751f4ab73fc6fe35461398e2d496f1d95adf1e941500ed84b482a837289"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/07-download-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/08-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/09-download-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/10-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/11-download-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/12-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/13-fresh-installation.log",
+    "length": 1344,
+    "sha256": "e9c2fd4a9c6a24247b49b64f865c3b13a53a9a8bca2a69f949c597523c1d0e59"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "cb76a4882edd5b8352fd1503814ddfd741da9cc3883740b05f82a0bf4c9d9f6c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/22-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/23-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/24-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/25-product-upgrade.log",
+    "length": 1204,
+    "sha256": "194904c7fec1846ff3435f9506d568e0a3cfef5ae7a6b440114e3bf4f8be35fb"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/29-repeat-installer.log",
+    "length": 1204,
+    "sha256": "30456944e115bdca11c892cbd5e1c7f94016056043832e5ccdabd7648bcf4969"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/30-remove-package.log",
+    "length": 108,
+    "sha256": "efd5973c4b5b86217c25db87e77b45f12af86b4f578adc9120f10f1bf33ab085"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/31-check-removal.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/32-rollback.log",
+    "length": 164,
+    "sha256": "59f09bfbec79b83a8cb32e51dfc6139feb2cb29fb4293d73c05b54c9134b36a1"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/33-run-restored-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/34-verify-package-files.log",
+    "length": 91,
+    "sha256": "f5af2792979374cd4eabb7a6b9914976d114aa05fcc9ea9d0a4e737ba2affe4f"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/35-final-health.log",
+    "length": 592,
+    "sha256": "ba0b89824cfb6ce4046e7c90e198a317de3a00a1cff77073a00f624bcbc5c45c"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/checkpoint.json",
+    "length": 6111,
+    "sha256": "724f7351c38e78d5a5bd47a5d7b5d5147826eb0c9523c9fb6aefae58cdd5e111"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/checks.json",
+    "length": 5533,
+    "sha256": "1cdd57ee5505fb358ebd853ca784195febcc372fe14f977a25c2b1cac5daab2f"
+  },
+  {
+    "path": "public-ci-evaluator/release-check-ubuntu-24.04/summary.md",
+    "length": 2238,
+    "sha256": "496022493d861f255929ce097c92084e0588192b66e74617ccad79d6f7eef047"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/07-download-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/08-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/09-download-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/10-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/11-download-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/12-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/13-fresh-installation.log",
+    "length": 2185,
+    "sha256": "cfa2f9db2df5f8fc752e7fb1809e0bd7a181c262a1f562868114d42dc20c2913"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "f71026798b7b439fe788bdef86833e2732832dd3f4086d0b62b55351c7b00a8c"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "a37f836e85e3c584b34f71140f010f711f459ace60f78f8cc5b8ebc1288d06ad"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/22-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/23-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/24-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/25-product-upgrade.log",
+    "length": 2110,
+    "sha256": "31cdd08ea84c6eafce2056da249ecf5c11aa1a05adcc8790a9e6fd3ce8327c1f"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "a37f836e85e3c584b34f71140f010f711f459ace60f78f8cc5b8ebc1288d06ad"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/29-repeat-installer.log",
+    "length": 2110,
+    "sha256": "21da8684d9450f12cc499eeae41581ff8ffa4efbdcf8a133671856b2ab5c6864"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/30-record-build-disk-space.log",
+    "length": 172,
+    "sha256": "98e01bfe80c0531717366f8901355a44ebff61eb5d5897099df3e84678e996dd"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/31-record-build-system-load.log",
+    "length": 21,
+    "sha256": "f098f6404df6477642485f6a4bcbcbed102ebb47b7c56cbe5dd70482925be4c9"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/32-wait-for-hosted-build-capacity.log",
+    "length": 305,
+    "sha256": "9498c36c2b3a5662fcf76354b6aa60c3e71e0c9f271c7dbabfae867818b8c280"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/33-build-public-flake.log",
+    "length": 622,
+    "sha256": "3a924e13df4da1f686ca23c49f4d215b056ef8cbf22857f5f5636098a4487ecd"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/34-run-built-package.log",
+    "length": 12,
+    "sha256": "5f61500d03d8e5947e434b80f148a9d93c09293ab3186fd5fc5138e6ff8c03ea"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/35-remove-package.log",
+    "length": 108,
+    "sha256": "ef21a8c350f3c9a35b0e5a1e9baa9aaea2c7b9ecc6ff6c464076a03eaea62ebc"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/36-check-removal.log",
+    "length": 5,
+    "sha256": "0ee8fd0768a0e041f1f8a44e928cd9ea0cb2c706e8a28639fcb6a94ac51683a7"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/37-rollback.log",
+    "length": 164,
+    "sha256": "2d9675056caed63ee7de0e40a6d4783d1ae62d791ee18ba9ae16ce9b49675749"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/38-run-restored-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/39-verify-package-files.log",
+    "length": 91,
+    "sha256": "73c50c624adb82341eb45bcc696728636ff2f54e208c0a5d07f8913139573bf5"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/40-final-health.log",
+    "length": 591,
+    "sha256": "84eb00a744c7c7d023544b0cb907917d13fa85a65f2f130f3f4a6a364d712213"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/broker-diagnostic.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/checkpoint.json",
+    "length": 6948,
+    "sha256": "29e755fa02d6fcfe8ca179e4cec0d81c09d61a93310acb4be395123e0344340c"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/checks.json",
+    "length": 6256,
+    "sha256": "03e4f1dc72aa1a09390419f85aaeb77a9c8777c2ad5eeb1ee1b95992d33c0e93"
+  },
+  {
+    "path": "public-ci-final/release-check-macos-15/summary.md",
+    "length": 2501,
+    "sha256": "2ce1001419791425e9437c9ceb581b73a8fb95664a5eaa5ee92d83c9fdd61065"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/07-download-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/08-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/09-download-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/10-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/11-download-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/12-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/13-fresh-installation.log",
+    "length": 1344,
+    "sha256": "c76e1eaddcc22318ea9b8aab90480c2c98d56020fa28b8419b14c014b0b55c4e"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "cb76a4882edd5b8352fd1503814ddfd741da9cc3883740b05f82a0bf4c9d9f6c"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/22-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/23-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/24-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/25-product-upgrade.log",
+    "length": 1204,
+    "sha256": "0f67abd15df2f2b690fe35f9961bdbc90dfd0c72d4cec4e0192a6a9a0ab0533f"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/29-repeat-installer.log",
+    "length": 1204,
+    "sha256": "8efcbf0e0cbae66114373fd62fef3904b7a55d2b66f006d294c2da5203d5b923"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/30-remove-package.log",
+    "length": 108,
+    "sha256": "efd5973c4b5b86217c25db87e77b45f12af86b4f578adc9120f10f1bf33ab085"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/31-check-removal.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/32-rollback.log",
+    "length": 164,
+    "sha256": "59f09bfbec79b83a8cb32e51dfc6139feb2cb29fb4293d73c05b54c9134b36a1"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/33-run-restored-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/34-verify-package-files.log",
+    "length": 91,
+    "sha256": "f5af2792979374cd4eabb7a6b9914976d114aa05fcc9ea9d0a4e737ba2affe4f"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/35-final-health.log",
+    "length": 592,
+    "sha256": "ba0b89824cfb6ce4046e7c90e198a317de3a00a1cff77073a00f624bcbc5c45c"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/checkpoint.json",
+    "length": 6111,
+    "sha256": "2948e752ba564e7ab95a4a0ee0c5257814c4036c91295826c4579dd4e2d8762f"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/checks.json",
+    "length": 5533,
+    "sha256": "de35bde05a52a399f6f5dfbe7063ac7a734d33844eb879466bb4c9889188c52a"
+  },
+  {
+    "path": "public-ci-final/release-check-ubuntu-24.04/summary.md",
+    "length": 2238,
+    "sha256": "f47b6a7a0c6c3f92350950d34bf1f2cbc00cfc8fafe73a7da87c728a52904c37"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/07-download-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/08-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/09-download-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/10-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/11-download-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/12-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/13-fresh-installation.log",
+    "length": 2185,
+    "sha256": "f3606a328bde0d0bce11ce4e9e4c80843e070d8ba6838266e252140e498492c4"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "f71026798b7b439fe788bdef86833e2732832dd3f4086d0b62b55351c7b00a8c"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "cf609745ac58d4d23f1cad406659f323d29428be8e4b6c4e1375baf2d1cf559c"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/22-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/23-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/24-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/25-product-upgrade.log",
+    "length": 2110,
+    "sha256": "980bf6e82bed7e3d38a0465172e3e1a3b3b46846b92a5d8d3c7600ff3e18573f"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "cf609745ac58d4d23f1cad406659f323d29428be8e4b6c4e1375baf2d1cf559c"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/29-repeat-installer.log",
+    "length": 2110,
+    "sha256": "c0500c6bbec6d727e92ae5de897bb3b4faeb692209b6d57761900a564498b5fa"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/30-record-build-disk-space.log",
+    "length": 172,
+    "sha256": "d8d448f1e01ef796aea69c519d8ef5ae038a62fb1d35bb88a5efdf0bdc8537b0"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/31-record-build-system-load.log",
+    "length": 23,
+    "sha256": "19467442e93c29a710666c7fa85c133c8927d14800b9b3ad8b3afe5e6c9f663d"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/32-build-public-flake.log",
+    "length": 228,
+    "sha256": "9eeb8a6d36ac26004f2ab959c3933086311c31b6e2d7725f125f656ce6f7e9cb"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/checkpoint.json",
+    "length": 3498,
+    "sha256": "d1c9e7db06567b8c330d49dbf75e323e70b339e735d7c1e56c593a4834ccb015"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/checks.json",
+    "length": 5372,
+    "sha256": "e59a3529a0ae80e66b04124675eb1e1ac9c82ae748f77454d6e926a7bc734ac2"
+  },
+  {
+    "path": "public-ci-first/release-check-macos-15/summary.md",
+    "length": 2203,
+    "sha256": "7ee35d5458286ff234dbc65ca15c3ca9585bc036fb3154d4e4a782cd36cb4029"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/07-download-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/08-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/09-download-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/10-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/11-download-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/12-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/13-fresh-installation.log",
+    "length": 1344,
+    "sha256": "36f395f1d44d7c128f40d5d55349d61a9683fb8a07081646b54cd9cdc7c831f6"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "cb76a4882edd5b8352fd1503814ddfd741da9cc3883740b05f82a0bf4c9d9f6c"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/22-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/23-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/24-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/25-product-upgrade.log",
+    "length": 1204,
+    "sha256": "7f62a0f0304e62b630bfbe0a4682871212f5e411ae8a07b459a325fbf9b094f0"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/29-repeat-installer.log",
+    "length": 1204,
+    "sha256": "444c098e04688b9c41490dfbc95b6da2cdf130433a1ce133aaf56648be592be6"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/30-remove-package.log",
+    "length": 108,
+    "sha256": "efd5973c4b5b86217c25db87e77b45f12af86b4f578adc9120f10f1bf33ab085"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/31-check-removal.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/32-rollback.log",
+    "length": 164,
+    "sha256": "59f09bfbec79b83a8cb32e51dfc6139feb2cb29fb4293d73c05b54c9134b36a1"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/33-run-restored-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/34-verify-package-files.log",
+    "length": 91,
+    "sha256": "f5af2792979374cd4eabb7a6b9914976d114aa05fcc9ea9d0a4e737ba2affe4f"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/35-final-health.log",
+    "length": 592,
+    "sha256": "ba0b89824cfb6ce4046e7c90e198a317de3a00a1cff77073a00f624bcbc5c45c"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/checkpoint.json",
+    "length": 6111,
+    "sha256": "053ac8c0d8a81b76e164cb576af9b496690e10ccd682473d50b0220589225651"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/checks.json",
+    "length": 5533,
+    "sha256": "75dff242bf1224c0dbe3956764e04da97a08e144481a20e8112b9fc389e5a4b1"
+  },
+  {
+    "path": "public-ci-first/release-check-ubuntu-24.04/summary.md",
+    "length": 2238,
+    "sha256": "ea9bbbf22214b67edb7ddde886b2facbb67e17c71fc6194622d01d48a8bc2048"
+  },
+  {
+    "path": "public-ci-first-run.json",
+    "length": 112,
+    "sha256": "b31b07054744582b0f97dd090174efb80373d23b0df1a622ee5dbed52be1c024"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/07-download-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/08-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/09-download-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/10-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/11-download-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/12-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/13-fresh-installation.log",
+    "length": 2185,
+    "sha256": "e837bf4c9725a6709a3a489244f126b60a7cfbe3445f2f7160a0e52e53ec4462"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "f71026798b7b439fe788bdef86833e2732832dd3f4086d0b62b55351c7b00a8c"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "cf609745ac58d4d23f1cad406659f323d29428be8e4b6c4e1375baf2d1cf559c"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/22-verify-v0-1-0-alpha-56-pkg-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/23-verify-v0-1-0-alpha-56-pkg-nix-broker-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/24-verify-v0-1-0-alpha-56-pkg-root-helper-aarch64-darwin.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/25-product-upgrade.log",
+    "length": 2110,
+    "sha256": "5298f43e920e34a72c8792c6a4fb05be923fd00e53c9687e6f86e8820a5edf24"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "cf609745ac58d4d23f1cad406659f323d29428be8e4b6c4e1375baf2d1cf559c"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/29-repeat-installer.log",
+    "length": 2110,
+    "sha256": "14791600245de238c3a134d611f4a1c0701c695869a15cb711f58321175ac2b4"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/30-record-build-disk-space.log",
+    "length": 172,
+    "sha256": "43eaaa45cb3dd96c8a7695636e24ecf81adcf801cccb8cbf0d5ba93bc075e38f"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/31-record-build-system-load.log",
+    "length": 21,
+    "sha256": "54b66cd670565e99a69d83b8fd6ac45ca7ceac27eec553abab90bac1537bd5d9"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/32-build-public-flake.log",
+    "length": 228,
+    "sha256": "9eeb8a6d36ac26004f2ab959c3933086311c31b6e2d7725f125f656ce6f7e9cb"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/checkpoint.json",
+    "length": 3495,
+    "sha256": "c36757dd399bbb4763eb59601344a8949bbb207cfe3f1dc90ce77bb503f8e745"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/checks.json",
+    "length": 5368,
+    "sha256": "8c9310686648a6101b691dce22f4242da687abb9d6ad723790ef6c316cbc8cec"
+  },
+  {
+    "path": "public-ci-second/release-check-macos-15/summary.md",
+    "length": 2199,
+    "sha256": "a7cadff065acf088bc33e2a58e3a6b9b7b27980cc721bb46a80b846af0916f37"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/01-download-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/02-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/03-download-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/04-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/05-download-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/06-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/07-download-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/08-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/09-download-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/10-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/11-download-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/12-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/13-fresh-installation.log",
+    "length": 1344,
+    "sha256": "36f395f1d44d7c128f40d5d55349d61a9683fb8a07081646b54cd9cdc7c831f6"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/14-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/15-install-cached-package.log",
+    "length": 391,
+    "sha256": "cb76a4882edd5b8352fd1503814ddfd741da9cc3883740b05f82a0bf4c9d9f6c"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/16-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/17-record-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/18-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/19-verify-v0-1-0-alpha-56-pkg-install-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/20-verify-v0-1-0-alpha-56-pkg-0-1-0-alpha-56-preview-pkg.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/21-verify-v0-1-0-alpha-56-install-preview-sh.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/22-verify-v0-1-0-alpha-56-pkg-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/23-verify-v0-1-0-alpha-56-pkg-nix-broker-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/24-verify-v0-1-0-alpha-56-pkg-root-helper-x86-64-linux.log",
+    "length": 12,
+    "sha256": "80a53f76c7ed6969dade3b6ee47cdb753162db7c00be625448999d08bae77ed8"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/25-product-upgrade.log",
+    "length": 1204,
+    "sha256": "7f62a0f0304e62b630bfbe0a4682871212f5e411ae8a07b459a325fbf9b094f0"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/26-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/27-check-nix-identity.log",
+    "length": 169,
+    "sha256": "9d8884ad1af180715db2f6d827c31db342c798486517fcdd5db8c5cff66e7900"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/28-retained-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/29-repeat-installer.log",
+    "length": 1204,
+    "sha256": "444c098e04688b9c41490dfbc95b6da2cdf130433a1ce133aaf56648be592be6"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/30-remove-package.log",
+    "length": 108,
+    "sha256": "efd5973c4b5b86217c25db87e77b45f12af86b4f578adc9120f10f1bf33ab085"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/31-check-removal.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/32-rollback.log",
+    "length": 164,
+    "sha256": "59f09bfbec79b83a8cb32e51dfc6139feb2cb29fb4293d73c05b54c9134b36a1"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/33-run-restored-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/34-verify-package-files.log",
+    "length": 91,
+    "sha256": "f5af2792979374cd4eabb7a6b9914976d114aa05fcc9ea9d0a4e737ba2affe4f"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/35-final-health.log",
+    "length": 592,
+    "sha256": "ba0b89824cfb6ce4046e7c90e198a317de3a00a1cff77073a00f624bcbc5c45c"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/checkpoint.json",
+    "length": 6111,
+    "sha256": "053ac8c0d8a81b76e164cb576af9b496690e10ccd682473d50b0220589225651"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/checks.json",
+    "length": 5533,
+    "sha256": "75dff242bf1224c0dbe3956764e04da97a08e144481a20e8112b9fc389e5a4b1"
+  },
+  {
+    "path": "public-ci-second/release-check-ubuntu-24.04/summary.md",
+    "length": 2238,
+    "sha256": "ea9bbbf22214b67edb7ddde886b2facbb67e17c71fc6194622d01d48a8bc2048"
+  },
+  {
+    "path": "public-ci-second-run.json",
+    "length": 112,
+    "sha256": "684b8813f4ac6c7acdf1b285696f838e666e6989ab3238d5c5c0ffd6bc87f7de"
+  },
+  {
+    "path": "public-evaluator-job.log",
+    "length": 14057,
+    "sha256": "6bd95ae9f44530229505f55dc71eaa4cfd6ca0f0c2f436472f3dac66c943efed"
+  },
+  {
+    "path": "public-macos-first-job.log",
+    "length": 83023,
+    "sha256": "f0d7e078508803cefdeb70c9533c9ce63e979e73e7cd0cc9c638d099f56d6365"
+  },
+  {
+    "path": "public-macos-second-job.log",
+    "length": 14053,
+    "sha256": "a4bf12a6a01af199161d3587a13dc53c97251e181eab4ef3a6625eb14eb37d6c"
+  },
+  {
+    "path": "public-verification.json",
+    "length": 6270,
+    "sha256": "10d0c566dfc7850bd0274fe50a3e8cc4a9440e6e2b5293172229c4de88b42038"
+  },
+  {
+    "path": "public-vm/01-anonymous-saved-public-installer.log",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "public-vm/02-verify-public-downloads.log",
+    "length": 259,
+    "sha256": "17b06089f75e5873d63f716bc26b888bd7764510e295233df21377e67f2a0756"
+  },
+  {
+    "path": "public-vm/03-fresh-public-installation.log",
+    "length": 2185,
+    "sha256": "c8eee0ad0edf4afe873bdda544513eca91688ed5a0827d74aff8937ebdd780ec"
+  },
+  {
+    "path": "public-vm/04-installed-release-bytes.log",
+    "length": 88,
+    "sha256": "e818074547f0e33b09e410580062567c6c20fffa8b5bf9e8216fb2f2d5614ab5"
+  },
+  {
+    "path": "public-vm/05-repeat-public-installer-with-configured-path.log",
+    "length": 2058,
+    "sha256": "9015dec2fa8f62ab269a9112ee19530c508dece0f1b55b64cc41609586930b93"
+  },
+  {
+    "path": "public-vm/06-install-cached-package.log",
+    "length": 391,
+    "sha256": "f71026798b7b439fe788bdef86833e2732832dd3f4086d0b62b55351c7b00a8c"
+  },
+  {
+    "path": "public-vm/07-run-installed-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-vm/08-fresh-configured-bash.log",
+    "length": 35,
+    "sha256": "ab446cf32597474565c10f6efbee707c16702872bf07a84a095ddbaa69173519"
+  },
+  {
+    "path": "public-vm/09-fresh-configured-zsh.log",
+    "length": 35,
+    "sha256": "ab446cf32597474565c10f6efbee707c16702872bf07a84a095ddbaa69173519"
+  },
+  {
+    "path": "public-vm/10-package-verification.log",
+    "length": 91,
+    "sha256": "2d61383e3059c4326164bc0ef99e205409962bc7f2ccb8f6093490ce7635fbf3"
+  },
+  {
+    "path": "public-vm/11-final-public-health.log",
+    "length": 591,
+    "sha256": "84eb00a744c7c7d023544b0cb907917d13fa85a65f2f130f3f4a6a364d712213"
+  },
+  {
+    "path": "public-vm/checks.json",
+    "length": 1553,
+    "sha256": "d3be4e33a83cc03c4b3045c9a045c39e1a0e6faba5aa7e6c504738388edeaeed"
+  },
+  {
+    "path": "public-vm/install.sh",
+    "length": 6707,
+    "sha256": "f2411bdc25db7e90f5fd2d79022cd9f2767a6ca8af7944b3bcdf6a4b0e5e598c"
+  },
+  {
+    "path": "public-vm/result.json",
+    "length": 329,
+    "sha256": "d6d67505445b491a3eaa44b66799d07824e9cd90672d348cde1f87e519cbc3b4"
+  },
+  {
+    "path": "public-vm/summary.md",
+    "length": 728,
+    "sha256": "dc69d192706ac19797043d90bffd2f0c32cdee0dc922a8a55fb583ff85dfb678"
+  },
+  {
+    "path": "public-vm-extra/01-run-public-built-package.log",
+    "length": 12,
+    "sha256": "5f61500d03d8e5947e434b80f148a9d93c09293ab3186fd5fc5138e6ff8c03ea"
+  },
+  {
+    "path": "public-vm-extra/02-verify-public-build.log",
+    "length": 91,
+    "sha256": "c9ce01e6984c9540ca7d281ad331c21c81d727c0e5c60fc5055f1c9a4eac4e78"
+  },
+  {
+    "path": "public-vm-extra/03-public-build-health-with-configured-path.log",
+    "length": 591,
+    "sha256": "84eb00a744c7c7d023544b0cb907917d13fa85a65f2f130f3f4a6a364d712213"
+  },
+  {
+    "path": "public-vm-extra/checks.json",
+    "length": 445,
+    "sha256": "4e7f55e43bbd72e386af1370c392bb0167c4258341bbae760e5326b584bb70cc"
+  },
+  {
+    "path": "public-vm-extra/result.json",
+    "length": 132,
+    "sha256": "72505cc56457a82d29f89b7ef76447ff78f4c3c914255b11bd3e9ea82c6c799c"
+  },
+  {
+    "path": "public-vm-extra/summary.md",
+    "length": 335,
+    "sha256": "9730895d4002dc1613c05027b6da2333138aba2302c4d9e920e1b02ded1ea29a"
+  },
+  {
+    "path": "public-vm-extra.log",
+    "length": 306,
+    "sha256": "b12c617cc13d84b2791d9a0baad23ea0d23cd4b97c7e71e4bab7a9eaffab6b1b"
+  },
+  {
+    "path": "public-vm-finish/01-remove-public-package.log",
+    "length": 108,
+    "sha256": "ef21a8c350f3c9a35b0e5a1e9baa9aaea2c7b9ecc6ff6c464076a03eaea62ebc"
+  },
+  {
+    "path": "public-vm-finish/02-check-package-removal.log",
+    "length": 5,
+    "sha256": "0ee8fd0768a0e041f1f8a44e928cd9ea0cb2c706e8a28639fcb6a94ac51683a7"
+  },
+  {
+    "path": "public-vm-finish/03-rollback-public-package.log",
+    "length": 164,
+    "sha256": "2d9675056caed63ee7de0e40a6d4783d1ae62d791ee18ba9ae16ce9b49675749"
+  },
+  {
+    "path": "public-vm-finish/04-run-restored-public-package.log",
+    "length": 16,
+    "sha256": "ee72023d21a58ed1836860d08e4a66df48c5e18d56d0f1396fc217f92518665c"
+  },
+  {
+    "path": "public-vm-finish/05-run-retained-public-build.log",
+    "length": 12,
+    "sha256": "5f61500d03d8e5947e434b80f148a9d93c09293ab3186fd5fc5138e6ff8c03ea"
+  },
+  {
+    "path": "public-vm-finish/06-verify-restored-package-files.log",
+    "length": 91,
+    "sha256": "73c50c624adb82341eb45bcc696728636ff2f54e208c0a5d07f8913139573bf5"
+  },
+  {
+    "path": "public-vm-finish/07-final-public-lifecycle-health.log",
+    "length": 591,
+    "sha256": "84eb00a744c7c7d023544b0cb907917d13fa85a65f2f130f3f4a6a364d712213"
+  },
+  {
+    "path": "public-vm-finish/checks.json",
+    "length": 997,
+    "sha256": "0d34b067c710f2951bf4de23f2722513cd5916558504d685dc2561b6c96dce37"
+  },
+  {
+    "path": "public-vm-finish/result.json",
+    "length": 161,
+    "sha256": "a07e7eac06f38e292a7543ce6eeaadd1712d142726c8a6166f50ddb0e49ba099"
+  },
+  {
+    "path": "public-vm-finish/summary.md",
+    "length": 531,
+    "sha256": "e605b756d6a9b1876e364dc9f641be857003e4a550e930058e5eee8cb4dba2f6"
+  },
+  {
+    "path": "public-vm-finish.log",
+    "length": 606,
+    "sha256": "c60a80cc77d9e881e87c2ec2ee69f0ba8e0d496ee8f8998e974a91f676f725a0"
+  },
+  {
+    "path": "public-vm-just-exit.txt",
+    "length": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "path": "public-vm-just-health.log",
+    "length": 908,
+    "sha256": "130af0376312ce93682238c53c9f5f61c5fdd45e39a0e9add82984a7a7c95e03"
+  },
+  {
+    "path": "public-vm-just.log",
+    "length": 622,
+    "sha256": "3a924e13df4da1f686ca23c49f4d215b056ef8cbf22857f5f5636098a4487ecd"
+  },
+  {
+    "path": "public-vm-packages.json",
+    "length": 351,
+    "sha256": "d57900bbfb67a3086bfa1bbc8b1a4d36da118b1c1f93cde31be2eb76b195a318"
+  },
+  {
+    "path": "public-vm.log",
+    "length": 899,
+    "sha256": "d6e4d6f0eedf4c7c6342b2b1bf7834324ca96d735c80082f7d9fd028d8f42e98"
+  },
+  {
+    "path": "public_vm.py",
+    "length": 2075,
+    "sha256": "76aab592ec52e1df1fd25b07f393202f58ffd132f468c657aff792e5698764c5"
+  },
+  {
+    "path": "public_vm_finish.py",
+    "length": 1079,
+    "sha256": "15b6bd5da9f5746cdce3decb5fe32d2d9194646351646d60856985bcabd6246b"
+  },
+  {
+    "path": "public_vm_just_health.py",
+    "length": 781,
+    "sha256": "f63944b5692285fd1f6a4a3deccd459aaf9d346ede2a553ee106655e877ebdb5"
+  },
+  {
+    "path": "published-inventory.json",
+    "length": 4852,
+    "sha256": "d54cd9bc3c007d2c0d72e6ad8dd67c8ba96586856c6d9a9b7b40f3a96e26cc8c"
+  },
+  {
+    "path": "quality-linux-ci.log",
+    "length": 43299,
+    "sha256": "c4d789a0257a1df85535617a4e2f72fa36b78e1d4bb332b09cb227cc01e2c925"
+  },
+  {
+    "path": "quality-macos-ci.log",
+    "length": 43126,
+    "sha256": "4c1d381cc178036109ca9ce9de97f58487b5dd7aeb0141e46e26088210ce38ca"
+  },
+  {
+    "path": "quality.log",
+    "length": 68,
+    "sha256": "9622393fac02c7f8427336d59aabd6c03d18ea577b22d886be8cb16da8b5d486"
+  },
+  {
+    "path": "reboot.log",
+    "length": 116,
+    "sha256": "d4c7d510374e39aee389d0ba279e84ab06b9a7d0555a7db8d25bb36c12bc1e3d"
+  },
+  {
+    "path": "resume.log",
+    "length": 447,
+    "sha256": "58acd1f588d4108c9c0c6945ed69103ef3cc7cdbc0855a3ce90c43210a049336"
+  },
+  {
+    "path": "review-spec-lock-probes/README.md",
+    "length": 1274,
+    "sha256": "76a7cc2259fe9e11560a4d258731d9c496d72ac26e5b2c923068a2aa7c3c0372"
+  },
+  {
+    "path": "review-spec-lock-probes/fork.log",
+    "length": 109,
+    "sha256": "400943f47a8c61e2a063fc2ea39e3bab2f79b1d244f857c2b9c75e371c85f952"
+  },
+  {
+    "path": "review-spec-lock-probes/fork.rs",
+    "length": 1067,
+    "sha256": "334aab38c5a446faeb99815252f23e20d549626a716ff9472fdbedf66a86dba2"
+  },
+  {
+    "path": "review-spec-lock-probes/results.json",
+    "length": 547,
+    "sha256": "75ad257890c75048380508451936071164d803caa7ce4aad5a5004a1d894818a"
+  },
+  {
+    "path": "review-spec-lock-probes/run.py",
+    "length": 1182,
+    "sha256": "da01960e68828918947b497ea5c440257f4812517f9e550aeb5bd6ec7264e620"
+  },
+  {
+    "path": "review-spec-lock-probes/spawn.log",
+    "length": 74,
+    "sha256": "75f1d31ca1b1ed6733a59f106f8a16121c48e5ab95106b2cbae1e101210a8cd4"
+  },
+  {
+    "path": "review-spec-lock-probes/spawn.rs",
+    "length": 2123,
+    "sha256": "40f90fab3e5a7a85b97586a24b8c1073e452e25159f355c099522288bd308328"
+  },
+  {
+    "path": "signed-build-ci.json",
+    "length": 4471,
+    "sha256": "6eb69a051b1ee81d5d7d3b9d3e458f4c65b28ddbd475b58208cebc5ad7c9114f"
+  },
+  {
+    "path": "source-checks.json",
+    "length": 1206,
+    "sha256": "a3a303f11f08164e63b4a527cd4746ada903835ea80be5cd15341656d2470939"
+  },
+  {
+    "path": "source-fast-ci.json",
+    "length": 16491,
+    "sha256": "90fbe2717793db5721b52d426b39a18547edb927478cafed382546988a370492"
+  },
+  {
+    "path": "source-native-ci.json",
+    "length": 5085,
+    "sha256": "03f604e7328e1189a1f6df81258959cf35c70b76f141e727efbbc8c722ef2500"
+  },
+  {
+    "path": "uninstall-exit.txt",
+    "length": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "path": "uninstall.log",
+    "length": 2822,
+    "sha256": "d19a728d902c6b88dccb5b9321c44e75d4fe0214d5ead7d4c9a4fbefe7315784"
+  },
+  {
+    "path": "upgrade.log",
+    "length": 5234,
+    "sha256": "3e9785c1625716735ed22187bf2d06c01aa2bfe16731f59502d671b76d7f83e6"
+  },
+  {
+    "path": "ux-final.log",
+    "length": 1109,
+    "sha256": "5a9c212938c9a442725f8b18cfbd1bc319888f4fd5384007b258bdc2efda9655"
+  },
+  {
+    "path": "ux_release.py",
+    "length": 3775,
+    "sha256": "55c413c93a708b49fafc3448366ac53e42fe1be96544226efe1759f48a855a20"
+  },
+  {
+    "path": "verified-assets.json",
+    "length": 2563,
+    "sha256": "9d96d067ab6b392742bf2eb3051e737e8e56f0f56aaf792420761a327f85df06"
+  },
+  {
+    "path": "verify-assets.log",
+    "length": 534,
+    "sha256": "760b1b53d631a47b1272c0626eacf7fdfbfe364d3c18d03598a6893d753f781d"
+  },
+  {
+    "path": "verify_assets.py",
+    "length": 1656,
+    "sha256": "84cc90e461c3ef5e51a30da37ff2af624aab4a7c7cb244ce9cf337698325fd95"
+  },
+  {
+    "path": "verify_channel.py",
+    "length": 2883,
+    "sha256": "c8225dbe66a912be5c4886a9466fd75e445b08d534b7957b7f7d617a6b87cc12"
+  }
+]
