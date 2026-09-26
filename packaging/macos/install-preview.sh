@@ -43,11 +43,11 @@ if /usr/bin/sudo /usr/bin/env -i HOME=/var/root PATH=/usr/bin:/bin:/usr/sbin:/sb
     echo "pkg setup completed."
     echo
     echo 'Next steps:'
-    echo '  eval "$(/usr/local/bin/pkg shellenv)"'
+    echo '  [ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"'
     echo '  pkg doctor'
     echo '  pkg install fzf'
     echo
-    echo 'For future zsh sessions, add eval "$(/usr/local/bin/pkg shellenv)" to ~/.zshrc.'
+    echo 'For future zsh sessions, add [ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)" to ~/.zshrc.'
     echo 'For Bash, add the same line to your shell startup file.'
 else
     code=$?
