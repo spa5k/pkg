@@ -23,6 +23,12 @@ only those three directories to root:0 mode 0755 before installation. It does no
 change child files. This fixture step refuses local hosts, symlinks, and existing
 pkg or Nix installations. Product ownership checks remain enabled.
 
+Before a hosted macOS public build, the fixture waits up to ten minutes for
+three CPU-load samples, 15 seconds apart, at or below the logical CPU count.
+It records every sample and fails if capacity does not become available.
+This avoids treating a busy newly provisioned runner as build-ready. The
+product still applies its own disk and load checks; their limits are unchanged.
+
 The workflow retains a result table, individual logs, exact-byte checks, and a
 checkpoint. It does not reboot a hosted runner and does not claim reboot proof.
 

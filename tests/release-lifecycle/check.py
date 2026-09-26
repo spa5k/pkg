@@ -9,6 +9,7 @@ from pathlib import Path
 import platform
 import re
 import subprocess
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -143,6 +144,9 @@ def upgrade(checks, args):
     if platform.system() == "Darwin":
         checks.run("Record build disk space", ["/bin/df", "-k", "/nix"])
         checks.run("Record build system load", ["/usr/sbin/sysctl", "-n", "vm.loadavg", "hw.logicalcpu"])
+        if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted":
+            checks.run("Wait for hosted build capacity", [sys.executable,
+                str(ROOT / "tests/release-lifecycle/wait_for_build_capacity.py")], timeout=660)
         checks.run("Build public flake", [CLI, "install", "github:casey/just#default", "-y"], timeout=1800)
         checks.package("just", "Run built package")
     checks.run("Remove package", [CLI, "remove", "fzf", "-y"])
