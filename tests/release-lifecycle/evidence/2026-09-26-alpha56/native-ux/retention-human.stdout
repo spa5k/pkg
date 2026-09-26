@@ -1,0 +1,4 @@
+Selected output closure estimate: 0 B
+Retention: Keep the active generation, the newest 3 retired generations, and all generations no older than 30 days. Delete only generations outside both protections.
+Estimate scope: Selected generation output closures only. Shared dependencies can overlap. Other dead store paths and build inputs are excluded. This is not measured disk space.
+Preview: No changes were applied.

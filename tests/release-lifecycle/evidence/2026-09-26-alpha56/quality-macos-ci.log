@@ -1,0 +1,407 @@
+﻿2026-09-26T11:29:56.3051290Z Current runner version: '2.337.0'
+2026-09-26T11:29:56.3064400Z ##[group]Runner Image Provisioner
+2026-09-26T11:29:56.3064880Z Hosted Compute Agent
+2026-09-26T11:29:56.3065240Z Version: 20260828.587
+2026-09-26T11:29:56.3065650Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-26T11:29:56.3066090Z Build Date: 2026-08-28T16:44:25Z
+2026-09-26T11:29:56.3066600Z Worker ID: {ce8576f4-e5a7-4d5a-9081-bb7900177229}
+2026-09-26T11:29:56.3067030Z Azure Region: westus
+2026-09-26T11:29:56.3067380Z ##[endgroup]
+2026-09-26T11:29:56.3068220Z ##[group]Operating System
+2026-09-26T11:29:56.3068580Z macOS
+2026-09-26T11:29:56.3068890Z 14.8.9
+2026-09-26T11:29:56.3069190Z 23J631
+2026-09-26T11:29:56.3069530Z ##[endgroup]
+2026-09-26T11:29:56.3070000Z ##[group]Runner Image
+2026-09-26T11:29:56.3070560Z Image: macos-14-arm64
+2026-09-26T11:29:56.3071050Z Version: 20260831.0302.1
+2026-09-26T11:29:56.3071880Z Included Software: https://github.com/actions/runner-images/blob/macos-14-arm64/20260831.0302/images/macos/macos-14-arm64-Readme.md
+2026-09-26T11:29:56.3072880Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-14-arm64%2F20260831.0302
+2026-09-26T11:29:56.3073510Z ##[endgroup]
+2026-09-26T11:29:56.3074200Z ##[group]GITHUB_TOKEN Permissions
+2026-09-26T11:29:56.3075170Z Contents: read
+2026-09-26T11:29:56.3075510Z Metadata: read
+2026-09-26T11:29:56.3075890Z ##[endgroup]
+2026-09-26T11:29:56.3077240Z Secret source: Actions
+2026-09-26T11:29:56.3077780Z Cache mode: write
+2026-09-26T11:29:56.3078190Z Prepare workflow directory
+2026-09-26T11:29:56.3303430Z Prepare all required actions
+2026-09-26T11:29:56.3334270Z Getting action download info
+2026-09-26T11:29:56.6010850Z Download action repository 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' (SHA:de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+2026-09-26T11:29:56.9903600Z Complete job name: G-QUALITY (strict budgets + debt ratchet) (macos-14)
+2026-09-26T11:29:57.0460890Z ##[group]Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+2026-09-26T11:29:57.0461680Z with:
+2026-09-26T11:29:57.0462010Z   fetch-depth: 0
+2026-09-26T11:29:57.0462360Z   persist-credentials: false
+2026-09-26T11:29:57.0463130Z   repository: spa5k/pkg
+2026-09-26T11:29:57.0466150Z   token: ***
+2026-09-26T11:29:57.0466470Z   ssh-strict: true
+2026-09-26T11:29:57.0466810Z   ssh-user: git
+2026-09-26T11:29:57.0467140Z   clean: true
+2026-09-26T11:29:57.0467490Z   sparse-checkout-cone-mode: true
+2026-09-26T11:29:57.0468400Z   fetch-tags: false
+2026-09-26T11:29:57.0468770Z   show-progress: true
+2026-09-26T11:29:57.0469130Z   lfs: false
+2026-09-26T11:29:57.0469460Z   submodules: false
+2026-09-26T11:29:57.0469810Z   set-safe-directory: true
+2026-09-26T11:29:57.0470690Z env:
+2026-09-26T11:29:57.0471070Z   RUSTUP_TOOLCHAIN: 1.96.1
+2026-09-26T11:29:57.0471520Z   CARGO_TERM_COLOR: always
+2026-09-26T11:29:57.0471880Z ##[endgroup]
+2026-09-26T11:29:57.3901590Z Syncing repository: spa5k/pkg
+2026-09-26T11:29:57.3903220Z ##[group]Getting Git version info
+2026-09-26T11:29:57.3903710Z Working directory is '/Users/runner/work/pkg/pkg'
+2026-09-26T11:29:57.3904550Z [command]/opt/homebrew/bin/git version
+2026-09-26T11:29:57.4141530Z git version 2.55.0
+2026-09-26T11:29:57.4167200Z ##[endgroup]
+2026-09-26T11:29:57.4174790Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/07811289-d8c4-4c86-9bf7-32a0d07a006e/.gitconfig'
+2026-09-26T11:29:57.4182510Z Temporarily overriding HOME='/Users/runner/work/_temp/07811289-d8c4-4c86-9bf7-32a0d07a006e' before making global git config changes
+2026-09-26T11:29:57.4183570Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-26T11:29:57.4184870Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/pkg/pkg
+2026-09-26T11:29:57.4268830Z Deleting the contents of '/Users/runner/work/pkg/pkg'
+2026-09-26T11:29:57.4271250Z ##[group]Initializing the repository
+2026-09-26T11:29:57.4296870Z [command]/opt/homebrew/bin/git init /Users/runner/work/pkg/pkg
+2026-09-26T11:29:57.4450900Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-26T11:29:57.4453720Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-26T11:29:57.4454860Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-26T11:29:57.4455740Z hint: call:
+2026-09-26T11:29:57.4456210Z hint:
+2026-09-26T11:29:57.4456860Z hint: 	git config --global init.defaultBranch <name>
+2026-09-26T11:29:57.4458410Z hint:
+2026-09-26T11:29:57.4459360Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-26T11:29:57.4460200Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-26T11:29:57.4461110Z hint:
+2026-09-26T11:29:57.4461640Z hint: 	git branch -m <name>
+2026-09-26T11:29:57.4462310Z hint:
+2026-09-26T11:29:57.4463000Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-26T11:29:57.4464190Z Initialized empty Git repository in /Users/runner/work/pkg/pkg/.git/
+2026-09-26T11:29:57.4466000Z [command]/opt/homebrew/bin/git remote add origin https://github.com/spa5k/pkg
+2026-09-26T11:29:57.4519200Z ##[endgroup]
+2026-09-26T11:29:57.4520880Z ##[group]Disabling automatic garbage collection
+2026-09-26T11:29:57.4521710Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+2026-09-26T11:29:57.4566270Z ##[endgroup]
+2026-09-26T11:29:57.4567070Z ##[group]Setting up auth
+2026-09-26T11:29:57.4567850Z Removing SSH command configuration
+2026-09-26T11:29:57.4588670Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-26T11:29:57.4641090Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-26T11:29:57.5186240Z Removing HTTP extra header
+2026-09-26T11:29:57.5190660Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-26T11:29:57.5225210Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-26T11:29:57.5665620Z Removing includeIf entries pointing to credentials config files
+2026-09-26T11:29:57.5668240Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-26T11:29:57.5706260Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-26T11:29:57.6161900Z [command]/opt/homebrew/bin/git config --file /Users/runner/work/_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-26T11:29:57.6208970Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/pkg/pkg/.git.path /Users/runner/work/_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:57.6246340Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:57.6286340Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:57.6327660Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:57.6370360Z ##[endgroup]
+2026-09-26T11:29:57.6371000Z ##[group]Fetching the repository
+2026-09-26T11:29:57.6375540Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +f1ec74805b170020b1fa267a85aacc17bc16417e:refs/remotes/pull/65/merge
+2026-09-26T11:29:59.1281570Z From https://github.com/spa5k/pkg
+2026-09-26T11:29:59.1304700Z  * [new branch]      agent/linux-alpha                        -> origin/agent/linux-alpha
+2026-09-26T11:29:59.1323140Z  * [new branch]      agent/macos-alpha                        -> origin/agent/macos-alpha
+2026-09-26T11:29:59.1340100Z  * [new branch]      backup/linux-alpha-pre-ponytail-20260817-074ca6e -> origin/backup/linux-alpha-pre-ponytail-20260817-074ca6e
+2026-09-26T11:29:59.1343660Z  * [new branch]      backup/macos-alpha-pre-ponytail-20260817-d4f2184 -> origin/backup/macos-alpha-pre-ponytail-20260817-d4f2184
+2026-09-26T11:29:59.1348500Z  * [new branch]      debug/loopback-repro                     -> origin/debug/loopback-repro
+2026-09-26T11:29:59.1351530Z  * [new branch]      dn/15-linux-lifecycle-cutover            -> origin/dn/15-linux-lifecycle-cutover
+2026-09-26T11:29:59.1365690Z  * [new branch]      dn/16-architecture-report-update         -> origin/dn/16-architecture-report-update
+2026-09-26T11:29:59.1368870Z  * [new branch]      dn/16-macos-lifecycle-cutover            -> origin/dn/16-macos-lifecycle-cutover
+2026-09-26T11:29:59.1373680Z  * [new branch]      dn/16-macos-lifecycle-proof              -> origin/dn/16-macos-lifecycle-proof
+2026-09-26T11:29:59.1393270Z  * [new branch]      dn/16-proof-channel-protocol             -> origin/dn/16-proof-channel-protocol
+2026-09-26T11:29:59.1398060Z  * [new branch]      dn/16-proof-manifest-protocol            -> origin/dn/16-proof-manifest-protocol
+2026-09-26T11:29:59.1400390Z  * [new branch]      dn/16-proof-native-integration           -> origin/dn/16-proof-native-integration
+2026-09-26T11:29:59.1419680Z  * [new branch]      dn/16-proof-release-inputs               -> origin/dn/16-proof-release-inputs
+2026-09-26T11:29:59.1421130Z  * [new branch]      feat/actionable-install-errors           -> origin/feat/actionable-install-errors
+2026-09-26T11:29:59.1424500Z  * [new branch]      feat/alpha-48-docs                       -> origin/feat/alpha-48-docs
+2026-09-26T11:29:59.1444210Z  * [new branch]      feat/alpha-48-release                    -> origin/feat/alpha-48-release
+2026-09-26T11:29:59.1458060Z  * [new branch]      feat/alpha-draft-deploy                  -> origin/feat/alpha-draft-deploy
+2026-09-26T11:29:59.1500560Z  * [new branch]      feat/alpha45-release                     -> origin/feat/alpha45-release
+2026-09-26T11:29:59.1524570Z  * [new branch]      feat/alpha49-docs                        -> origin/feat/alpha49-docs
+2026-09-26T11:29:59.1526510Z  * [new branch]      feat/alpha49-install-cli                 -> origin/feat/alpha49-install-cli
+2026-09-26T11:29:59.1528290Z  * [new branch]      feat/alpha50-release                     -> origin/feat/alpha50-release
+2026-09-26T11:29:59.1529690Z  * [new branch]      feat/alpha51-public-docs                 -> origin/feat/alpha51-public-docs
+2026-09-26T11:29:59.1532070Z  * [new branch]      feat/alpha52-docs                        -> origin/feat/alpha52-docs
+2026-09-26T11:29:59.1535250Z  * [new branch]      feat/alpha53-docs                        -> origin/feat/alpha53-docs
+2026-09-26T11:29:59.1536850Z  * [new branch]      feat/alpha53-release                     -> origin/feat/alpha53-release
+2026-09-26T11:29:59.1538260Z  * [new branch]      feat/alpha54-docs                        -> origin/feat/alpha54-docs
+2026-09-26T11:29:59.1541140Z  * [new branch]      feat/alpha54-release                     -> origin/feat/alpha54-release
+2026-09-26T11:29:59.1543000Z  * [new branch]      feat/alpha55-installation                -> origin/feat/alpha55-installation
+2026-09-26T11:29:59.1546280Z  * [new branch]      feat/alpha56-shell-guard                 -> origin/feat/alpha56-shell-guard
+2026-09-26T11:29:59.1549460Z  * [new branch]      feat/blocking-http-fixture               -> origin/feat/blocking-http-fixture
+2026-09-26T11:29:59.1551530Z  * [new branch]      feat/build-cache-frontier                -> origin/feat/build-cache-frontier
+2026-09-26T11:29:59.1554490Z  * [new branch]      feat/clear-build-preview                 -> origin/feat/clear-build-preview
+2026-09-26T11:29:59.1558840Z  * [new branch]      feat/cli-command-guide                   -> origin/feat/cli-command-guide
+2026-09-26T11:29:59.1560830Z  * [new branch]      feat/cli-package-ux                      -> origin/feat/cli-package-ux
+2026-09-26T11:29:59.1563370Z  * [new branch]      feat/complete-cli-experience             -> origin/feat/complete-cli-experience
+2026-09-26T11:29:59.1567030Z  * [new branch]      feat/doctor-determinate-ownership        -> origin/feat/doctor-determinate-ownership
+2026-09-26T11:29:59.1570280Z  * [new branch]      feat/friendly-progress                   -> origin/feat/friendly-progress
+2026-09-26T11:29:59.1572370Z  * [new branch]      feat/install-cli-ci                      -> origin/feat/install-cli-ci
+2026-09-26T11:29:59.1574530Z  * [new branch]      feat/installer-auth-diagnostics          -> origin/feat/installer-auth-diagnostics
+2026-09-26T11:29:59.1576690Z  * [new branch]      feat/installer-service-upgrades          -> origin/feat/installer-service-upgrades
+2026-09-26T11:29:59.1581230Z  * [new branch]      feat/local-build-input-reuse             -> origin/feat/local-build-input-reuse
+2026-09-26T11:29:59.1583900Z  * [new branch]      feat/macos-build-temporary-directory     -> origin/feat/macos-build-temporary-directory
+2026-09-26T11:29:59.1587620Z  * [new branch]      feat/macos-determinate-builds            -> origin/feat/macos-determinate-builds
+2026-09-26T11:29:59.1590240Z  * [new branch]      feat/macos-foreground-preview            -> origin/feat/macos-foreground-preview
+2026-09-26T11:29:59.1601380Z  * [new branch]      feat/macos-lifecycle-evidence            -> origin/feat/macos-lifecycle-evidence
+2026-09-26T11:29:59.1603970Z  * [new branch]      feat/macos-uninstall-recovery            -> origin/feat/macos-uninstall-recovery
+2026-09-26T11:29:59.1606690Z  * [new branch]      feat/nixpkgs-catalog                     -> origin/feat/nixpkgs-catalog
+2026-09-26T11:29:59.1609030Z  * [new branch]      feat/onboarding-quality-audit            -> origin/feat/onboarding-quality-audit
+2026-09-26T11:29:59.1613180Z  * [new branch]      feat/onboarding-ux                       -> origin/feat/onboarding-ux
+2026-09-26T11:29:59.1647640Z  * [new branch]      feat/public-cli-install-experience       -> origin/feat/public-cli-install-experience
+2026-09-26T11:29:59.1654500Z  * [new branch]      feat/public-flake-packages               -> origin/feat/public-flake-packages
+2026-09-26T11:29:59.1679180Z  * [new branch]      feat/public-installer                    -> origin/feat/public-installer
+2026-09-26T11:29:59.1685570Z  * [new branch]      feat/refresh-rustls-advisory             -> origin/feat/refresh-rustls-advisory
+2026-09-26T11:29:59.1708900Z  * [new branch]      feat/release-alpha47                     -> origin/feat/release-alpha47
+2026-09-26T11:29:59.1769880Z  * [new branch]      feat/release-alpha47-docs                -> origin/feat/release-alpha47-docs
+2026-09-26T11:29:59.1772320Z  * [new branch]      feat/release-alpha52                     -> origin/feat/release-alpha52
+2026-09-26T11:29:59.1777970Z  * [new branch]      feat/release-host-fixture                -> origin/feat/release-host-fixture
+2026-09-26T11:29:59.1780360Z  * [new branch]      feat/show-install-provenance             -> origin/feat/show-install-provenance
+2026-09-26T11:29:59.1782510Z  * [new branch]      feat/startup-lock-reliability            -> origin/feat/startup-lock-reliability
+2026-09-26T11:29:59.1785220Z  * [new branch]      feat/terminal-progress                   -> origin/feat/terminal-progress
+2026-09-26T11:29:59.1787640Z  * [new branch]      feat/unprivileged-source-evaluation      -> origin/feat/unprivileged-source-evaluation
+2026-09-26T11:29:59.1790040Z  * [new branch]      fix/dn15-product-asset-lifecycle         -> origin/fix/dn15-product-asset-lifecycle
+2026-09-26T11:29:59.1793740Z  * [new branch]      fix/dn15-product-docs                    -> origin/fix/dn15-product-docs
+2026-09-26T11:29:59.1795870Z  * [new branch]      fix/dn15-product-proof-composed          -> origin/fix/dn15-product-proof-composed
+2026-09-26T11:29:59.1798840Z  * [new branch]      fix/dn15-product-proof-harness           -> origin/fix/dn15-product-proof-harness
+2026-09-26T11:29:59.1801250Z  * [new branch]      fix/dn16-channel-only-proof-inputs       -> origin/fix/dn16-channel-only-proof-inputs
+2026-09-26T11:29:59.1805010Z  * [new branch]      fix/dn16-compact-vm-inputs               -> origin/fix/dn16-compact-vm-inputs
+2026-09-26T11:29:59.1806980Z  * [new branch]      fix/dn16-exact-sealed-manifest           -> origin/fix/dn16-exact-sealed-manifest
+2026-09-26T11:29:59.1809170Z  * [new branch]      fix/dn16-explicit-harness-inventory      -> origin/fix/dn16-explicit-harness-inventory
+2026-09-26T11:29:59.1812720Z  * [new branch]      fix/dn16-external-proof-channel          -> origin/fix/dn16-external-proof-channel
+2026-09-26T11:29:59.1815000Z  * [new branch]      fix/dn16-install-failure-stage           -> origin/fix/dn16-install-failure-stage
+2026-09-26T11:29:59.1817420Z  * [new branch]      fix/dn16-macos-accepted-handoff-nix-root -> origin/fix/dn16-macos-accepted-handoff-nix-root
+2026-09-26T11:29:59.1820660Z  * [new branch]      fix/dn16-macos-handoff-lock              -> origin/fix/dn16-macos-handoff-lock
+2026-09-26T11:29:59.1823180Z  * [new branch]      fix/dn16-macos-idempotent-prior-state    -> origin/fix/dn16-macos-idempotent-prior-state
+2026-09-26T11:29:59.1826150Z  * [new branch]      fix/dn16-macos-proof-workflow-11         -> origin/fix/dn16-macos-proof-workflow-11
+2026-09-26T11:29:59.1829760Z  * [new branch]      fix/dn16-macos-proof-workflow-12         -> origin/fix/dn16-macos-proof-workflow-12
+2026-09-26T11:29:59.1831850Z  * [new branch]      fix/dn16-macos-proof-workflow-13         -> origin/fix/dn16-macos-proof-workflow-13
+2026-09-26T11:29:59.1834220Z  * [new branch]      fix/dn16-macos-proof-workflow-14         -> origin/fix/dn16-macos-proof-workflow-14
+2026-09-26T11:29:59.1836220Z  * [new branch]      fix/dn16-macos-proof-workflow-15         -> origin/fix/dn16-macos-proof-workflow-15
+2026-09-26T11:29:59.1838640Z  * [new branch]      fix/dn16-macos-proof-workflow-17         -> origin/fix/dn16-macos-proof-workflow-17
+2026-09-26T11:29:59.1841900Z  * [new branch]      fix/dn16-macos-proof-workflow-18         -> origin/fix/dn16-macos-proof-workflow-18
+2026-09-26T11:29:59.1843980Z  * [new branch]      fix/dn16-macos-proof-workflow-19         -> origin/fix/dn16-macos-proof-workflow-19
+2026-09-26T11:29:59.1846060Z  * [new branch]      fix/dn16-macos-proof-workflow-23         -> origin/fix/dn16-macos-proof-workflow-23
+2026-09-26T11:29:59.1848580Z  * [new branch]      fix/dn16-macos-vendor-tmpdir             -> origin/fix/dn16-macos-vendor-tmpdir
+2026-09-26T11:29:59.1853130Z  * [new branch]      fix/dn16-phase-timeout-contingency       -> origin/fix/dn16-phase-timeout-contingency
+2026-09-26T11:29:59.1855440Z  * [new branch]      fix/dn16-preflight-marker-binding        -> origin/fix/dn16-preflight-marker-binding
+2026-09-26T11:29:59.1857500Z  * [new branch]      fix/dn16-privileged-marker-reads         -> origin/fix/dn16-privileged-marker-reads
+2026-09-26T11:29:59.1859470Z  * [new branch]      fix/dn16-proof-capacity-gate             -> origin/fix/dn16-proof-capacity-gate
+2026-09-26T11:29:59.1862980Z  * [new branch]      fix/dn16-safe-root-ancestor              -> origin/fix/dn16-safe-root-ancestor
+2026-09-26T11:29:59.1864880Z  * [new branch]      fix/dn16-vm-cosign-preflight             -> origin/fix/dn16-vm-cosign-preflight
+2026-09-26T11:29:59.1867330Z  * [new branch]      main                                     -> origin/main
+2026-09-26T11:29:59.1869130Z  * [new branch]      openspec/pre-production-roadmap          -> origin/openspec/pre-production-roadmap
+2026-09-26T11:29:59.1872160Z  * [new branch]      plan/determinate-nix-stacked-prs         -> origin/plan/determinate-nix-stacked-prs
+2026-09-26T11:29:59.1875340Z  * [new branch]      rel/alpha-debug                          -> origin/rel/alpha-debug
+2026-09-26T11:29:59.1877030Z  * [new branch]      rel/determinate-extra-conf               -> origin/rel/determinate-extra-conf
+2026-09-26T11:29:59.1901570Z  * [new branch]      rel/p0-sign-error-fidelity               -> origin/rel/p0-sign-error-fidelity
+2026-09-26T11:29:59.1904400Z  * [new branch]      rel/p1-pkg-rel-and-cleanup               -> origin/rel/p1-pkg-rel-and-cleanup
+2026-09-26T11:29:59.1906440Z  * [new branch]      rel/p1-runtime-channel-url               -> origin/rel/p1-runtime-channel-url
+2026-09-26T11:29:59.1908360Z  * [new branch]      research/dn16-runner-cost-preflight      -> origin/research/dn16-runner-cost-preflight
+2026-09-26T11:29:59.1910390Z  * [new branch]      verify/dn1-pr1-time-injection            -> origin/verify/dn1-pr1-time-injection
+2026-09-26T11:29:59.1913960Z  * [new branch]      verify/dn1-pr2-hermetic-runner           -> origin/verify/dn1-pr2-hermetic-runner
+2026-09-26T11:29:59.1915920Z  * [new branch]      verify/dn1-pr6-repeat-proof              -> origin/verify/dn1-pr6-repeat-proof
+2026-09-26T11:29:59.1917430Z  * [new tag]         dn1-proof-pair-1                         -> dn1-proof-pair-1
+2026-09-26T11:29:59.1918950Z  * [new tag]         dn1-proof-pair-2                         -> dn1-proof-pair-2
+2026-09-26T11:29:59.1920360Z  * [new tag]         dn1-proof-pair-3                         -> dn1-proof-pair-3
+2026-09-26T11:29:59.1923770Z  * [new tag]         dn1-proof-pair-4                         -> dn1-proof-pair-4
+2026-09-26T11:29:59.1929290Z  * [new tag]         dn1-proof-pair-5                         -> dn1-proof-pair-5
+2026-09-26T11:29:59.1934120Z  * [new tag]         dn1-proof-pair-7                         -> dn1-proof-pair-7
+2026-09-26T11:29:59.1957970Z  * [new tag]         dn1-proof-pair-8                         -> dn1-proof-pair-8
+2026-09-26T11:29:59.1963210Z  * [new tag]         dn1-proof-workflow-1                     -> dn1-proof-workflow-1
+2026-09-26T11:29:59.1991380Z  * [new tag]         dn1-proof-workflow-10                    -> dn1-proof-workflow-10
+2026-09-26T11:29:59.1996240Z  * [new tag]         dn1-proof-workflow-11                    -> dn1-proof-workflow-11
+2026-09-26T11:29:59.1997760Z  * [new tag]         dn1-proof-workflow-12                    -> dn1-proof-workflow-12
+2026-09-26T11:29:59.1999250Z  * [new tag]         dn1-proof-workflow-13                    -> dn1-proof-workflow-13
+2026-09-26T11:29:59.2002430Z  * [new tag]         dn1-proof-workflow-14                    -> dn1-proof-workflow-14
+2026-09-26T11:29:59.2003880Z  * [new tag]         dn1-proof-workflow-15                    -> dn1-proof-workflow-15
+2026-09-26T11:29:59.2005260Z  * [new tag]         dn1-proof-workflow-16                    -> dn1-proof-workflow-16
+2026-09-26T11:29:59.2006730Z  * [new tag]         dn1-proof-workflow-17                    -> dn1-proof-workflow-17
+2026-09-26T11:29:59.2008230Z  * [new tag]         dn1-proof-workflow-18                    -> dn1-proof-workflow-18
+2026-09-26T11:29:59.2009630Z  * [new tag]         dn1-proof-workflow-19                    -> dn1-proof-workflow-19
+2026-09-26T11:29:59.2010960Z  * [new tag]         dn1-proof-workflow-2                     -> dn1-proof-workflow-2
+2026-09-26T11:29:59.2012740Z  * [new tag]         dn1-proof-workflow-3                     -> dn1-proof-workflow-3
+2026-09-26T11:29:59.2014140Z  * [new tag]         dn1-proof-workflow-4                     -> dn1-proof-workflow-4
+2026-09-26T11:29:59.2016550Z  * [new tag]         dn1-proof-workflow-5                     -> dn1-proof-workflow-5
+2026-09-26T11:29:59.2018290Z  * [new tag]         dn1-proof-workflow-6                     -> dn1-proof-workflow-6
+2026-09-26T11:29:59.2019980Z  * [new tag]         dn1-proof-workflow-7                     -> dn1-proof-workflow-7
+2026-09-26T11:29:59.2021340Z  * [new tag]         dn1-proof-workflow-8                     -> dn1-proof-workflow-8
+2026-09-26T11:29:59.2022720Z  * [new tag]         dn1-proof-workflow-9                     -> dn1-proof-workflow-9
+2026-09-26T11:29:59.2025520Z  * [new tag]         dn1-reviewed-1                           -> dn1-reviewed-1
+2026-09-26T11:29:59.2030030Z  * [new tag]         dn16-macos-proof-workflow-1              -> dn16-macos-proof-workflow-1
+2026-09-26T11:29:59.2032030Z  * [new tag]         dn16-macos-proof-workflow-10             -> dn16-macos-proof-workflow-10
+2026-09-26T11:29:59.2034890Z  * [new tag]         dn16-macos-proof-workflow-11             -> dn16-macos-proof-workflow-11
+2026-09-26T11:29:59.2047900Z  * [new tag]         dn16-macos-proof-workflow-12             -> dn16-macos-proof-workflow-12
+2026-09-26T11:29:59.2049810Z  * [new tag]         dn16-macos-proof-workflow-13             -> dn16-macos-proof-workflow-13
+2026-09-26T11:29:59.2051380Z  * [new tag]         dn16-macos-proof-workflow-14             -> dn16-macos-proof-workflow-14
+2026-09-26T11:29:59.2056150Z  * [new tag]         dn16-macos-proof-workflow-15             -> dn16-macos-proof-workflow-15
+2026-09-26T11:29:59.2059360Z  * [new tag]         dn16-macos-proof-workflow-16             -> dn16-macos-proof-workflow-16
+2026-09-26T11:29:59.2061030Z  * [new tag]         dn16-macos-proof-workflow-17             -> dn16-macos-proof-workflow-17
+2026-09-26T11:29:59.2062660Z  * [new tag]         dn16-macos-proof-workflow-18             -> dn16-macos-proof-workflow-18
+2026-09-26T11:29:59.2065100Z  * [new tag]         dn16-macos-proof-workflow-19             -> dn16-macos-proof-workflow-19
+2026-09-26T11:29:59.2068390Z  * [new tag]         dn16-macos-proof-workflow-2              -> dn16-macos-proof-workflow-2
+2026-09-26T11:29:59.2070660Z  * [new tag]         dn16-macos-proof-workflow-20             -> dn16-macos-proof-workflow-20
+2026-09-26T11:29:59.2072400Z  * [new tag]         dn16-macos-proof-workflow-21             -> dn16-macos-proof-workflow-21
+2026-09-26T11:29:59.2074370Z  * [new tag]         dn16-macos-proof-workflow-22             -> dn16-macos-proof-workflow-22
+2026-09-26T11:29:59.2075980Z  * [new tag]         dn16-macos-proof-workflow-23             -> dn16-macos-proof-workflow-23
+2026-09-26T11:29:59.2077980Z  * [new tag]         dn16-macos-proof-workflow-24             -> dn16-macos-proof-workflow-24
+2026-09-26T11:29:59.2079830Z  * [new tag]         dn16-macos-proof-workflow-25             -> dn16-macos-proof-workflow-25
+2026-09-26T11:29:59.2087760Z  * [new tag]         dn16-macos-proof-workflow-3              -> dn16-macos-proof-workflow-3
+2026-09-26T11:29:59.2103880Z  * [new tag]         dn16-macos-proof-workflow-4              -> dn16-macos-proof-workflow-4
+2026-09-26T11:29:59.2108620Z  * [new tag]         dn16-macos-proof-workflow-5              -> dn16-macos-proof-workflow-5
+2026-09-26T11:29:59.2111450Z  * [new tag]         dn16-macos-proof-workflow-6              -> dn16-macos-proof-workflow-6
+2026-09-26T11:29:59.2113820Z  * [new tag]         dn16-macos-proof-workflow-7              -> dn16-macos-proof-workflow-7
+2026-09-26T11:29:59.2141440Z  * [new tag]         dn16-macos-proof-workflow-8              -> dn16-macos-proof-workflow-8
+2026-09-26T11:29:59.2144110Z  * [new tag]         dn16-macos-proof-workflow-9              -> dn16-macos-proof-workflow-9
+2026-09-26T11:29:59.2145710Z  * [new tag]         dn16-proof-workflow-1                    -> dn16-proof-workflow-1
+2026-09-26T11:29:59.2148730Z  * [new tag]         v0.1.0-alpha.1                           -> v0.1.0-alpha.1
+2026-09-26T11:29:59.2153440Z  * [new tag]         v0.1.0-alpha.10                          -> v0.1.0-alpha.10
+2026-09-26T11:29:59.2154670Z  * [new tag]         v0.1.0-alpha.11                          -> v0.1.0-alpha.11
+2026-09-26T11:29:59.2158230Z  * [new tag]         v0.1.0-alpha.12                          -> v0.1.0-alpha.12
+2026-09-26T11:29:59.2160280Z  * [new tag]         v0.1.0-alpha.13                          -> v0.1.0-alpha.13
+2026-09-26T11:29:59.2161450Z  * [new tag]         v0.1.0-alpha.14                          -> v0.1.0-alpha.14
+2026-09-26T11:29:59.2163070Z  * [new tag]         v0.1.0-alpha.15                          -> v0.1.0-alpha.15
+2026-09-26T11:29:59.2164240Z  * [new tag]         v0.1.0-alpha.16                          -> v0.1.0-alpha.16
+2026-09-26T11:29:59.2166360Z  * [new tag]         v0.1.0-alpha.17                          -> v0.1.0-alpha.17
+2026-09-26T11:29:59.2169370Z  * [new tag]         v0.1.0-alpha.18                          -> v0.1.0-alpha.18
+2026-09-26T11:29:59.2170690Z  * [new tag]         v0.1.0-alpha.19                          -> v0.1.0-alpha.19
+2026-09-26T11:29:59.2172740Z  * [new tag]         v0.1.0-alpha.2                           -> v0.1.0-alpha.2
+2026-09-26T11:29:59.2175000Z  * [new tag]         v0.1.0-alpha.20                          -> v0.1.0-alpha.20
+2026-09-26T11:29:59.2176780Z  * [new tag]         v0.1.0-alpha.21                          -> v0.1.0-alpha.21
+2026-09-26T11:29:59.2178210Z  * [new tag]         v0.1.0-alpha.22                          -> v0.1.0-alpha.22
+2026-09-26T11:29:59.2179370Z  * [new tag]         v0.1.0-alpha.23                          -> v0.1.0-alpha.23
+2026-09-26T11:29:59.2180520Z  * [new tag]         v0.1.0-alpha.24                          -> v0.1.0-alpha.24
+2026-09-26T11:29:59.2181980Z  * [new tag]         v0.1.0-alpha.25                          -> v0.1.0-alpha.25
+2026-09-26T11:29:59.2183360Z  * [new tag]         v0.1.0-alpha.26                          -> v0.1.0-alpha.26
+2026-09-26T11:29:59.2187780Z  * [new tag]         v0.1.0-alpha.27                          -> v0.1.0-alpha.27
+2026-09-26T11:29:59.2189010Z  * [new tag]         v0.1.0-alpha.28                          -> v0.1.0-alpha.28
+2026-09-26T11:29:59.2190170Z  * [new tag]         v0.1.0-alpha.29                          -> v0.1.0-alpha.29
+2026-09-26T11:29:59.2191310Z  * [new tag]         v0.1.0-alpha.3                           -> v0.1.0-alpha.3
+2026-09-26T11:29:59.2192430Z  * [new tag]         v0.1.0-alpha.30                          -> v0.1.0-alpha.30
+2026-09-26T11:29:59.2193590Z  * [new tag]         v0.1.0-alpha.31                          -> v0.1.0-alpha.31
+2026-09-26T11:29:59.2194880Z  * [new tag]         v0.1.0-alpha.32                          -> v0.1.0-alpha.32
+2026-09-26T11:29:59.2196530Z  * [new tag]         v0.1.0-alpha.33                          -> v0.1.0-alpha.33
+2026-09-26T11:29:59.2198280Z  * [new tag]         v0.1.0-alpha.34                          -> v0.1.0-alpha.34
+2026-09-26T11:29:59.2200590Z  * [new tag]         v0.1.0-alpha.35                          -> v0.1.0-alpha.35
+2026-09-26T11:29:59.2201750Z  * [new tag]         v0.1.0-alpha.36                          -> v0.1.0-alpha.36
+2026-09-26T11:29:59.2204200Z  * [new tag]         v0.1.0-alpha.37                          -> v0.1.0-alpha.37
+2026-09-26T11:29:59.2220760Z  * [new tag]         v0.1.0-alpha.38                          -> v0.1.0-alpha.38
+2026-09-26T11:29:59.2230730Z  * [new tag]         v0.1.0-alpha.39                          -> v0.1.0-alpha.39
+2026-09-26T11:29:59.2235470Z  * [new tag]         v0.1.0-alpha.4                           -> v0.1.0-alpha.4
+2026-09-26T11:29:59.2236860Z  * [new tag]         v0.1.0-alpha.40                          -> v0.1.0-alpha.40
+2026-09-26T11:29:59.2238130Z  * [new tag]         v0.1.0-alpha.41                          -> v0.1.0-alpha.41
+2026-09-26T11:29:59.2241300Z  * [new tag]         v0.1.0-alpha.42                          -> v0.1.0-alpha.42
+2026-09-26T11:29:59.2242580Z  * [new tag]         v0.1.0-alpha.43                          -> v0.1.0-alpha.43
+2026-09-26T11:29:59.2244680Z  * [new tag]         v0.1.0-alpha.44                          -> v0.1.0-alpha.44
+2026-09-26T11:29:59.2245840Z  * [new tag]         v0.1.0-alpha.45                          -> v0.1.0-alpha.45
+2026-09-26T11:29:59.2246990Z  * [new tag]         v0.1.0-alpha.46                          -> v0.1.0-alpha.46
+2026-09-26T11:29:59.2248120Z  * [new tag]         v0.1.0-alpha.47                          -> v0.1.0-alpha.47
+2026-09-26T11:29:59.2249220Z  * [new tag]         v0.1.0-alpha.48                          -> v0.1.0-alpha.48
+2026-09-26T11:29:59.2250330Z  * [new tag]         v0.1.0-alpha.49                          -> v0.1.0-alpha.49
+2026-09-26T11:29:59.2252170Z  * [new tag]         v0.1.0-alpha.5                           -> v0.1.0-alpha.5
+2026-09-26T11:29:59.2254610Z  * [new tag]         v0.1.0-alpha.50                          -> v0.1.0-alpha.50
+2026-09-26T11:29:59.2256190Z  * [new tag]         v0.1.0-alpha.51                          -> v0.1.0-alpha.51
+2026-09-26T11:29:59.2257400Z  * [new tag]         v0.1.0-alpha.52                          -> v0.1.0-alpha.52
+2026-09-26T11:29:59.2258790Z  * [new tag]         v0.1.0-alpha.53                          -> v0.1.0-alpha.53
+2026-09-26T11:29:59.2259890Z  * [new tag]         v0.1.0-alpha.54                          -> v0.1.0-alpha.54
+2026-09-26T11:29:59.2261860Z  * [new tag]         v0.1.0-alpha.55                          -> v0.1.0-alpha.55
+2026-09-26T11:29:59.2263030Z  * [new tag]         v0.1.0-alpha.56                          -> v0.1.0-alpha.56
+2026-09-26T11:29:59.2264190Z  * [new tag]         v0.1.0-alpha.6                           -> v0.1.0-alpha.6
+2026-09-26T11:29:59.2265770Z  * [new tag]         v0.1.0-alpha.7                           -> v0.1.0-alpha.7
+2026-09-26T11:29:59.2267500Z  * [new tag]         v0.1.0-alpha.8                           -> v0.1.0-alpha.8
+2026-09-26T11:29:59.2268920Z  * [new tag]         v0.1.0-alpha.9                           -> v0.1.0-alpha.9
+2026-09-26T11:29:59.2270220Z  * [new ref]         f1ec74805b170020b1fa267a85aacc17bc16417e -> pull/65/merge
+2026-09-26T11:29:59.2273120Z ##[endgroup]
+2026-09-26T11:29:59.2274640Z ##[group]Determining the checkout info
+2026-09-26T11:29:59.2275770Z ##[endgroup]
+2026-09-26T11:29:59.2276480Z [command]/opt/homebrew/bin/git sparse-checkout disable
+2026-09-26T11:29:59.2279400Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-26T11:29:59.2282720Z ##[group]Checking out the ref
+2026-09-26T11:29:59.2283730Z [command]/opt/homebrew/bin/git checkout --progress --force refs/remotes/pull/65/merge
+2026-09-26T11:29:59.2438730Z HEAD is now at f1ec748 Merge 23a2de23eaaa61e1e10af4a52c1e83dbb24b13c4 into 3bb4277e6a0cc36bcbde5b548876adadfcd44968
+2026-09-26T11:29:59.2443220Z ##[endgroup]
+2026-09-26T11:29:59.2511640Z [command]/opt/homebrew/bin/git log -1 --format=%H
+2026-09-26T11:29:59.2558760Z f1ec74805b170020b1fa267a85aacc17bc16417e
+2026-09-26T11:29:59.2566490Z ##[group]Removing auth
+2026-09-26T11:29:59.2567610Z Removing SSH command configuration
+2026-09-26T11:29:59.2570950Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-26T11:29:59.2624990Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-26T11:29:59.3294820Z Removing HTTP extra header
+2026-09-26T11:29:59.3296750Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-26T11:29:59.3363000Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-26T11:29:59.4376530Z Removing includeIf entries pointing to credentials config files
+2026-09-26T11:29:59.4379970Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-26T11:29:59.4443700Z includeif.gitdir:/Users/runner/work/pkg/pkg/.git.path
+2026-09-26T11:29:59.4445010Z includeif.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path
+2026-09-26T11:29:59.4446080Z includeif.gitdir:/github/workspace/.git.path
+2026-09-26T11:29:59.4448260Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-26T11:29:59.4455750Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/pkg/pkg/.git.path
+2026-09-26T11:29:59.4515710Z /Users/runner/work/_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:59.4528760Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/pkg/pkg/.git.path /Users/runner/work/_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:59.4603250Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path
+2026-09-26T11:29:59.4705180Z /Users/runner/work/_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:59.4733450Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/pkg/pkg/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:59.4839060Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-09-26T11:29:59.4942740Z /github/runner_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:59.4968620Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:59.5067280Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-26T11:29:59.5176830Z /github/runner_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:59.5205090Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config
+2026-09-26T11:29:59.5298560Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-26T11:29:59.5961310Z Removing credentials config '/Users/runner/work/_temp/git-credentials-cd334dfa-29fc-48d0-b765-96886a51a1a3.config'
+2026-09-26T11:29:59.5966620Z ##[endgroup]
+2026-09-26T11:29:59.6154850Z ##[group]Run set -euo pipefail
+2026-09-26T11:29:59.6155610Z [36;1mset -euo pipefail[0m
+2026-09-26T11:29:59.6156250Z [36;1mexpected="${RUSTUP_TOOLCHAIN}"[0m
+2026-09-26T11:29:59.6157120Z [36;1mchannel="$(grep -E '^channel[[:space:]]*=' rust-toolchain.toml \[0m
+2026-09-26T11:29:59.6158590Z [36;1m           | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"[0m
+2026-09-26T11:29:59.6160120Z [36;1mif [ "$channel" != "$expected" ]; then[0m
+2026-09-26T11:29:59.6161170Z [36;1m  echo "::error::rust-toolchain.toml channel '$channel' != expected '$expected'" >&2[0m
+2026-09-26T11:29:59.6162180Z [36;1m  exit 1[0m
+2026-09-26T11:29:59.6162750Z [36;1mfi[0m
+2026-09-26T11:29:59.6163590Z [36;1mrustup toolchain install "$channel" --profile minimal --component clippy[0m
+2026-09-26T11:29:59.6164550Z [36;1mrustc --version[0m
+2026-09-26T11:29:59.6165130Z [36;1mcargo --version[0m
+2026-09-26T11:29:59.6251390Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-09-26T11:29:59.6252920Z env:
+2026-09-26T11:29:59.6253880Z   RUSTUP_TOOLCHAIN: 1.96.1
+2026-09-26T11:29:59.6256160Z   CARGO_TERM_COLOR: always
+2026-09-26T11:29:59.6257180Z ##[endgroup]
+2026-09-26T11:29:59.7439220Z info: syncing channel updates for 1.96.1-aarch64-apple-darwin
+2026-09-26T11:29:59.9528830Z info: latest update on 2026-06-30 for version 1.96.1 (31fca3adb 2026-06-26)
+2026-09-26T11:29:59.9532230Z info: downloading 4 components
+2026-09-26T11:30:07.3184120Z 
+2026-09-26T11:30:07.4275370Z   1.96.1-aarch64-apple-darwin installed - rustc 1.96.1 (31fca3adb 2026-06-26)
+2026-09-26T11:30:07.4276310Z info: self-update is disabled for this build of rustup
+2026-09-26T11:30:07.4276680Z 
+2026-09-26T11:30:07.4277110Z info: any updates to rustup will need to be fetched with your system package manager
+2026-09-26T11:30:07.4531300Z rustc 1.96.1 (31fca3adb 2026-06-26)
+2026-09-26T11:30:07.4885680Z cargo 1.96.1 (356927216 2026-06-26)
+2026-09-26T11:30:07.4975890Z ##[group]Run tools/quality/quality-gate.sh check
+2026-09-26T11:30:07.4976260Z [36;1mtools/quality/quality-gate.sh check[0m
+2026-09-26T11:30:07.5052990Z shell: /bin/bash -e {0}
+2026-09-26T11:30:07.5053280Z env:
+2026-09-26T11:30:07.5053510Z   RUSTUP_TOOLCHAIN: 1.96.1
+2026-09-26T11:30:07.5053800Z   CARGO_TERM_COLOR: always
+2026-09-26T11:30:07.5054040Z   GITHUB_BASE_REF: main
+2026-09-26T11:30:07.5054280Z ##[endgroup]
+2026-09-26T11:31:22.5386600Z quality: 922 debt sites across 23 lints
+2026-09-26T11:31:22.5388290Z ratchet: ok
+2026-09-26T11:31:22.5413160Z G-QUALITY: PASS
+2026-09-26T11:31:22.5569220Z Post job cleanup.
+2026-09-26T11:31:22.9441430Z [command]/opt/homebrew/bin/git version
+2026-09-26T11:31:22.9657540Z git version 2.55.0
+2026-09-26T11:31:22.9714050Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/c1436ee3-bb5c-4a95-8ad2-69cc91cc1bb4/.gitconfig'
+2026-09-26T11:31:22.9737190Z Temporarily overriding HOME='/Users/runner/work/_temp/c1436ee3-bb5c-4a95-8ad2-69cc91cc1bb4' before making global git config changes
+2026-09-26T11:31:22.9745560Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-26T11:31:22.9747690Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/pkg/pkg
+2026-09-26T11:31:22.9829340Z Removing SSH command configuration
+2026-09-26T11:31:22.9829960Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-26T11:31:22.9885440Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-26T11:31:23.0778960Z Removing HTTP extra header
+2026-09-26T11:31:23.0783390Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-26T11:31:23.0840610Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-26T11:31:23.1739950Z Removing includeIf entries pointing to credentials config files
+2026-09-26T11:31:23.1804100Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-26T11:31:23.1908130Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-26T11:31:23.3337140Z Cleaning up orphan processes

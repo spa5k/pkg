@@ -1,0 +1,32 @@
+Stop services: pkg services
+Remove package roots: Registered pkg users
+Remove user state: Package selections, generations, logs, and caches for registered pkg users
+Remove file: /usr/local/bin/pkg
+Remove file: /private/etc/paths.d/pkg
+Remove file: /opt/pkg/bin/pkg-root-helper
+Remove file: /opt/pkg/bin/pkg-nix-broker
+Remove file: /Library/LaunchDaemons/org.pkg.root-helper.plist
+Remove file: /Library/LaunchDaemons/org.pkg.nix-broker.plist
+Remove directory: /Library/Application Support/pkg/run/helper
+Remove directory: /Library/Application Support/pkg/run/broker
+Remove directory: /Library/Application Support/pkg/log/helper
+Remove directory: /Library/Application Support/pkg/log/broker
+Remove directory: /Library/Application Support/pkg/broker-home/channel
+Remove directory: /private/var/db/pkg-source
+Remove directory: /Library/Application Support/pkg/run
+Remove directory: /Library/Application Support/pkg/log
+Remove directory: /Library/Application Support/pkg/helper-home
+Remove directory: /Library/Application Support/pkg/broker-home
+Remove directory: /opt/pkg/bin
+Remove directory: /Library/Application Support/pkg
+Remove account: pkg-nix-broker
+Remove group: pkg-nix-broker
+Remove file: /opt/pkg/uninstall/manifest.json
+Remove directory: /opt/pkg/uninstall
+Remove directory: /opt/pkg
+Verify cleanup: Product services, accounts, and privileged files
+Run vendor uninstall: Determinate removes Base Nix and its managed store; its result is final
+Retained: Personal shell startup files and unrelated user files
+Retained: The root-owned install coordination lock (contains no lifecycle state)
+Shell setup: Remove old unguarded pkg shellenv lines from your Bash or zsh startup file. Guarded setup lines can stay. Open a new shell after uninstall.
+Preview: No changes were applied.

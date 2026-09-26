@@ -1,7 +1,7 @@
 # CLI experience
 
 This is the acceptance checklist for PUBLIC-12, PUBLIC-13, and PUBLIC-17 in the
-[active plan](../plans/determinate-nix-stacked-prs.md).
+[completed-work record](../plans/completed-alpha-work.md).
 
 Use one quiet visual language: cyan headings, green completed checks, amber
 warnings, red failures, and muted secondary text. Color must never carry the

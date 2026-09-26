@@ -1,0 +1,20 @@
+[
+  {
+    "check": "Run public built package",
+    "status": "passed",
+    "seconds": 0.01,
+    "log": "01-run-public-built-package.log"
+  },
+  {
+    "check": "Verify public build",
+    "status": "passed",
+    "seconds": 8.28,
+    "log": "02-verify-public-build.log"
+  },
+  {
+    "check": "Public build health with configured PATH",
+    "status": "passed",
+    "seconds": 0.52,
+    "log": "03-public-build-health-with-configured-path.log"
+  }
+]

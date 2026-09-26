@@ -1,0 +1,16 @@
+Checking package sources...
+Package source ready.
+Checking build dependencies and cached downloads...
+Build plan ready.
+Preparing the approved build...
+Local build complete.
+Saving the new package environment...
+Package environment saved.
+Activating packages...
+Packages are ready to use.
+Activated generation gen-0006
+Package  Version  Outputs
+just     1.58.0   out
+
+Generation: gen-0006
+Installed 1 package using a local build. Ready to use.

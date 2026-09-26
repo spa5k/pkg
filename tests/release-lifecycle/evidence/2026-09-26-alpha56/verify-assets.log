@@ -1,0 +1,15 @@
+verified install-preview.sh
+verified install.sh
+verified pkg-0.1.0-alpha.56-preview.pkg
+verified pkg-aarch64-darwin
+verified pkg-binaries-aarch64-darwin.tar.gz
+verified pkg-binaries-x86_64-linux.tar.gz
+verified pkg-install-aarch64-darwin
+verified pkg-install-x86_64-linux
+verified pkg-nix-broker-aarch64-darwin
+verified pkg-nix-broker-x86_64-linux
+verified pkg-release-index-aarch64-darwin
+verified pkg-release-index-x86_64-linux
+verified pkg-root-helper-aarch64-darwin
+verified pkg-root-helper-x86_64-linux
+verified pkg-x86_64-linux

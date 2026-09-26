@@ -1,0 +1,74 @@
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	﻿2026-09-26T12:12:17.1210240Z ##[group]Run python3 tests/release-lifecycle/check.py smoke --from-release "$FROM_RELEASE" --to-release "$TO_RELEASE" --work "$RUNNER_TEMP/pkg-release-proof" --confirm TEST-DISPOSABLE-HOST
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:17.1211600Z ^[[36;1mpython3 tests/release-lifecycle/check.py smoke --from-release "$FROM_RELEASE" --to-release "$TO_RELEASE" --work "$RUNNER_TEMP/pkg-release-proof" --confirm TEST-DISPOSABLE-HOST^[[0m
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:17.1251270Z shell: /bin/bash -e {0}
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:17.1251540Z env:
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:17.1253800Z   GH_TOKEN: ***
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:17.1254080Z   FROM_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:17.1254340Z   TO_RELEASE: v0.1.0-alpha.56
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:17.1254580Z ##[endgroup]
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:17.2710450Z Running: Download v0.1.0-alpha.56 pkg-install-x86_64-linux
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:18.5378620Z PASS: Download v0.1.0-alpha.56 pkg-install-x86_64-linux (1.27s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:18.5469410Z Running: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:18.9754840Z PASS: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux (0.42s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:18.9755490Z Running: Download v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:19.8153050Z PASS: Download v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg (0.84s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:19.8154650Z Running: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:20.1909170Z PASS: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg (0.38s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:20.2010380Z Running: Download v0.1.0-alpha.56 install-preview.sh
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:20.9888950Z PASS: Download v0.1.0-alpha.56 install-preview.sh (0.8s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:20.9890000Z Running: Verify v0.1.0-alpha.56 install-preview.sh
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:21.2238580Z PASS: Verify v0.1.0-alpha.56 install-preview.sh (0.23s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:21.2256680Z Running: Download v0.1.0-alpha.56 pkg-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:22.1797710Z PASS: Download v0.1.0-alpha.56 pkg-aarch64-darwin (0.96s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:22.1802270Z Running: Verify v0.1.0-alpha.56 pkg-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:22.5476370Z PASS: Verify v0.1.0-alpha.56 pkg-aarch64-darwin (0.37s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:22.5510660Z Running: Download v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:23.5946340Z PASS: Download v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin (1.05s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:23.6017650Z Running: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:23.9961510Z PASS: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin (0.4s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:23.9962200Z Running: Download v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:24.9102650Z PASS: Download v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin (0.91s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:24.9103350Z Running: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:25.1927620Z PASS: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin (0.28s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:12:25.2074890Z Running: Fresh installation
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:13:43.4480450Z PASS: Fresh installation (78.24s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:13:43.5007140Z Running: Installed release bytes
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:13:43.7059000Z PASS: Installed release bytes (0.2s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:13:43.7059540Z Running: Install cached package
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:12.7828100Z PASS: Install cached package (29.07s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:12.7829070Z Running: Run installed package
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:12.8580750Z PASS: Run installed package (0.06s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:12.8581130Z Running: Record Nix identity
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:13.1178780Z PASS: Record Nix identity (0.26s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:13.1538840Z Running: Installed release bytes
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:13.3185680Z PASS: Installed release bytes (0.16s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:13.3187810Z Running: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:14.0810100Z PASS: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux (0.76s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:14.0810880Z Running: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:14.3713340Z PASS: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg (0.29s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:14.3721740Z Running: Verify v0.1.0-alpha.56 install-preview.sh
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:14.7926590Z PASS: Verify v0.1.0-alpha.56 install-preview.sh (0.42s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:14.7932280Z Running: Verify v0.1.0-alpha.56 pkg-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:15.0978430Z PASS: Verify v0.1.0-alpha.56 pkg-aarch64-darwin (0.3s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:15.3869640Z Running: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:15.3870480Z PASS: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin (0.29s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:15.3871180Z Running: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:15.7094830Z PASS: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin (0.32s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:15.7372990Z Running: Product upgrade
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:23.7602250Z PASS: Product upgrade (8.02s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:23.7849960Z Running: Installed release bytes
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:23.9727730Z PASS: Installed release bytes (0.19s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:23.9728440Z Running: Check Nix identity
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:24.1946570Z PASS: Check Nix identity (0.22s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:24.1946890Z Running: Retained package
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:24.2072480Z PASS: Retained package (0.01s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:24.2072870Z Running: Repeat installer
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:31.6901560Z PASS: Repeat installer (7.48s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:31.6902720Z Running: Record build disk space
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:31.7293690Z PASS: Record build disk space (0.04s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:31.7294560Z Running: Record build system load
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:31.7438530Z PASS: Record build system load (0.01s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:31.7439420Z Running: Build public flake
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:32.3876000Z FAIL: Build public flake (0.64s)
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:32.3916980Z FAIL: Command '['/usr/local/bin/pkg', 'install', 'github:casey/just#default', '-y']' returned non-zero exit status 64.
+Installation and daily use (macos-15)	Check signed downloads, installation, repeat setup, build, and rollback	2026-09-26T12:14:32.4117950Z ##[error]Process completed with exit code 1.

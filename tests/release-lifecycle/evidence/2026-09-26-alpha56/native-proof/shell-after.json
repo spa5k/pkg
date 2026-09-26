@@ -1,0 +1,14 @@
+[
+  {
+    "shell": "/bin/bash",
+    "startup": "/Users/admin/.bash_profile",
+    "command": ". /Users/admin/.bash_profile; . /Users/admin/.bash_profile; test ! -x /usr/local/bin/pkg",
+    "exit": 0
+  },
+  {
+    "shell": "/bin/zsh",
+    "startup": "/Users/admin/.zshrc",
+    "command": ". /Users/admin/.zshrc; . /Users/admin/.zshrc; test ! -x /usr/local/bin/pkg",
+    "exit": 0
+  }
+]

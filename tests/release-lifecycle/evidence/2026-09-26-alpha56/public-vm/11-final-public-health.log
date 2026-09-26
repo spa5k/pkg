@@ -1,0 +1,9 @@
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[ok] shell.raw_nix: raw Nix commands are not visible on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[ok] state.activation: the active package links match the committed generation; store contents are not checked
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy

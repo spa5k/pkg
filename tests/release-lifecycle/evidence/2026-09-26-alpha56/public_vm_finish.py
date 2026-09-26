@@ -1,0 +1,15 @@
+import importlib.util,json
+from pathlib import Path
+s=importlib.util.spec_from_file_location('lifecycle','/Users/admin/pkg-proof/tests/release-lifecycle/check.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+m.require_disposable('TEST-DISPOSABLE-HOST')
+w=Path('/Users/admin/alpha56-public-finish');w.mkdir(mode=0o700)
+c=m.Checks(w)
+c.run('Remove public package',[m.CLI,'remove','fzf','-y'])
+names=c.run('Check package removal',[m.CLI,'list','--name-only']);c.removed('fzf',names)
+c.run('Rollback public package',[m.CLI,'rollback','-y'])
+c.package('fzf','Run restored public package')
+c.package('just','Run retained public build')
+c.run('Verify restored package files',[m.CLI,'repair','--verify-only'])
+c.run('Final public lifecycle health',[m.CLI,'doctor'])
+(w/'result.json').write_text(json.dumps({'status':'passed','scope':'Complete package removal, rollback, verification, and health after the fresh public install and just build','checks':len(c.rows)},indent=2)+'\n')
+print('PASS: public package removal, rollback, restored package use, repair, and doctor')

@@ -5,7 +5,7 @@ Scope: TRUST-01 in the [active plan](../../../plans/determinate-nix-stacked-prs.
 
 ## Why
 
-Alpha.54 is published with the alpha test root and ad-hoc macOS signatures.
+Alpha.56 is published with the alpha test root and ad-hoc macOS signatures.
 Production signing helpers, an initial runbook, and exact-release checks exist.
 Production key custody, provider identities, domain access, Apple identities,
 and notarization access are not established by that tooling.
@@ -20,8 +20,8 @@ on independent native hosts before a production announcement.
 ## Non-goals
 
 No alpha-root promotion, product rename, arbitrary channel override, or new
-package feature. This proposal does not authorize production publication. The owner authorized
-alpha.55 separately; that release continues to use the alpha test root.
+package feature. This proposal does not authorize production publication.
+The alpha.56 release was authorized separately and retains the alpha test root.
 
 ## Impact
 

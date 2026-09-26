@@ -1,6 +1,6 @@
 # `pkg`
 
-[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.54)
+[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.56)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 `pkg` is a package manager for Linux and macOS. It has a simple command
@@ -47,7 +47,7 @@ pkg remove ripgrep       # Remove a package
 `pkg` uses cached packages first. If a local build is required, `pkg` asks for
 one exact, one-time approval.
 
-Alpha.54 on macOS also supports
+Alpha.56 on macOS also supports
 [public flake packages](docs/commands.md#public-flake-packages-macos).
 
 ## Remove pkg itself
@@ -103,8 +103,8 @@ repair. See the
 
 | Platform | Preview status |
 | --- | --- |
-| Linux x86-64 | Public alpha.54; requires systemd |
-| macOS Apple silicon | Public alpha.54; ad-hoc signed, not notarized |
+| Linux x86-64 | Public alpha.56; requires systemd |
+| macOS Apple silicon | Public alpha.56; ad-hoc signed, not notarized |
 | macOS Intel | Not supported |
 | Linux arm64 | Not available in this preview |
 
@@ -112,7 +112,7 @@ The native platform cutover proofs passed. The release includes automatic
 product service updates, the doctor ownership correction, and `pkg shellenv`.
 The [native lifecycle report](tests/macos-clean-host/PUBLIC-04.md) records the
 compiled-package, repair, reboot, and uninstall checks that support these changes.
-See the [release notes](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.54)
+See the [release notes](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.56)
 for checks on the exact release files and known limits.
 
 ## Contribute

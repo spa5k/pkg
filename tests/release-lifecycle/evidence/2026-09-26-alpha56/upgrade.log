@@ -1,0 +1,67 @@
+$ sudo shasum -a 256 --check /Users/admin/alpha56-proof/v0.1.0-alpha.55/installed.sha256
+Running: Installed release bytes
+PASS: Installed release bytes (0.14s)
+$ cosign verify-blob --bundle /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-install-x86_64-linux.sigstore.json --certificate-identity https://github.com/spa5k/pkg/.github/workflows/alpha-release.yml@refs/tags/v0.1.0-alpha.56 --certificate-oidc-issuer https://token.actions.githubusercontent.com /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-install-x86_64-linux
+Running: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux
+PASS: Verify v0.1.0-alpha.56 pkg-install-x86_64-linux (1.11s)
+$ cosign verify-blob --bundle /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-0.1.0-alpha.56-preview.pkg.sigstore.json --certificate-identity https://github.com/spa5k/pkg/.github/workflows/alpha-release.yml@refs/tags/v0.1.0-alpha.56 --certificate-oidc-issuer https://token.actions.githubusercontent.com /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-0.1.0-alpha.56-preview.pkg
+Running: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg
+PASS: Verify v0.1.0-alpha.56 pkg-0.1.0-alpha.56-preview.pkg (0.69s)
+$ cosign verify-blob --bundle /Users/admin/alpha56-proof/v0.1.0-alpha.56/install-preview.sh.sigstore.json --certificate-identity https://github.com/spa5k/pkg/.github/workflows/alpha-release.yml@refs/tags/v0.1.0-alpha.56 --certificate-oidc-issuer https://token.actions.githubusercontent.com /Users/admin/alpha56-proof/v0.1.0-alpha.56/install-preview.sh
+Running: Verify v0.1.0-alpha.56 install-preview.sh
+PASS: Verify v0.1.0-alpha.56 install-preview.sh (0.91s)
+$ cosign verify-blob --bundle /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-aarch64-darwin.sigstore.json --certificate-identity https://github.com/spa5k/pkg/.github/workflows/alpha-release.yml@refs/tags/v0.1.0-alpha.56 --certificate-oidc-issuer https://token.actions.githubusercontent.com /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-aarch64-darwin
+Running: Verify v0.1.0-alpha.56 pkg-aarch64-darwin
+PASS: Verify v0.1.0-alpha.56 pkg-aarch64-darwin (0.73s)
+$ cosign verify-blob --bundle /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-nix-broker-aarch64-darwin.sigstore.json --certificate-identity https://github.com/spa5k/pkg/.github/workflows/alpha-release.yml@refs/tags/v0.1.0-alpha.56 --certificate-oidc-issuer https://token.actions.githubusercontent.com /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-nix-broker-aarch64-darwin
+Running: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin
+PASS: Verify v0.1.0-alpha.56 pkg-nix-broker-aarch64-darwin (1.48s)
+$ cosign verify-blob --bundle /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-root-helper-aarch64-darwin.sigstore.json --certificate-identity https://github.com/spa5k/pkg/.github/workflows/alpha-release.yml@refs/tags/v0.1.0-alpha.56 --certificate-oidc-issuer https://token.actions.githubusercontent.com /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-root-helper-aarch64-darwin
+Running: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin
+PASS: Verify v0.1.0-alpha.56 pkg-root-helper-aarch64-darwin (0.76s)
+$ /bin/bash /Users/admin/alpha56-proof/v0.1.0-alpha.56/install-preview.sh /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-0.1.0-alpha.56-preview.pkg 62409a8949d64db2369515f76017a446ccfcd2e37b0ecef7feea4a59b6497a92
+Running: Product upgrade (verified draft package)
+PASS: Product upgrade (verified draft package) (10.74s)
+$ sudo shasum -a 256 --check /Users/admin/alpha56-proof/v0.1.0-alpha.56/installed.sha256
+Running: Installed release bytes
+PASS: Installed release bytes (0.1s)
+$ sudo shasum -a 256 /nix/receipt.json /nix/nix-installer
+Running: Check Nix identity
+PASS: Check Nix identity (0.2s)
+$ '/Users/admin/Library/Application Support/pkg/current/bin/fzf' --version
+Running: Retained package
+PASS: Retained package (0.01s)
+$ /bin/bash /Users/admin/alpha56-proof/v0.1.0-alpha.56/install-preview.sh /Users/admin/alpha56-proof/v0.1.0-alpha.56/pkg-0.1.0-alpha.56-preview.pkg 62409a8949d64db2369515f76017a446ccfcd2e37b0ecef7feea4a59b6497a92
+Running: Repeat installer (verified draft package)
+PASS: Repeat installer (verified draft package) (6.98s)
+$ /bin/df -k /nix
+Running: Record build disk space
+PASS: Record build disk space (0.0s)
+$ /usr/sbin/sysctl -n vm.loadavg hw.logicalcpu
+Running: Record build system load
+PASS: Record build system load (0.01s)
+$ /usr/local/bin/pkg install 'github:casey/just#default' -y
+Running: Build public flake
+PASS: Build public flake (58.92s)
+$ '/Users/admin/Library/Application Support/pkg/current/bin/just' --version
+Running: Run built package
+PASS: Run built package (0.01s)
+$ /usr/local/bin/pkg remove fzf -y
+Running: Remove package
+PASS: Remove package (0.49s)
+$ /usr/local/bin/pkg list --name-only
+Running: Check removal
+PASS: Check removal (0.1s)
+$ /usr/local/bin/pkg rollback -y
+Running: Rollback
+PASS: Rollback (0.67s)
+$ '/Users/admin/Library/Application Support/pkg/current/bin/fzf' --version
+Running: Run restored package
+PASS: Run restored package (0.1s)
+$ /usr/local/bin/pkg repair --verify-only
+Running: Verify package files
+PASS: Verify package files (9.39s)
+$ /usr/local/bin/pkg doctor
+Running: Final health
+PASS: Final health (0.7s)
+PASS: completed selected phase. See checkpoint.json for reboot status.

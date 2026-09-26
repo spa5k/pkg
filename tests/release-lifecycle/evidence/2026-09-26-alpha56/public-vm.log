@@ -1,0 +1,23 @@
+Running: Anonymous saved public installer
+PASS: Anonymous saved public installer (0.59s)
+Running: Verify public downloads
+PASS: Verify public downloads (1.24s)
+Running: Fresh public installation
+PASS: Fresh public installation (80.2s)
+Running: Installed release bytes
+PASS: Installed release bytes (0.09s)
+Running: Repeat public installer with configured PATH
+PASS: Repeat public installer with configured PATH (8.0s)
+Running: Install cached package
+PASS: Install cached package (67.8s)
+Running: Run installed package
+PASS: Run installed package (0.01s)
+Running: Fresh configured bash
+PASS: Fresh configured bash (0.1s)
+Running: Fresh configured zsh
+PASS: Fresh configured zsh (0.05s)
+Running: Package verification
+PASS: Package verification (7.97s)
+Running: Final public health
+PASS: Final public health (0.98s)
+PASS: anonymous public reinstall, repeat setup, package use, fresh shells, and health

@@ -32,21 +32,27 @@ historical proof. They remain a separate assurance task.
 | PUBLIC-10 | One verified public installer; [PR #45](https://github.com/spa5k/pkg/pull/45) |
 | PUBLIC-11 | CI summaries, exact-release checks, production-signing helpers, initial runbook; [PR #46](https://github.com/spa5k/pkg/pull/46). Production activation remains open |
 | PUBLIC-12 and PUBLIC-13 | Command help, layout, useful results and previews; [PR #50](https://github.com/spa5k/pkg/pull/50), [PR #51](https://github.com/spa5k/pkg/pull/51) |
-| PUBLIC-14 and PUBLIC-15 | Alpha.52 publication and installation guide; superseded by alpha.54 |
+| PUBLIC-14 and PUBLIC-15 | Alpha.52 publication and installation guide; superseded by alpha.56 |
 | PUBLIC-16 | Installer authentication diagnostics; [PR #54](https://github.com/spa5k/pkg/pull/54) |
 | PUBLIC-17 | Installed-name resolution, package/system uninstall separation, history and rollback details; [PR #55](https://github.com/spa5k/pkg/pull/55) |
 | PUBLIC-18 | Alpha.53 candidate prepared but withheld after native removal failed; never a public release |
 | PUBLIC-20 | System-removal cleanup and partial-removal recovery; [PR #58](https://github.com/spa5k/pkg/pull/58) |
-| PUBLIC-21 and PUBLIC-22 | Alpha.54 published and current installation instructions; [release](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.54), [PR #60](https://github.com/spa5k/pkg/pull/60) |
-| PUBLIC-23 | Bounded doctor startup checks and reliable lock regression; [PR #61](https://github.com/spa5k/pkg/pull/61), merged at `4ab2121`. Not released |
+| PUBLIC-21 and PUBLIC-22 | Alpha.54 publication and its installation instructions; [release](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.54), [PR #60](https://github.com/spa5k/pkg/pull/60) |
+| PUBLIC-23 | Bounded doctor startup checks and reliable lock regression; [PR #61](https://github.com/spa5k/pkg/pull/61), merged at `4ab2121`; released in alpha.56 |
+| BUG-01 through BUG-09 | Daily-use, state recovery, repair, and CLI fixes; [PR #62](https://github.com/spa5k/pkg/pull/62), [evidence](../tests/macos-clean-host/BUG-FIXES-2026-09-26.md) |
+| UX-01 through UX-06 | GC measurement/retention, uninstall details, preview notices, and safe shell setup; [PR #63](https://github.com/spa5k/pkg/pull/63), [PR #65](https://github.com/spa5k/pkg/pull/65), [evidence](../tests/macos-clean-host/UX-FIXES-2026-09-26.md) |
+| Alpha.55 candidate | Withheld after exact native output exposed the old wrapper instructions. Signed files and sequence 55 remain unchanged. |
+| VERIFY-01 fixtures | Bounded broker-stage capture and hosted macOS capacity wait; [PR #66](https://github.com/spa5k/pkg/pull/66), [PR #67](https://github.com/spa5k/pkg/pull/67). Wider assurance work remains open |
+| RELEASE-NEXT | Alpha.56 signed publication, exact native upgrade/reboot/removal, and fresh public Linux/macOS checks; [release proof](../tests/release-lifecycle/ALPHA-56-2026-09-26.md) |
 
 The alpha.54 [fresh public checks](https://github.com/spa5k/pkg/actions/runs/36135260608)
 passed on Linux and macOS. Its release notes identify exact native upgrade,
 reboot, removal, and reinstall evidence and their limits.
 Delivered features can still have defects. The later
-[daily-use audit](../tests/macos-clean-host/BUG-HUNT-2026-09-26.md) records open
-concurrency, recovery, repair, and CLI failures. Those remain in QUALITY-01
-and issue #4; they do not reopen the superseded feature proposals below.
+[daily-use audit](../tests/macos-clean-host/BUG-HUNT-2026-09-26.md) retains the original
+concurrency, recovery, repair, and CLI failures. Their fixes are released in
+alpha.56. QUALITY-01 and issue #4 retain measured lint and assurance work; they
+do not reopen completed fixes or superseded feature proposals.
 
 ## Superseded proposals
 

@@ -1,0 +1,5 @@
+{
+  "status": "passed",
+  "scope": "Complete package removal, rollback, verification, and health after the fresh public install and just build",
+  "checks": 7
+}

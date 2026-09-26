@@ -1,0 +1,19 @@
+test_deadline_is_bounded (test_build_capacity.BuildCapacityTests.test_deadline_is_bounded) ... ok
+test_delayed_wakeup_cannot_admit_after_deadline (test_build_capacity.BuildCapacityTests.test_delayed_wakeup_cannot_admit_after_deadline) ... ok
+test_nonfinite_or_negative_load_does_not_admit (test_build_capacity.BuildCapacityTests.test_nonfinite_or_negative_load_does_not_admit) ... ok
+test_short_final_interval_cannot_supply_a_third_ready_sample (test_build_capacity.BuildCapacityTests.test_short_final_interval_cannot_supply_a_third_ready_sample) ... ok
+test_transient_idle_sample_does_not_admit_busy_runner (test_build_capacity.BuildCapacityTests.test_transient_idle_sample_does_not_admit_busy_runner) ... ok
+test_invalid_tag_is_refused (test_check.LifecycleTests.test_invalid_tag_is_refused) ... ok
+test_missing_confirmation_does_not_probe_or_mutate_the_host (test_check.LifecycleTests.test_missing_confirmation_does_not_probe_or_mutate_the_host) ... ok
+test_removal_detects_even_a_broken_activation_link (test_check.LifecycleTests.test_removal_detects_even_a_broken_activation_link) ... ok
+test_system_fallback_cannot_hide_a_missing_managed_command (test_check.LifecycleTests.test_system_fallback_cannot_hide_a_missing_managed_command) ... Running: Missing managed command
+FAIL: Missing managed command (0.0s)
+ok
+test_later_symlink_is_refused_before_any_directory_change (test_prepare_host.HostFixtureTests.test_later_symlink_is_refused_before_any_directory_change) ... Before: /var/folders/bf/42lp61cd7kj2tvpg1m33jryh0000gn/T/tmpbsm_v67s uid=501 gid=20 mode=0700
+ok
+test_local_host_is_refused_before_mutation (test_prepare_host.HostFixtureTests.test_local_host_is_refused_before_mutation) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.009s
+
+OK

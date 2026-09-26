@@ -1,0 +1,81 @@
+{
+  "source": "23a2de23eaaa61e1e10af4a52c1e83dbb24b13c4",
+  "tag": "v0.1.0-alpha.56",
+  "verified": [
+    {
+      "name": "install-preview.sh",
+      "bytes": 2604,
+      "sha256": "f57aa0a86d5e9b150d899c63e09a5dada3d9e7fdf97ebbf018af3fbacabc7dc5"
+    },
+    {
+      "name": "install.sh",
+      "bytes": 6707,
+      "sha256": "f2411bdc25db7e90f5fd2d79022cd9f2767a6ca8af7944b3bcdf6a4b0e5e598c"
+    },
+    {
+      "name": "pkg-0.1.0-alpha.56-preview.pkg",
+      "bytes": 4385012,
+      "sha256": "62409a8949d64db2369515f76017a446ccfcd2e37b0ecef7feea4a59b6497a92"
+    },
+    {
+      "name": "pkg-aarch64-darwin",
+      "bytes": 14100832,
+      "sha256": "bb915cd992bc665e98632ef789292bd36f93e0e53ca675881ee4f266e1f78299"
+    },
+    {
+      "name": "pkg-binaries-aarch64-darwin.tar.gz",
+      "bytes": 16161228,
+      "sha256": "01a88fac37e84b40d22d125dc0af0516f954e037ae2df98b7d229d830997fc6d"
+    },
+    {
+      "name": "pkg-binaries-x86_64-linux.tar.gz",
+      "bytes": 18064836,
+      "sha256": "8b0603ff626a3dcf707795566461ca06561e5576e920dd441d859c142a9d63a0"
+    },
+    {
+      "name": "pkg-install-aarch64-darwin",
+      "bytes": 10766512,
+      "sha256": "251b89a6f2c56872a8e32fc9229a0605b0496c281902628f60d6af7d60d14101"
+    },
+    {
+      "name": "pkg-install-x86_64-linux",
+      "bytes": 13583352,
+      "sha256": "b5de84b6a70de69bd1e7b61da9ce25667160b7f8d5b4412ab16d6deec0fd2735"
+    },
+    {
+      "name": "pkg-nix-broker-aarch64-darwin",
+      "bytes": 12027184,
+      "sha256": "768cb5674e1fb77bbfedb2e6dd0b7d16796a3c2257c7dfbeee00dc048136531f"
+    },
+    {
+      "name": "pkg-nix-broker-x86_64-linux",
+      "bytes": 15018112,
+      "sha256": "62486720ac0c28bd9b07c9b112f882f1c68a5833fe8395eced7ff1e6cdb9b8b5"
+    },
+    {
+      "name": "pkg-release-index-aarch64-darwin",
+      "bytes": 3177824,
+      "sha256": "af2c4b34f37b7d7171b68c5335c4148fd732330de6c023cddbc160871a3e4619"
+    },
+    {
+      "name": "pkg-release-index-x86_64-linux",
+      "bytes": 3443944,
+      "sha256": "4a13a6ba10fce1b5607b695e113bb4fc7f8695c4a0bea48822ed49c01be0c01b"
+    },
+    {
+      "name": "pkg-root-helper-aarch64-darwin",
+      "bytes": 2782624,
+      "sha256": "97d1730a1ccc247a3a4b2a0063c40fa5909ddd378e204dbfa5919e4b9d6d21ec"
+    },
+    {
+      "name": "pkg-root-helper-x86_64-linux",
+      "bytes": 3245480,
+      "sha256": "1a75b354d8b7b4a7a4e2a2a278111c3c4bc14b037ea55c993662a0b81e5f3aac"
+    },
+    {
+      "name": "pkg-x86_64-linux",
+      "bytes": 17499984,
+      "sha256": "ab7f3bb52422074e3a9a8bb1a13ef5bc793a92856c151293f53faab2a90176ee"
+    }
+  ]
+}

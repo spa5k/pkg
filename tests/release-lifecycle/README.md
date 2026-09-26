@@ -1,5 +1,7 @@
 # Exact public release checks
 
+Current proof: [alpha.56, 26 September 2026](ALPHA-56-2026-09-26.md).
+
 `check.py` runs only as a normal test user on a GitHub-hosted disposable runner
 or a VirtualMac guest. Every run also requires `--confirm TEST-DISPOSABLE-HOST`.
 It refuses a fresh proof on a host that already has pkg or a Nix receipt.

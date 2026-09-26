@@ -1,0 +1,7 @@
+Running: Prepare next upgrade: remove existing public test package
+PASS: Prepare next upgrade: remove existing public test package (0.43s)
+Running: Check next upgrade package baseline
+PASS: Check next upgrade package baseline (0.05s)
+Running: Retained package before alpha56
+PASS: Retained package before alpha56 (0.01s)
+PASS: removed just as normal user so next upgrade phase can install the public flake again

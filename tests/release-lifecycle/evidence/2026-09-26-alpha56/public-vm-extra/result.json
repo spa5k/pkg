@@ -1,0 +1,5 @@
+{
+  "status": "passed",
+  "scope": "Public just build use, repair, and doctor with the documented configured PATH",
+  "checks": 3
+}

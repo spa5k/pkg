@@ -5,7 +5,7 @@ title: Install pkg
 # Install pkg
 
 The current public release is
-[`v0.1.0-alpha.54`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.54).
+[`v0.1.0-alpha.56`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.56).
 It supports **Apple silicon macOS** and **Linux x86-64 with systemd**.
 Intel macOS and Linux arm64 are not release targets yet.
 
@@ -45,10 +45,10 @@ Use the terminal installer. It keeps the macOS permission prompt in your
 terminal session, shows the real result, and saves a private log.
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.54/pkg-0.1.0-alpha.54-preview.pkg && \
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.54/install-preview.sh && \
-printf '%s  %s\n' '64ff6f29a287ce4b4759096b3a862b58a8bca681b05dcf3ea46d8a94793de4b4' 'install-preview.sh' | shasum -a 256 --check && \
-/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.54-preview.pkg 8c601088e68deb63da9010673292dbf0dbfc496fee4e8ff892cc040b96a370ba
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.56/pkg-0.1.0-alpha.56-preview.pkg && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.56/install-preview.sh && \
+printf '%s  %s\n' 'f57aa0a86d5e9b150d899c63e09a5dada3d9e7fdf97ebbf018af3fbacabc7dc5' 'install-preview.sh' | shasum -a 256 --check && \
+/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.56-preview.pkg 62409a8949d64db2369515f76017a446ccfcd2e37b0ecef7feea4a59b6497a92
 ```
 
 Allow the macOS system configuration prompt if it appears. Keep the terminal
@@ -83,8 +83,8 @@ sessions as an upgrade method.
 Download and verify the installer before you run it:
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.54/pkg-install-x86_64-linux && \
-printf '%s  %s\n' 'd78aa382373fb591a58e280f6385eff345b2ac99f4c34e3df847bdaa102fb0a5' 'pkg-install-x86_64-linux' | sha256sum --check && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.56/pkg-install-x86_64-linux && \
+printf '%s  %s\n' 'b5de84b6a70de69bd1e7b61da9ce25667160b7f8d5b4412ab16d6deec0fd2735' 'pkg-install-x86_64-linux' | sha256sum --check && \
 chmod 700 ./pkg-install-x86_64-linux && \
 sudo ./pkg-install-x86_64-linux
 ```

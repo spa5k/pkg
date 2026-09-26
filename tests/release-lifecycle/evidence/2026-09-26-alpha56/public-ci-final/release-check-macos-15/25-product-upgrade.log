@@ -1,0 +1,53 @@
+
+pkg 0.1.0-alpha.56 · macOS Apple silicon
+
+  Downloading pkg-0.1.0-alpha.56-preview.pkg...
+  [ok] Verified pkg-0.1.0-alpha.56-preview.pkg
+  Downloading install-preview.sh...
+  [ok] Verified install-preview.sh
+  Install log: /var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T//pkg-install-log.q2eP3n7W
+  Administrator access is needed to set up pkg.
+Checking the downloaded pkg installer...
+Install log: /var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T//pkg-install-log.tzenua
+Administrator access is needed to set up pkg.
+Allow the macOS system configuration prompt if it appears.
+pkg setup — 0.1.0-alpha.56
+Downloading and verifying the release. This can take a few minutes...
+Checking this Mac...
+Preparing pkg files and folders...
+Preparing the package and build engine...
+Installing pkg commands and services...
+Verifying the installed files...
+Checking the package engine...
+Saving the installation record...
+pkg is installed.
+pkg setup completed.
+
+Next steps:
+  [ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"
+  pkg doctor
+  pkg install fzf
+
+For future zsh sessions, add [ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)" to ~/.zshrc.
+For Bash, add the same line to your shell startup file.
+  Checking the installation...
+[ok] host.system: macOS arm64
+[ok] shell.path: the active generation bin directory is on PATH
+[ok] shell.raw_nix: raw Nix commands are not visible on PATH
+[ok] state.permissions: the per-user state root is a private directory
+[ok] state.activation: the active package links match the committed generation; store contents are not checked
+[ok] nix.unmanaged: no unmanaged Nix signals were detected
+[ok] runtime.managed: managed Nix 2.35.2 answered through the private broker
+[ok] channel.signed: the private broker authenticated its signed channel and native index at startup
+overall: healthy
+  [ok] pkg is ready.
+
+Open a new terminal, or run:
+  [ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"
+
+Start here:
+  pkg search ripgrep
+  pkg install ripgrep
+  pkg list
+
+Run this same installer command when you want to update pkg.

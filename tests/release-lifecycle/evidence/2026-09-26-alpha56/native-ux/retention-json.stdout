@@ -1,0 +1,1 @@
+{"command":"gc","dryRun":true,"estimateScope":"selected-generation-output-closures","estimatedReclaimableBytes":0,"generations":["gen-0001","gen-0002","gen-0003","gen-0004"],"ok":true,"retention":{"alwaysKeepActive":true,"keepRetiredGenerations":3,"maxAgeDays":0,"pruneRule":"outside-count-and-older-than-age"},"schemaVersion":1}
