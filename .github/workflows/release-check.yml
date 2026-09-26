@@ -42,6 +42,13 @@ jobs:
           python3 tests/release-lifecycle/check.py smoke
           --from-release "$FROM_RELEASE" --to-release "$TO_RELEASE"
           --work "$RUNNER_TEMP/pkg-release-proof" --confirm TEST-DISPOSABLE-HOST
+      - name: Retain redacted macOS broker acquisition stage
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg-release-proof"
+          sudo /usr/bin/tail -n 200 '/Library/Application Support/pkg/log/broker/broker.log' |
+            /usr/bin/sed -n '/^pkg broker acquisition refused: /p' > "$RUNNER_TEMP/pkg-release-proof/broker-diagnostic.log"
       - name: Show results and proof scope
         if: always()
         shell: bash
