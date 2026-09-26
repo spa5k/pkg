@@ -33,6 +33,11 @@ payload="$work/expanded/Scripts/pkg-install"
 /usr/bin/codesign --verify --strict "$payload"
 
 log=$(/usr/bin/mktemp "${TMPDIR:-/tmp}/pkg-install-log.XXXXXX")
+pkg_command_fail() {
+    printf '%s\n' "pkg command check failed: $1" "Keep this log for support: $log" \
+        | /usr/bin/tee -a "$log" >&2
+    exit 1
+}
 echo "Install log: $log"
 echo "Administrator access is needed to set up pkg."
 echo "Allow the macOS system configuration prompt if it appears."
@@ -40,6 +45,14 @@ echo "Allow the macOS system configuration prompt if it appears."
 /usr/bin/sudo -v
 if /usr/bin/sudo /usr/bin/env -i HOME=/var/root PATH=/usr/bin:/bin:/usr/sbin:/sbin \
     PKG_INSTALL_DEBUG="${PKG_INSTALL_DEBUG:-0}" "$payload" "$@" 2>&1 | /usr/bin/tee "$log"; then
+    # Root can verify the installed file even when its parents block this user.
+    # Verify public command access before printing user-facing completion.
+    pkg_cli=/usr/local/bin/pkg
+    [ -x "$pkg_cli" ] || pkg_command_fail \
+        "$pkg_cli is missing or not executable for your user. Check the file and parent directory permissions."
+    if ! "$pkg_cli" --version >>"$log" 2>&1; then
+        pkg_command_fail "$pkg_cli could not start. The command error is in the log."
+    fi
     echo "pkg setup completed."
     echo
     echo 'Next steps:'
