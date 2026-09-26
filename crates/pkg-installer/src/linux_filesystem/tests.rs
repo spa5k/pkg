@@ -11,6 +11,48 @@ use tempfile::TempDir;
 use super::*;
 use crate::linux_install_assets;
 
+#[test]
+fn profile_setup_preserves_manpath_and_is_idempotent() -> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    fixture
+        .manager
+        .ensure_asset(Fixture::asset("profile-snippet"))?;
+    let snippet = fs::read_to_string(fixture.temporary.path().join("etc/profile.d/pkg.sh"))?;
+    let man = "/home/pkg test/.local/share/pkg/current/share/man";
+    let bin = "/home/pkg test/.local/share/pkg/current/bin";
+    for initial in [
+        None,
+        Some(""),
+        Some("/custom/man"),
+        Some(":/custom/man:"),
+        Some(man),
+    ] {
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .env_clear()
+            .env("HOME", "/home/pkg test")
+            .env("PATH", "/usr/bin:/bin");
+        if let Some(initial) = initial {
+            command.env("MANPATH", initial);
+        }
+        let output = command
+            .args([
+                "-c",
+                &format!("{snippet}{snippet}{snippet}printf '%s\\n%s' \"$PATH\" \"$MANPATH\""),
+            ])
+            .output()?;
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let actual = String::from_utf8(output.stdout)?;
+        let expected_man = if initial == Some(man) {
+            man.to_owned()
+        } else {
+            format!("{man}:{}", initial.unwrap_or_default())
+        };
+        assert_eq!(actual, format!("{bin}:/usr/bin:/bin\n{expected_man}"));
+    }
+    Ok(())
+}
+
 struct Fixture {
     temporary: TempDir,
     manager: LinuxFilesystemManager,

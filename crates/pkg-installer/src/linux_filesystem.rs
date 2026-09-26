@@ -43,7 +43,11 @@ case \":$PATH:\" in\n\
   *\":$__pkg_state/current/bin:\"*) ;;\n\
   *) PATH=\"$__pkg_state/current/bin:$PATH\" ;;\n\
 esac\n\
-export MANPATH=\"$__pkg_state/current/share/man:${MANPATH:-}\"\n\
+case \":${MANPATH:-}:\" in\n\
+  *\":$__pkg_state/current/share/man:\"*) ;;\n\
+  *) MANPATH=\"$__pkg_state/current/share/man:${MANPATH:-}\" ;;\n\
+esac\n\
+export MANPATH\n\
 unset __pkg_state\n";
 
 /// Stable failure classes for the privileged filesystem boundary.
