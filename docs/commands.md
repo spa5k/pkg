@@ -4,7 +4,7 @@ title: Everyday pkg commands
 
 # Everyday commands
 
-These commands are available in alpha.54.
+These commands are available in alpha.55.
 
 ```console
 pkg search ripgrep
@@ -126,7 +126,7 @@ measure them.
 
 ## Package coverage
 
-The signed alpha.54 channel contains 64,412 package records for Apple silicon
+The signed alpha.55 channel contains 64,412 package records for Apple silicon
 macOS and 69,517 records for x86-64 Linux. It uses metadata generated from
 Nixpkgs, including nested package sets such as `python311Packages.requests`.
 
@@ -181,7 +181,7 @@ with `generation` and `outcome`. An `applied` outcome confirms the current
 switch. An `uncertain` outcome means the switch may have completed. Both require
 forward recovery before another change.
 
-The public installer selects alpha.54.
+The public installer selects alpha.55.
 
 `install --keep-going` and `upgrade --keep-going` are currently refused.
 Omit this option. An install stops at the first failure and does not commit a

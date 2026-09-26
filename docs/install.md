@@ -5,7 +5,7 @@ title: Install pkg
 # Install pkg
 
 The current public release is
-[`v0.1.0-alpha.54`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.54).
+[`v0.1.0-alpha.55`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.55).
 It supports **Apple silicon macOS** and **Linux x86-64 with systemd**.
 Intel macOS and Linux arm64 are not release targets yet.
 
@@ -45,10 +45,10 @@ Use the terminal installer. It keeps the macOS permission prompt in your
 terminal session, shows the real result, and saves a private log.
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.54/pkg-0.1.0-alpha.54-preview.pkg && \
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.54/install-preview.sh && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.55/pkg-0.1.0-alpha.55-preview.pkg && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.55/install-preview.sh && \
 printf '%s  %s\n' '64ff6f29a287ce4b4759096b3a862b58a8bca681b05dcf3ea46d8a94793de4b4' 'install-preview.sh' | shasum -a 256 --check && \
-/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.54-preview.pkg 8c601088e68deb63da9010673292dbf0dbfc496fee4e8ff892cc040b96a370ba
+/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.55-preview.pkg a7648bf7e4d63a4a06d33b4c7bee463d93bceb995bdfabffb402d9b2d39d70a3
 ```
 
 Allow the macOS system configuration prompt if it appears. Keep the terminal
@@ -83,8 +83,8 @@ sessions as an upgrade method.
 Download and verify the installer before you run it:
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.54/pkg-install-x86_64-linux && \
-printf '%s  %s\n' 'd78aa382373fb591a58e280f6385eff345b2ac99f4c34e3df847bdaa102fb0a5' 'pkg-install-x86_64-linux' | sha256sum --check && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.55/pkg-install-x86_64-linux && \
+printf '%s  %s\n' '9b63e6db1f1955949932e90e272a343ae2ad73d5994c72f52f5485069b55b53c' 'pkg-install-x86_64-linux' | sha256sum --check && \
 chmod 700 ./pkg-install-x86_64-linux && \
 sudo ./pkg-install-x86_64-linux
 ```
