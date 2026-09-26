@@ -54,6 +54,9 @@ class RenderTests(unittest.TestCase):
         import shlex
         source = (module.ROOT / "docs/install.sh").read_text()
         snippet = next(line for line in source.split("'") if line.startswith("  [ ! -x /usr/local/bin/pkg ]"))
+        wrapper = (module.ROOT / "packaging/macos/install-preview.sh").read_text()
+        self.assertIn("echo '" + snippet + "'", wrapper)
+        self.assertIn("add " + snippet.strip() + " to ~/.zshrc.", wrapper)
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / "pkg"
             binary.write_text('#!/bin/sh\nprintf "export PKG_SHELL_TEST=ready\\n"\n')

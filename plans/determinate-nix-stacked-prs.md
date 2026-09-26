@@ -2,7 +2,10 @@
 
 Status: alpha product. Reviewed on 26 September 2026. The nine bug fixes are
 committed in `538cdbe`; the six UX fixes are committed in `03c4e3a`.
-Alpha.55 publication is authorized and in progress.
+Alpha.56 publication is in progress. The exact alpha.55 check found an old
+macOS wrapper startup message. Alpha.55 remains unpublished; its signed assets
+and deployed sequence 55 are retained unchanged. Alpha.56 also makes the Linux
+profile MANPATH setup idempotent.
 The filename is retained for existing links. The original four-PR migration
 stack is complete. New work branches from current `main`.
 
@@ -14,7 +17,7 @@ stack is complete. New work branches from current `main`.
   current public release. Alpha.53 remains an unpublished candidate.
 - PUBLIC-23 merged in [PR #61](https://github.com/spa5k/pkg/pull/61). Its bounded
   startup check is on `main`, but it is not in alpha.54.
-- The owner resumed alpha release work on 26 September. Alpha.55 will include
+- The owner resumed alpha release work on 26 September. Alpha.56 will include
   PUBLIC-23, the nine bug fixes, and the six UX fixes after the release gates.
 - Production trust is not active. The alpha uses a test root and ad-hoc macOS
   signing. Tooling readiness does not mean production readiness.
@@ -113,14 +116,14 @@ The [production tasks](../openspec/changes/execute-production-trust-ceremony/tas
 contain only the remaining activation work. Signing helpers and the initial
 runbook already exist.
 
-### RELEASE-NEXT: alpha.55 publication
+### RELEASE-NEXT: alpha.56 publication
 
 - **Purpose:** publish PUBLIC-23 and the confirmed bug and UX fixes.
-- **Owns:** version metadata, signed alpha assets, channel sequence 55, public
+- **Owns:** version metadata, signed alpha assets, channel sequence 56, public
   installation instructions, and exact-release lifecycle evidence.
 - **Depends:** reviewed source changes and passing CI for the final source.
 - **Tests & gates:** signed native builds; authenticated channel and artifact
-  verification; native macOS alpha.54-to-alpha.55 upgrade on the same VM;
+  verification; native macOS alpha.54-to-alpha.55-to-alpha.56 upgrade on the same VM;
   reboot; package workflows; removal; fresh public Linux and macOS checks.
 - **Rollback:** publish a higher channel sequence with prior approved content.
   Never replay older metadata. Keep the alpha test root separate from production.
