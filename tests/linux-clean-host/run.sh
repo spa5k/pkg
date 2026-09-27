@@ -1329,7 +1329,7 @@ docker exec "$container" sh -eu -c '
     cp /etc/nix/sentry-endpoint /run/pkg-proof-sentry-original
     sha256sum /var/lib/pkg-install/determinate-handoff-v1.json \
         /opt/pkg/uninstall/manifest.json > /run/pkg-proof-uninstall-before
-    printf "changed by proof\n" >> /etc/nix/sentry-endpoint
+    printf "\nchanged by proof\n" >> /etc/nix/sentry-endpoint
 '
 if docker exec "$container" /usr/local/bin/pkg --yes system uninstall; then
     echo "Changed vendor residue was accepted for deletion." >&2
