@@ -21,7 +21,8 @@ use pkg_nix::{
 
 use crate::{
     AcquireError, AuthenticatedBuildPreparation, BuildHostFacts, BuildHostFactsProbe,
-    BuildPlanningAdapter, acquire_cache_only_with_progress, assemble_cache_install_evidence,
+    BuildIntentError, BuildIntentErrorCode, BuildPlanningAdapter, acquire_cache_only_with_progress,
+    assemble_cache_install_evidence,
     host_facts::{ProductionBuildHostFactsProbe, production_native_system},
     preflight_cache_only, resolve_install, verify_acquired,
 };
@@ -352,12 +353,17 @@ impl AuthenticatedBuildAuthority {
             (state.channel.clone(), state.index.clone())
         };
         let adapter = Arc::clone(&self.adapter);
+        let mut acquisition_error = BuildAuthorityErrorCode::AcquisitionRefused;
         caller
             .acquire_cache_install(handle, || {
                 let source_spec = NixpkgsFetchSpec::from_verified_channel(&channel)
                     .map_err(|_| acquisition_refused("source"))?;
-                let source = fetch_verified_nixpkgs(&source_spec, adapter.as_ref())
-                    .map_err(|_| acquisition_refused("fetch"))?;
+                let source =
+                    fetch_verified_nixpkgs(&source_spec, adapter.as_ref()).map_err(|error| {
+                        acquisition_error =
+                            BuildAuthorityErrorCode::from_planning(BuildIntentError::source(error));
+                        acquisition_refused("fetch");
+                    })?;
                 let system =
                     production_native_system().map_err(|_| acquisition_refused("resolve"))?;
                 let resolved = resolve_install(
@@ -367,7 +373,12 @@ impl AuthenticatedBuildAuthority {
                     index.as_ref().map(VerifiedIndex::document),
                     adapter.as_ref(),
                 )
-                .map_err(|_| acquisition_refused("resolve"))?;
+                .map_err(|error| {
+                    acquisition_error = BuildAuthorityErrorCode::from_planning(
+                        BuildIntentError::resolution(&error),
+                    );
+                    acquisition_refused("resolve");
+                })?;
                 let preflight = preflight_cache_only(&resolved)
                     .map_err(|_| acquisition_refused("preflight"))?;
                 let acquired = match acquire_cache_only_with_progress(
@@ -383,6 +394,8 @@ impl AuthenticatedBuildAuthority {
                         return Ok(CacheInstallAttempt::BuildRequired);
                     }
                     Err(AcquireError::SubstituteRefused(code, adapter_code)) => {
+                        acquisition_error =
+                            BuildAuthorityErrorCode::from_substitution(code, adapter_code);
                         substitution_refused(code, adapter_code);
                         return Err(());
                     }
@@ -391,8 +404,10 @@ impl AuthenticatedBuildAuthority {
                         return Err(());
                     }
                 };
-                let verified =
-                    verify_acquired(acquired).map_err(|_| acquisition_refused("verification"))?;
+                let verified = verify_acquired(acquired).map_err(|_| {
+                    acquisition_error = BuildAuthorityErrorCode::AcquisitionVerificationFailed;
+                    acquisition_refused("verification");
+                })?;
                 let evidence =
                     assemble_cache_install_evidence(&resolved, &verified, adapter.as_ref())
                         .map_err(|_| acquisition_refused("evidence"))?;
@@ -409,9 +424,7 @@ impl AuthenticatedBuildAuthority {
                     | BrokerErrorCode::InvalidAdmissionTransition => {
                         BuildAuthorityErrorCode::AcquisitionIntentRefused
                     }
-                    BrokerErrorCode::CacheAcquisitionFailed => {
-                        BuildAuthorityErrorCode::AcquisitionRefused
-                    }
+                    BrokerErrorCode::CacheAcquisitionFailed => acquisition_error,
                     _ => BuildAuthorityErrorCode::AcquisitionRefused,
                 };
                 BuildAuthorityError::new(code)
@@ -619,10 +632,45 @@ pub enum BuildAuthorityErrorCode {
     PreparationRefused,
     /// Cache-first acquisition or its broker lifecycle failed closed.
     AcquisitionRefused,
+    /// The managed engine was unavailable during acquisition.
+    AcquisitionEngineUnavailable,
+    /// Source, package trust, or acquired identity failed verification.
+    AcquisitionVerificationFailed,
     /// Cache-first acquisition was cancelled by the operation lifecycle.
     AcquisitionCancelled,
     /// Cache-first acquisition was requested with an invalid operation intent.
     AcquisitionIntentRefused,
+}
+
+impl BuildAuthorityErrorCode {
+    const fn from_planning(error: BuildIntentError) -> Self {
+        match error.code() {
+            BuildIntentErrorCode::RuntimeUnavailable => Self::AcquisitionEngineUnavailable,
+            BuildIntentErrorCode::VerificationFailed => Self::AcquisitionVerificationFailed,
+            _ => Self::AcquisitionRefused,
+        }
+    }
+
+    const fn from_substitution(
+        code: SubstituteErrorCode,
+        adapter: Option<NixAdapterErrorCode>,
+    ) -> Self {
+        match code {
+            SubstituteErrorCode::AdapterFailure => match adapter {
+                Some(NixAdapterErrorCode::Unavailable | NixAdapterErrorCode::Timeout) => {
+                    Self::AcquisitionEngineUnavailable
+                }
+                Some(NixAdapterErrorCode::TrustFailure | NixAdapterErrorCode::IntegrityFailure) => {
+                    Self::AcquisitionVerificationFailed
+                }
+                _ => Self::AcquisitionRefused,
+            },
+            SubstituteErrorCode::UnapprovedSignature
+            | SubstituteErrorCode::IntegrityFailure
+            | SubstituteErrorCode::TrustFailure
+            | SubstituteErrorCode::MetadataMismatch => Self::AcquisitionVerificationFailed,
+        }
+    }
 }
 
 /// Redacted failure at the broker-owned build-authority boundary.
@@ -705,7 +753,49 @@ mod tests {
     }
 
     #[test]
-    fn acquisition_diagnostics_are_one_static_redacted_line() {
+    fn acquisition_failures_keep_typed_categories_and_redacted_diagnostics() {
+        for (adapter, expected) in [
+            (None, BuildAuthorityErrorCode::AcquisitionRefused),
+            (
+                Some(NixAdapterErrorCode::OperationFailed),
+                BuildAuthorityErrorCode::AcquisitionRefused,
+            ),
+            (
+                Some(NixAdapterErrorCode::Unavailable),
+                BuildAuthorityErrorCode::AcquisitionEngineUnavailable,
+            ),
+            (
+                Some(NixAdapterErrorCode::Timeout),
+                BuildAuthorityErrorCode::AcquisitionEngineUnavailable,
+            ),
+            (
+                Some(NixAdapterErrorCode::TrustFailure),
+                BuildAuthorityErrorCode::AcquisitionVerificationFailed,
+            ),
+            (
+                Some(NixAdapterErrorCode::IntegrityFailure),
+                BuildAuthorityErrorCode::AcquisitionVerificationFailed,
+            ),
+        ] {
+            assert_eq!(
+                BuildAuthorityErrorCode::from_substitution(
+                    SubstituteErrorCode::AdapterFailure,
+                    adapter
+                ),
+                expected
+            );
+        }
+        for code in [
+            SubstituteErrorCode::UnapprovedSignature,
+            SubstituteErrorCode::TrustFailure,
+            SubstituteErrorCode::IntegrityFailure,
+            SubstituteErrorCode::MetadataMismatch,
+        ] {
+            assert_eq!(
+                BuildAuthorityErrorCode::from_substitution(code, None),
+                BuildAuthorityErrorCode::AcquisitionVerificationFailed
+            );
+        }
         let mut output = Vec::new();
         write_substitution_diagnostic(
             &mut output,

@@ -484,7 +484,6 @@ impl RealNixAdapter {
         args.extend(paths.iter().map(|path| OsString::from(path.as_str())));
         self.require_success(MethodKind::Substitute, args, BUILD_TIMEOUT)
             .map(|_| ())
-            .map_err(|_| NixAdapterError::TrustFailure)
     }
 
     pub(super) fn raw_path_info(
@@ -784,8 +783,7 @@ impl NixAdapter for RealNixAdapter {
     fn substitute(&self, path: &StorePath) -> Result<SubstituteReport, NixAdapterError> {
         let mut ping = base_args();
         ping.extend(os_args(["store", "ping", "--store", CACHE_URL]));
-        self.require_success(MethodKind::Substitute, ping, SHORT_TIMEOUT)
-            .map_err(|_| NixAdapterError::Unavailable)?;
+        self.require_success(MethodKind::Substitute, ping, SHORT_TIMEOUT)?;
 
         let remote = match self.raw_path_info(path, false, true) {
             Ok(remote) => remote,
@@ -808,8 +806,7 @@ impl NixAdapter for RealNixAdapter {
         let mut copy = base_args();
         copy.extend(os_args(["copy", "--from", CACHE_URL]));
         copy.push(path.as_str().into());
-        self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)
-            .map_err(|_| NixAdapterError::TrustFailure)?;
+        self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)?;
         self.copy_cache_signatures(&[path])?;
         let local = self.raw_path_info(path, false, false)?;
         let local_entry = root_path_info(&local, path)?;
@@ -829,8 +826,7 @@ impl NixAdapter for RealNixAdapter {
         }
         let mut ping = base_args();
         ping.extend(os_args(["store", "ping", "--store", CACHE_URL]));
-        self.require_success(MethodKind::Substitute, ping, SHORT_TIMEOUT)
-            .map_err(|_| NixAdapterError::Unavailable)?;
+        self.require_success(MethodKind::Substitute, ping, SHORT_TIMEOUT)?;
 
         let mut reports = Vec::with_capacity(paths.len());
         for chunk in paths.chunks(PATH_INFO_BATCH_SIZE) {
@@ -890,8 +886,7 @@ impl NixAdapter for RealNixAdapter {
                         .iter()
                         .map(|path| OsString::from(path.as_str())),
                 );
-                self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)
-                    .map_err(|_| NixAdapterError::TrustFailure)?;
+                self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)?;
                 self.copy_cache_signatures(&authenticated_paths)?;
                 let local = self.raw_path_infos(&authenticated_paths, false, false)?;
                 for (index, path, remote_hash, nar_hash, signatures) in authenticated {

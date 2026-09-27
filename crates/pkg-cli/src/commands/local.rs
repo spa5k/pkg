@@ -2592,33 +2592,46 @@ const fn install_build_error_fields(
     }
 }
 
+const fn cache_acquisition_error_fields(
+    code: Option<CacheInstallErrorCode>,
+) -> (ExitCode, &'static str, &'static str) {
+    match code {
+        Some(CacheInstallErrorCode::InvalidIntent) => (
+            ExitCode::ResolveFailed,
+            "the package request was refused",
+            "check the package name, then retry the package operation",
+        ),
+        Some(CacheInstallErrorCode::AcquisitionFailed) => (
+            ExitCode::AcquireNetwork,
+            "the trusted package download failed",
+            "check network access, then retry the package operation",
+        ),
+        Some(CacheInstallErrorCode::VerificationFailed) => (
+            ExitCode::VerifyFail,
+            "the package could not be verified",
+            "run `pkg update` and retry; report the verification failure if it continues",
+        ),
+        Some(CacheInstallErrorCode::Cancelled) => (
+            ExitCode::Cancelled,
+            "the package operation was cancelled",
+            "run the package operation again when ready",
+        ),
+        Some(CacheInstallErrorCode::AuthorityUnavailable) | None => (
+            ExitCode::EngineUnavailable,
+            "the trusted package service is unavailable",
+            "run `pkg doctor`, then retry the package operation",
+        ),
+    }
+}
+
 const fn install_broker_error_fields(
     code: BrokerClientErrorCode,
     cache_code: Option<CacheInstallErrorCode>,
 ) -> (ExitCode, &'static str, &'static str) {
     match code {
-        BrokerClientErrorCode::InstallAcquisitionRefused => match cache_code {
-            Some(CacheInstallErrorCode::InvalidIntent) => (
-                ExitCode::ResolveFailed,
-                "the package request was refused",
-                "check the package name, then retry the package operation",
-            ),
-            Some(CacheInstallErrorCode::AcquisitionFailed) => (
-                ExitCode::AcquireNetwork,
-                "the trusted package download failed",
-                "check network access, then retry the package operation",
-            ),
-            Some(CacheInstallErrorCode::Cancelled) => (
-                ExitCode::Cancelled,
-                "the package operation was cancelled",
-                "run the package operation again when ready",
-            ),
-            Some(CacheInstallErrorCode::AuthorityUnavailable) | None => (
-                ExitCode::EngineUnavailable,
-                "the trusted package service is unavailable",
-                "run `pkg doctor`, then retry the package operation",
-            ),
-        },
+        BrokerClientErrorCode::InstallAcquisitionRefused => {
+            cache_acquisition_error_fields(cache_code)
+        }
         BrokerClientErrorCode::BuildRefused => (
             ExitCode::BuildFailed,
             "the local build failed",

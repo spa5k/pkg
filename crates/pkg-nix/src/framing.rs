@@ -535,8 +535,10 @@ pub enum ChannelRefreshErrorCode {
 pub enum CacheInstallErrorCode {
     /// The handle, operation class, or retained intent was invalid.
     InvalidIntent,
-    /// Authenticated resolution, substitution, or verification failed.
+    /// Authenticated resolution or cache acquisition failed.
     AcquisitionFailed,
+    /// The source, package trust, or acquired identity failed verification.
+    VerificationFailed,
     /// Lifecycle cancellation won while acquisition was in flight.
     Cancelled,
     /// Broker-owned channel or acquisition authority was unavailable.
@@ -550,6 +552,7 @@ impl CacheInstallErrorCode {
         match self {
             Self::InvalidIntent => "invalid-intent",
             Self::AcquisitionFailed => "acquisition-failed",
+            Self::VerificationFailed => "verification-failed",
             Self::Cancelled => "cancelled",
             Self::AuthorityUnavailable => "authority-unavailable",
         }
@@ -2790,6 +2793,7 @@ fn parse_cache_install_error_code(value: &str) -> Result<CacheInstallErrorCode, 
     match value {
         "invalid-intent" => Ok(CacheInstallErrorCode::InvalidIntent),
         "acquisition-failed" => Ok(CacheInstallErrorCode::AcquisitionFailed),
+        "verification-failed" => Ok(CacheInstallErrorCode::VerificationFailed),
         "cancelled" => Ok(CacheInstallErrorCode::Cancelled),
         "authority-unavailable" => Ok(CacheInstallErrorCode::AuthorityUnavailable),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
@@ -4901,6 +4905,7 @@ mod tests {
         for code in [
             CacheInstallErrorCode::InvalidIntent,
             CacheInstallErrorCode::AcquisitionFailed,
+            CacheInstallErrorCode::VerificationFailed,
             CacheInstallErrorCode::Cancelled,
             CacheInstallErrorCode::AuthorityUnavailable,
         ] {

@@ -108,6 +108,11 @@ impl Fixture {
     }
 }
 
+fn write_service_file(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    fs::write(path, contents)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o644))
+}
+
 #[test]
 fn install_parent_preflight_refuses_unsafe_system_directories_without_repairing_them()
 -> Result<(), Box<dyn Error>> {
@@ -638,7 +643,7 @@ fn upgrade_replaces_only_exact_prior_owned_bytes_and_rolls_back() -> Result<(), 
         .path()
         .join("usr/lib/systemd/system/pkg-nix-broker.service");
     let prior = b"prior authenticated unit\n";
-    fs::write(&path, prior)?;
+    write_service_file(&path, prior)?;
     let prior_digest = body_digest(prior);
 
     assert!(fixture.manager.replace_static_owned_file(
@@ -655,7 +660,7 @@ fn upgrade_replaces_only_exact_prior_owned_bytes_and_rolls_back() -> Result<(), 
     fixture.manager.rollback_asset(asset)?;
     assert_eq!(fs::read(&path)?, prior);
 
-    fs::write(&path, b"locally changed unit\n")?;
+    write_service_file(&path, b"locally changed unit\n")?;
     assert_eq!(
         failure_code(&fixture.manager.replace_static_owned_file(
             asset,
@@ -679,7 +684,7 @@ fn explicit_repair_restores_candidate_bytes_and_rolls_back_on_later_failure()
         .path()
         .join("usr/lib/systemd/system/pkg-nix-broker.service");
     let modified = b"locally changed unit\n";
-    fs::write(&path, modified)?;
+    write_service_file(&path, modified)?;
 
     assert!(fixture.manager.replace_static_owned_file(
         asset,
@@ -706,7 +711,7 @@ fn interrupted_upgrade_restores_prior_bytes_from_the_fixed_backup() -> Result<()
         .path()
         .join("usr/lib/systemd/system/pkg-nix-broker.service");
     let prior = b"prior authenticated unit\n";
-    fs::write(&path, prior)?;
+    write_service_file(&path, prior)?;
     let prior_digest = body_digest(prior);
     fixture.manager.replace_static_owned_file(
         asset,
@@ -732,8 +737,8 @@ fn interrupted_upgrade_before_exchange_discards_only_the_candidate_backup()
     let path = parent.join("pkg-nix-broker.service");
     let backup = parent.join(rollback_name(asset));
     let prior = b"prior authenticated unit\n";
-    fs::write(&path, prior)?;
-    fs::write(&backup, LinuxSystemdAssets::BROKER_SERVICE)?;
+    write_service_file(&path, prior)?;
+    write_service_file(&backup, LinuxSystemdAssets::BROKER_SERVICE)?;
 
     fixture
         .manager
@@ -761,7 +766,7 @@ fn partial_upgrade_staging_refuses_when_live_prior_identity_is_wrong() -> Result
     let path = parent.join("pkg-nix-broker.service");
     let staging = parent.join(rollback_name(asset));
     let authenticated_prior = b"authenticated prior unit\n";
-    fs::write(&path, b"unknown live bytes\n")?;
+    write_service_file(&path, b"unknown live bytes\n")?;
     fs::write(&staging, b"partial candidate")?;
     fs::set_permissions(&staging, fs::Permissions::from_mode(0o600))?;
 
@@ -870,7 +875,7 @@ fn repair_recovery_keeps_candidate_and_discards_unknown_prior_bytes() -> Result<
     let parent = fixture.temporary.path().join("usr/lib/systemd/system");
     let path = parent.join("pkg-nix-broker.service");
     let backup = parent.join(rollback_name(asset));
-    fs::write(&path, LinuxSystemdAssets::BROKER_SERVICE)?;
+    write_service_file(&path, LinuxSystemdAssets::BROKER_SERVICE)?;
     fs::write(&backup, b"unknown prior bytes")?;
     fs::set_permissions(&backup, fs::Permissions::from_mode(0o600))?;
 
@@ -923,7 +928,7 @@ fn committed_repair_cleanup_is_exact_and_resumable() -> Result<(), Box<dyn Error
         .temporary
         .path()
         .join("usr/lib/systemd/system/pkg-nix-broker.service");
-    fs::write(&path, b"locally changed unit\n")?;
+    write_service_file(&path, b"locally changed unit\n")?;
     fixture.manager.replace_static_owned_file(
         asset,
         LinuxSystemdAssets::BROKER_SERVICE,

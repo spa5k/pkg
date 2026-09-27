@@ -748,7 +748,7 @@ mod tests {
         let binary = temporary.path().join("nix");
         std::fs::write(
             &binary,
-            "#!/bin/sh\ncase \"$*\" in\n  *'flake metadata'*) printf source-metadata ;;\n  *) exit 42 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$*\" in\n  *'flake metadata'*) printf source-metadata ;;\n  'store ping --store daemon') exit 0 ;;\n  *) exit 42 ;;\nesac\n",
         )?;
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))?;
         std::fs::copy(&binary, temporary.path().join("nix-store"))?;

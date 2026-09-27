@@ -480,34 +480,38 @@ fn cache_acquisition_refusal_is_typed_and_keeps_the_connection_usable() -> Resul
         OutputSelection::default_selection(),
         SourceRevision::CurrentChannel,
     );
-    server.write_all(&ProductFrameCodec::encode_cli_response(
-        1,
-        &CliBrokerResponse::InstallAcquisitionRefused(CacheInstallErrorCode::AuthorityUnavailable),
-    )?)?;
     let mut client = BrokerLifecycleClient::from_stream(client);
-
-    let error = client
-        .acquire_install(handle.clone(), vec![selector.clone()])
-        .unwrap_err();
-    assert_eq!(
-        error.code(),
-        BrokerClientErrorCode::InstallAcquisitionRefused
-    );
-    assert_eq!(
-        error.cache_install_code(),
-        Some(CacheInstallErrorCode::AuthorityUnavailable)
-    );
-    assert!(client.healthy);
-    let request = read_frame(
-        &mut server,
-        Instant::now()
-            .checked_add(RESPONSE_TIMEOUT)
-            .ok_or_else(|| io::Error::other("deadline overflow"))?,
-    )?;
-    assert_eq!(
-        ProductFrameCodec::decode_cli_request(&request)?,
-        (1, CliBrokerRequest::AcquireInstall(handle, vec![selector]))
-    );
+    for (request_id, code) in [
+        (1, CacheInstallErrorCode::AuthorityUnavailable),
+        (2, CacheInstallErrorCode::VerificationFailed),
+    ] {
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            request_id,
+            &CliBrokerResponse::InstallAcquisitionRefused(code),
+        )?)?;
+        let error = client
+            .acquire_install(handle.clone(), vec![selector.clone()])
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            BrokerClientErrorCode::InstallAcquisitionRefused
+        );
+        assert_eq!(error.cache_install_code(), Some(code));
+        assert!(client.healthy);
+        let request = read_frame(
+            &mut server,
+            Instant::now()
+                .checked_add(RESPONSE_TIMEOUT)
+                .ok_or_else(|| io::Error::other("deadline overflow"))?,
+        )?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&request)?,
+            (
+                request_id,
+                CliBrokerRequest::AcquireInstall(handle.clone(), vec![selector.clone()])
+            )
+        );
+    }
     Ok(())
 }
 
