@@ -1890,7 +1890,7 @@ fn acquire_install_evidence(
             if matches!(
                 cache_code,
                 Some(
-                    CacheInstallErrorCode::InvalidIntent | CacheInstallErrorCode::AcquisitionFailed
+                    CacheInstallErrorCode::InvalidIntent | CacheInstallErrorCode::ResolutionFailed
                 )
             ) && let Some(diagnostic) = diagnose_install_selector_error(broker, &selectors)
             {
@@ -2064,8 +2064,8 @@ fn diagnose_install_selector_error(
         #[cfg(not(target_os = "linux"))]
         return Some(CommandError::new(
             ExitCode::ResolveFailed,
-            "the public package could not be fetched or evaluated",
-            "check the repository, package output, network access, and committed flake.lock; inputs must use locked remote sources",
+            "the public package could not be evaluated",
+            "check the package output and committed flake.lock; inputs must use locked remote sources",
         ));
     }
     let requests = selectors
@@ -2601,10 +2601,15 @@ const fn cache_acquisition_error_fields(
             "the package request was refused",
             "check the package name, then retry the package operation",
         ),
+        Some(CacheInstallErrorCode::ResolutionFailed) => (
+            ExitCode::ResolveFailed,
+            "the package could not be resolved",
+            "check the package name and requested version, then retry the package operation",
+        ),
         Some(CacheInstallErrorCode::AcquisitionFailed) => (
             ExitCode::AcquireNetwork,
-            "the trusted package download failed",
-            "check network access, then retry the package operation",
+            "the package source or download could not be obtained",
+            "check the source reference and network access, then retry the package operation",
         ),
         Some(CacheInstallErrorCode::VerificationFailed) => (
             ExitCode::VerifyFail,

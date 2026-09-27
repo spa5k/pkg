@@ -1540,6 +1540,7 @@ dependencies = [
  "pkg-nix",
  "pkg-testkit",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

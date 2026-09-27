@@ -93,6 +93,8 @@ pub enum ResolveErrorCode {
     InvalidSelector,
     /// Evaluate-only Nix execution failed closed.
     EvaluationFailed,
+    /// The public source could not be obtained and locked for evaluation.
+    SourceUnavailable,
     /// The managed evaluator was unavailable or timed out.
     EngineUnavailable,
     /// The evaluator reported a trust or integrity failure.
@@ -185,7 +187,7 @@ fn resolve_flake(
     let lock = match selector.source_revision() {
         SourceRevision::CurrentChannel => adapter
             .lock_flake(reference)
-            .map_err(|error| map_adapter_error(&error))?,
+            .map_err(|error| map_source_lock_error(&error))?,
         SourceRevision::PublicFlake(lock) if lock.reference() == reference => lock.clone(),
         _ => return Err(ResolveError::new(ResolveErrorCode::SourceMismatch)),
     };
@@ -316,6 +318,16 @@ const fn map_adapter_error(error: &NixAdapterError) -> ResolveError {
         }
         _ => ResolveErrorCode::EvaluationFailed,
     })
+}
+
+const fn map_source_lock_error(error: &NixAdapterError) -> ResolveError {
+    let mapped = map_adapter_error(error);
+    match mapped.code() {
+        ResolveErrorCode::EvaluationFailed => {
+            ResolveError::new(ResolveErrorCode::SourceUnavailable)
+        }
+        _ => mapped,
+    }
 }
 
 #[cfg(test)]

@@ -632,6 +632,8 @@ pub enum BuildAuthorityErrorCode {
     PreparationRefused,
     /// Cache-first acquisition or its broker lifecycle failed closed.
     AcquisitionRefused,
+    /// The package selector or its evaluation failed during acquisition.
+    AcquisitionResolutionRefused,
     /// The managed engine was unavailable during acquisition.
     AcquisitionEngineUnavailable,
     /// Source, package trust, or acquired identity failed verification.
@@ -647,6 +649,9 @@ impl BuildAuthorityErrorCode {
         match error.code() {
             BuildIntentErrorCode::RuntimeUnavailable => Self::AcquisitionEngineUnavailable,
             BuildIntentErrorCode::VerificationFailed => Self::AcquisitionVerificationFailed,
+            BuildIntentErrorCode::InvalidIntent | BuildIntentErrorCode::ResolutionFailed => {
+                Self::AcquisitionResolutionRefused
+            }
             _ => Self::AcquisitionRefused,
         }
     }

@@ -535,7 +535,9 @@ pub enum ChannelRefreshErrorCode {
 pub enum CacheInstallErrorCode {
     /// The handle, operation class, or retained intent was invalid.
     InvalidIntent,
-    /// Authenticated resolution or cache acquisition failed.
+    /// The package selector or its evaluation failed.
+    ResolutionFailed,
+    /// Source locking or cache acquisition failed.
     AcquisitionFailed,
     /// The source, package trust, or acquired identity failed verification.
     VerificationFailed,
@@ -551,6 +553,7 @@ impl CacheInstallErrorCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidIntent => "invalid-intent",
+            Self::ResolutionFailed => "resolution-failed",
             Self::AcquisitionFailed => "acquisition-failed",
             Self::VerificationFailed => "verification-failed",
             Self::Cancelled => "cancelled",
@@ -2792,6 +2795,7 @@ fn decode_build_execution_progress(
 fn parse_cache_install_error_code(value: &str) -> Result<CacheInstallErrorCode, FrameError> {
     match value {
         "invalid-intent" => Ok(CacheInstallErrorCode::InvalidIntent),
+        "resolution-failed" => Ok(CacheInstallErrorCode::ResolutionFailed),
         "acquisition-failed" => Ok(CacheInstallErrorCode::AcquisitionFailed),
         "verification-failed" => Ok(CacheInstallErrorCode::VerificationFailed),
         "cancelled" => Ok(CacheInstallErrorCode::Cancelled),
@@ -4904,6 +4908,7 @@ mod tests {
         }
         for code in [
             CacheInstallErrorCode::InvalidIntent,
+            CacheInstallErrorCode::ResolutionFailed,
             CacheInstallErrorCode::AcquisitionFailed,
             CacheInstallErrorCode::VerificationFailed,
             CacheInstallErrorCode::Cancelled,

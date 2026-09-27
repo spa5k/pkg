@@ -219,6 +219,9 @@ impl BuildIntentError {
 
     pub(crate) fn resolution(error: &crate::ResolveBatchError) -> Self {
         Self::new(match error.source().map(pkg_resolver::ResolveError::code) {
+            Some(pkg_resolver::ResolveErrorCode::SourceUnavailable) => {
+                BuildIntentErrorCode::SourceUnavailable
+            }
             Some(pkg_resolver::ResolveErrorCode::EngineUnavailable) => {
                 BuildIntentErrorCode::RuntimeUnavailable
             }
