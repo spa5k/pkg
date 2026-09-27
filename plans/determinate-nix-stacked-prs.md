@@ -102,6 +102,25 @@ Remaining code-quality work:
 - Review complex acquisition, build, commit, and privileged filesystem paths
   with focused behavior tests. A graph score does not justify deleting code.
 
+### INSTALL-01: verify macOS command access
+
+- **Purpose:** check installation state, request administrator access clearly,
+  and prevent completion when the invoking user cannot run a healthy pkg.
+- **Owns:** macOS wrapper path and approval checks, complete bootstrap failure
+  logs, troubleshooting guidance, and regression proof.
+- **Depends:** current `main` and the published alpha.56 package.
+- **Tests & gates:** real package expansion and signature checks; missing,
+  non-executable, blocked or unsafe parent, and launch-failure cases; native
+  approval, cancellation, no-terminal, and healthy controls; final version and
+  health failure logs; G-LINT; docs links; E and A review.
+- **Rollback:** revert the wrapper, bootstrap template, docs, and tests. No
+  permission or user-state migration is included.
+
+The [command-access proof](../tests/macos-clean-host/INSTALL-COMMAND-ACCESS-2026-09-27.md)
+records the alpha.56 false-success reproduction and candidate correction.
+The correction needs review and release. The coworker's exact failure cause
+still needs direct path and command diagnostics.
+
 ### VERIFY-01: repeatable assurance
 
 - **Purpose:** make the existing proofs repeatable and close measured test gaps.
