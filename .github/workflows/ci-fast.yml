@@ -341,9 +341,13 @@ jobs:
         run: python3 -m unittest discover -s packaging/macos -v
 
   test-contracts:
-    name: Behavior test regression guard
-    runs-on: ubuntu-24.04
+    name: Behavior test regression guard (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -359,7 +363,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: test-contracts
+          name: test-contracts-${{ matrix.os }}
           path: ${{ runner.temp }}/test-contracts/
           if-no-files-found: warn
           retention-days: 7

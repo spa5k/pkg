@@ -1,9 +1,10 @@
 # Active implementation plan
 
-Status: alpha product. Reviewed on 26 September 2026. Alpha.56 is public.
-The nine bug fixes, six UX fixes, and final shell corrections are merged and
-released. [Release proof](../tests/release-lifecycle/ALPHA-56-2026-09-26.md)
-records the exact source, signed files, and native/public checks.
+Status: alpha product. Reviewed on 27 September 2026. Alpha.57 is public.
+Its installer and bounded test changes are delivered. PREVIEW-01 below records
+the remaining public-source error-category defect. The
+[alpha.56 proof](../tests/release-lifecycle/ALPHA-56-2026-09-26.md) retains the
+earlier nine bug fixes, six UX fixes, and their native/public checks.
 The filename is retained for existing links. The original four-PR migration
 stack is complete. New work branches from current `main`.
 
@@ -11,7 +12,7 @@ stack is complete. New work branches from current `main`.
 
 - The Determinate migration and both platform cutovers are complete.
   [Completed work](completed-alpha-work.md) records their evidence.
-- [Alpha.56](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.56) is current.
+- [Alpha.57](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.57) is current.
   Alpha.53 and alpha.55 remain unpublished candidates.
 - Alpha.56 includes PUBLIC-23 from [PR #61](https://github.com/spa5k/pkg/pull/61),
   nine bugs from [PR #62](https://github.com/spa5k/pkg/pull/62), six UX fixes from
@@ -26,16 +27,16 @@ removed; their replacements are in the completed-work record and Git history.
 
 ## Remaining work
 
-### RELEASE-NEXT: alpha.57 publication
+### RELEASE-NEXT: alpha.58 publication
 
-- **Purpose:** release the reviewed test guards, installer fixes, and accurate
-  install-preparation diagnostics as alpha.57.
-- **Owns:** version pins, signed alpha assets, sequence-57 catalogs and channel,
+- **Purpose:** release the remaining public-source error-category correction
+  as alpha.58. Alpha.57 remains immutable and publicly available.
+- **Owns:** version pins, signed alpha assets, sequence-58 catalogs and channel,
   exact native upgrade and reboot proof, public checks, and current release records.
-- **Depends:** merged INSTALL-01, INSTALL-02, INSTALL-03, and PREVIEW-01 fixes.
+- **Depends:** merged alpha.57 changes and the remaining PREVIEW-01 correction.
 - **Tests & gates:** Rust 1.96.1 G-LINT and G-QUALITY; behavior regression guard;
   native Linux lifecycle; exact Cosign asset and sealed-channel verification;
-  same-VM alpha.56 upgrade, package use, and real reboot; public Linux/macOS
+  same-VM alpha.57 upgrade, package use, and real reboot; public Linux/macOS
   installation; docs links; E review and A security review before publication.
 - **Rollback:** revert unpublished source changes. After publication, publish a
   higher channel sequence with approved assets. Never replace signed release files,
@@ -43,19 +44,27 @@ removed; their replacements are in the completed-work record and Git history.
 
 ### PREVIEW-01: preserve package-preparation failure categories
 
-- **Purpose:** show a resolution error for an invalid or unknown package without
-  hiding a source, verification, or managed-engine failure.
-- **Owns:** redacted preparation error categories from the real planner through
-  the broker protocol to install and upgrade output. An index miss alone is not
-  a resolution failure because direct attribute evaluation remains supported.
-- **Depends:** current `main`; this delivery follows the installer and test
-  isolation changes in PR #70.
+- **Purpose:** preserve public-flake source-lock failures as source errors in both
+  preview and live installation. An unavailable output from a locked source
+  remains a resolution error. Typed engine and verification errors remain distinct.
+- **Owns:** the remaining category loss in cache-first planning, strict broker
+  responses, and CLI handling. Do not infer a backend cause from a generic source
+  failure. An index miss alone is not a resolution failure.
+- **Depends:** current `main`, including PR #71 and the public alpha.57 entry
+  update in PR #73. The earlier literal-selector fixes remain delivered.
 - **Tests & gates:** installed CLI and real broker checks for preview/live
-  resolution failure, a valid preview, unchanged committed state, and an
-  unavailable engine; source and verification failure controls; strict protocol
+  missing locked-source and missing-output failures, valid controls, unchanged
+  committed state, and an unavailable engine; verification controls; strict protocol
   decoding; pinned G-LINT and G-QUALITY; docs links; E and A review.
 - **Rollback:** revert the code and proof change. No package-state migration is
   introduced. CLI and broker must come from the same release.
+
+The signed alpha.57 Mac control reproduces source-lock preview 66 versus live
+64 for an absent fixed public revision. A missing output at a valid fixed
+revision returns 64 in both modes. All 45 recorded committed-state and package
+GC-root entries stay unchanged. This confirmed category defect is separate from
+the retained hosted public-build refusal at `stage=resolve`, whose underlying
+cause remains unknown. Keep both failed controls in the final release evidence.
 
 ### INSTALL-02: refuse unsafe parents before vendor installation
 

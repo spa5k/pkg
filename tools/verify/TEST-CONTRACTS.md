@@ -17,9 +17,14 @@ with the defect, and a passing restored control. The mutation target must match
 exactly once. A changed target fails closed. Build/import failures, skipped or
 missing tests, and timeouts do not count as caught defects.
 
-The eleven cases cover renderer digests, symlink and tag refusal, doctor rows,
+The twelve shared cases cover renderer digests, symlink and tag refusal, doctor rows,
 public-result privacy, trusted HOME boundaries, workflow manual gating, harness
-entry, GC dry-run policy, and exactly-once dispatch. The
+entry, GC dry-run policy, exactly-once dispatch, and public-source error
+categories across the real broker socket codec and CLI JSON output. macOS runs
+a thirteenth case that restores the public source-lock/evaluation category
+confusion. Its keeper runs real child processes through the source sandbox.
+Linux does not support public flake execution, so that case is selected only
+on macOS; the shared socket case still runs on both platforms. The
 [audit and cleanup evidence](../../tests/test-audit/2026-09-27/cleanup.md)
 explains the original gaps. New false-green findings need a meaningful case
 here or equivalent mutation proof in their owning platform lane.
@@ -28,9 +33,10 @@ The guard's integration tests use actual Python source files and child test
 processes. They verify that weak assertions, missing tests, skipped tests,
 import failures, and stale mutation targets cannot produce a passing guard.
 
-Fast CI runs this job on every pull request and main push. The aggregate result
-requires its success. Logs and machine-readable results are retained as a CI
-artifact. A reviewer must check any removal or weakening of cases against the
+Fast CI runs this job on Ubuntu 24.04 and macOS 15 on every pull request and main
+push. The aggregate result requires both matrix jobs to succeed. Logs and
+machine-readable results are retained in separate platform CI artifacts.
+A reviewer must check any removal or weakening of cases against the
 product contract; no local test can make its own deletion impossible.
 
 This guard covers known regressions. It is not proof of full native installation,

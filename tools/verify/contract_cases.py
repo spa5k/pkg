@@ -16,6 +16,7 @@ workflow = python_test('tools/release', 'test_workflow.py')
 privacy = rust_test(['--lib'], 'commands::execute::tests::public_result_rejects_private_runtime_material_and_reserved_fields')
 doctor = rust_test(['--test', 'cli'], 'completion_is_real_static_source_and_doctor_reports_verified_host_state')
 policy = rust_test(['--lib'], 'commands::execute::tests::core_engine_routes_every_variant_and_preserves_global_policy')
+public_source = rust_test(['--lib'], 'commands::local::tests::public_source_acquisition_refusals_keep_categories_and_cancel')
 cases = [
     ('renderer-wrong-sha256', 'tools/install/render.py', 'hashlib.file_digest(stream, "sha256").hexdigest()', '("0" * 64)', bootstrap),
     ('renderer-symlink-accepted', 'tools/install/render.py', 'path.is_symlink() or ', '', renderer),
@@ -28,4 +29,18 @@ cases = [
     ('renderer-swapped-artifact-digests', 'tools/install/render.py', '    source = (ROOT / "docs/install.sh").read_text()', '    replacements["PKG_SHA256_X86_64_LINUX"], replacements["PKG_SHA256_MACOS_PACKAGE"] = replacements["PKG_SHA256_MACOS_PACKAGE"], replacements["PKG_SHA256_X86_64_LINUX"]\n    source = (ROOT / "docs/install.sh").read_text()', bootstrap),
     ('gc-dry-run-policy-lost', 'crates/pkg-cli/src/commands/execute.rs', 'Command::Gc(args) => self.operations.gc(args, policy),', 'Command::Gc(args) => self.operations.gc(args, OperationPolicy { dry_run: false, ..policy }),', policy),
     ('duplicate-remove-dispatch', 'crates/pkg-cli/src/commands/execute.rs', 'Command::Remove(args) => self.operations.remove(args, policy),', 'Command::Remove(args) => { self.operations.remove(args, policy)?; self.operations.remove(args, policy) },', policy),
+    ('public-source-coerced-to-resolution', 'crates/pkg-cli/src/commands/local.rs', 'CacheInstallErrorCode::InvalidIntent | CacheInstallErrorCode::ResolutionFailed', 'CacheInstallErrorCode::InvalidIntent | CacheInstallErrorCode::AcquisitionFailed', public_source),
 ]
+
+# Public flake execution is supported on macOS. Its owner uses the real source
+# subprocess sandbox; it must run there, not count a missing Linux test as proof.
+if sys.platform == 'darwin':
+    cases.append((
+        'public-source-lock-coerced-to-evaluation',
+        'crates/pkg-resolver/src/lib.rs',
+        'ResolveError::new(ResolveErrorCode::SourceUnavailable)',
+        'ResolveError::new(ResolveErrorCode::EvaluationFailed)',
+        ['cargo', 'test', '--locked', '-p', 'pkg-resolver', '--lib',
+         'tests::public_source::public_source_process_failure_keeps_lock_and_evaluation_categories',
+         '--', '--exact'],
+    ))

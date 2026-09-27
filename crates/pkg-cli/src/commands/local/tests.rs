@@ -1325,6 +1325,112 @@ fn cache_hit_uses_the_closed_acquire_protocol_and_returns_evidence() {
 }
 
 #[test]
+fn public_source_acquisition_refusals_keep_categories_and_cancel() {
+    for (code, expected) in [
+        (
+            CacheInstallErrorCode::AcquisitionFailed,
+            ExitCode::AcquireNetwork,
+        ),
+        (
+            CacheInstallErrorCode::ResolutionFailed,
+            ExitCode::ResolveFailed,
+        ),
+        (
+            CacheInstallErrorCode::VerificationFailed,
+            ExitCode::VerifyFail,
+        ),
+        (
+            CacheInstallErrorCode::AuthorityUnavailable,
+            ExitCode::EngineUnavailable,
+        ),
+    ] {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let worker = thread::spawn(move || serve_public_acquisition_refusal(&mut server, code));
+        let mut broker = BrokerLifecycleClient::from_stream(client);
+        let mut events = Vec::new();
+        let error = acquire_install_evidence(
+            &mut broker,
+            vec![PackageSelector::new(
+                SelectorId::new("sel_public").unwrap(),
+                SelectorInput::new("github:example/tools#default").unwrap(),
+                pkg_core::VersionPreference::Any,
+                pkg_core::OutputSelection::default_selection(),
+                SourceRevision::CurrentChannel,
+            )],
+            OperationPolicy::for_test(true, false),
+            true,
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        drop(broker);
+        worker.join().unwrap();
+        assert_eq!(error.exit_code(), expected, "{code:?}");
+        assert_eq!(events.len(), 1, "a refusal must not start a build");
+        for mode in [OutputMode::Json, OutputMode::JsonLines] {
+            let mut output = Vec::new();
+            crate::ux::write_error(&mut output, Vec::new(), mode, "install", &error).unwrap();
+            let result: Value = serde_json::from_slice(&output).unwrap();
+            assert_eq!(result["schemaVersion"], 1);
+            assert_eq!(result["error"]["code"], expected.as_u8());
+            assert_eq!(result["error"]["symbol"], expected.symbol());
+        }
+    }
+}
+
+fn serve_public_acquisition_refusal(server: &mut UnixStream, code: CacheInstallErrorCode) {
+    let caller = InProcessBroker::new()
+        .unwrap()
+        .connect(InProcessCallerPeer::authenticated(501))
+        .unwrap();
+    let (request_id, request) = read_request(server);
+    assert_eq!(
+        request,
+        CliBrokerRequest::Begin(BrokerOperationKind::Acquire)
+    );
+    let acquire = caller.begin(BrokerOperationKind::Acquire).unwrap();
+    write_response(
+        server,
+        request_id,
+        &CliBrokerResponse::Started(acquire.clone()),
+    );
+    let (request_id, request) = read_request(server);
+    let CliBrokerRequest::AcquireInstall(actual, selectors) = request else {
+        panic!("expected public package acquisition");
+    };
+    assert_eq!(actual, acquire);
+    assert_eq!(selectors.len(), 1);
+    assert_eq!(
+        selectors[0].selector().as_str(),
+        "github:example/tools#default"
+    );
+    write_response(
+        server,
+        request_id,
+        &CliBrokerResponse::InstallAcquisitionRefused(code),
+    );
+    let (request_id, request) = read_request(server);
+    assert_eq!(request, CliBrokerRequest::Cancel(acquire.clone()));
+    caller.cancel(&acquire).unwrap();
+    write_response(server, request_id, &CliBrokerResponse::Cancelled);
+    assert_eq!(caller.poll(&acquire).unwrap(), OperationStatus::Cancelled);
+    let mut eof = [0_u8; 1];
+    assert_eq!(
+        server.read(&mut eof).unwrap(),
+        0,
+        "no build or commit after refusal"
+    );
+}
+
+#[test]
 fn install_and_upgrade_report_build_preparation_refusals_and_cancel() {
     use pkg_nix::BuildPreparationErrorCode;
     for (code, expected) in [
@@ -1845,10 +1951,13 @@ fn install_failures_name_the_failed_step_and_next_action() {
         Some(CacheInstallErrorCode::AcquisitionFailed),
     );
     assert_eq!(download.0, ExitCode::AcquireNetwork);
-    assert_eq!(download.1, "the trusted package download failed");
+    assert_eq!(
+        download.1,
+        "the package source or download could not be obtained"
+    );
     assert_eq!(
         download.2,
-        "check network access, then retry the package operation"
+        "check the source reference and network access, then retry the package operation"
     );
 
     let verification = install_broker_error_fields(

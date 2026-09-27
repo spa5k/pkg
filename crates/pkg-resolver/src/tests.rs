@@ -1,5 +1,8 @@
 //! Tests for the `src` module.
 
+#[cfg(all(unix, not(target_os = "linux")))]
+mod public_source;
+
 use super::*;
 use pkg_core::state::Digest;
 use pkg_core::{
