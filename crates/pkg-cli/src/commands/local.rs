@@ -2511,11 +2511,48 @@ fn invalid_install_selector() -> CommandError {
 }
 
 fn install_broker_error(error: BrokerClientError) -> CommandError {
-    let (exit, message, hint) = error.build_execution_code().map_or_else(
-        || install_broker_error_fields(error.code(), error.cache_install_code()),
-        install_build_error_fields,
-    );
+    let (exit, message, hint) = match (error.build_execution_code(), error.build_preparation_code())
+    {
+        (Some(code), _) => install_build_error_fields(code),
+        (_, Some(code)) => install_preparation_error_fields(code),
+        _ => install_broker_error_fields(error.code(), error.cache_install_code()),
+    };
     CommandError::new(exit, message, hint)
+}
+
+const fn install_preparation_error_fields(
+    code: pkg_nix::BuildPreparationErrorCode,
+) -> (ExitCode, &'static str, &'static str) {
+    use pkg_nix::BuildPreparationErrorCode;
+    match code {
+        BuildPreparationErrorCode::IntentRefused | BuildPreparationErrorCode::ResolutionRefused => {
+            (
+                ExitCode::ResolveFailed,
+                "the package request could not be resolved or evaluated",
+                "check the package selector and supported source; run `pkg search` to find package names",
+            )
+        }
+        BuildPreparationErrorCode::SourceUnavailable => (
+            ExitCode::AcquireNetwork,
+            "the package source could not be acquired",
+            "check source availability and network access, then retry the package operation",
+        ),
+        BuildPreparationErrorCode::VerificationRefused => (
+            ExitCode::VerifyFail,
+            "the package source could not be verified",
+            "run `pkg update` and retry; report the verification failure if it continues",
+        ),
+        BuildPreparationErrorCode::HostRefused | BuildPreparationErrorCode::BrokerRefused => (
+            ExitCode::EngineUnavailable,
+            "the managed package engine is unavailable",
+            "run `pkg doctor`, then retry the package operation",
+        ),
+        BuildPreparationErrorCode::PlanningRefused => (
+            ExitCode::EngineUnavailable,
+            "the package operation could not be prepared",
+            "run `pkg doctor`, then retry the package operation",
+        ),
+    }
 }
 
 const fn install_build_error_fields(

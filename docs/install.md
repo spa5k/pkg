@@ -67,6 +67,27 @@ Add the same `[ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv
 Use `~/.bashrc` if your interactive shell is Bash. `cxx-prettyprint` is a
 header library; it does not add a command to PATH.
 
+### If macOS setup stops
+
+Run the installer in Terminal as your normal user. A background command from
+an editor or an AI tool may have no terminal for the administrator password
+prompt. If `sudo` reports that a terminal is required, run the saved installer
+in Terminal. Do not run the complete script with `sudo`.
+
+The public command is `/usr/local/bin/pkg`. `/opt/pkg/bin` holds private service
+binaries. Denied access to that private directory does not mean the CLI is missing.
+These commands check the public path without changing it:
+
+```sh
+/bin/ls -ldeO /usr/local /usr/local/bin /usr/local/bin/pkg
+/usr/local/bin/pkg --version
+```
+
+Keep the command output and the installation logs when asking for help.
+A `Permission denied` message alone does not establish a Full Disk Access
+problem. Check the named path and its access rules first. Keep existing Nix
+receipts and `/pkg` data until their ownership and recovery state are understood.
+
 ### macOS product upgrade and repair
 
 Run the same verified installer for a compatible product upgrade.

@@ -22,6 +22,10 @@ pub enum NixpkgsSourceErrorCode {
     InvalidVerifiedPin,
     /// The closed metadata runner could not execute the fixed request.
     RunnerFailure,
+    /// The managed metadata runner was unavailable or timed out.
+    RunnerUnavailable,
+    /// The runner reported source trust or integrity failure.
+    VerificationFailure,
     /// Nix returned more metadata than the product-owned limit.
     MetadataTooLarge,
     /// Nix metadata was malformed or omitted a required top-level field.
@@ -47,6 +51,19 @@ impl NixpkgsSourceError {
     #[must_use]
     pub const fn runner_failure() -> Self {
         Self::new(NixpkgsSourceErrorCode::RunnerFailure)
+    }
+
+    pub(crate) const fn from_adapter(error: &crate::NixAdapterError) -> Self {
+        Self::new(match error.code() {
+            crate::NixAdapterErrorCode::Unavailable | crate::NixAdapterErrorCode::Timeout => {
+                NixpkgsSourceErrorCode::RunnerUnavailable
+            }
+            crate::NixAdapterErrorCode::TrustFailure
+            | crate::NixAdapterErrorCode::IntegrityFailure => {
+                NixpkgsSourceErrorCode::VerificationFailure
+            }
+            _ => NixpkgsSourceErrorCode::RunnerFailure,
+        })
     }
 
     /// Returns the stable public failure category.

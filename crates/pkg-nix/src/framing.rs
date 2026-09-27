@@ -282,7 +282,13 @@ pub enum BuildPreparationErrorCode {
     HostRefused,
     /// The typed selector batch was invalid under the verified channel.
     IntentRefused,
-    /// Source, resolution, cache classification, or plan construction refused.
+    /// A package selector could not be resolved or evaluated.
+    ResolutionRefused,
+    /// Source acquisition failed before package evaluation.
+    SourceUnavailable,
+    /// Source identity or integrity verification failed.
+    VerificationRefused,
+    /// Cache classification or remaining plan construction refused.
     PlanningRefused,
     /// The caller-bound broker handle would not retain this preparation.
     BrokerRefused,
@@ -295,6 +301,9 @@ impl BuildPreparationErrorCode {
         match self {
             Self::HostRefused => "host_refused",
             Self::IntentRefused => "intent_refused",
+            Self::ResolutionRefused => "resolution_refused",
+            Self::SourceUnavailable => "source_unavailable",
+            Self::VerificationRefused => "verification_refused",
             Self::PlanningRefused => "planning_refused",
             Self::BrokerRefused => "broker_refused",
         }
@@ -2805,6 +2814,9 @@ fn parse_build_preparation_error_code(
     match value {
         "host_refused" => Ok(BuildPreparationErrorCode::HostRefused),
         "intent_refused" => Ok(BuildPreparationErrorCode::IntentRefused),
+        "resolution_refused" => Ok(BuildPreparationErrorCode::ResolutionRefused),
+        "source_unavailable" => Ok(BuildPreparationErrorCode::SourceUnavailable),
+        "verification_refused" => Ok(BuildPreparationErrorCode::VerificationRefused),
         "planning_refused" => Ok(BuildPreparationErrorCode::PlanningRefused),
         "broker_refused" => Ok(BuildPreparationErrorCode::BrokerRefused),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
@@ -4446,6 +4458,9 @@ mod tests {
         for code in [
             BuildPreparationErrorCode::HostRefused,
             BuildPreparationErrorCode::IntentRefused,
+            BuildPreparationErrorCode::ResolutionRefused,
+            BuildPreparationErrorCode::SourceUnavailable,
+            BuildPreparationErrorCode::VerificationRefused,
             BuildPreparationErrorCode::PlanningRefused,
             BuildPreparationErrorCode::BrokerRefused,
         ] {

@@ -452,11 +452,21 @@ impl RealNixAdapter {
         args: Vec<OsString>,
         timeout: Duration,
     ) -> Result<Vec<u8>, NixAdapterError> {
-        let outcome = self.run(method, args, timeout)?;
-        if outcome.code != Some(0) {
-            return Err(NixAdapterError::OperationFailed);
+        let error = match self.run(method, args, timeout) {
+            Ok(outcome) if outcome.code == Some(0) => return Ok(outcome.stdout),
+            Ok(_) => NixAdapterError::OperationFailed,
+            Err(error) => error,
+        };
+        // Nix also uses a nonzero process exit when its daemon is unavailable.
+        // Diagnose that ambiguity without retrying the source or evaluation.
+        // The fixed ping uses MethodKind::Version, so this cannot recurse.
+        if method == MethodKind::EvaluateDerivation
+            && matches!(error, NixAdapterError::OperationFailed)
+            && self.ping_managed_store().is_err()
+        {
+            return Err(NixAdapterError::Unavailable);
         }
-        Ok(outcome.stdout)
+        Err(error)
     }
 
     pub(super) fn copy_cache_signatures(
@@ -674,7 +684,7 @@ impl NixpkgsMetadataRunner for RealNixAdapter {
         );
         args.push("--json".into());
         self.require_success(MethodKind::EvaluateDerivation, args, EVALUATE_TIMEOUT)
-            .map_err(|_| NixpkgsSourceError::runner_failure())
+            .map_err(|error| NixpkgsSourceError::from_adapter(&error))
     }
 }
 

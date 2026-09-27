@@ -1325,84 +1325,126 @@ fn cache_hit_uses_the_closed_acquire_protocol_and_returns_evidence() {
 }
 
 #[test]
-fn local_install_reports_each_build_preparation_refusal_and_cancels() {
-    for code in [
-        pkg_nix::BuildPreparationErrorCode::HostRefused,
-        pkg_nix::BuildPreparationErrorCode::IntentRefused,
-        pkg_nix::BuildPreparationErrorCode::PlanningRefused,
-        pkg_nix::BuildPreparationErrorCode::BrokerRefused,
+fn install_and_upgrade_report_build_preparation_refusals_and_cancel() {
+    use pkg_nix::BuildPreparationErrorCode;
+    for (code, expected) in [
+        (
+            BuildPreparationErrorCode::HostRefused,
+            ExitCode::EngineUnavailable,
+        ),
+        (
+            BuildPreparationErrorCode::IntentRefused,
+            ExitCode::ResolveFailed,
+        ),
+        (
+            BuildPreparationErrorCode::ResolutionRefused,
+            ExitCode::ResolveFailed,
+        ),
+        (
+            BuildPreparationErrorCode::SourceUnavailable,
+            ExitCode::AcquireNetwork,
+        ),
+        (
+            BuildPreparationErrorCode::VerificationRefused,
+            ExitCode::VerifyFail,
+        ),
+        (
+            BuildPreparationErrorCode::PlanningRefused,
+            ExitCode::EngineUnavailable,
+        ),
+        (
+            BuildPreparationErrorCode::BrokerRefused,
+            ExitCode::EngineUnavailable,
+        ),
     ] {
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let worker = thread::spawn(move || {
-            let caller = InProcessBroker::new()
-                .unwrap()
-                .connect(InProcessCallerPeer::authenticated(501))
-                .unwrap();
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::Begin(BrokerOperationKind::Acquire)
-            );
-            let acquire = caller.begin(BrokerOperationKind::Acquire).unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                &CliBrokerResponse::Started(acquire.clone()),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert!(matches!(request, CliBrokerRequest::AcquireInstall(_, _)));
-            write_response(
-                &mut server,
-                request_id,
-                &CliBrokerResponse::InstallBuildRequired,
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Complete(acquire.clone()));
-            caller.complete(&acquire).unwrap();
-            write_response(&mut server, request_id, &CliBrokerResponse::Completed);
+        for operation in ["live-install", "install-preview", "upgrade-preview"] {
+            let (mut server, client) = UnixStream::pair().unwrap();
+            let worker = thread::spawn(move || {
+                let caller = InProcessBroker::new()
+                    .unwrap()
+                    .connect(InProcessCallerPeer::authenticated(501))
+                    .unwrap();
+                if operation == "live-install" {
+                    let (request_id, request) = read_request(&mut server);
+                    assert_eq!(
+                        request,
+                        CliBrokerRequest::Begin(BrokerOperationKind::Acquire)
+                    );
+                    let acquire = caller.begin(BrokerOperationKind::Acquire).unwrap();
+                    write_response(
+                        &mut server,
+                        request_id,
+                        &CliBrokerResponse::Started(acquire.clone()),
+                    );
+                    let (request_id, request) = read_request(&mut server);
+                    assert!(matches!(request, CliBrokerRequest::AcquireInstall(_, _)));
+                    write_response(
+                        &mut server,
+                        request_id,
+                        &CliBrokerResponse::InstallBuildRequired,
+                    );
+                    let (request_id, request) = read_request(&mut server);
+                    assert_eq!(request, CliBrokerRequest::Complete(acquire.clone()));
+                    caller.complete(&acquire).unwrap();
+                    write_response(&mut server, request_id, &CliBrokerResponse::Completed);
+                }
+                let (request_id, request) = read_request(&mut server);
+                assert_eq!(request, CliBrokerRequest::Begin(BrokerOperationKind::Build));
+                let build = caller.begin(BrokerOperationKind::Build).unwrap();
+                write_response(
+                    &mut server,
+                    request_id,
+                    &CliBrokerResponse::Started(build.clone()),
+                );
+                let (request_id, request) = read_request(&mut server);
+                assert!(matches!(request, CliBrokerRequest::PrepareBuild(_, _)));
+                write_response(
+                    &mut server,
+                    request_id,
+                    &CliBrokerResponse::BuildPreparationRefused(code),
+                );
+                let (request_id, request) = read_request(&mut server);
+                assert_eq!(request, CliBrokerRequest::Cancel(build.clone()));
+                caller.cancel(&build).unwrap();
+                write_response(&mut server, request_id, &CliBrokerResponse::Cancelled);
+                assert_eq!(caller.poll(&build).unwrap(), OperationStatus::Cancelled);
+            });
 
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Begin(BrokerOperationKind::Build));
-            let build = caller.begin(BrokerOperationKind::Build).unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                &CliBrokerResponse::Started(build.clone()),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert!(matches!(request, CliBrokerRequest::PrepareBuild(_, _)));
-            write_response(
-                &mut server,
-                request_id,
-                &CliBrokerResponse::BuildPreparationRefused(code),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Cancel(build.clone()));
-            caller.cancel(&build).unwrap();
-            write_response(&mut server, request_id, &CliBrokerResponse::Cancelled);
-            assert_eq!(caller.poll(&build).unwrap(), OperationStatus::Cancelled);
-        });
-
-        let mut events = Vec::new();
-        let error = acquire_install_evidence(
-            &mut BrokerLifecycleClient::from_stream(client),
-            hello_selectors(),
-            OperationPolicy::for_test(true, false),
-            true,
-            &mut |event| {
-                events.push(event);
-                Ok(())
-            },
-        )
-        .unwrap_err();
-        worker.join().unwrap();
-        assert_eq!(error.exit_code(), ExitCode::EngineUnavailable);
-        let event = serde_json::to_value(events.last().unwrap()).unwrap();
-        assert_eq!(event["type"], "phase");
-        assert_eq!(event["schemaVersion"], 1);
-        assert_eq!(event["phase"], "build_prepare");
-        assert_eq!(event["status"], code.as_str());
-        assert!(event["opId"].as_str().unwrap().starts_with("op_"));
+            let mut events = Vec::new();
+            let mut broker = BrokerLifecycleClient::from_stream(client);
+            let error = match operation {
+                "install-preview" => {
+                    preview_install(&mut broker, hello_selectors(), None).unwrap_err()
+                }
+                "upgrade-preview" => {
+                    preview_upgrade(&mut broker, hello_selectors(), &[]).unwrap_err()
+                }
+                _ => acquire_install_evidence(
+                    &mut broker,
+                    hello_selectors(),
+                    OperationPolicy::for_test(true, false),
+                    true,
+                    &mut |event| {
+                        events.push(event);
+                        Ok(())
+                    },
+                )
+                .unwrap_err(),
+            };
+            worker.join().unwrap();
+            assert_eq!(error.exit_code(), expected, "{operation}: {code:?}");
+            if expected != ExitCode::EngineUnavailable {
+                assert!(!error.hint().contains("doctor"));
+            }
+            if operation == "live-install" {
+                let event = serde_json::to_value(events.last().unwrap()).unwrap();
+                assert_eq!(event["type"], "phase");
+                assert_eq!(event["schemaVersion"], 1);
+                assert_eq!(event["phase"], "build_prepare");
+                assert_eq!(event["status"], code.as_str());
+                assert!(event["opId"].as_str().unwrap().starts_with("op_"));
+            }
+        }
     }
 }
 

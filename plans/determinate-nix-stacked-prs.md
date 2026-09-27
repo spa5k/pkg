@@ -41,6 +41,21 @@ removed; their replacements are in the completed-work record and Git history.
   higher channel sequence with approved assets. Never replace signed release files,
   move a published tag, or replay old metadata. Alpha trust remains unchanged.
 
+### PREVIEW-01: preserve package-preparation failure categories
+
+- **Purpose:** show a resolution error for an invalid or unknown package without
+  hiding a source, verification, or managed-engine failure.
+- **Owns:** redacted preparation error categories from the real planner through
+  the broker protocol to install and upgrade output. An index miss alone is not
+  a resolution failure because direct attribute evaluation remains supported.
+- **Depends:** current `main`; this delivery follows the installer and test
+  isolation changes in PR #70.
+- **Tests & gates:** installed CLI and real broker checks for preview/live
+  resolution failure, a valid preview, unchanged committed state, and an
+  unavailable engine; source and verification failure controls; strict protocol
+  decoding; pinned G-LINT and G-QUALITY; docs links; E and A review.
+- **Rollback:** revert the code and proof change. No package-state migration is
+  introduced. CLI and broker must come from the same release.
 
 ### INSTALL-02: refuse unsafe parents before vendor installation
 
@@ -117,6 +132,25 @@ Remaining code-quality work:
 - Enable the strict touched-file rule only after the required debt is removed.
 - Review complex acquisition, build, commit, and privileged filesystem paths
   with focused behavior tests. A graph score does not justify deleting code.
+
+### INSTALL-01: verify macOS command access
+
+- **Purpose:** check installation state, request administrator access clearly,
+  and prevent completion when the invoking user cannot run a healthy pkg.
+- **Owns:** macOS wrapper path and approval checks, complete bootstrap failure
+  logs, troubleshooting guidance, and regression proof.
+- **Depends:** current `main` and the published alpha.56 package.
+- **Tests & gates:** real package expansion and signature checks; missing,
+  non-executable, blocked or unsafe parent, and launch-failure cases; native
+  approval, cancellation, no-terminal, and healthy controls; final version and
+  health failure logs; G-LINT; docs links; E and A review.
+- **Rollback:** revert the wrapper, bootstrap template, docs, and tests. No
+  permission or user-state migration is included.
+
+The [command-access proof](../tests/macos-clean-host/INSTALL-COMMAND-ACCESS-2026-09-27.md)
+records the alpha.56 false-success reproduction and candidate correction.
+The correction needs review and release. The coworker's exact failure cause
+still needs direct path and command diagnostics.
 
 ### VERIFY-01: repeatable assurance
 

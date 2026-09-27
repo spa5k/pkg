@@ -10,6 +10,7 @@ PKG_SHA256_MACOS_WRAPPER='@PKG_SHA256_MACOS_WRAPPER@'
 
 pkg_mode=install
 pkg_color=auto
+pkg_log=
 for pkg_arg in "$@"; do
     case "$pkg_arg" in
         --verify-only) pkg_mode=verify ;;
@@ -32,7 +33,13 @@ pkg_ok() {
         printf '  [ok] %s\n' "$*"
     fi
 }
-pkg_fail() { printf '\npkg: %s\n' "$*" >&2; exit 1; }
+pkg_fail() {
+    printf '\npkg: %s\n' "$*" >&2
+    if [ -n "$pkg_log" ]; then
+        printf '\npkg: %s\n' "$*" >>"$pkg_log"
+    fi
+    exit 1
+}
 pkg_digest() {
     case "$1" in *[!0-9a-f]*|'') pkg_fail 'Invalid pinned SHA-256.' ;; esac
     [ "${#1}" -eq 64 ] || pkg_fail 'Invalid pinned SHA-256 length.'
@@ -107,14 +114,22 @@ pkg_note 'Administrator access is needed to set up pkg.'
 ) 2>&1 | tee "$pkg_log"
 pkg_status=$(cat "$pkg_tmp/status")
 if [ "$pkg_status" -ne 0 ]; then
-    printf '\npkg setup failed (exit %s). Keep this log for support: %s\n' "$pkg_status" "$pkg_log" >&2
+    printf '\npkg setup failed (exit %s). Keep this log for support: %s\n' "$pkg_status" "$pkg_log" \
+        | tee -a "$pkg_log" >&2
     exit "$pkg_status"
 fi
 
 # Check the installed program as the original user, with its managed commands on PATH.
 pkg_cli=/usr/local/bin/pkg
-[ -x "$pkg_cli" ] || pkg_fail "Setup finished, but pkg is missing. Keep this log: $pkg_log"
-[ "$("$pkg_cli" --version)" = "pkg ${PKG_RELEASE#v}" ] || pkg_fail "The installed version is not the requested release. Keep this log: $pkg_log"
+ls -ld "${pkg_cli%/*}" "$pkg_cli" >>"$pkg_log" 2>&1 || :
+[ -x "$pkg_cli" ] || pkg_fail "Setup finished, but $pkg_cli is missing or cannot be executed by your user. Keep this log: $pkg_log"
+if pkg_version=$("$pkg_cli" --version 2>&1); then
+    printf 'Installed version: %s\n' "$pkg_version" >>"$pkg_log"
+else
+    printf '%s\n' "$pkg_version" >>"$pkg_log"
+    pkg_fail "Setup finished, but $pkg_cli could not start. Keep this log: $pkg_log"
+fi
+[ "$pkg_version" = "pkg ${PKG_RELEASE#v}" ] || pkg_fail "The installed version is not the requested release. Keep this log: $pkg_log"
 case "$pkg_kernel" in
     Darwin) pkg_user_bin="$HOME/Library/Application Support/pkg/current/bin" ;;
     Linux) pkg_user_bin="$HOME/.local/share/pkg/current/bin" ;;
@@ -129,7 +144,12 @@ case ":$pkg_check_path:" in
     *:"$pkg_user_bin":*) ;;
     *) pkg_check_path="$pkg_user_bin:$pkg_check_path" ;;
 esac
-if ! PATH="$pkg_check_path" "$pkg_cli" --no-color doctor; then
+( pkg_status=0
+  PATH="$pkg_check_path" "$pkg_cli" --no-color doctor || pkg_status=$?
+  printf '%s\n' "$pkg_status" >"$pkg_tmp/health-status"
+) 2>&1 | tee -a "$pkg_log"
+pkg_health_status=$(cat "$pkg_tmp/health-status") || pkg_fail "Could not read the health check result. Keep this log: $pkg_log"
+if [ "$pkg_health_status" != 0 ]; then
     pkg_fail "Setup finished, but a health check failed. Follow the steps above. Keep this log: $pkg_log"
 fi
 pkg_ok 'pkg is ready.'
