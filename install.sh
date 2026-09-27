@@ -1,11 +1,11 @@
 #!/bin/sh
 # Publication replaces these values with one reviewed release. No runtime URL overrides.
 set -eu
-PKG_RELEASE='v0.1.0-alpha.57'
+PKG_RELEASE='v0.1.0-alpha.58'
 PKG_RELEASE_BASE_URL='https://github.com/spa5k/pkg/releases/download'
 PKG_ARTIFACT_X86_64_LINUX='pkg-install-x86_64-linux'
-PKG_SHA256_X86_64_LINUX='23d438dfd974c5c8cb312a7ce35002b2018e932d686eeabd710249b503da8ebe'
-PKG_SHA256_MACOS_PACKAGE='9dee9c7db0fb9d13e9deff2163773dbb3fb291e43f2d16b1817fac474e5073b7'
+PKG_SHA256_X86_64_LINUX='4798d96fcce31a68be6a4e416c666d1db4d8da55ebd310f6cb83e36a39a44bc6'
+PKG_SHA256_MACOS_PACKAGE='41a6b2d822e1ac15e1cfcba127e2ad00fd2b7ab83ff27addb4f015afcbe49611'
 PKG_SHA256_MACOS_WRAPPER='e91915d0449177e795b014ba0649aff6721df5f2de5ce6385b488530ab85fed5'
 
 pkg_mode=install
