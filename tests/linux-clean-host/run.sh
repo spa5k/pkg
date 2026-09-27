@@ -887,6 +887,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import tempfile
 
 phase = sys.argv[1]
 state_root = Path("/home/proof-user/.local/share/pkg")
@@ -954,6 +955,23 @@ def install(label, selector, dry_run, code, symbol=None):
     check(label, arguments, code, symbol)
 
 
+def require_active_unit(unit):
+    result = subprocess.run(
+        ["systemctl", "is-active", unit], capture_output=True, text=True, timeout=30,
+    )
+    observation = {"unit": unit, "expected": "active", "status": result.returncode,
+                   "stdout": result.stdout, "stderr": result.stderr}
+    print(json.dumps(observation, sort_keys=True), flush=True)
+    assert result.returncode == 0, observation
+    assert result.stdout.strip() == "active" and not result.stderr, observation
+
+
+def socket_identity(path):
+    metadata = path.lstat()
+    assert stat.S_ISSOCK(metadata.st_mode), f"not a socket: {path}"
+    return (stat.S_IFMT(metadata.st_mode), metadata.st_dev, metadata.st_ino)
+
+
 if phase == "source-offline":
     # A read-only command creates the empty per-user layout without asking the
     # broker for Nixpkgs. No earlier preview or install runs in this container.
@@ -988,21 +1006,39 @@ elif phase == "resolution":
     finally:
         subprocess.run(["systemctl", "start", *units], check=True, timeout=30)
     install("engine-restored-preview", "ripgrep", True, 0)
-    daemon_units = ["nix-daemon.socket", "nix-daemon.service"]
-    for unit in daemon_units:
-        subprocess.run(["systemctl", "is-active", "--quiet", unit], check=True)
+    daemon_units = ["nix-daemon.socket", "determinate-nixd.socket", "nix-daemon.service"]
+    for unit in daemon_units + units:
+        require_active_unit(unit)
+    socket = Path("/nix/var/nix/daemon-socket/socket")
+    original_socket = socket_identity(socket)
+    held_directory = Path(tempfile.mkdtemp(prefix="pkg-proof-daemon-", dir=socket.parent))
+    assert stat.S_IMODE(held_directory.stat().st_mode) == 0o700
+    held_socket = held_directory / "socket"
+    assert not os.path.lexists(held_socket), "socket backup already exists"
+    socket.rename(held_socket)
     try:
-        subprocess.run(["systemctl", "stop", *daemon_units], check=True, timeout=30)
-        for unit in daemon_units:
-            assert subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode != 0
-        # Keep the broker healthy so a generic Nix process failure cannot be
-        # mistaken for a missing selector or an external source outage.
-        for unit in units:
-            subprocess.run(["systemctl", "is-active", "--quiet", unit], check=True)
+        # Stopping the socket would also stop the broker through systemd
+        # dependencies. Keep every unit active and remove only the reachable
+        # socket name, retaining the exact live socket in a private directory.
+        assert socket_identity(held_socket) == original_socket
+        assert not os.path.lexists(socket), "daemon socket is still reachable"
         for dry_run in (True, False):
-            install(f"daemon-stopped-{dry_run}", "ripgrep", dry_run, 79, "ENGINE_UNAVAILABLE")
+            for unit in daemon_units + units:
+                require_active_unit(unit)
+            install(f"daemon-unreachable-{dry_run}", "ripgrep", dry_run, 79, "ENGINE_UNAVAILABLE")
+            assert not os.path.lexists(socket), "daemon socket was recreated"
+            assert socket_identity(held_socket) == original_socket
     finally:
-        subprocess.run(["systemctl", "start", *daemon_units], check=True, timeout=30)
+        assert not os.path.lexists(socket), "refuse to replace a new daemon socket"
+        assert socket_identity(held_socket) == original_socket
+        held_socket.rename(socket)
+        restored_socket = socket_identity(socket)
+        print(json.dumps({"daemon_socket_before": original_socket,
+                          "daemon_socket_restored": restored_socket}), flush=True)
+        assert restored_socket == original_socket
+        held_directory.rmdir()
+    for unit in daemon_units + units:
+        require_active_unit(unit)
     install("daemon-restored-preview", "ripgrep", True, 0)
 else:
     raise AssertionError(f"unknown refusal proof phase: {phase}")
