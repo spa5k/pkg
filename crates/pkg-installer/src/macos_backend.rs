@@ -334,6 +334,8 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         if (mode == InstallMode::OfflineRepair) != self.requested_repair {
             return Err(MacOsError::backend_failure());
         }
+        crate::linux_filesystem::preflight_install_parents(self.system)
+            .map_err(|_| MacOsError::backend_failure())?;
         if self.requested_resume {
             if mode != InstallMode::FreshInstall {
                 return Err(MacOsError::backend_failure());
@@ -371,6 +373,8 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         {
             return Err(MacOsError::backend_failure());
         }
+        crate::linux_filesystem::preflight_install_parents(system)
+            .map_err(|_| MacOsError::backend_failure())?;
         let handoff = DeterminateHandoff::production()
             .and_then(|handoff| handoff.state())
             .map_err(|_| MacOsError::backend_failure())?;

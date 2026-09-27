@@ -396,3 +396,44 @@ fn production_offline_upgrade_refuses_missing_receipt_owned_non_files_before_mut
     }
     Ok(())
 }
+
+#[test]
+fn unsafe_command_parent_refuses_before_existing_install_service_transition()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let system = System::X8664Linux;
+    let fixture = ProductionLinuxInstallBackend::for_existing_non_file_preflight_test(
+        system,
+        ManagedGroupBindings::new(30_000, 30_001)?,
+        Digest::from_bytes([0xd2; 32]),
+        "",
+    )?;
+    let ExistingNonFilePreflightBackend {
+        mut backend,
+        temporary,
+        account_mutation_calls,
+        service_calls,
+    } = fixture;
+    let parent = temporary.path().join("usr/local/bin");
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o777))?;
+    let receipt = temporary.path().join("opt/pkg/uninstall/manifest.json");
+    let receipt_before = std::fs::read(&receipt)?;
+
+    assert!(backend.preflight_clean_host(system).is_err());
+
+    assert_eq!(
+        service_calls.get(),
+        0,
+        "filesystem refusal must precede service transition"
+    );
+    assert_eq!(account_mutation_calls.get(), 0);
+    assert_eq!(backend.install_mode(), crate::InstallMode::FreshInstall);
+    assert!(!backend.existing_managed_install);
+    assert_eq!(std::fs::read(&receipt)?, receipt_before);
+    assert_eq!(
+        std::fs::metadata(&parent)?.permissions().mode() & 0o777,
+        0o777
+    );
+    Ok(())
+}
