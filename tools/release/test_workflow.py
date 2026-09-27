@@ -167,10 +167,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "package-repair",
             "package-roots-gc",
             "old-runtime-absent",
+            "changed-vendor-leaf",
             "terminal-uninstall",
+            "same-host-reinstall",
         ):
             self.assertIn(case, LINUX_HARNESS)
-        self.assertIn('"$results")" -eq 34', LINUX_HARNESS)
+        self.assertIn('"$results")" -eq 38', LINUX_HARNESS)
         self.assertIn(
             "test ! -e /opt/pkg/nix\n    test ! -L /opt/pkg/nix", LINUX_HARNESS
         )
