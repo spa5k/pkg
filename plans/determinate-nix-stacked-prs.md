@@ -26,6 +26,37 @@ removed; their replacements are in the completed-work record and Git history.
 
 ## Remaining work
 
+### INSTALL-02: refuse unsafe parents before vendor installation
+
+- **Purpose:** prevent an unsafe command directory from leaving a partial Nix install.
+- **Owns:** read-only parent checks before product mutation and vendor start;
+  fixed path and detection diagnostics. Shared directories are not repaired.
+- **Depends:** current `main`.
+- **Tests & gates:** real filesystem refusal cases; native unsafe-parent install
+  with no Nix, product state, or install journal afterward; G-LINT, docs links,
+  E review and A security review.
+- **Rollback:** revert. No new persistent state is introduced.
+
+### INSTALL-03: repeat Linux installation after full removal
+
+- **Purpose:** allow install, uninstall, and reinstall on the same clean Linux host.
+- **Owns:** a private vendor-install HOME and its product-owned cleanup;
+  identity-bound removal of the single recorded Linux sentry endpoint before
+  terminal vendor uninstall. Foreign-Nix detection remains unchanged.
+- **Depends:** current `main`.
+- **Tests & gates:** changed-file and legacy-record preservation; private-home
+  cleanup; real signed candidate install, package use, uninstall, reinstall,
+  and uninstall on the same host; G-LINT, docs links, E review and A security review.
+- **Rollback:** revert before installation. An installed candidate must complete
+  its uninstall with the matching candidate before downgrade. Retain records
+  after failure; do not remove or reconstruct them by hand.
+
+These fixes address the 27 September E2B failures. Linux cleanup authority is
+recorded only during a newly accepted clean installation. An older Accepted
+record does not grant new deletion authority. This does not add general vendor
+residue cleanup, repair, adoption, or macOS residue cleanup. The bounded change
+to ownership is recorded in [ADR 0004](../docs/adr/0004-determinate-base-nix-lifecycle.md).
+
 ### QUALITY-01: measured code-quality follow-up
 
 - **Purpose:** test the public user path and keep one measured quality backlog.
@@ -102,6 +133,12 @@ still needs direct path and command diagnostics.
   period before promoting new assurance checks to production prerequisites.
 - **Rollback:** revert new test tooling. Do not weaken an existing passing gate.
 
+The [test cleanup evidence](../tests/test-audit/2026-09-27/cleanup.md) records
+the retained contracts and eleven caught defects. The
+[behavior test regression guard](../tools/verify/TEST-CONTRACTS.md) repeats those
+defects in Fast CI. This completes that bounded guard; native repeat proofs,
+fault coverage, and the observation period below remain open.
+
 The workflow exists, but the latest retained
 [repeat-proof run](https://github.com/spa5k/pkg/actions/runs/33898972544) failed.
 The latest inspected [nightly run](https://github.com/spa5k/pkg/actions/runs/36109155550)
@@ -154,7 +191,7 @@ runbook already exist.
 | macOS | Apple Silicon | No Intel support; alpha package is not notarized |
 | Public flakes | Public, locked GitHub roots on macOS | Linux needs an equivalent per-process source read boundary |
 | Package sources | Catalog and supported public flakes | Private credentials, development shells, and system modules are outside current scope |
-| Base Nix | Pinned Determinate install and terminal uninstall | No product-owned Base Nix repair/update or vendor-residue cleanup |
+| Base Nix | Pinned Determinate install and terminal uninstall | No product-owned Base Nix repair/update or general vendor-residue cleanup; INSTALL-03 owns the bounded Linux cleanup change |
 
 These limits are not unfinished items in the completed migration stack.
 New platform or source features need a scoped plan and platform proof.
@@ -187,9 +224,10 @@ until a replacement has passed the relevant privilege, build, and lifecycle test
   receipt, consumes Accepted state, then terminally executes the vendor.
 - A synchronous exec failure restores exact Accepted state under the same lock.
   A crash after state consumption can leave unmarked Nix; this fails closed.
-  After exec, Determinate owns signals, status, cleanup, and residue.
+  After exec, Determinate owns signals, status, cleanup, and residue. INSTALL-03
+  permits removal of one identity-recorded Linux file before that boundary.
 - Foreign or changed state is preserved and refused. No unauthenticated reset,
-  adoption, receipt reconstruction, or vendor-residue cleanup is allowed.
+  adoption, receipt reconstruction, or unrecorded vendor-residue cleanup is allowed.
 - The Linux `/run/pkg-install-handoff.lock` and macOS
   `/private/var/db/pkg-install-handoff.lock` are root-owned mode-0600 coordination
   files. They are not package lifecycle state.

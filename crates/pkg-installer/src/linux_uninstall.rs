@@ -348,6 +348,9 @@ impl LinuxUninstallRuntime for ProductionRuntime {
         {
             return Err(UninstallError::backend_failure());
         }
+        self.handoff
+            .verify_uninstall_residue()
+            .map_err(|_| UninstallError::backend_failure())?;
         self.verify_created_assets(manifest)?;
         let preserve_nix = manifest_preserves_nix(manifest)?;
         self.preserve_nix = Some(preserve_nix);

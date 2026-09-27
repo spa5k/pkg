@@ -312,16 +312,6 @@ impl<C> CoreEngine<C> {
     pub const fn new(operations: C) -> Self {
         Self { operations }
     }
-    /// Returns shared access to the wrapped implementation, primarily for assertions.
-    #[must_use]
-    pub const fn operations(&self) -> &C {
-        &self.operations
-    }
-    /// Consumes the engine and returns the wrapped implementation.
-    #[must_use]
-    pub fn into_operations(self) -> C {
-        self.operations
-    }
 }
 
 impl<C: CoreOperations> CommandEngine for CoreEngine<C> {

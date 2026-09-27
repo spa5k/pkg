@@ -116,6 +116,7 @@ pub struct ProductionLinuxInstallBackend {
 #[derive(Debug)]
 struct ProductionPreflightFixture {
     effective_ids: (u32, u32),
+    parent_root: Option<std::path::PathBuf>,
     handoff_snapshots: std::rc::Rc<std::cell::RefCell<Vec<DeterminateHandoffState>>>,
 }
 
@@ -269,6 +270,24 @@ impl ProductionLinuxInstallBackend {
         Self::production_effective_ids()
     }
 
+    fn preflight_system_parents(&self) -> Result<(), InstallError> {
+        #[cfg(test)]
+        if let Some(root) = self
+            .preflight_fixture
+            .as_ref()
+            .and_then(|fixture| fixture.parent_root.as_ref())
+        {
+            return crate::linux_filesystem::preflight_install_parents_at(
+                root,
+                Uid::effective().as_raw(),
+                self.system,
+            )
+            .map_err(|_| InstallError::backend_failure());
+        }
+        crate::linux_filesystem::preflight_install_parents(self.system)
+            .map_err(|_| InstallError::backend_failure())
+    }
+
     fn production_effective_ids() -> (u32, u32) {
         (Uid::effective().as_raw(), Gid::effective().as_raw())
     }
@@ -298,6 +317,7 @@ impl ProductionLinuxInstallBackend {
                 manage_upgrade_services: false,
                 preflight_fixture: Some(ProductionPreflightFixture {
                     effective_ids: (0, 0),
+                    parent_root: None,
                     handoff_snapshots,
                 }),
             },
@@ -329,6 +349,7 @@ impl ProductionLinuxInstallBackend {
                 manage_upgrade_services: false,
                 preflight_fixture: Some(ProductionPreflightFixture {
                     effective_ids: (0, 0),
+                    parent_root: Some(assets.temporary.path().to_path_buf()),
                     handoff_snapshots: std::rc::Rc::new(std::cell::RefCell::new(vec![
                         DeterminateHandoffState::Accepted,
                     ])),
@@ -456,6 +477,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         if system != self.system || !self.assets.authenticated_inputs_bound(system) {
             return Err(InstallError::backend_failure());
         }
+        self.preflight_system_parents()?;
         self.mode = mode;
         self.recovered_fresh_install = mode == crate::InstallMode::FreshInstall;
         self.assets
@@ -569,6 +591,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         if system != self.system || !authenticated_inputs_bound || effective_ids != (0, 0) {
             return Err(InstallError::backend_failure());
         }
+        self.preflight_system_parents()?;
         let path_entries = env::var_os("PATH")
             .map(|value| env::split_paths(&value).collect::<Vec<_>>())
             .unwrap_or_default();
@@ -590,6 +613,13 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         }
         let report = detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);
         if report.disposition() != DetectionDisposition::Clean {
+            for finding in report.findings() {
+                eprintln!(
+                    "pkg host preflight refused {}: {}",
+                    finding.id(),
+                    finding.detail()
+                );
+            }
             return Err(InstallError::backend_failure());
         }
         self.existing_managed_install = false;

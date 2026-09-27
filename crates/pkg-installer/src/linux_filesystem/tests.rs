@@ -108,6 +108,102 @@ impl Fixture {
     }
 }
 
+#[test]
+fn install_parent_preflight_refuses_unsafe_system_directories_without_repairing_them()
+-> Result<(), Box<dyn Error>> {
+    for relative in [
+        "usr/local",
+        "usr/local/bin",
+        "usr/lib/systemd/system",
+        "etc/profile.d",
+    ] {
+        for mode in [0o775, 0o777] {
+            let fixture = Fixture::new()?;
+            let parent = fixture.temporary.path().join(relative);
+            fs::set_permissions(&parent, fs::Permissions::from_mode(mode))?;
+            assert_eq!(
+                preflight_install_parents_at(
+                    fixture.temporary.path(),
+                    Uid::effective().as_raw(),
+                    System::X8664Linux
+                )
+                .map_err(LinuxFilesystemError::code),
+                Err(LinuxFilesystemErrorCode::UnsafeFilesystemState),
+                "{relative} mode {mode:o} must refuse before managed directories or Nix exist"
+            );
+            assert_eq!(fs::metadata(&parent)?.mode() & 0o777, mode);
+            assert!(!fixture.temporary.path().join("opt/pkg").exists());
+            assert!(!fixture.temporary.path().join("nix").exists());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn install_parent_preflight_accepts_absent_managed_paths_but_refuses_invalid_system_parents()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let root = fixture.temporary.path();
+    let uid = Uid::effective().as_raw();
+    preflight_install_parents_at(root, uid, System::X8664Linux)?;
+    assert!(!root.join("opt/pkg").exists());
+    assert!(!root.join("nix").exists());
+    let parent = root.join("usr/local/bin");
+    fs::remove_dir(&parent)?;
+    assert!(preflight_install_parents_at(root, uid, System::X8664Linux).is_err());
+    assert!(!parent.exists());
+    fs::write(&parent, b"foreign file")?;
+    assert!(preflight_install_parents_at(root, uid, System::X8664Linux).is_err());
+    assert_eq!(fs::read(&parent)?, b"foreign file");
+    fs::remove_file(&parent)?;
+    symlink(root.join("usr/lib"), &parent)?;
+    assert!(preflight_install_parents_at(root, uid, System::X8664Linux).is_err());
+    assert_eq!(fs::read_link(&parent)?, root.join("usr/lib"));
+    Ok(())
+}
+
+#[test]
+fn macos_install_parent_preflight_uses_canonical_system_paths() -> Result<(), Box<dyn Error>> {
+    let root = tempfile::tempdir()?;
+    for path in [
+        "opt",
+        "usr",
+        "usr/local",
+        "usr/local/bin",
+        "Library",
+        "Library/Application Support",
+        "Library/LaunchDaemons",
+        "private",
+        "private/var",
+        "private/var/db",
+        "private/etc",
+        "private/etc/paths.d",
+    ] {
+        fs::create_dir(root.path().join(path))?;
+    }
+    symlink("private/var", root.path().join("var"))?;
+    symlink("private/etc", root.path().join("etc"))?;
+    preflight_install_parents_at(
+        root.path(),
+        Uid::effective().as_raw(),
+        System::Aarch64Darwin,
+    )?;
+    let parent = root.path().join("usr/local/bin");
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o777))?;
+    assert_eq!(
+        preflight_install_parents_at(
+            root.path(),
+            Uid::effective().as_raw(),
+            System::Aarch64Darwin
+        )
+        .map_err(LinuxFilesystemError::code),
+        Err(LinuxFilesystemErrorCode::UnsafeFilesystemState)
+    );
+    assert_eq!(fs::metadata(&parent)?.mode() & 0o777, 0o777);
+    assert!(!root.path().join("opt/pkg").exists());
+    Ok(())
+}
+
 fn failure_code<T>(
     result: &Result<T, LinuxFilesystemError>,
 ) -> Result<LinuxFilesystemErrorCode, Box<dyn Error>> {

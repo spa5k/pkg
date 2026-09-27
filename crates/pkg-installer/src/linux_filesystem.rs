@@ -11,7 +11,10 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use nix::unistd::{Gid, Uid};
-use pkg_core::state::{Digest, body_digest};
+use pkg_core::{
+    System,
+    state::{Digest, body_digest},
+};
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
 };
@@ -1770,17 +1773,7 @@ impl LinuxFilesystemManager {
         if let Some(asset) = managed {
             return self.verify_metadata(asset, directory);
         }
-        // A different group is safe when neither the group nor others can write the directory.
-        let metadata = directory.metadata().map_err(|_| io_failure())?;
-        if !metadata.is_dir()
-            || metadata.uid() != self.principals.root_uid
-            || metadata.mode() & 0o022 != 0
-        {
-            return Err(LinuxFilesystemError::new(
-                LinuxFilesystemErrorCode::UnsafeFilesystemState,
-            ));
-        }
-        Ok(())
+        verify_unmanaged_parent(directory, self.principals.root_uid)
     }
 
     fn remove_if_owned(
@@ -1813,6 +1806,107 @@ impl LinuxFilesystemManager {
         fsync(parent).map_err(|_| io_failure())?;
         Ok(())
     }
+}
+
+/// Checks every system-owned product parent before accounts, files, or Base Nix change.
+/// Product-owned directories are created and verified by the asset writer; the
+/// vendor owns the /nix parents. Neither is required to exist on a fresh host.
+pub fn preflight_install_parents(system: System) -> Result<(), LinuxFilesystemError> {
+    preflight_install_parents_at(Path::new("/"), 0, system)
+}
+
+pub fn preflight_install_parents_at(
+    root: &Path,
+    root_uid: u32,
+    system: System,
+) -> Result<(), LinuxFilesystemError> {
+    let assets = install_parent_assets(system)?;
+    let root = File::from(
+        open(
+            root,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(open_error)?,
+    );
+    verify_unmanaged_parent(&root, root_uid)?;
+    for asset in &assets {
+        check_install_asset_parents(&root, root_uid, *asset, &assets)?;
+    }
+    Ok(())
+}
+
+fn install_parent_assets(system: System) -> Result<Vec<LinuxInstallAsset>, LinuxFilesystemError> {
+    match system {
+        System::X8664Linux | System::Aarch64Linux => crate::assets::linux_product_install_assets()
+            .filter(|asset| {
+                matches!(
+                    asset.kind(),
+                    LinuxAssetKind::Directory | LinuxAssetKind::File
+                )
+            })
+            .map(Ok)
+            .collect(),
+        System::X8664Darwin | System::Aarch64Darwin => macos_product_install_assets()
+            .filter(|asset| {
+                matches!(
+                    asset.kind(),
+                    MacOsAssetKind::Directory | MacOsAssetKind::File
+                )
+            })
+            .map(map_macos_filesystem_asset)
+            .collect(),
+    }
+}
+
+fn check_install_asset_parents(
+    root: &File,
+    root_uid: u32,
+    asset: LinuxInstallAsset,
+    assets: &[LinuxInstallAsset],
+) -> Result<(), LinuxFilesystemError> {
+    let components = absolute_components(Path::new(asset.path_or_name()))?;
+    let (_, parents) = components.split_last().ok_or_else(unsupported)?;
+    let mut directory = root.try_clone().map_err(|_| io_failure())?;
+    let mut path = PathBuf::from("/");
+    for component in parents {
+        path.push(component);
+        if path == Path::new("/nix")
+            || assets.iter().any(|managed| {
+                managed.kind() == LinuxAssetKind::Directory
+                    && Path::new(managed.path_or_name()) == path
+            })
+        {
+            break;
+        }
+        let checked = openat(
+            &directory,
+            component,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map(File::from)
+        .map_err(open_error)
+        .and_then(|child| {
+            verify_unmanaged_parent(&child, root_uid)?;
+            Ok(child)
+        });
+        directory = checked.inspect_err(|error| {
+            eprintln!("pkg installer parent preflight refused {}: {:?}; require an existing root-owned directory without group or other write access", path.display(), error.code());
+        })?;
+    }
+    Ok(())
+}
+
+fn verify_unmanaged_parent(directory: &File, root_uid: u32) -> Result<(), LinuxFilesystemError> {
+    // A different group is safe when neither the group nor others can write the directory.
+    let metadata = directory.metadata().map_err(|_| io_failure())?;
+    if !metadata.is_dir() || metadata.uid() != root_uid || metadata.mode() & 0o022 != 0 {
+        return Err(LinuxFilesystemError::new(
+            LinuxFilesystemErrorCode::UnsafeFilesystemState,
+        ));
+    }
+    Ok(())
 }
 
 fn static_payload(asset: LinuxInstallAsset) -> Option<&'static [u8]> {

@@ -7,23 +7,6 @@ fn pkg() -> Command {
 }
 
 #[test]
-fn help_exits_success_and_lists_the_product_commands() {
-    let output = pkg().arg("--help").output().unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    for verb in [
-        "doctor",
-        "install",
-        "upgrade",
-        "rollback",
-        "repair",
-        "uninstall",
-    ] {
-        assert!(stdout.contains(verb));
-    }
-}
-
-#[test]
 fn help_guides_common_tasks_and_short_flags_match_long_flags() {
     let short = pkg().arg("-h").output().unwrap();
     let short = String::from_utf8(short.stdout).unwrap();
@@ -79,25 +62,32 @@ fn configuration_failure_obeys_json_and_jsonl_terminal_contracts() {
 }
 
 #[test]
-fn home_environment_is_not_a_state_identity_input() {
-    for home in [Some("/spoofed-home"), None] {
+fn history_uses_the_system_home_boundary_despite_spoofed_or_absent_home() {
+    let user = nix::unistd::User::from_uid(nix::unistd::Uid::effective())
+        .unwrap()
+        .unwrap();
+    let temporary = tempfile::tempdir_in(user.dir).unwrap();
+    let spoofed = tempfile::tempdir().unwrap();
+    for (label, home) in [("spoofed", Some(spoofed.path())), ("absent", None)] {
+        let state = temporary.path().join(label);
         let mut command = pkg();
-        command.args(["--json", "--state", "relative", "history"]);
-        match home {
-            Some(home) => {
-                command.env("HOME", home);
-            }
-            None => {
-                command.env_remove("HOME");
-            }
+        command
+            .args(["--json", "--state", state.to_str().unwrap(), "history"])
+            .env_remove("PKG_STATE_DIR");
+        if let Some(home) = home {
+            command.env("HOME", home);
+        } else {
+            command.env_remove("HOME");
         }
         let output = command.output().unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(output.status.code(), Some(78));
-        assert_eq!(
-            value["error"]["message"],
-            "the alternate state root must be an absolute path"
-        );
+        assert!(output.status.success(), "{label}: {output:?}");
+        assert!(output.stderr.is_empty());
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["command"], "history");
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["entries"], serde_json::json!([]));
+        assert!(state.join("logs/pkg.log").is_file());
+        assert_eq!(std::fs::read_dir(spoofed.path()).unwrap().count(), 0);
     }
 }
 
@@ -119,17 +109,22 @@ fn completion_is_real_static_source_and_doctor_reports_verified_host_state() {
         .output()
         .unwrap();
     let value: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    // Both required production rows must exist exactly once before any status
+    // or exit decision is read; a missing report row is a report defect.
+    let checks = value["checks"].as_array().unwrap();
+    let required_row = |id: &str| {
+        let matches: Vec<&serde_json::Value> =
+            checks.iter().filter(|check| check["id"] == id).collect();
+        assert_eq!(matches.len(), 1, "{id} must appear exactly once");
+        matches[0]
+    };
+    let managed = required_row("runtime.managed");
+    let channel = required_row("channel.signed");
     // The developer machine can have a working authenticated broker. An
     // alternate user-state directory does not isolate the system service.
     if doctor.status.success() {
         assert_eq!(value["overall"], "healthy");
-        for id in ["runtime.managed", "channel.signed"] {
-            let check = value["checks"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|check| check["id"] == id)
-                .unwrap();
+        for check in [managed, channel] {
             assert_eq!(check["status"], "pass");
         }
         return;
@@ -144,19 +139,9 @@ fn completion_is_real_static_source_and_doctor_reports_verified_host_state() {
         value["overall"].as_str(),
         Some("needs_attention" | "nix_ownership_unknown")
     ));
-    assert!(
-        value["checks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|check| {
-                matches!(
-                    check["id"].as_str(),
-                    Some("runtime.managed" | "channel.signed")
-                )
-            })
-            .all(|check| check["status"] == "fail")
-    );
+    for check in [managed, channel] {
+        assert_eq!(check["status"], "fail");
+    }
 }
 
 #[test]
@@ -305,6 +290,19 @@ fn every_command_has_examples_and_remains_discoverable() {
         !home.contains("--state"),
         "the home guide keeps advanced options in full help"
     );
+    let help = pkg().arg("--help").output().unwrap();
+    assert!(help.status.success());
+    let help = String::from_utf8(help.stdout).unwrap();
+    for verb in [
+        "doctor",
+        "install",
+        "upgrade",
+        "rollback",
+        "repair",
+        "uninstall",
+    ] {
+        assert!(help.contains(verb), "missing {verb} from --help");
+    }
     for command in grammar.get_subcommands() {
         let name = command.get_name();
         assert!(

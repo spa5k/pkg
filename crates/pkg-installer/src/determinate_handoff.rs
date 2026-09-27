@@ -1,5 +1,8 @@
 //! Durable, fail-closed handoff for the pinned Determinate installer.
 
+mod residue;
+use residue::LinuxResidueIdentity;
+
 use nix::unistd::{Gid, Uid, fchown};
 use pkg_core::state::Digest;
 use serde::{Deserialize, Serialize};
@@ -119,6 +122,7 @@ enum Record {
     Accepted {
         installer: FileIdentity,
         receipt: FileIdentity,
+        linux_residue: Option<LinuxResidueIdentity>,
     },
 }
 
@@ -142,6 +146,8 @@ enum WireState {
     Accepted {
         installer: WireIdentity,
         receipt: WireIdentity,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        linux_residue: Option<LinuxResidueIdentity>,
     },
 }
 
@@ -217,7 +223,9 @@ impl DeterminateHandoff {
         match self.load_locked()? {
             None => Ok(DeterminateHandoffState::NotStarted),
             Some(Record::Started) => Ok(DeterminateHandoffState::Started),
-            Some(Record::Accepted { installer, receipt }) => {
+            Some(Record::Accepted {
+                installer, receipt, ..
+            }) => {
                 let current = self.observe_vendor_identity()?;
                 if current != (installer, receipt) {
                     return Err(DeterminateHandoffError::IdentityMismatch);
@@ -241,7 +249,9 @@ impl DeterminateHandoff {
             return Ok(false);
         }
         let Some(ObservedRecord {
-            record: record @ Record::Accepted { installer, receipt },
+            record: record @ Record::Accepted {
+                installer, receipt, ..
+            },
             metadata: opened,
             bytes,
         }) = self.read_record()?
@@ -287,7 +297,18 @@ impl DeterminateHandoff {
             return Err(DeterminateHandoffError::InvalidTransition);
         }
         let (installer, receipt) = self.observe_vendor_identity()?;
-        self.persist_locked(Record::Accepted { installer, receipt }, false)
+        #[cfg(target_os = "linux")]
+        let linux_residue = residue::capture(&self.trust_root, self.owner, self.group)?;
+        #[cfg(not(target_os = "linux"))]
+        let linux_residue = None;
+        self.persist_locked(
+            Record::Accepted {
+                installer,
+                receipt,
+                linux_residue,
+            },
+            false,
+        )
     }
 
     /// Explicit recovery only: accept a completed pinned macOS receipt after a
@@ -327,7 +348,15 @@ impl DeterminateHandoff {
         if self.observe_vendor_identity()? != (installer, receipt) {
             return Err(DeterminateHandoffError::IdentityMismatch);
         }
-        self.persist_locked(Record::Accepted { installer, receipt }, false)
+        // Recovery must never backfill deletion authority for older installs.
+        self.persist_locked(
+            Record::Accepted {
+                installer,
+                receipt,
+                linux_residue: None,
+            },
+            false,
+        )
     }
 
     /// Enforces the platform receipt mode after a successful vendor install.
@@ -371,15 +400,58 @@ impl DeterminateHandoff {
         }
     }
 
-    fn consume_for_terminal_uninstall(
-        &self,
-    ) -> Result<ConsumedAcceptedHandoff<'_>, DeterminateHandoffError> {
-        let lock = self.lock_operation()?;
-        let Some(accepted @ Record::Accepted { installer, receipt }) = self.load_locked()? else {
+    /// Check the recorded Linux leaf before any product uninstall mutation.
+    /// Older Accepted records carry no authority to delete vendor residue.
+    pub(crate) fn verify_uninstall_residue(&self) -> Result<(), DeterminateHandoffError> {
+        let _lock = self.lock_operation()?;
+        let Some(Record::Accepted {
+            installer,
+            receipt,
+            linux_residue,
+        }) = self.load_locked()?
+        else {
             return Err(DeterminateHandoffError::InvalidTransition);
         };
         if self.observe_vendor_identity()? != (installer, receipt) {
             return Err(DeterminateHandoffError::IdentityMismatch);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(identity) = linux_residue {
+            residue::verify(&self.trust_root, self.owner, self.group, identity)?;
+        }
+        #[cfg(not(target_os = "linux"))]
+        if linux_residue.is_some() {
+            return Err(DeterminateHandoffError::InvalidState);
+        }
+        Ok(())
+    }
+
+    fn consume_for_terminal_uninstall(
+        &self,
+    ) -> Result<ConsumedAcceptedHandoff<'_>, DeterminateHandoffError> {
+        let lock = self.lock_operation()?;
+        let Some(
+            accepted @ Record::Accepted {
+                installer,
+                receipt,
+                linux_residue,
+            },
+        ) = self.load_locked()?
+        else {
+            return Err(DeterminateHandoffError::InvalidTransition);
+        };
+        if self.observe_vendor_identity()? != (installer, receipt) {
+            return Err(DeterminateHandoffError::IdentityMismatch);
+        }
+        // Only a leaf recorded by this installation may be removed. The vendor
+        // still removes /etc/nix after reverting its own remaining files.
+        #[cfg(target_os = "linux")]
+        if let Some(identity) = linux_residue {
+            residue::remove(&self.trust_root, self.owner, self.group, identity)?;
+        }
+        #[cfg(not(target_os = "linux"))]
+        if linux_residue.is_some() {
+            return Err(DeterminateHandoffError::InvalidState);
         }
         if let Err(clear_error) = self.clear_locked(&lock) {
             return match self.restore_accepted_locked(&lock, accepted) {
@@ -399,7 +471,10 @@ impl DeterminateHandoff {
         _lock: &File,
         accepted: Record,
     ) -> Result<(), DeterminateHandoffError> {
-        let Record::Accepted { installer, receipt } = accepted else {
+        let Record::Accepted {
+            installer, receipt, ..
+        } = accepted
+        else {
             return Err(DeterminateHandoffError::InvalidTransition);
         };
         if self.observe_vendor_identity()? != (installer, receipt) {
@@ -426,6 +501,8 @@ impl DeterminateHandoff {
             .ok_or(DeterminateHandoffError::PersistenceFailed)?;
         if parent != self.trust_root {
             self.remove_probe_cache(parent)?;
+            #[cfg(target_os = "linux")]
+            self.remove_private_child(parent, "vendor-home")?;
             let temporary_directory = parent.join("tmp");
             match fs::remove_dir(&temporary_directory) {
                 Ok(()) => {}
@@ -463,13 +540,21 @@ impl DeterminateHandoff {
     fn remove_probe_cache(&self, parent: &Path) -> Result<(), DeterminateHandoffError> {
         // The daemon probe creates a Nix cache in this private HOME.
         // Remove only that owned tree before removing the handoff directory.
+        self.remove_private_child(parent, ".cache")
+    }
+
+    fn remove_private_child(
+        &self,
+        parent: &Path,
+        child: &str,
+    ) -> Result<(), DeterminateHandoffError> {
         let cache = Path::new("/")
             .join(
                 parent
                     .strip_prefix(&self.trust_root)
                     .map_err(|_| DeterminateHandoffError::PersistenceFailed)?,
             )
-            .join(".cache");
+            .join(child);
         crate::linux_user_cleanup::remove_owned_tree(
             &self.trust_root,
             &cache,
@@ -801,9 +886,14 @@ fn completed_macos_receipt(bytes: &[u8]) -> bool {
 fn encode(record: &Record) -> Result<Vec<u8>, DeterminateHandoffError> {
     let state = match record {
         Record::Started => WireState::Started {},
-        Record::Accepted { installer, receipt } => WireState::Accepted {
+        Record::Accepted {
+            installer,
+            receipt,
+            linux_residue,
+        } => WireState::Accepted {
             installer: (*installer).into(),
             receipt: (*receipt).into(),
+            linux_residue: *linux_residue,
         },
     };
     serde_json::to_vec(&WireRecord {
@@ -821,9 +911,14 @@ fn decode(bytes: &[u8]) -> Result<Record, DeterminateHandoffError> {
     }
     match wire.state {
         WireState::Started {} => Ok(Record::Started),
-        WireState::Accepted { installer, receipt } => Ok(Record::Accepted {
+        WireState::Accepted {
+            installer,
+            receipt,
+            linux_residue,
+        } => Ok(Record::Accepted {
             installer: installer.try_into()?,
             receipt: receipt.try_into()?,
+            linux_residue,
         }),
     }
 }
@@ -1630,6 +1725,100 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
             fixture.handoff.state().unwrap(),
             DeterminateHandoffState::Accepted
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_terminal_cleanup_preserves_authority_across_exec_failure_and_retry() {
+        let fixture = production_parent_fixture(0o600);
+        let root = fixture.temporary.path();
+        fs::create_dir_all(root.join("etc/nix")).unwrap();
+        let sentry = root.join("etc/nix/sentry-endpoint");
+        write_mode(&sentry, b"vendor crash endpoint", 0o600);
+        let home = root.join("var/lib/pkg-install/vendor-home");
+        fs::create_dir_all(home.join(".nix-defexpr")).unwrap();
+        fs::create_dir_all(home.join(".local/state")).unwrap();
+        write_mode(
+            &home.join(".local/state/systems.determinate.detsys-ids-client"),
+            b"id",
+            0o600,
+        );
+        symlink(&fixture.unrelated, home.join(".nix-profile")).unwrap();
+        symlink(&fixture.unrelated, home.join(".nix-defexpr/channels")).unwrap();
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        let accepted = fs::read(&fixture.handoff.handoff).unwrap();
+        let record: serde_json::Value = serde_json::from_slice(&accepted).unwrap();
+        assert!(record["state"]["linux_residue"].is_object());
+        fixture.handoff.verify_uninstall_residue().unwrap();
+        assert_eq!(
+            fixture.handoff.run_terminal_uninstall(|| {
+                assert!(!sentry.exists());
+                assert!(!home.exists());
+                assert!(sentry.parent().unwrap().is_dir());
+                assert_eq!(fs::read(&fixture.handoff.receipt).unwrap(), RECEIPT_SECRET);
+                assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
+                Err::<(), ()>(())
+            }),
+            Err(TerminalUninstallError::ExecFailedRestored)
+        );
+        assert_eq!(fs::read(&fixture.handoff.handoff).unwrap(), accepted);
+        fixture.handoff.verify_uninstall_residue().unwrap();
+        fixture
+            .handoff
+            .run_terminal_uninstall(|| Ok::<(), ()>(()))
+            .unwrap();
+        assert!(!fixture.handoff.handoff.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_changed_residue_refuses_before_consumption_and_old_records_never_adopt_it() {
+        let fixture = production_parent_fixture(0o600);
+        let root = fixture.temporary.path();
+        fs::create_dir_all(root.join("etc/nix")).unwrap();
+        let sentry = root.join("etc/nix/sentry-endpoint");
+        write_mode(&sentry, b"vendor endpoint", 0o600);
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        let accepted = fs::read(&fixture.handoff.handoff).unwrap();
+        write_mode(&sentry, b"changed endpoint", 0o600);
+        assert_eq!(
+            fixture.handoff.verify_uninstall_residue(),
+            Err(DeterminateHandoffError::IdentityMismatch)
+        );
+        assert_eq!(
+            fixture
+                .handoff
+                .consume_for_terminal_uninstall()
+                .unwrap_err(),
+            DeterminateHandoffError::IdentityMismatch
+        );
+        assert_eq!(fs::read(&fixture.handoff.handoff).unwrap(), accepted);
+        assert_eq!(fs::read(&sentry).unwrap(), b"changed endpoint");
+        // An old Accepted wire record remains valid but has no residue authority.
+        let mut legacy: serde_json::Value = serde_json::from_slice(&accepted).unwrap();
+        legacy["state"]
+            .as_object_mut()
+            .unwrap()
+            .remove("linux_residue");
+        write_mode(
+            &fixture.handoff.handoff,
+            &serde_json::to_vec(&legacy).unwrap(),
+            0o600,
+        );
+        fixture.handoff.verify_uninstall_residue().unwrap();
+        fixture
+            .handoff
+            .run_terminal_uninstall(|| Ok::<(), ()>(()))
+            .unwrap();
+        assert_eq!(fs::read(sentry).unwrap(), b"changed endpoint");
     }
 
     #[test]

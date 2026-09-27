@@ -96,6 +96,24 @@ change before its gate passes.
 - **Project license.** The project uses Apache-2.0. Keep the workspace package
   metadata, release archives, and notices consistent with that license.
 
+### 3.2 Behavior tests must remain effective
+
+Prefer real CLI processes, files, cryptographic checks, and lifecycle results.
+A mock call list or source-string check is not proof that a user operation works.
+Keep a narrow test only when it owns a distinct contract without a stronger
+practical keeper. Before deleting or weakening a test, name the replacement
+contract and show that it rejects the relevant defect. Do not use test count or
+line coverage as a substitute for this proof.
+
+The Fast-CI `test-contracts` job deliberately breaks known behaviors in a
+temporary copy. Healthy and restored controls must pass; the broken behavior
+must fail by test assertion. Missing tests, skips, timeouts, and build/import
+errors fail the guard. Its result is included in the required aggregate job.
+Use [the test-audit skill](.agents/skills/test-audit/SKILL.md) and
+[the guard procedure](tools/verify/TEST-CONTRACTS.md) for test changes.
+When an owner changes, update its mutation and keeper together. Preserve the
+observable contract or document the approved product behavior change.
+
 ## 4. Rollback evidence
 
 Every merged PR must leave enough trace to roll back cleanly:
