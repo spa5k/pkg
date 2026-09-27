@@ -1,6 +1,6 @@
 # `pkg`
 
-[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.57)
+[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.58)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 `pkg` is a package manager for Linux and macOS. It has a simple command
@@ -105,8 +105,8 @@ repair. See the
 
 | Platform | Preview status |
 | --- | --- |
-| Linux x86-64 | Public alpha.57; requires systemd |
-| macOS Apple silicon | Public alpha.57; ad-hoc signed, not notarized |
+| Linux x86-64 | Public alpha.58; requires systemd |
+| macOS Apple silicon | Public alpha.58; ad-hoc signed, not notarized |
 | macOS Intel | Not supported |
 | Linux arm64 | Not available in this preview |
 
@@ -114,7 +114,7 @@ The native platform cutover proofs passed. The release includes automatic
 product service updates, the doctor ownership correction, and `pkg shellenv`.
 The [native lifecycle report](tests/macos-clean-host/PUBLIC-04.md) records the
 compiled-package, repair, reboot, and uninstall checks that support these changes.
-See the [release notes](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.57)
+See the [release notes](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.58)
 for checks on the exact release files and known limits.
 
 ## Contribute
