@@ -512,6 +512,9 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
                 BuildAuthorityErrorCode::AcquisitionRefused => {
                     CacheInstallErrorCode::AcquisitionFailed
                 }
+                BuildAuthorityErrorCode::AcquisitionVerificationFailed => {
+                    CacheInstallErrorCode::VerificationFailed
+                }
                 _ => CacheInstallErrorCode::AuthorityUnavailable,
             })
     }

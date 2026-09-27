@@ -1851,6 +1851,14 @@ fn install_failures_name_the_failed_step_and_next_action() {
         "check network access, then retry the package operation"
     );
 
+    let verification = install_broker_error_fields(
+        BrokerClientErrorCode::InstallAcquisitionRefused,
+        Some(CacheInstallErrorCode::VerificationFailed),
+    );
+    assert_eq!(verification.0, ExitCode::VerifyFail);
+    assert_eq!(verification.1, "the package could not be verified");
+    assert!(!verification.2.contains("network"));
+
     let activation = install_broker_error_fields(BrokerClientErrorCode::BuildRootRefused, None);
     assert_eq!(activation.0, ExitCode::Permission);
     assert_eq!(activation.1, "the built package could not be activated");

@@ -209,7 +209,7 @@ impl BuildIntentError {
         })
     }
 
-    const fn source(error: pkg_nix::NixpkgsSourceError) -> Self {
+    pub(crate) const fn source(error: pkg_nix::NixpkgsSourceError) -> Self {
         Self::new(match error.code() {
             NixpkgsSourceErrorCode::RunnerFailure => BuildIntentErrorCode::SourceUnavailable,
             NixpkgsSourceErrorCode::RunnerUnavailable => BuildIntentErrorCode::RuntimeUnavailable,
@@ -217,7 +217,7 @@ impl BuildIntentError {
         })
     }
 
-    fn resolution(error: &crate::ResolveBatchError) -> Self {
+    pub(crate) fn resolution(error: &crate::ResolveBatchError) -> Self {
         Self::new(match error.source().map(pkg_resolver::ResolveError::code) {
             Some(pkg_resolver::ResolveErrorCode::EngineUnavailable) => {
                 BuildIntentErrorCode::RuntimeUnavailable
