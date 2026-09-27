@@ -544,14 +544,15 @@ fn core_engine_routes_every_variant_and_preserves_global_policy() {
         (vec!["pkg", "unpin", "ripgrep"], "unpin", true),
         (vec!["pkg", "history"], "history", true),
         (vec!["pkg", "rollback"], "rollback", true),
-        (vec!["pkg", "gc"], "gc", true),
+        (vec!["pkg", "gc", "--dry-run"], "gc", true),
         (vec!["pkg", "repair"], "repair", true),
     ];
     let mut engine = CoreEngine::new(RecordingOperations::default());
-    for (argv, expected, has_policy) in cases {
+    for (index, (argv, expected, has_policy)) in cases.into_iter().enumerate() {
         let cli = Cli::try_parse(argv).unwrap();
         engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
-        let (called, policy) = engine.operations().calls.last().unwrap();
+        assert_eq!(engine.operations.calls.len(), index + 1, "{expected}");
+        let (called, policy) = engine.operations.calls.last().unwrap();
         assert_eq!(*called, expected);
         assert_eq!(policy.is_some(), has_policy);
         if expected == "install" {
@@ -559,6 +560,15 @@ fn core_engine_routes_every_variant_and_preserves_global_policy() {
                 *policy,
                 Some(OperationPolicy {
                     yes: true,
+                    dry_run: true
+                })
+            );
+        }
+        if expected == "gc" {
+            assert_eq!(
+                *policy,
+                Some(OperationPolicy {
+                    yes: false,
                     dry_run: true
                 })
             );

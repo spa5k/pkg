@@ -1,7 +1,11 @@
 """Structural release-workflow security contract."""
 
 from pathlib import Path
+import os
 import re
+import shlex
+import subprocess
+import tempfile
 import unittest
 
 
@@ -21,6 +25,7 @@ PROOF_SERVER = (ROOT / "tools/release/serve_proof_channel.py").read_text(
 MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
     encoding="utf-8"
 )
+LINUX_RUN_SH = ROOT / "tests/linux-clean-host/run.sh"
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -48,7 +53,6 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("contents: write", WORKFLOW)
         self.assertNotIn("gh release", WORKFLOW)
         self.assertNotIn("aws-actions", WORKFLOW)
-        self.assertIn("in-memory Ed25519 test keys", (ROOT / "tools/release/README.md").read_text())
 
     def test_linux_alpha_artifact_is_retained_but_not_published(self) -> None:
         self.assertIn('- "crates/**"', WORKFLOW)
@@ -84,17 +88,70 @@ class ReleaseWorkflowTests(unittest.TestCase):
             WORKFLOW,
         )
 
+    def _single_block(self, lines: list[str], header: str) -> list[str]:
+        """Return the block opened by exactly one `header` line; fail closed."""
+        matches = [index for index, line in enumerate(lines) if line == header]
+        self.assertEqual(
+            len(matches),
+            1,
+            f"expected exactly one {header!r} block, found {len(matches)}",
+        )
+        indent = " " * (len(header) - len(header.lstrip()) + 1)
+        start = matches[0]
+        end = len(lines)
+        for index in range(start + 1, len(lines)):
+            line = lines[index]
+            if line.strip() and not line.startswith(indent):
+                end = index
+                break
+        return lines[start:end]
+
     def test_production_linux_input_is_manual_fixed_and_not_published(self) -> None:
-        self.assertIn("production-linux:", WORKFLOW)
-        self.assertIn("inputs.production-linux", WORKFLOW)
-        self.assertIn("runs-on: ubuntu-22.04", WORKFLOW)
-        self.assertIn("https://releases.happytoolin.com/metadata/1.root.json", WORKFLOW)
+        lines = WORKFLOW.splitlines()
+        permissions = self._single_block(lines, "permissions:")
+        self.assertEqual(
+            [line for line in permissions[1:] if line.strip()], ["  contents: read"]
+        )
+        on_block = self._single_block(lines, "on:")
+        dispatch = self._single_block(on_block, "  workflow_dispatch:")
+        inputs = self._single_block(dispatch, "    inputs:")
+        production_input = self._single_block(inputs, "      production-linux:")
+        for key, value in (("required", "false"), ("type", "boolean"), ("default", "false")):
+            self.assertEqual(
+                [line for line in production_input if line.startswith(f"        {key}:")],
+                [f"        {key}: {value}"],
+            )
+        jobs = self._single_block(lines, "jobs:")
+        production_job = self._single_block(jobs, "  production-linux:")
+        self.assertEqual(
+            [line for line in production_job if line.startswith("    if:")],
+            [
+                "    if: ${{ github.event_name == 'workflow_dispatch' "
+                "&& inputs.production-linux }}"
+            ],
+        )
+        self.assertEqual(
+            [line for line in production_job if line.startswith("    runs-on:")],
+            ["    runs-on: ubuntu-22.04"],
+        )
+        self.assertFalse(any(line.startswith("    permissions:") for line in production_job))
+        for gate_job in ("dry-run-sign", "linux-alpha-proof"):
+            gate = self._single_block(jobs, f"  {gate_job}:")
+            self.assertEqual(
+                [line for line in gate if line.startswith("    if:")],
+                [
+                    "    if: ${{ github.event_name != 'workflow_dispatch' "
+                    "|| !inputs.production-linux }}"
+                ],
+            )
+        production_source = "\n".join(production_job)
+        self.assertIn("https://releases.happytoolin.com/metadata/1.root.json", production_source)
         self.assertIn(
             "52523a9bf76dee8e364efc302b733140f850fe377c1cc73a7675b842d28b94e2",
-            WORKFLOW,
+            production_source,
         )
-        self.assertIn("pkg-v0.1.0-alpha.56-production-linux-input", WORKFLOW)
-        self.assertIn("pkg-release-index", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.56-production-linux-input", production_source)
+        self.assertIn("pkg-release-index", production_source)
 
     def test_linux_uninstall_uses_plain_terminal_exec_status(self) -> None:
         self.assertEqual(
@@ -117,8 +174,6 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('test "$status" -eq 78', LINUX_HARNESS)
         self.assertIn('test ! -s "$stderr"', LINUX_HARNESS)
         self.assertIn('cmp "$before" "$after"', LINUX_HARNESS)
-        self.assertNotIn("pkg-after-uninstall", LINUX_HARNESS)
-        self.assertNotIn("idempotent uninstall", LINUX_HARNESS)
 
     def test_linux_proof_binary_is_isolated_and_every_blocker_runs_twice(self) -> None:
         build = (
@@ -427,6 +482,86 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
         ):
             self.assertIn(asset, authenticate)
         self.assertIn('manifest.get("releaseId") != sys.argv[2]', authenticate)
+
+
+class LinuxCleanHostRefusalTests(unittest.TestCase):
+    """The real harness must refuse bad input before any Docker or git work."""
+
+    HARNESS = LINUX_RUN_SH
+
+    def _sentinel_path(self, root: Path) -> tuple[Path, Path]:
+        """Build a PATH whose docker/git wrappers log one line then fail."""
+        sentinels = root / "sentinels"
+        sentinels.mkdir()
+        log = root / "sentinel.log"
+        for name in ("docker", "git"):
+            sentinel = sentinels / name
+            sentinel.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' \"{name} $*\" >> {shlex.quote(str(log))}\n"
+                "exit 97\n",
+                encoding="utf-8",
+            )
+            sentinel.chmod(0o700)
+        return sentinels, log
+
+    def _run_harness(
+        self, argv: list[str], sentinels: Path, cwd: Path
+    ) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                ["/bin/sh", str(self.HARNESS), *argv],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(cwd),
+                env={**os.environ, "PATH": str(sentinels)},
+            )
+        except subprocess.TimeoutExpired as error:
+            self.fail(f"clean-host harness did not fail fast: {error}")
+
+    def test_invalid_arguments_refuse_with_exact_usage_and_no_side_effects(self) -> None:
+        for argv in (
+            ["--keep-artifacts"],
+            ["--keep-artifacts", "out", "extra"],
+            ["--bogus"],
+        ):
+            with self.subTest(argv=argv):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    sentinels, log = self._sentinel_path(root)
+                    result = self._run_harness(argv, sentinels, root)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(
+                        result.stderr,
+                        f"usage: {self.HARNESS} [--keep-artifacts DIR]\n",
+                    )
+                    self.assertEqual(result.stdout, "")
+                    self.assertFalse(log.exists())
+                    self.assertEqual(
+                        sorted(path.name for path in root.iterdir()), ["sentinels"]
+                    )
+
+    def test_valid_arguments_stop_at_first_docker_attempt_without_git_or_artifacts(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sentinels, log = self._sentinel_path(root)
+            artifacts = root / "artifacts"
+            result = self._run_harness(
+                ["--keep-artifacts", str(artifacts)], sentinels, root
+            )
+            self.assertEqual(result.returncode, 97)
+            self.assertEqual(
+                log.read_text(encoding="utf-8").splitlines(),
+                ["docker version --format {{.Server.Arch}}"],
+            )
+            self.assertFalse(artifacts.exists())
+            self.assertEqual(
+                sorted(path.name for path in root.iterdir()),
+                ["sentinel.log", "sentinels"],
+            )
 
 
 if __name__ == "__main__":

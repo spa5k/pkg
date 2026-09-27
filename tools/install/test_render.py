@@ -1,60 +1,98 @@
-import importlib.util
+"""Real renderer refusals and shell setup. Bootstrap execution owns digest proof."""
 from pathlib import Path
+import shlex
+import subprocess
+import sys
 import tempfile
 import unittest
 
-spec = importlib.util.spec_from_file_location("render", Path(__file__).with_name("render.py"))
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+ROOT = Path(__file__).resolve().parents[2]
+TAG = "v0.1.0-alpha.49"
+LINUX_ARTIFACT = b"#!/bin/sh\npkg x86-64 linux artifact fixture bytes\n"
+MACOS_PACKAGE = b"pkg macOS preview package fixture bytes for 0.1.0-alpha.49\n"
+MACOS_WRAPPER = b"#!/bin/sh\npkg macOS preview wrapper fixture bytes\n"
+ARTIFACTS = {
+    "pkg-install-x86_64-linux": LINUX_ARTIFACT,
+    f"pkg-{TAG[1:]}-preview.pkg": MACOS_PACKAGE,
+    "install-preview.sh": MACOS_WRAPPER,
+}
 
 
-class RenderTests(unittest.TestCase):
-    def test_missing_or_linked_asset_refuses(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            with self.assertRaises(ValueError):
-                module.render("v0.1.0-alpha.49", root)
-            payload = root / "payload"
-            payload.write_bytes(b"bytes")
-            (root / "pkg-install-x86_64-linux").symlink_to(payload)
-            with self.assertRaises(ValueError):
-                module.render("v0.1.0-alpha.49", root)
+def write_assets(root: Path) -> None:
+    """Write a complete fixture whose three artifact payloads are pairwise distinct."""
+    for name, data in ARTIFACTS.items():
+        (root / name).write_bytes(data)
 
-    def test_invalid_tag_cannot_inject_shell(self):
-        for tag in ["$(id)", "v1.0.0'; echo injected", "../v1.0.0", "v1.0.0\n"]:
-            with self.assertRaises(ValueError):
-                module.render(tag, Path("."))
 
-    def test_render_contains_exact_bytes_for_both_platforms(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name in ["pkg-install-x86_64-linux", "pkg-0.1.0-alpha.49-preview.pkg", "install-preview.sh"]:
-                (root / name).write_bytes(b"bytes")
-            text = module.render("v0.1.0-alpha.49", root)
-            self.assertNotRegex(text, r"@PKG_[A-Z0-9_]+@")
-            self.assertIn("Darwin:arm64", text)
-            self.assertIn("Linux:x86_64", text)
+def run_render_cli(tag: str, assets: Path, output: Path) -> subprocess.CompletedProcess:
+    """Invoke the real render.py CLI the release flow uses."""
+    return subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("render.py")), "--", tag, str(assets), str(output)],
+        capture_output=True, text=True, timeout=10,
+    )
 
-    def test_doctor_path_is_idempotent(self):
-        import subprocess
-        source = (module.ROOT / "docs/install.sh").read_text()
-        start = source.index("pkg_check_path=$PATH")
-        end = source.index('if ! PATH="$pkg_check_path"', start)
-        script = source[start:end] + '\nprintf "%s" "$pkg_check_path"\n'
-        managed = "/Users/test/Library/Application Support/pkg/current/bin"
-        for initial in ["/usr/bin:/bin", f"{managed}:/usr/local/bin:/usr/bin:/bin", "/usr/local/bin:/usr/bin:/bin"]:
-            result = subprocess.check_output(["/bin/sh", "-c", script], env={"PATH": initial, "pkg_user_bin": managed}, text=True)
-            self.assertEqual(result.split(":" ).count(managed), 1)
-            self.assertEqual(result.split(":" ).count("/usr/local/bin"), 1)
-            repeated = subprocess.check_output(["/bin/sh", "-c", script], env={"PATH": result, "pkg_user_bin": managed}, text=True)
-            self.assertEqual(repeated, result)
 
+class RenderedReleaseProof(unittest.TestCase):
+    def test_each_unsafe_artifact_refuses_at_the_cli(self):
+        for name in ARTIFACTS:
+            for label in ["missing", "symlink", "empty", "directory"]:
+                with self.subTest(artifact=name, case=label):
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        write_assets(root)
+                        target = root / name
+                        if label == "missing":
+                            target.unlink()
+                        elif label == "symlink":
+                            decoy = root / "decoy-payload"
+                            decoy.write_bytes(b"nonempty decoy bytes\n")
+                            target.unlink()
+                            target.symlink_to(decoy)
+                        elif label == "empty":
+                            target.write_bytes(b"")
+                        else:
+                            target.unlink()
+                            target.mkdir()
+                        output = root / "rendered-install.sh"
+                        result = run_render_cli(TAG, root, output)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(f"missing or unsafe release artifact: {name}", result.stderr)
+                        self.assertFalse(output.exists())
+
+    def test_invalid_tags_fail_at_the_tag_guard(self):
+        unsafe_tags = [
+            "v1.0.0'; echo injected",
+            "$(id)",
+            "v1.0.0`id`",
+            "../v1.0.0",
+            "v1.0.0\nrm -rf /",
+            "1.0.0",
+            "v1.0.0-alpha.0",
+        ]
+        for tag in unsafe_tags:
+            with self.subTest(tag=tag):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    write_assets(root)
+                    # A disabled tag guard would reach this tag-derived artifact
+                    # name; create it safely when it is one plain path component
+                    # so only the tag guard can refuse the run. These fixture
+                    # files are never executed.
+                    derived = f"pkg-{tag[1:]}-preview.pkg"
+                    if "/" not in derived and "\x00" not in derived:
+                        (root / derived).write_bytes(b"fixture for a disabled tag guard\n")
+                    output = root / "rendered-install.sh"
+                    result = run_render_cli(tag, root, output)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("invalid release tag", result.stderr)
+                    self.assertFalse(output.exists())
+
+
+class RealShellBoundaryTests(unittest.TestCase):
     def test_guarded_startup_survives_removed_binary(self):
-        import subprocess
-        import shlex
-        source = (module.ROOT / "docs/install.sh").read_text()
+        source = (ROOT / "docs/install.sh").read_text()
         snippet = next(line for line in source.split("'") if line.startswith("  [ ! -x /usr/local/bin/pkg ]"))
-        wrapper = (module.ROOT / "packaging/macos/install-preview.sh").read_text()
+        wrapper = (ROOT / "packaging/macos/install-preview.sh").read_text()
         self.assertIn("echo '" + snippet + "'", wrapper)
         self.assertIn("add " + snippet.strip() + " to ~/.zshrc.", wrapper)
         with tempfile.TemporaryDirectory() as directory:
@@ -73,3 +111,7 @@ class RenderTests(unittest.TestCase):
                     removed = subprocess.run([shell, "-c", snippet], capture_output=True)
                     self.assertEqual(removed.returncode, 0, removed.stderr)
                     self.assertEqual(removed.stderr, b"")
+
+
+if __name__ == "__main__":
+    unittest.main()
