@@ -1056,12 +1056,45 @@ fn nixpkgs_metadata_runner_failure_is_closed() {
         "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     )
     .unwrap();
-    let adapter = RealNixAdapter::scripted(Scripted::new(vec![failure(1)]));
-
-    assert_eq!(
-        adapter.run_metadata(&pin).unwrap_err().code(),
-        crate::NixpkgsSourceErrorCode::RunnerFailure
-    );
+    for (ping, expected) in [
+        (
+            success(Vec::new()),
+            crate::NixpkgsSourceErrorCode::RunnerFailure,
+        ),
+        (failure(1), crate::NixpkgsSourceErrorCode::RunnerUnavailable),
+    ] {
+        let executor = Scripted::new(vec![failure(1), ping]);
+        let calls = Arc::clone(&executor.calls);
+        let adapter = RealNixAdapter::scripted(executor);
+        assert_eq!(adapter.run_metadata(&pin).unwrap_err().code(), expected);
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "one failed operation and one diagnostic");
+        assert_eq!(calls[1], os_args(["store", "ping", "--store", "daemon"]));
+    }
+    for (failure, expected) in [
+        (
+            NixAdapterError::Unavailable,
+            crate::NixpkgsSourceErrorCode::RunnerUnavailable,
+        ),
+        (
+            NixAdapterError::Timeout,
+            crate::NixpkgsSourceErrorCode::RunnerUnavailable,
+        ),
+        (
+            NixAdapterError::TrustFailure,
+            crate::NixpkgsSourceErrorCode::VerificationFailure,
+        ),
+        (
+            NixAdapterError::IntegrityFailure,
+            crate::NixpkgsSourceErrorCode::VerificationFailure,
+        ),
+    ] {
+        let executor = Scripted::with_results(vec![Err(failure)]);
+        let calls = Arc::clone(&executor.calls);
+        let adapter = RealNixAdapter::scripted(executor);
+        assert_eq!(adapter.run_metadata(&pin).unwrap_err().code(), expected);
+        assert_eq!(calls.lock().unwrap().len(), 1, "typed errors need no probe");
+    }
 }
 
 #[test]

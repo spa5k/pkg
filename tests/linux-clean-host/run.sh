@@ -872,6 +872,168 @@ for name, target, resolved in roots:
 PY
 }
 
+run_install_refusal_cases() {
+    refusal_run=$1
+    refusal_phase=$2
+    refusal_directory="$evidence_root/install-refusals/run-$refusal_run"
+    mkdir -p "$refusal_directory"
+    if docker exec -i "$container" python3 - "$refusal_phase" \
+        > "$refusal_directory/$refusal_phase.jsonl" \
+        2> "$refusal_directory/$refusal_phase.stderr" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+
+phase = sys.argv[1]
+state_root = Path("/home/proof-user/.local/share/pkg")
+gc_root = Path("/nix/var/nix/gcroots/pkg")
+
+
+def cli(arguments):
+    return subprocess.run(
+        ["runuser", "-u", "proof-user", "--", "/usr/local/bin/pkg", "--json", "--yes", *arguments],
+        cwd="/home/proof-user", capture_output=True, text=True, timeout=120,
+    )
+
+
+def committed_state():
+    # Logs and lease records may record a refused attempt. Package content,
+    # activation, retained generations, and published roots must not change.
+    paths = []
+    for name in ("manifest.json", "manifest.json.sha256", "lock.json", "lock.json.sha256",
+                 "generations", "activations", "current"):
+        root = state_root / name
+        paths.append(root)
+        if root.is_dir() and not root.is_symlink():
+            paths.extend(root.rglob("*"))
+    paths.append(gc_root)
+    paths.extend(gc_root.rglob("*"))
+    snapshot = {}
+    for path in sorted(paths):
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            snapshot[str(path)] = None
+            continue
+        value = [stat.S_IFMT(metadata.st_mode), stat.S_IMODE(metadata.st_mode),
+                 metadata.st_uid, metadata.st_gid]
+        if stat.S_ISREG(metadata.st_mode):
+            value.append(hashlib.sha256(path.read_bytes()).hexdigest())
+        elif stat.S_ISLNK(metadata.st_mode):
+            value.append(os.readlink(path))
+        elif not stat.S_ISDIR(metadata.st_mode):
+            raise AssertionError(f"unexpected package state object: {path}")
+        snapshot[str(path)] = value
+    return snapshot
+
+
+def check(label, arguments, code, symbol=None):
+    before = committed_state()
+    result = cli(arguments)
+    after = committed_state()
+    observation = {"case": label, "arguments": arguments, "status": result.returncode,
+                   "stdout": result.stdout, "stderr": result.stderr,
+                   "before": before, "after": after}
+    print(json.dumps(observation, sort_keys=True), flush=True)
+    assert result.returncode == code, observation
+    assert not result.stderr, observation
+    value = json.loads(result.stdout)
+    assert value["schemaVersion"] == 1 and value["ok"] == (code == 0), observation
+    if symbol is not None:
+        assert value["error"]["code"] == code, observation
+        assert value["error"]["symbol"] == symbol, observation
+    assert before == after, f"{label}: committed package state changed"
+
+
+def install(label, selector, dry_run, code, symbol=None):
+    arguments = (["--dry-run"] if dry_run else []) + ["install", "--", selector]
+    check(label, arguments, code, symbol)
+
+
+if phase == "source-offline":
+    # A read-only command creates the empty per-user layout without asking the
+    # broker for Nixpkgs. No earlier preview or install runs in this container.
+    initial = cli(["list"])
+    assert initial.returncode == 0 and json.loads(initial.stdout)["ok"], initial
+    assert not Path("/var/lib/pkg/broker-home/nixpkgs").exists(), "source marker is warm"
+    materialized = [str(path) for path in Path("/nix/store").iterdir()
+                    if (path / "pkgs/top-level/all-packages.nix").is_file()]
+    assert not materialized, f"Nixpkgs source is already materialized: {materialized}"
+    print(json.dumps({"source_cold": True, "materialized_nixpkgs": materialized}), flush=True)
+    # The signed channel is served on loopback and remains authenticated while
+    # the first real pinned-source acquisition has no external network route.
+    check("offline-signed-channel", ["update", "--check"], 0)
+    for dry_run in (True, False):
+        install(f"source-offline-{dry_run}", "hello", dry_run, 66, "ACQUIRE_NETWORK")
+elif phase == "source-restored":
+    install("source-restored-preview", "hello", True, 0)
+elif phase == "resolution":
+    install("valid-preview", "ripgrep", True, 0)
+    for selector in ("pkg-proof-missing-9f485818", ".", "..", "null", "--help", "--"):
+        for dry_run in (True, False):
+            install(f"resolution-{selector}-{dry_run}", selector, dry_run, 64, "RESOLVE_FAILED")
+    units = ["pkg-nix-broker.socket", "pkg-nix-broker.service"]
+    for unit in units:
+        subprocess.run(["systemctl", "is-active", "--quiet", unit], check=True)
+    try:
+        subprocess.run(["systemctl", "stop", *units], check=True, timeout=30)
+        for unit in units:
+            assert subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode != 0
+        for dry_run in (True, False):
+            install(f"engine-stopped-{dry_run}", "ripgrep", dry_run, 79, "ENGINE_UNAVAILABLE")
+    finally:
+        subprocess.run(["systemctl", "start", *units], check=True, timeout=30)
+    install("engine-restored-preview", "ripgrep", True, 0)
+    daemon_units = ["nix-daemon.socket", "nix-daemon.service"]
+    for unit in daemon_units:
+        subprocess.run(["systemctl", "is-active", "--quiet", unit], check=True)
+    try:
+        subprocess.run(["systemctl", "stop", *daemon_units], check=True, timeout=30)
+        for unit in daemon_units:
+            assert subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode != 0
+        # Keep the broker healthy so a generic Nix process failure cannot be
+        # mistaken for a missing selector or an external source outage.
+        for unit in units:
+            subprocess.run(["systemctl", "is-active", "--quiet", unit], check=True)
+        for dry_run in (True, False):
+            install(f"daemon-stopped-{dry_run}", "ripgrep", dry_run, 79, "ENGINE_UNAVAILABLE")
+    finally:
+        subprocess.run(["systemctl", "start", *daemon_units], check=True, timeout=30)
+    install("daemon-restored-preview", "ripgrep", True, 0)
+else:
+    raise AssertionError(f"unknown refusal proof phase: {phase}")
+PY
+    then
+        return 0
+    else
+        refusal_status=$?
+        tail -n 1 "$refusal_directory/$refusal_phase.jsonl" >&2
+        cat "$refusal_directory/$refusal_phase.stderr" >&2
+        return "$refusal_status"
+    fi
+}
+
+prove_source_fetch_refusal() {
+    echo "+ pinned source fetch refusal with local signed channel available"
+    docker network disconnect bridge "$container"
+    if run_install_refusal_cases "$1" source-offline; then
+        source_refusal_status=0
+    else
+        source_refusal_status=$?
+    fi
+    # Always reconnect after the bounded command, including assertion failure.
+    # The existing signal/EXIT cleanup removes the disposable container.
+    docker network connect bridge "$container"
+    test "$source_refusal_status" -eq 0
+    wait_container_ready
+    run_install_refusal_cases "$1" source-restored
+    record_pass source-fetch-refusal "$1" "real cold-source preview/live exit 66; local signed channel stays available; reconnect preview succeeds"
+}
+
 publication_installer() {
     docker exec -i "$container" python3 - "$1" <<'PY'
 import hashlib
@@ -1036,6 +1198,8 @@ do
     run_filter_group "$blocking_case" "$1"
 done
 
+prove_source_fetch_refusal "$1"
+
 echo "+ pkg install hello"
 docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --yes install hello"
 docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list" \
@@ -1043,6 +1207,10 @@ docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list" \
 docker exec "$container" su - proof-user -c \
     "/home/proof-user/.local/share/pkg/current/bin/hello" \
     | grep -F "Hello, world!" >/dev/null
+
+echo "+ preview and live resolution refusals preserve installed package state"
+run_install_refusal_cases "$1" resolution
+record_pass install-refusal-codes "$1" "unknown and invalid literals exit 64; real stopped broker exits 79; valid preview succeeds; package state preserved"
 
 echo "+ pkg install ripgrep"
 docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --yes install ripgrep"
@@ -1467,7 +1635,9 @@ for blocking_case in \
     old-runtime-absent \
     changed-vendor-leaf \
     terminal-uninstall \
-    same-host-reinstall
+    same-host-reinstall \
+    source-fetch-refusal \
+    install-refusal-codes
 do
     test "$(awk -F '\t' -v case_name="$blocking_case" \
         '$1 == "pass" && $2 == case_name { count += 1 } END { print count + 0 }' \
@@ -1478,7 +1648,7 @@ do
             "$results")" -eq 1
     done
 done
-test "$(awk -F '\t' '$1 == "pass" { count += 1 } END { print count + 0 }' "$results")" -eq 38
+test "$(awk -F '\t' '$1 == "pass" { count += 1 } END { print count + 0 }' "$results")" -eq 42
 
 echo "Linux vendor install/uninstall and product package lifecycle proof passed."
 echo "Docker limits: no host boot or reboot, SELinux, foreign-host coexistence, or full distribution matrix."

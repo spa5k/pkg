@@ -17,7 +17,7 @@ use pkg_core::{
 use pkg_index::{IndexDocument, IndexQuery, InfoLookup};
 use pkg_nix::{
     BuildCacheSubject, BuildPlanTarget, DerivationPlanReport, EvaluateDerivationRequest,
-    NixAdapter, NixAdapterError, VerifiedNixpkgsSource,
+    NixAdapter, NixAdapterError, NixAdapterErrorCode, VerifiedNixpkgsSource,
 };
 
 /// A selector paired with the authoritative result of pinned evaluation.
@@ -93,6 +93,10 @@ pub enum ResolveErrorCode {
     InvalidSelector,
     /// Evaluate-only Nix execution failed closed.
     EvaluationFailed,
+    /// The managed evaluator was unavailable or timed out.
+    EngineUnavailable,
+    /// The evaluator reported a trust or integrity failure.
+    VerificationFailed,
     /// The authoritative evaluated version violated user intent.
     VersionMismatch,
 }
@@ -179,18 +183,18 @@ fn resolve_flake(
         return Err(ResolveError::new(ResolveErrorCode::AlreadyRealized));
     }
     let lock = match selector.source_revision() {
-        SourceRevision::CurrentChannel => {
-            adapter.lock_flake(reference).map_err(map_adapter_error)?
-        }
+        SourceRevision::CurrentChannel => adapter
+            .lock_flake(reference)
+            .map_err(|error| map_adapter_error(&error))?,
         SourceRevision::PublicFlake(lock) if lock.reference() == reference => lock.clone(),
         _ => return Err(ResolveError::new(ResolveErrorCode::SourceMismatch)),
     };
     let request =
         EvaluateDerivationRequest::for_flake(lock.clone(), system, selector.outputs().clone())
-            .map_err(map_adapter_error)?;
+            .map_err(|error| map_adapter_error(&error))?;
     let plan = adapter
         .evaluate_derivation(&request)
-        .map_err(map_adapter_error)?;
+        .map_err(|error| map_adapter_error(&error))?;
     if !selector.version_preference().matches(plan.version()) {
         return Err(ResolveError::new(ResolveErrorCode::VersionMismatch));
     }
@@ -236,7 +240,7 @@ fn resolve_with_source(
     .map_err(|_| ResolveError::new(ResolveErrorCode::InvalidSelector))?;
     let plan = adapter
         .evaluate_derivation(&request)
-        .map_err(map_adapter_error)?;
+        .map_err(|error| map_adapter_error(&error))?;
     if !selector.version_preference().matches(plan.version()) {
         return Err(ResolveError::new(ResolveErrorCode::VersionMismatch));
     }
@@ -302,8 +306,16 @@ fn discover_attribute(
         .map_err(|_| ResolveError::new(ResolveErrorCode::PackageNotFound))
 }
 
-fn map_adapter_error(_: NixAdapterError) -> ResolveError {
-    ResolveError::new(ResolveErrorCode::EvaluationFailed)
+const fn map_adapter_error(error: &NixAdapterError) -> ResolveError {
+    ResolveError::new(match error.code() {
+        NixAdapterErrorCode::Unavailable | NixAdapterErrorCode::Timeout => {
+            ResolveErrorCode::EngineUnavailable
+        }
+        NixAdapterErrorCode::TrustFailure | NixAdapterErrorCode::IntegrityFailure => {
+            ResolveErrorCode::VerificationFailed
+        }
+        _ => ResolveErrorCode::EvaluationFailed,
+    })
 }
 
 #[cfg(test)]

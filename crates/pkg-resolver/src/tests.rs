@@ -202,6 +202,41 @@ fn source_mismatch_and_adapter_failure_are_redacted() {
     assert_eq!(error.code(), ResolveErrorCode::EvaluationFailed);
     assert!(!error.to_string().contains("/nix/store"));
 
+    for (failure, expected) in [
+        (
+            NixAdapterError::OperationFailed,
+            ResolveErrorCode::EvaluationFailed,
+        ),
+        (
+            NixAdapterError::Unavailable,
+            ResolveErrorCode::EngineUnavailable,
+        ),
+        (
+            NixAdapterError::Timeout,
+            ResolveErrorCode::EngineUnavailable,
+        ),
+        (
+            NixAdapterError::TrustFailure,
+            ResolveErrorCode::VerificationFailed,
+        ),
+        (
+            NixAdapterError::IntegrityFailure,
+            ResolveErrorCode::VerificationFailed,
+        ),
+    ] {
+        let fake = FakeNix::new();
+        fake.expect_evaluate_derivation(request("ripgrep"), Err(failure));
+        let error = resolve_for_test(
+            &super::tests::selector("ripgrep", VersionPreference::Any),
+            None,
+            &fake,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), expected);
+        assert!(!error.to_string().contains("/nix/store"));
+        assert_eq!(fake.assert_exhausted(), Ok(()));
+    }
+
     let pinned = super::tests::selector("ripgrep", VersionPreference::Any)
         .with_attribute(AttributePath::new("ripgrep").unwrap())
         .unwrap()
