@@ -26,6 +26,21 @@ removed; their replacements are in the completed-work record and Git history.
 
 ## Remaining work
 
+### RELEASE-NEXT: alpha.57 publication
+
+- **Purpose:** release the reviewed test guards, installer fixes, and accurate
+  install-preparation diagnostics as alpha.57.
+- **Owns:** version pins, signed alpha assets, sequence-57 catalogs and channel,
+  exact native upgrade and reboot proof, public checks, and current release records.
+- **Depends:** merged INSTALL-01, INSTALL-02, INSTALL-03, and PREVIEW-01 fixes.
+- **Tests & gates:** Rust 1.96.1 G-LINT and G-QUALITY; behavior regression guard;
+  native Linux lifecycle; exact Cosign asset and sealed-channel verification;
+  same-VM alpha.56 upgrade, package use, and real reboot; public Linux/macOS
+  installation; docs links; E review and A security review before publication.
+- **Rollback:** revert unpublished source changes. After publication, publish a
+  higher channel sequence with approved assets. Never replace signed release files,
+  move a published tag, or replay old metadata. Alpha trust remains unchanged.
+
 ### PREVIEW-01: preserve package-preparation failure categories
 
 - **Purpose:** show a resolution error for an invalid or unknown package without
