@@ -66,11 +66,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("cargo fetch --locked", WORKFLOW)
         self.assertNotIn("PKG_NIX_SOURCE_ARCHIVE:", WORKFLOW)
         self.assertNotIn("nix-2.34.8", WORKFLOW)
-        candidate = "pkg-v0.1.0-alpha.56-linux-x86_64.tar.gz"
+        candidate = "pkg-v0.1.0-alpha.57-linux-x86_64.tar.gz"
         self.assertIn(f"proof-artifacts/{candidate}", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.56-linux-x86_64-candidate", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.57-linux-x86_64-candidate", WORKFLOW)
         self.assertIn("proof-artifacts/evidence/", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.56-x86_64-linux-proof", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.57-x86_64-linux-proof", WORKFLOW)
         self.assertIn("retention-days: 7", WORKFLOW)
         self.assertIn("set -o pipefail", WORKFLOW)
         self.assertIn('tee "$RUNNER_TEMP/dn15-runtime.log"', WORKFLOW)
@@ -150,7 +150,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "52523a9bf76dee8e364efc302b733140f850fe377c1cc73a7675b842d28b94e2",
             production_source,
         )
-        self.assertIn("pkg-v0.1.0-alpha.56-production-linux-input", production_source)
+        self.assertIn("pkg-v0.1.0-alpha.57-production-linux-input", production_source)
         self.assertIn("pkg-release-index", production_source)
 
     def test_linux_uninstall_uses_plain_terminal_exec_status(self) -> None:
