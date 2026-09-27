@@ -452,11 +452,21 @@ impl RealNixAdapter {
         args: Vec<OsString>,
         timeout: Duration,
     ) -> Result<Vec<u8>, NixAdapterError> {
-        let outcome = self.run(method, args, timeout)?;
-        if outcome.code != Some(0) {
-            return Err(NixAdapterError::OperationFailed);
+        let error = match self.run(method, args, timeout) {
+            Ok(outcome) if outcome.code == Some(0) => return Ok(outcome.stdout),
+            Ok(_) => NixAdapterError::OperationFailed,
+            Err(error) => error,
+        };
+        // Nix also uses a nonzero process exit when its daemon is unavailable.
+        // Diagnose that ambiguity without retrying the source or evaluation.
+        // The fixed ping uses MethodKind::Version, so this cannot recurse.
+        if method == MethodKind::EvaluateDerivation
+            && matches!(error, NixAdapterError::OperationFailed)
+            && self.ping_managed_store().is_err()
+        {
+            return Err(NixAdapterError::Unavailable);
         }
-        Ok(outcome.stdout)
+        Err(error)
     }
 
     pub(super) fn copy_cache_signatures(
@@ -474,7 +484,6 @@ impl RealNixAdapter {
         args.extend(paths.iter().map(|path| OsString::from(path.as_str())));
         self.require_success(MethodKind::Substitute, args, BUILD_TIMEOUT)
             .map(|_| ())
-            .map_err(|_| NixAdapterError::TrustFailure)
     }
 
     pub(super) fn raw_path_info(
@@ -674,7 +683,7 @@ impl NixpkgsMetadataRunner for RealNixAdapter {
         );
         args.push("--json".into());
         self.require_success(MethodKind::EvaluateDerivation, args, EVALUATE_TIMEOUT)
-            .map_err(|_| NixpkgsSourceError::runner_failure())
+            .map_err(|error| NixpkgsSourceError::from_adapter(&error))
     }
 }
 
@@ -774,8 +783,7 @@ impl NixAdapter for RealNixAdapter {
     fn substitute(&self, path: &StorePath) -> Result<SubstituteReport, NixAdapterError> {
         let mut ping = base_args();
         ping.extend(os_args(["store", "ping", "--store", CACHE_URL]));
-        self.require_success(MethodKind::Substitute, ping, SHORT_TIMEOUT)
-            .map_err(|_| NixAdapterError::Unavailable)?;
+        self.require_success(MethodKind::Substitute, ping, SHORT_TIMEOUT)?;
 
         let remote = match self.raw_path_info(path, false, true) {
             Ok(remote) => remote,
@@ -798,8 +806,7 @@ impl NixAdapter for RealNixAdapter {
         let mut copy = base_args();
         copy.extend(os_args(["copy", "--from", CACHE_URL]));
         copy.push(path.as_str().into());
-        self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)
-            .map_err(|_| NixAdapterError::TrustFailure)?;
+        self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)?;
         self.copy_cache_signatures(&[path])?;
         let local = self.raw_path_info(path, false, false)?;
         let local_entry = root_path_info(&local, path)?;
@@ -819,8 +826,7 @@ impl NixAdapter for RealNixAdapter {
         }
         let mut ping = base_args();
         ping.extend(os_args(["store", "ping", "--store", CACHE_URL]));
-        self.require_success(MethodKind::Substitute, ping, SHORT_TIMEOUT)
-            .map_err(|_| NixAdapterError::Unavailable)?;
+        self.require_success(MethodKind::Substitute, ping, SHORT_TIMEOUT)?;
 
         let mut reports = Vec::with_capacity(paths.len());
         for chunk in paths.chunks(PATH_INFO_BATCH_SIZE) {
@@ -880,8 +886,7 @@ impl NixAdapter for RealNixAdapter {
                         .iter()
                         .map(|path| OsString::from(path.as_str())),
                 );
-                self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)
-                    .map_err(|_| NixAdapterError::TrustFailure)?;
+                self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)?;
                 self.copy_cache_signatures(&authenticated_paths)?;
                 let local = self.raw_path_infos(&authenticated_paths, false, false)?;
                 for (index, path, remote_hash, nar_hash, signatures) in authenticated {

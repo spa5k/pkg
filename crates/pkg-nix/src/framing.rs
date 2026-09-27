@@ -282,7 +282,13 @@ pub enum BuildPreparationErrorCode {
     HostRefused,
     /// The typed selector batch was invalid under the verified channel.
     IntentRefused,
-    /// Source, resolution, cache classification, or plan construction refused.
+    /// A package selector could not be resolved or evaluated.
+    ResolutionRefused,
+    /// Source acquisition failed before package evaluation.
+    SourceUnavailable,
+    /// Source identity or integrity verification failed.
+    VerificationRefused,
+    /// Cache classification or remaining plan construction refused.
     PlanningRefused,
     /// The caller-bound broker handle would not retain this preparation.
     BrokerRefused,
@@ -295,6 +301,9 @@ impl BuildPreparationErrorCode {
         match self {
             Self::HostRefused => "host_refused",
             Self::IntentRefused => "intent_refused",
+            Self::ResolutionRefused => "resolution_refused",
+            Self::SourceUnavailable => "source_unavailable",
+            Self::VerificationRefused => "verification_refused",
             Self::PlanningRefused => "planning_refused",
             Self::BrokerRefused => "broker_refused",
         }
@@ -526,8 +535,10 @@ pub enum ChannelRefreshErrorCode {
 pub enum CacheInstallErrorCode {
     /// The handle, operation class, or retained intent was invalid.
     InvalidIntent,
-    /// Authenticated resolution, substitution, or verification failed.
+    /// Authenticated resolution or cache acquisition failed.
     AcquisitionFailed,
+    /// The source, package trust, or acquired identity failed verification.
+    VerificationFailed,
     /// Lifecycle cancellation won while acquisition was in flight.
     Cancelled,
     /// Broker-owned channel or acquisition authority was unavailable.
@@ -541,6 +552,7 @@ impl CacheInstallErrorCode {
         match self {
             Self::InvalidIntent => "invalid-intent",
             Self::AcquisitionFailed => "acquisition-failed",
+            Self::VerificationFailed => "verification-failed",
             Self::Cancelled => "cancelled",
             Self::AuthorityUnavailable => "authority-unavailable",
         }
@@ -2781,6 +2793,7 @@ fn parse_cache_install_error_code(value: &str) -> Result<CacheInstallErrorCode, 
     match value {
         "invalid-intent" => Ok(CacheInstallErrorCode::InvalidIntent),
         "acquisition-failed" => Ok(CacheInstallErrorCode::AcquisitionFailed),
+        "verification-failed" => Ok(CacheInstallErrorCode::VerificationFailed),
         "cancelled" => Ok(CacheInstallErrorCode::Cancelled),
         "authority-unavailable" => Ok(CacheInstallErrorCode::AuthorityUnavailable),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
@@ -2805,6 +2818,9 @@ fn parse_build_preparation_error_code(
     match value {
         "host_refused" => Ok(BuildPreparationErrorCode::HostRefused),
         "intent_refused" => Ok(BuildPreparationErrorCode::IntentRefused),
+        "resolution_refused" => Ok(BuildPreparationErrorCode::ResolutionRefused),
+        "source_unavailable" => Ok(BuildPreparationErrorCode::SourceUnavailable),
+        "verification_refused" => Ok(BuildPreparationErrorCode::VerificationRefused),
         "planning_refused" => Ok(BuildPreparationErrorCode::PlanningRefused),
         "broker_refused" => Ok(BuildPreparationErrorCode::BrokerRefused),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
@@ -4446,6 +4462,9 @@ mod tests {
         for code in [
             BuildPreparationErrorCode::HostRefused,
             BuildPreparationErrorCode::IntentRefused,
+            BuildPreparationErrorCode::ResolutionRefused,
+            BuildPreparationErrorCode::SourceUnavailable,
+            BuildPreparationErrorCode::VerificationRefused,
             BuildPreparationErrorCode::PlanningRefused,
             BuildPreparationErrorCode::BrokerRefused,
         ] {
@@ -4886,6 +4905,7 @@ mod tests {
         for code in [
             CacheInstallErrorCode::InvalidIntent,
             CacheInstallErrorCode::AcquisitionFailed,
+            CacheInstallErrorCode::VerificationFailed,
             CacheInstallErrorCode::Cancelled,
             CacheInstallErrorCode::AuthorityUnavailable,
         ] {

@@ -26,6 +26,22 @@ removed; their replacements are in the completed-work record and Git history.
 
 ## Remaining work
 
+### PREVIEW-01: preserve package-preparation failure categories
+
+- **Purpose:** show a resolution error for an invalid or unknown package without
+  hiding a source, verification, or managed-engine failure.
+- **Owns:** redacted preparation error categories from the real planner through
+  the broker protocol to install and upgrade output. An index miss alone is not
+  a resolution failure because direct attribute evaluation remains supported.
+- **Depends:** current `main`; this delivery follows the installer and test
+  isolation changes in PR #70.
+- **Tests & gates:** installed CLI and real broker checks for preview/live
+  resolution failure, a valid preview, unchanged committed state, and an
+  unavailable engine; source and verification failure controls; strict protocol
+  decoding; pinned G-LINT and G-QUALITY; docs links; E and A review.
+- **Rollback:** revert the code and proof change. No package-state migration is
+  introduced. CLI and broker must come from the same release.
+
 ### INSTALL-02: refuse unsafe parents before vendor installation
 
 - **Purpose:** prevent an unsafe command directory from leaving a partial Nix install.

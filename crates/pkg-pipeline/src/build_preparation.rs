@@ -9,8 +9,8 @@ pub use pkg_nix::BuildPreparationErrorCode;
 use pkg_nix::{AuthenticatedCaller, BuildPreview, BuildPreviewEstimates, OperationHandle};
 
 use crate::{
-    AuthenticatedBuildIntent, AuthenticatedBuildReplanner, BuildPlanningAdapter,
-    ProductionBuildHostFactsProbe,
+    AuthenticatedBuildIntent, AuthenticatedBuildReplanner, BuildIntentError, BuildIntentErrorCode,
+    BuildPlanningAdapter, ProductionBuildHostFactsProbe,
 };
 
 /// A private initial plan paired with its only trusted replanning capability.
@@ -55,14 +55,14 @@ impl AuthenticatedBuildPreparation {
         .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::IntentRefused))?;
         intent
             .lock_sources(adapter.as_ref())
-            .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::PlanningRefused))?;
+            .map_err(BuildPreparationError::from_intent)?;
         let replanner = Arc::new(AuthenticatedBuildReplanner::new(intent, adapter, host));
         let initial_plan = replanner.initial_plan().map_err(|error| {
             let _ = writeln!(
                 std::io::stderr().lock(),
                 "pkg broker build preparation refused: {error:?}"
             );
-            BuildPreparationError::new(BuildPreparationErrorCode::PlanningRefused)
+            BuildPreparationError::from_intent(error)
         })?;
         let estimates = initial_plan
             .bootstrap_estimates()
@@ -105,6 +105,21 @@ pub struct BuildPreparationError {
 impl BuildPreparationError {
     pub(crate) const fn new(code: BuildPreparationErrorCode) -> Self {
         Self { code }
+    }
+
+    const fn from_intent(error: BuildIntentError) -> Self {
+        Self::new(match error.code() {
+            BuildIntentErrorCode::InvalidIntent => BuildPreparationErrorCode::IntentRefused,
+            BuildIntentErrorCode::ResolutionFailed => BuildPreparationErrorCode::ResolutionRefused,
+            BuildIntentErrorCode::SourceUnavailable => BuildPreparationErrorCode::SourceUnavailable,
+            BuildIntentErrorCode::VerificationFailed => {
+                BuildPreparationErrorCode::VerificationRefused
+            }
+            BuildIntentErrorCode::RuntimeUnavailable => BuildPreparationErrorCode::HostRefused,
+            BuildIntentErrorCode::InvalidPolicy
+            | BuildIntentErrorCode::CacheClassificationFailed
+            | BuildIntentErrorCode::PlanRejected => BuildPreparationErrorCode::PlanningRefused,
+        })
     }
 
     /// Returns the stable failure category.

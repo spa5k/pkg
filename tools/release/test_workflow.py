@@ -225,9 +225,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "changed-vendor-leaf",
             "terminal-uninstall",
             "same-host-reinstall",
+            "source-fetch-refusal",
+            "install-refusal-codes",
         ):
             self.assertIn(case, LINUX_HARNESS)
-        self.assertIn('"$results")" -eq 38', LINUX_HARNESS)
+        self.assertIn('"$results")" -eq 42', LINUX_HARNESS)
         self.assertIn(
             "test ! -e /opt/pkg/nix\n    test ! -L /opt/pkg/nix", LINUX_HARNESS
         )

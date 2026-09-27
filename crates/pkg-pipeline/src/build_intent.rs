@@ -10,8 +10,8 @@ use pkg_core::{PackageSelector, System};
 use pkg_index::IndexDocument;
 use pkg_nix::{
     BuildCacheErrorCode, BuildCacheProbe, BuildCacheTarget, BuildPlan, BuildReadiness, NixAdapter,
-    NixpkgsFetchSpec, NixpkgsMetadataRunner, TrustedBuildReplanner, TrustedReplanError,
-    classify_build_cache, fetch_verified_nixpkgs,
+    NixAdapterErrorCode, NixpkgsFetchSpec, NixpkgsMetadataRunner, NixpkgsSourceErrorCode,
+    TrustedBuildReplanner, TrustedReplanError, classify_build_cache, fetch_verified_nixpkgs,
 };
 
 use crate::{
@@ -64,12 +64,12 @@ impl AuthenticatedBuildIntent {
             {
                 if self.system.os() == pkg_core::Os::Linux {
                     return Err(BuildIntentError::new(
-                        BuildIntentErrorCode::SourceUnavailable,
+                        BuildIntentErrorCode::ResolutionFailed,
                     ));
                 }
                 let lock = adapter
                     .lock_flake(&reference)
-                    .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::SourceUnavailable))?;
+                    .map_err(|error| BuildIntentError::source_lock(&error))?;
                 *selector = selector
                     .clone()
                     .with_flake_lock(lock)
@@ -114,8 +114,8 @@ impl AuthenticatedBuildIntent {
             .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::InvalidPolicy))?;
         let source_spec = NixpkgsFetchSpec::from_verified_channel(&self.channel)
             .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::InvalidPolicy))?;
-        let source = fetch_verified_nixpkgs(&source_spec, adapter)
-            .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::SourceUnavailable))?;
+        let source =
+            fetch_verified_nixpkgs(&source_spec, adapter).map_err(BuildIntentError::source)?;
         let runtime = adapter
             .version()
             .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::RuntimeUnavailable))?;
@@ -126,7 +126,7 @@ impl AuthenticatedBuildIntent {
             self.index.as_ref(),
             adapter,
         )
-        .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::ResolutionFailed))?;
+        .map_err(|error| BuildIntentError::resolution(&error))?;
         let preflight = preflight_cache_only(&resolved)
             .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::ResolutionFailed))?
             .outputs()
@@ -170,6 +170,8 @@ pub enum BuildIntentErrorCode {
     InvalidPolicy,
     /// The pinned source could not be materialized and independently verified.
     SourceUnavailable,
+    /// Source or evaluated package identity failed verification.
+    VerificationFailed,
     /// The managed runtime did not satisfy its closed version contract.
     RuntimeUnavailable,
     /// Evaluate-only resolution failed.
@@ -193,6 +195,39 @@ impl BuildIntentError {
             code,
             cache_code: None,
         }
+    }
+
+    const fn source_lock(error: &pkg_nix::NixAdapterError) -> Self {
+        Self::new(match error.code() {
+            NixAdapterErrorCode::Unavailable | NixAdapterErrorCode::Timeout => {
+                BuildIntentErrorCode::RuntimeUnavailable
+            }
+            NixAdapterErrorCode::TrustFailure | NixAdapterErrorCode::IntegrityFailure => {
+                BuildIntentErrorCode::VerificationFailed
+            }
+            _ => BuildIntentErrorCode::SourceUnavailable,
+        })
+    }
+
+    pub(crate) const fn source(error: pkg_nix::NixpkgsSourceError) -> Self {
+        Self::new(match error.code() {
+            NixpkgsSourceErrorCode::RunnerFailure => BuildIntentErrorCode::SourceUnavailable,
+            NixpkgsSourceErrorCode::RunnerUnavailable => BuildIntentErrorCode::RuntimeUnavailable,
+            _ => BuildIntentErrorCode::VerificationFailed,
+        })
+    }
+
+    pub(crate) fn resolution(error: &crate::ResolveBatchError) -> Self {
+        Self::new(match error.source().map(pkg_resolver::ResolveError::code) {
+            Some(pkg_resolver::ResolveErrorCode::EngineUnavailable) => {
+                BuildIntentErrorCode::RuntimeUnavailable
+            }
+            Some(
+                pkg_resolver::ResolveErrorCode::VerificationFailed
+                | pkg_resolver::ResolveErrorCode::SourceMismatch,
+            ) => BuildIntentErrorCode::VerificationFailed,
+            _ => BuildIntentErrorCode::ResolutionFailed,
+        })
     }
 
     const fn cache(error: pkg_nix::BuildCacheError) -> Self {

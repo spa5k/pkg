@@ -34,6 +34,29 @@ Separate clean hosts
 prove foreign-Nix refusal before mutation and product-asset ownership-drift
 refusal.
 
+Each lifecycle checks preview and live refusal codes through the installed CLI
+and real Broker. A cold-source check disconnects the disposable container from
+the Docker bridge. The signed channel remains available on localhost. Both
+preview and live source acquisition must return `ACQUIRE_NETWORK` (66), then
+preview must succeed after reconnection. No earlier package request may warm
+the source. The command has a two-minute bound; networking is restored after
+failure, and signal cleanup removes the container.
+
+With `hello` installed, a valid `ripgrep` preview must succeed. Unknown and
+invalid literal selectors must return `RESOLVE_FAILED` (64) for preview and
+live commands. Stopping the real Broker service and socket must instead return
+`ENGINE_UNAVAILABLE` (79). A second control makes the daemon socket unreachable
+while the Broker, daemon, and activation units remain active. It moves the real
+socket into a private sibling directory. Preview and live commands must return
+79. A `finally` block restores the exact socket type, device, and inode. It
+refuses an existing backup or a newly created socket at the original path.
+Each control restores its service boundary and repeats the valid preview.
+Every command preserves exact manifest and lock content, retained
+generations, activation links, and package GC roots. Operation logs and lease
+records are outside that comparison. The retained JSONL observations include
+command arguments, status, output, and both state snapshots. Unsupported Linux
+public flakes are not used as a source-fetch outage.
+
 Each publication contains a separately built product set. The second build uses
 an equivalent build-time channel URL. This makes the authenticated Broker and
 installer bytes different without test-only runtime behavior. Each lifecycle
@@ -120,7 +143,7 @@ install journal remain authoritative.
 The replay has a one-hour diagnostic-only cleanup cap. Its private one-MiB
 process capture and bounded systemd journal are diagnostic evidence only. They
 never replace the original failure
-or run after success. `dn15-results.tsv` has exactly two pass rows for each of 17
+or run after success. `dn15-results.tsv` has exactly two pass rows for each of 21
 blocking cases. The workflow uploads evidence even when the proof fails.
 It uploads the candidate only after the complete proof succeeds.
 

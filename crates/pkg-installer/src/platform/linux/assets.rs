@@ -129,6 +129,8 @@ impl LinuxPlatformAssetManager {
         release: Digest,
         missing_id: &str,
     ) -> Result<ExistingNonFilePreflightAssets, Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
         let temporary = tempfile::tempdir()?;
         for path in [
             "opt",
@@ -151,6 +153,10 @@ impl LinuxPlatformAssetManager {
         ] {
             std::fs::create_dir(temporary.path().join(path))?;
         }
+        std::fs::set_permissions(
+            temporary.path().join("nix"),
+            std::fs::Permissions::from_mode(0o755),
+        )?;
         let payloads =
             LinuxReleasePayloads::from_authenticated_bytes(b"root-helper", b"broker", b"pkg-cli")?;
         let (accounts, account_mutation_calls) =
