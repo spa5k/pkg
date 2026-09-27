@@ -894,6 +894,27 @@ PY
 
 shipping_installer=/srv/pkg-release/v0.1.0-alpha.56/pkg-installer-x86_64-linux
 
+echo "+ unsafe command parent refusal before vendor start"
+start_container
+docker exec "$container" chmod 0777 /usr/local/bin
+if unsafe_parent_output=$(docker exec "$container" "$shipping_installer" 2>&1); then
+    echo "Unsafe command parent was accepted." >&2
+    exit 1
+fi
+printf '%s\n' "$unsafe_parent_output" \
+    | grep -F 'pkg installer parent preflight refused /usr/local/bin:'
+docker exec "$container" sh -eu -c '
+    test "$(stat -c %a /usr/local/bin)" = 777
+    test ! -e /nix
+    test ! -e /opt/pkg
+    test ! -e /var/lib/pkg
+    test ! -e /var/lib/pkg-install
+    test ! -e /var/lib/pkg-install-journal
+    ! getent passwd pkg-nix-broker
+    ! getent group nixbld
+'
+stop_container
+
 echo "+ foreign Nix refusal before mutation"
 start_container
 docker exec "$container" sh -eu -c 'mkdir /nix; printf "foreign\n" > /nix/foreign'
@@ -1302,6 +1323,29 @@ prove_structured_uninstall_refusal json "$1"
 echo "+ refuse live JSONL uninstall without mutation"
 prove_structured_uninstall_refusal jsonl "$1"
 
+echo "+ changed vendor leaf refuses before product cleanup"
+docker exec "$container" sh -eu -c '
+    umask 077
+    cp /etc/nix/sentry-endpoint /run/pkg-proof-sentry-original
+    sha256sum /var/lib/pkg-install/determinate-handoff-v1.json \
+        /opt/pkg/uninstall/manifest.json > /run/pkg-proof-uninstall-before
+    printf "changed by proof\n" >> /etc/nix/sentry-endpoint
+'
+if docker exec "$container" /usr/local/bin/pkg --yes system uninstall; then
+    echo "Changed vendor residue was accepted for deletion." >&2
+    exit 1
+fi
+docker exec "$container" sh -eu -c '
+    sha256sum --check /run/pkg-proof-uninstall-before
+    grep -Fx "changed by proof" /etc/nix/sentry-endpoint
+    systemctl is-active --quiet pkg-nix-broker.socket
+    systemctl is-active --quiet pkg-root-helper.socket
+    cat /run/pkg-proof-sentry-original > /etc/nix/sentry-endpoint
+    rm /run/pkg-proof-sentry-original /run/pkg-proof-uninstall-before
+'
+docker exec "$container" su - proof-user -c "/usr/local/bin/pkg doctor"
+record_pass changed-vendor-leaf "$1" "changed leaf and product state are preserved"
+
 echo "+ verify terminal-exec uninstall inputs"
 docker exec "$container" sh -eu -c '
     python3 -c '\''
@@ -1372,6 +1416,31 @@ docker exec "$container" sh -eu -c '
         | awk '\''$1 ~ /(nix|determinate)/ { print "vendor residue: unit=" $1 " state=" $2 }'\''
 ' > "$residue_report"
 cat "$residue_report"
+
+echo "+ reinstall on the same host after full uninstall"
+docker exec "$container" sh -eu -c '
+    test ! -e /etc/nix
+    test ! -e /root/.nix-profile
+    test ! -L /root/.nix-profile
+    test ! -e /root/.nix-defexpr
+    test ! -L /root/.nix-defexpr
+    printf "preserve unrelated data\n" > /home/proof-user/unrelated.txt
+'
+docker exec "$container" "$n_plus_1_installer"
+docker exec "$container" su - proof-user -c "/usr/local/bin/pkg doctor"
+docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --yes install hello"
+docker exec "$container" su - proof-user -c \
+    "/home/proof-user/.local/share/pkg/current/bin/hello" | grep -Fx 'Hello, world!'
+docker exec "$container" /usr/local/bin/pkg --yes system uninstall
+docker exec "$container" sh -eu -c '
+    test ! -e /nix
+    test ! -e /etc/nix
+    test ! -e /usr/local/bin/pkg
+    test ! -e /var/lib/pkg-install
+    test ! -e /home/proof-user/.local/share/pkg
+    grep -Fx "preserve unrelated data" /home/proof-user/unrelated.txt
+'
+record_pass same-host-reinstall "$1" "uninstall, reinstall, real package execution, uninstall"
 stop_container
 }
 
@@ -1396,7 +1465,9 @@ for blocking_case in \
     package-repair \
     package-roots-gc \
     old-runtime-absent \
-    terminal-uninstall
+    changed-vendor-leaf \
+    terminal-uninstall \
+    same-host-reinstall
 do
     test "$(awk -F '\t' -v case_name="$blocking_case" \
         '$1 == "pass" && $2 == case_name { count += 1 } END { print count + 0 }' \
@@ -1407,7 +1478,7 @@ do
             "$results")" -eq 1
     done
 done
-test "$(awk -F '\t' '$1 == "pass" { count += 1 } END { print count + 0 }' "$results")" -eq 34
+test "$(awk -F '\t' '$1 == "pass" { count += 1 } END { print count + 0 }' "$results")" -eq 38
 
 echo "Linux vendor install/uninstall and product package lifecycle proof passed."
 echo "Docker limits: no host boot or reboot, SELinux, foreign-host coexistence, or full distribution matrix."

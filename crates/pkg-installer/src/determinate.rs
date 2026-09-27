@@ -23,6 +23,8 @@ const OUTPUT_LIMIT: usize = 256 * 1024;
 
 #[cfg(target_os = "linux")]
 const HOME: &str = "/root";
+#[cfg(target_os = "linux")]
+const INSTALL_HOME: &str = "/var/lib/pkg-install/vendor-home";
 #[cfg(target_os = "macos")]
 const HOME: &str = "/var/root";
 #[cfg(target_os = "linux")]
@@ -235,9 +237,19 @@ struct CapturedStream {
     truncated: bool,
 }
 
-fn production_settings() -> ProcessSettings<'static> {
+fn production_settings(operation: Operation) -> ProcessSettings<'static> {
+    #[cfg(target_os = "linux")]
+    let home = match operation {
+        Operation::Install => INSTALL_HOME,
+        Operation::Uninstall => HOME,
+    };
+    #[cfg(not(target_os = "linux"))]
+    let home = {
+        let _ = operation;
+        HOME
+    };
     ProcessSettings {
-        home: OsStr::new(HOME),
+        home: OsStr::new(home),
         path: OsStr::new(PATH),
         tmpdir: Path::new(TMPDIR),
         trust_root: Path::new("/"),
@@ -250,7 +262,21 @@ fn run_production(
     installer: &DeterminateInstaller,
     operation: Operation,
 ) -> Result<DeterminateProcessOutcome, DeterminateProcessError> {
-    let captured = match run(executable, installer, operation, &production_settings()) {
+    #[cfg(target_os = "linux")]
+    if matches!(operation, Operation::Install) {
+        // Vendor Nix commands create profile links and telemetry state beneath
+        // HOME. Keep these in the existing private installation boundary.
+        validate_private_tmpdir(Path::new("/var/lib/pkg-install"), 0, Path::new("/"))
+            .map_err(|()| DeterminateProcessError::InvalidEnvironment)?;
+        crate::bootstrap::prepare_private_nix_home_at(Path::new(INSTALL_HOME), 0, 0)
+            .map_err(|_| DeterminateProcessError::InvalidEnvironment)?;
+    }
+    let captured = match run(
+        executable,
+        installer,
+        operation,
+        &production_settings(operation),
+    ) {
         Ok(captured) => captured,
         Err(error) => {
             write_process_error_diagnostic(error, &mut io::stderr().lock());

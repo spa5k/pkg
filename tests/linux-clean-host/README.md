@@ -15,7 +15,10 @@ that proof-only executable in both fresh lifecycle containers. The candidate
 archive never contains it.
 
 The proof uses pinned Determinate Nix Installer 3.22.1 and the public `pkg` CLI.
-It runs the vendor install and uninstall lifecycle twice in fresh containers.
+It runs the vendor install and uninstall lifecycle in two fresh containers.
+Each container then repeats install, real package execution, and uninstall on
+the same host. Unsafe command-directory permissions must refuse before Nix or
+product installation state is created.
 Each run also proves the product Package Repair and channel lifecycle. It proves
 bootstrap verification, repeat product install, the authenticated installed
 vendor helper, opaque receipt metadata, functional vendor Nix and systemd state,
@@ -25,8 +28,9 @@ the absence of the old `/opt/pkg/nix` runtime, and vendor uninstall
 postconditions. Determinate owns its supported native
 update. `pkg` exposes no Base Nix update action in this alpha. This proof does
 not invoke or validate `determinate-nixd upgrade`. General Base Nix repair has
-no supported vendor command or product action. The proof records vendor residue.
-It does not require exact `/etc/nix` or `nixbld` cleanup. Separate clean hosts
+no supported vendor command or product action. The proof records vendor residue
+and requires `/etc/nix` and root profile links to be absent before reinstall.
+Separate clean hosts
 prove foreign-Nix refusal before mutation and product-asset ownership-drift
 refusal.
 
