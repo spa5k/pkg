@@ -64,10 +64,27 @@ recovery protocol. Determinate remains the only owner of Base Nix. Product
 upgrade and Product Asset Repair cannot install, repair, update, or remove Base
 Nix.
 
-`pkg` does not implement a second Base Nix install, repair, update, uninstall, or residue-cleanup engine. If the vendor has no supported operation, `pkg` reports that capability as unsupported. It does not fill the gap with custom Base Nix mutation code.
+`pkg` does not implement a second Base Nix install, repair, update, uninstall, or general residue-cleanup engine. If the vendor has no supported operation, `pkg` reports that capability as unsupported. The bounded pre-uninstall cleanup below is the only exception.
 
-Vendor-owned residue after vendor uninstall is accepted for the alpha product.
-The proof records relevant residue. `pkg` does not delete it.
+### Linux reinstall correction (27 September 2026)
+
+Same-host testing showed that successful vendor uninstall left
+`/etc/nix/sentry-endpoint` and root profile links. The unchanged clean-host scan
+then refused a new installation. INSTALL-03 moves vendor install HOME into a
+private product directory and removes that owned tree before terminal exec.
+Terminal uninstall retains the normal root HOME.
+
+A new clean Linux install records the sentry file's identity with Accepted
+Base Nix Handoff. Uninstall checks this identity before product mutation and
+again before deletion. It removes only that recorded leaf. The vendor still
+owns removal of `/etc/nix` and the rest of Base Nix. An absent recorded leaf
+needs no action; this also permits retry after a synchronous exec failure.
+An existing changed leaf is preserved and refused. Older Accepted records are
+not given deletion authority. The opaque Vendor Receipt is not parsed or changed.
+
+This change avoids accepting arbitrary leftover Nix state during a new install.
+It does not add cleanup after terminal exec, general residue discovery, or
+macOS residue cleanup. Other vendor residue remains preserved and reported.
 
 Package Lifecycle remains product-owned. This includes package selection, builds, state, Generations, Activation Forests, package roots, package garbage collection, Package Repair, and package-level Root Helper Nix operations. Base Nix repair and Package Repair are different operations.
 
@@ -192,7 +209,7 @@ Intel macOS is unsupported until an authenticated asset and complete lifecycle p
 ## Rejected alternatives
 
 - **Keep the custom Base Nix implementation.** This duplicates vendor lifecycle code.
-- **Add product repair, update, uninstall, or residue cleanup for vendor-owned Base Nix.** This creates a second lifecycle engine.
+- **Add product repair, update, uninstall, or general residue cleanup for vendor-owned Base Nix.** This creates a second lifecycle engine; the bounded Linux reinstall correction above does not add one.
 - **Copy or fork selected vendor Rust modules.** This creates an incomplete fork.
 - **Use the experimental Rust library.** The pinned executable is the supported integration seam.
 - **Parse or duplicate the Vendor Receipt.** This couples `pkg` to vendor action internals.
