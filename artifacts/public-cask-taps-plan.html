@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>pkg — Raw Ruby and public taps</title>
+<style>
+:root { --ink:#172b36; --muted:#526570; --paper:#f5f3ed; --line:#d4dcd9; --accent:#08645c; }
+* { box-sizing:border-box; }
+html { scroll-padding-top:1.5rem; }
+body { margin:0; background:var(--paper); color:var(--ink); font:17px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+a { color:var(--accent); text-underline-offset:3px; }
+a:hover { text-decoration-thickness:2px; }
+a:focus-visible { outline:3px solid #db9020; outline-offset:4px; }
+.skip { position:absolute; left:-10000px; }.skip:focus { left:1rem; top:1rem; background:white; padding:.5rem; }
+.hero { padding:3.5rem max(1.4rem,calc((100vw - 1200px)/2)) 2.5rem; background:#173c3b; color:#fff; }
+.kicker { font-size:.75rem; font-weight:750; letter-spacing:.17em; text-transform:uppercase; color:#aad5c9; }
+h1 { max-width:900px; margin:.5rem 0 1rem; font:650 clamp(2.2rem,5vw,3.6rem)/1.1 system-ui,sans-serif; letter-spacing:-.035em; }
+.hero p { max-width:790px; color:#e2efea; margin:.75rem 0; }
+.badges { display:flex; gap:.6rem; flex-wrap:wrap; margin-top:1.5rem; }
+.badges span { padding:.3rem .7rem; border:1px solid #71938a; border-radius:4px; font-size:.8rem; }
+.layout { display:grid; grid-template-columns:240px minmax(0,1fr); gap:3rem; max-width:1240px; margin:0 auto; padding:2rem 1.5rem 5rem; }
+nav { align-self:start; position:sticky; top:1.3rem; max-height:calc(100vh - 2.6rem); overflow:auto; font-size:.83rem; }
+nav p { text-transform:uppercase; letter-spacing:.08em; font-size:.73rem; font-weight:750; }
+nav ol { list-style:none; padding:0; margin:0; } nav li { border-top:1px solid var(--line); } nav a { display:block; padding:.55rem .1rem; text-decoration:none; color:#344e58; }
+main { min-width:0; }
+.summary { border-left:5px solid var(--accent); padding:1rem 1.4rem; background:#e6efea; margin-bottom:2rem; }
+.summary p { margin:.2rem 0 .8rem; }.summary p:last-child { margin-bottom:.2rem; }
+.documents { font-size:.86rem; padding-bottom:1rem; border-bottom:1px solid var(--line); }
+h2 { font-size:1.6rem; line-height:1.2; margin:3rem 0 1rem; padding-top:1.4rem; border-top:1px solid var(--line); letter-spacing:-.02em; }
+h3 { font-size:1.1rem; margin:1.8rem 0 .6rem; }
+p { margin:.85rem 0; } li { margin:.4rem 0; } strong { font-weight:700; }
+code { font: .85em/1.5 "SFMono-Regular",Consolas,monospace; background:#e5e9e4; border-radius:3px; padding:.1rem .25rem; overflow-wrap:anywhere; }
+pre { padding:1rem 1.2rem; overflow:auto; color:#e1ede7; background:#1d353d; border-radius:5px; font-size:.87rem; }
+pre code { color:inherit; background:none; padding:0; overflow-wrap:normal; }
+.table-scroll { overflow-x:auto; margin:1.4rem 0; }
+table { border-collapse:collapse; width:100%; font-size:.86rem; line-height:1.5; min-width:540px; background:#fffdf7; }
+th { text-align:left; background:#e4ebe5; font-size:.79rem; }
+th,td { padding:.7rem .8rem; border:1px solid var(--line); vertical-align:top; }
+footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line); font-size:.82rem; color:var(--muted); }
+@media(max-width:850px) { .layout { display:block; padding:1.4rem; } nav { position:static; max-height:none; margin-bottom:2rem; } nav ol { columns:2; gap:1.5rem; } nav li { break-inside:avoid; } .hero { padding:2.5rem 1.4rem 2rem; } }
+@media(max-width:520px) { body { font-size:16px; } nav ol { columns:1; } h2 { font-size:1.4rem; } }
+@media print { body { background:white; font-size:10pt; } .hero { padding:0 0 1rem; background:white; color:black; } .hero p,.kicker { color:#333; } .badges,nav,.skip { display:none; } .layout { display:block; padding:0; } a { color:inherit; } pre { white-space:pre-wrap; background:#eee; color:black; } h2,h3 { break-after:avoid; } table { min-width:0; } tr { break-inside:avoid; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#plan">Skip to the plan</a>
+<header class="hero">
+<div class="kicker">pkg / next phase / 29 September 2026</div>
+<h1>Raw Ruby casks.<br>Public taps. Native Nix.</h1>
+<p>Reuse Homebrew's reader during catalog updates. Keep Rust validation and native Nix installation. Add sources through configuration.</p>
+<div class="badges"><span>PR #81 merged</span><span>Plan only</span><span>Three implementation PRs</span><span>macOS ARM64 + Linux x86-64</span></div>
+</header>
+<div class="layout">
+<nav aria-label="Plan sections"><p>Contents</p><ol><li><a href="#section-1">1. Decision</a></li>
+<li><a href="#section-2">2. Scope and user flows</a></li>
+<li><a href="#section-3">3. One data flow</a></li>
+<li><a href="#section-4">4. Source registry and locks</a></li>
+<li><a href="#section-5">5. Ruby exporter and its limits</a></li>
+<li><a href="#section-6">6. Isolation and failure handling</a></li>
+<li><a href="#section-7">7. Captured exports and reproducibility</a></li>
+<li><a href="#section-8">8. Identity and catalog schema 3</a></li>
+<li><a href="#section-9">9. Repository changes and deletion budget</a></li>
+<li><a href="#section-10">10. Maintainer update workflow</a></li>
+<li><a href="#section-11">11. Delivery order and acceptance</a></li>
+<li><a href="#section-12">12. Focused failure cases</a></li>
+<li><a href="#section-13">13. What this plan does not promise</a></li></ol></nav>
+<main id="plan">
+<section class="summary" aria-label="Recommended approach">
+<p><strong>The main choice:</strong> run pinned Homebrew Ruby only in isolated maintainer environments. No Brew installation or Ruby evaluation is added to the client.</p>
+<p><strong>The delivery:</strong> prove the exporter, add source-qualified identities, then run a public-tap pilot. Unsupported behavior stays visible.</p>
+</section>
+<p class="documents"><a href="../openspec/changes/import-public-cask-taps/proposal.md">Proposal</a> · <a href="../openspec/changes/import-public-cask-taps/design.md">Authoritative design</a> · <a href="../openspec/changes/import-public-cask-taps/tasks.md">Open tasks</a> · <a href="../docs/research/2026-09-29-raw-ruby-public-taps.md">Source research</a></p>
+<p>Status: proposed. Nothing in this document is implemented by the plan commit.
+Baseline: merged PR #81, <code>f6f99a748653861302876dfe127dfc6bf498d323</code>.</p>
+<h2 id="section-1">1. Decision</h2>
+<p>Use <strong>a small pinned Homebrew exporter at catalog-update time</strong>. Keep the
+orchestrator and catalog compiler in Rust. Keep Nix as the build and install
+engine. Keep the client free of Ruby and Homebrew.</p>
+<p>This makes one explicit change to the earlier design: Ruby is allowed in the
+maintainer export environment. It is still absent from the client archive,
+client commands, Nix evaluation, and generated package builds.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Approach</th>
+<th>What we must own</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Rust parses and evaluates Cask Ruby</td>
+<td>DSL rules, Ruby expressions, helpers, platform branches, and upstream changes</td>
+<td>Reject for the first version. This becomes a partial Ruby interpreter.</td>
+</tr>
+<tr>
+<td>Pinned upstream Ruby reader in an isolated update runner</td>
+<td>Small export adapter, source pins, isolation, and output validation</td>
+<td>Recommended. Reuse upstream semantics.</td>
+</tr>
+<tr>
+<td>JSON snapshots only</td>
+<td>Existing reader and pins</td>
+<td>Retain as an input option. It cannot ingest a tap that publishes only Ruby.</td>
+</tr>
+<tr>
+<td>Install Brew inside each user&#39;s workflow</td>
+<td>Brew state and another package lifecycle</td>
+<td>Outside the chosen product architecture.</td>
+</tr>
+</tbody></table></div>
+<p><a href="https://github.com/ruby/prism">Prism</a> provides Ruby parsing and Rust
+bindings. It does not provide Homebrew&#39;s runtime semantics. Using it would
+still leave us to evaluate helper calls and platform logic. This is an
+engineering inference from its documented parser interface.</p>
+<p>The Homebrew export interfaces are internal. Pin the exact upstream source
+and its Ruby dependencies. Upgrade them together, with focused comparison
+checks. Do not copy a large selection of Homebrew files into our codebase or
+maintain a permanent fork. Keep the upstream checkout in the tool cache and
+keep its license notices. Our small exporter is the only integration code.</p>
+<h2 id="section-2">2. Scope and user flows</h2>
+<p>The supported targets stay <code>aarch64-darwin</code> and <code>x86_64-linux</code>. Casks must
+actually support the selected target. Formula-only Linux taps do not become
+Casks. Fonts, services, drivers, installer scripts, and dependency expansion
+remain excluded. A source repository being public does not imply support.</p>
+<p><strong>Consumer:</strong> search the generated catalog, see the tap name and exclusion
+reason, then install a qualified cask through the existing native lifecycle.
+No raw repository is evaluated during <code>pkg install</code>.</p>
+<p><strong>Catalog maintainer:</strong> add one source entry, lock its revision, export its
+metadata, generate a catalog, review the diff, and publish the Git change.
+All casks under the configured Cask directory are discovered. No app names
+are added to Rust or Nix code.</p>
+<p><strong>Independent publisher:</strong> run the same tool against a registry they own.
+Commit the generated catalog into a flake that uses the generic builders.
+Consumers point the existing <code>sources.casks</code> setting at that flake. This
+allows public taps without adding them to our default catalog.</p>
+<p>There is no instant <code>pkg tap add</code> that evaluates arbitrary Ruby on a user&#39;s
+machine. A raw tap must first become generated data. A future client helper
+may select an already-generated flake; that does not require a Ruby runtime.</p>
+<h2 id="section-3">3. One data flow</h2>
+<pre><code class="language-text">sources.toml + pinned exporter environment
+                  |
+           Rust fetch / lock             network allowed
+                  |
+       immutable source trees
+                  |
+     isolated Homebrew Ruby export       network denied
+       /                       \
+ macOS ARM64                Linux x86-64
+       \                       /
+       hashed export snapshots
+                  |
+       Rust validation / generation      offline
+                  |
+        one generated catalog v3
+                  |
+       Nix flake + cheap search index
+                  |
+        ordinary pkg / Nix lifecycle
+</code></pre>
+<p>Only the trusted fetch phase uses the network. It obtains source trees and
+the pinned exporter environment. Export does not fetch vendor applications,
+request installers, run livecheck update scans, install gems, install tap
+formulae, or invoke tap commands. Loading a livecheck or caveats declaration
+can still execute Ruby; the isolated runner contains that load-time code.
+Generation consumes captured bytes; it does not run Ruby.</p>
+<h2 id="section-4">4. Source registry and locks</h2>
+<p>Proposed files:</p>
+<ul>
+<li><code>nix/casks/catalog/sources.toml</code>: desired source identities, URLs, refs,
+Cask directories, and declared licenses.</li>
+<li><code>nix/casks/catalog/sources.lock.json</code>: exact revisions, tree/input hashes,
+exporter environment identity, target contexts, and export content hashes.</li>
+<li><code>nix/casks/catalog/catalog.json</code>: one runtime artifact, including all
+authoritative input provenance. No runtime reader needs the registry.</li>
+</ul>
+<p>Example registry shape. Values are illustrative, not selected source pins:</p>
+<pre><code class="language-toml">[[sources]]
+id = &quot;homebrew/cask&quot;
+kind = &quot;ruby-tap&quot;
+url = &quot;https://github.com/Homebrew/homebrew-cask.git&quot;
+ref = &quot;HEAD&quot;
+cask_dir = &quot;Casks&quot;
+license = &quot;BSD-2-Clause&quot;
+
+[[sources]]
+id = &quot;vendor/tools&quot;
+kind = &quot;ruby-tap&quot;
+url = &quot;https://github.com/vendor/homebrew-tools.git&quot;
+ref = &quot;HEAD&quot;
+cask_dir = &quot;Casks&quot;
+license = &quot;MIT&quot;
+</code></pre>
+<p>Source IDs are stable, lowercase two-part names. They are configured
+explicitly; they are not guessed from a redirect. Duplicate source IDs are
+errors. The first version accepts public HTTPS Git sources and local cached
+trees that match their lock. SSH credentials and private tap support are out
+of scope. Git transport redirects must not silently change the locked source
+identity. Source URL changes require a visible registry and lock diff.</p>
+<p>Fetch resolves a moving ref to a commit, verifies the resulting checkout,
+and records a canonical tree content hash. It disables local Git hooks and
+external checkout filters. It does not initialize submodules. Export rejects
+submodule dependencies and paths that escape the source root. Retain the
+whole pinned tap tree in cache so local Ruby helpers can resolve. Discover
+regular <code>.rb</code> files below <code>cask_dir</code> in sorted order; do not follow symlinks
+outside it. Reject duplicate tokens within one source.</p>
+<p>Record the tap&#39;s own license and origin. Do not label every public tap as
+Homebrew BSD data. Unknown licensing remains explicit and blocks default
+redistribution until the source metadata is resolved.</p>
+<p>The JSON adapter receives the same source ID and exact input hash. It joins
+the same compiler path after input decoding. It does not bypass validation.</p>
+<h2 id="section-5">5. Ruby exporter and its limits</h2>
+<p>Start from the upstream <code>generate-cask-api</code> loading pattern. The researched
+revision uses <code>API.with_no_api_env</code>, <code>Cask.generating_hash!</code>,
+<code>Cask::CaskLoader.load(path)</code>, and <code>to_hash_with_variations</code>. The simple
+serializer is <code>to_h</code>; do not assume <code>Cask#to_hash</code> exists. See the
+<a href="../docs/research/2026-09-29-raw-ruby-public-taps.md">pinned-source research</a>
+for exact paths and semantics.</p>
+<p>For our native-per-target export, use a narrower sequence than the official
+all-variation job. In a fresh target process, enter no-API mode and generation
+mode, select the target and language, then load the explicit pinned file.
+Call <code>cask.platform_supported?(tag, installable: true)</code> and serialize
+<code>cask.to_h</code> while that context remains active. The predicate is the one
+upstream uses for support evidence and does not refresh the Cask.</p>
+<p>Do not run <code>to_hash_with_variations</code>, language-variation expansion, or
+<code>refresh</code> in this native path. They re-evaluate DSL blocks without necessarily
+reloading top-level statements. Capture a boolean
+<code>upstreamPlatformSupported</code> with the exact target/tag. Do not invent a full
+Homebrew <code>supported_platforms</code> array from one target run. The JSON adapter
+keeps its existing complete-field/variation rules; both adapters produce
+one effective target input for the same Rust classifier.</p>
+<p>Materialize the pinned tap in Homebrew&#39;s expected tap layout inside the
+disposable workspace. Keep it read-only. Configure any upstream tap-trust
+decision only for that selected source in that workspace; never change host
+trust settings. Use explicit file paths for loading. The adapter must verify
+that Homebrew&#39;s reported tap/file identity agrees with the outer source lock.
+The spike must prove this layout and trust setup against the pinned loader.</p>
+<p>First prove this integration with a small exporter spike. Do not design a
+new DSL reader around guessed method names. The spike must show that all
+fields used by our classifier survive export, including platform evidence,
+renames, URL options, dependency declarations, and active install operations.</p>
+<p>Load each cask/target in a fresh Ruby process or clean child fork from a
+trusted preloaded parent. No tap code runs before that parent is cloned.
+This limits accidental constant and monkey-patch leakage. It is not the
+security isolation between untrusted sources.</p>
+<p>Use a native macOS ARM64 runner for the macOS export and a native Linux x86-64
+runner for Linux. Homebrew target simulation affects Homebrew APIs; it does
+not emulate arbitrary Ruby system calls, host files, or <code>RUBY_PLATFORM</code>.
+Mac simulation selects a release family, not an exact patch version. Keep
+the declared macOS baseline and the actual runner version in provenance.
+Do not claim that a Linux-only export proves native macOS behavior.</p>
+<p>The first version uses the pinned Homebrew default language policy. It does
+not generate every locale variant. Locale, timezone, prefix, home directory,
+and target settings are fixed in the runner recipe and recorded. Unknown
+locale or host-dependent behavior is reported, not silently generalized.</p>
+<h3>Metadata that needs a payload</h3>
+<p>Some public casks use <code>staged_path</code> to enumerate files inside a downloaded
+application. With no payload, a directory glob can return an empty list.
+That would hide a required manpage or binary.</p>
+<p>The exporter must catch the upstream staging access in this case and emit
+<code>staged-path-during-metadata</code>.
+The spike will test a narrow guard on Homebrew&#39;s staging access during DSL
+evaluation. Keep a sticky refusal flag even if a cask rescues the exception.
+The guard may conservatively refuse harmless staging-path interpolation.
+It must not interfere with ordinary upstream serialization.
+Do not download an application to make this metadata-only phase succeed.
+Do not add per-token exceptions. If a reliable guard cannot be demonstrated,
+do not ship a claim of complete raw-tap conversion; narrow the supported
+export contract and record this as an unresolved implementation blocker.</p>
+<p>Arbitrary Ruby can inspect other host state without calling that accessor,
+including through a manual path, <code>caskroom_path</code>, or a helper.
+No finite guard proves complete semantic independence. Therefore support is
+limited to metadata that resolves from the pinned source and declared runner
+context. Exported snapshots are the reproducibility boundary. Raw revisions
+alone are not a promise of deterministic Ruby execution.</p>
+<h3>Active operations and unsupported data</h3>
+<p>Preserve legacy flight blocks and structured <code>preflight_steps</code> /
+<code>postflight_steps</code> as explicit capability flags or metadata. Required install
+actions that our builders do not reproduce yield an exclusion. A successful
+<code>to_h</code> call is not sufficient for eligibility. Uninstall and zap behavior
+remain outside our lifecycle and are never executed.</p>
+<p>Custom download strategies, credentials, live network lookups, helpers
+outside the pinned tree, or missing required metadata yield a precise
+exclusion or source failure. Unknown active stanzas fail closed. A tap may
+contain formulae, commands, and other files; none is invoked as a plugin.</p>
+<h2 id="section-6">6. Isolation and failure handling</h2>
+<p>Use the existing disposable E2B runner for Linux and a disposable native
+macOS VM for Darwin. Build the pinned tool image before adding any tap.
+Do not snapshot a VM after it has evaluated untrusted source code.</p>
+<p>Prefer an ordinary sandboxed Nix derivation for the export command inside
+each disposable runner. Nix can supply the pinned Ruby environment and
+read-only dependencies. Enable sandboxing explicitly on both hosts; refuse
+Linux sandbox fallback. Keep network fetches separate. Do not make the Ruby
+export a fixed-output derivation or use a relaxed sandbox exception.
+The <a href="https://nix.dev/manual/nix/2.35/command-ref/conf-file.html#conf-sandbox">Nix sandbox reference</a>
+documents the Linux network exception for fixed-output builds and the
+different platform defaults. Verify the actual macOS network policy rather
+than inferring it from Linux behavior.</p>
+<p>This is an explicit maintainer build. The published flake reads only the
+resulting JSON, so it still uses no import-from-derivation. VM and process
+limits supplement Nix where it does not supply a resource quota.</p>
+<p>The implementation spike must prove these runner properties:</p>
+<ul>
+<li>Public source export has no network access, model API key, GitHub token,
+signing key, developer home mount, SSH agent, or publishing credential.</li>
+<li>The pinned source tree and exporter toolchain are read-only. Writable
+space is temporary. Resource limits cover wall time, memory, process count,
+writable disk, and result size.</li>
+<li>Different sources have separate isolation. A subprocess alone is not a
+sandbox. Nix build isolation and the macOS VM network
+policy must be tested. Do not assume the E2B SDK&#39;s model-key handling alone
+enforces these properties.</li>
+<li>A trusted process outside that isolation validates result files. It checks
+expected source, target, token inventory, schema, bounded size, and hashes.
+The exporting VM cannot publish or replace another source&#39;s artifacts.</li>
+</ul>
+<p>This is one runner contract, not a new sandbox platform. Use existing tools.
+If a runner cannot enforce the contract, it does not run public tap Ruby.</p>
+<p>Per-record syntax or unsupported metadata errors produce excluded entries
+with stable error codes. A process timeout is recorded as an export failure,
+not a successful empty cask. Missing expected records, an unavailable runner,
+corrupt result files, changed runtime identity, or a source-wide crash abort
+the update. They must not publish an apparently smaller successful catalog.</p>
+<p>Generate in a temporary directory. Replace the runtime catalog only after
+all requested sources and targets have valid results. Its embedded pins are
+the runtime authority. Commit registry, lock, snapshots, and catalog together.
+Check their agreement in CI. A failed update leaves the previous runtime
+catalog byte-for-byte intact. Do not mix old source output with fresh output
+without an explicit lock that identifies both.</p>
+<h2 id="section-7">7. Captured exports and reproducibility</h2>
+<p>Use a small versioned interchange document, <code>pkg-cask-source/1</code>. It contains
+source identity, per-file path and hash, target context, exporter identity,
+and either complete metadata or an exclusion for each discovered token and
+target. It has no executable callback channel.</p>
+<p>Record the upstream Brew commit, Ruby/runtime recipe digest, adapter version,
+source commit/tree hash, and export content hash. Raw output and diagnostics
+are bounded. Normalize report-only paths and stack traces outside catalog
+data. Preserve license notices with captured artifacts.</p>
+<p>Ruby can read time and other ambient state. A repeated export comparison
+helps find instability but cannot prove arbitrary Ruby deterministic. The
+strong contract is narrower: <strong>the same captured exports and Rust compiler
+version produce identical catalog bytes</strong>. Published catalog regeneration
+uses captured exports, not a fresh raw Ruby evaluation.</p>
+<p>Reuse an export only when the entire source tree, exporter runtime, target
+context, and export policy match its lock. Do not cache only by cask file:
+another helper in the same repository can change its result. For the first
+version, unchanged source/target pairs are the cache unit. No new distributed
+cache service is needed. Keep captured JSON compressed in the catalog repo;
+measure size before adopting a different artifact store.</p>
+<h2 id="section-8">8. Identity and catalog schema 3</h2>
+<p>Every entry has separate fields:</p>
+<pre><code class="language-text">id:       vendor/tools/editor
+sourceId: vendor/tools
+token:    editor
+origin:   Casks/e/editor.rb + file hash
+targets:  the existing per-system status and plan shape
+</code></pre>
+<p><code>entries</code> is keyed by <code>id</code>. <code>inputs</code> is keyed by source ID and carries its
+lock provenance. <code>pkg-cask-catalog/3</code> is the only newly supported envelope.
+The generator, Nix projection, and Rust client decoder change together.
+Remove the schema-2 decoder and its obsolete fixtures after cutover.</p>
+<p>Qualified command shape:</p>
+<pre><code class="language-sh">pkg install cask:vendor/tools/editor
+</code></pre>
+<p><code>cask:editor</code> is shorthand only when exactly one catalog entry has that token.
+Count eligible and excluded matches; an excluded entry must not cause us to
+silently select a different tap. Multiple matches return qualified choices.
+Bare <code>editor</code> keeps existing Nixpkgs-versus-Cask ambiguity handling and adds
+the qualified cask choices. Do not give the first source or official tap
+implicit precedence. A qualified ID never falls back to another source.</p>
+<p>Two different taps may both contain <code>editor</code>. Two records with the same full
+ID are a whole-input integrity error. A source rename changes identity; there
+is no automatic migration to a similarly named repository.</p>
+<p>The Nix package key is one quoted attribute:</p>
+<pre><code class="language-text">packages.aarch64-darwin.&quot;vendor/tools/editor&quot;
+</code></pre>
+<p>Do not turn <code>/</code> into a filesystem path or nested attribute lookup. Validate
+each identity segment, and use one quoting routine for CLI installables.
+Keep store package names separate: a safe token plus a stable source-ID hash
+suffix. Check hash-suffix collisions during generation. Package identity
+must not change when the source revision changes.</p>
+<p><code>info</code> and search JSON expose the source ID, raw source revision, path, and
+exclusion reason. Existing profile storage remains authoritative. The moving
+generated flake reference stays the install origin, so upgrades see later
+catalog commits and rollback returns to the prior native generation.</p>
+<p>Removing a source does not uninstall its packages. A later upgrade may report
+that the old attribute is unavailable. Never move that package to another tap
+with the same token. No compatibility migration database is introduced.</p>
+<h2 id="section-9">9. Repository changes and deletion budget</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Location</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>tools/cask-catalog/src/main.rs</code></td>
+<td>Extend the existing maintainer commands; keep CLI wiring small.</td>
+</tr>
+<tr>
+<td><code>tools/cask-catalog/src/source.rs</code></td>
+<td>Own registry, lock, identities, and captured-source decoding.</td>
+</tr>
+<tr>
+<td><code>tools/cask-catalog/export/</code></td>
+<td>Small pinned-upstream Ruby adapter and runner recipe. No vendored Homebrew fork.</td>
+</tr>
+<tr>
+<td><code>effective.rs</code>, <code>classify.rs</code>, <code>plan.rs</code>, <code>emit.rs</code></td>
+<td>Reuse one classifier and one plan builder; adapt inputs before classification.</td>
+</tr>
+<tr>
+<td><code>nix/casks/catalog/</code></td>
+<td>Replace the one-input pin with registry/lock/export artifacts and catalog v3.</td>
+</tr>
+<tr>
+<td><code>nix/casks/flake.nix</code></td>
+<td>Source-qualified package keys and v3 index projection. No Ruby, fetch-on-eval, or IFD.</td>
+</tr>
+<tr>
+<td><code>crates/pkg-cli/src/catalog/{id,cask,search}.rs</code></td>
+<td>Qualified identities, exact-token ambiguity, and source display.</td>
+</tr>
+<tr>
+<td><code>crates/pkg-cli/src/nix/manifest.rs</code></td>
+<td>Strict v3 decoding and required source provenance.</td>
+</tr>
+<tr>
+<td>Existing verification tools</td>
+<td>Accept qualified IDs; replay unchanged artifact plans. Reuse these scripts.</td>
+</tr>
+</tbody></table></div>
+<p>Delete the hardcoded Brew API repository/hash defaults when registry-driven
+fetch replaces them. Delete the old <code>input.json</code> consumer path, schema-2
+decode, and mirror-specific CI URL assertion at cutover. Keep JSON input
+support only through the common source interface. Do not add a generic plugin
+system, dependency closure engine, per-tap subclasses, or second classifier.</p>
+<h2 id="section-10">10. Maintainer update workflow</h2>
+<p>Proposed commands, not commands available in the merged client:</p>
+<pre><code class="language-sh">cargo run -p cask-catalog -- fetch --sources sources.toml --lock sources.lock.json
+cargo run -p cask-catalog -- export --lock sources.lock.json --out-dir captured
+cargo run -p cask-catalog -- generate --lock sources.lock.json \
+  --exports captured --out-dir nix/casks/catalog
+</code></pre>
+<p><code>fetch</code> is the only phase that resolves moving refs. <code>export</code> dispatches to
+the declared isolated native runners and records export hashes. <code>generate</code>
+is offline Rust. Exact flag names may follow the existing Clap conventions;
+the phase separation and failure rules are binding.</p>
+<p>Review added/removed identities, source moves, newly excluded records, active
+operations, and eligibility changes. Never write a token allowlist to make
+coverage numbers larger. Updating source pins is a normal Git change.
+No daemon or scheduled task is required by this plan.</p>
+<h2 id="section-11">11. Delivery order and acceptance</h2>
+<p>Use three implementation PRs after the plan. Each has a usable result.</p>
+<h3>PR A — exporter and source interface</h3>
+<p>First prove the raw export shape, isolation, native target behavior, staging
+guard, active-step preservation, and reproducibility limits on small inputs.
+Then add registry/lock handling and captured exports to the Rust tool. Keep
+the default published catalog unchanged while the new path is exercised.</p>
+<p>Gate: a source can be fetched, exported for both targets, and classified
+offline without an application download. One broken record is visible; a
+source-wide failure cannot publish partial output. If this gate fails, stop
+expanding the importer and record the unsupported contract precisely.</p>
+<h3>PR B — namespaced catalog and client cutover</h3>
+<p>Change generation, Nix keys, source provenance, decoding, and exact-name
+resolution together. Publish schema 3. Remove the schema-2 path and the
+mirror-only fetch assumptions. Package names and original moving references
+must survive update and rollback without crossing source identities.</p>
+<p>Gate: two sources with the same token coexist; shorthand is ambiguous;
+qualified installs select the requested source; offline catalog regeneration
+is byte-identical; ordinary search never forces a derivation.</p>
+<h3>PR C — public-tap pilot and official source cutover</h3>
+<p>Run the official tap plus at least three representative public taps through
+the tool. Choose sources by supported examples and documented edge cases,
+not by popularity alone. Source inspection candidates include Aerospace and
+Wine taps; their active actions may correctly remain excluded.</p>
+<p>Compare source inventory and normalized metadata with the pinned upstream
+exporter. Use the previous top-1,000 ranking for an explicit coverage diff.
+Evaluate every eligible derivation with IFD disabled. Replay plans with tiny
+payloads. Run native install/use/remove and update/rollback for a small
+representative set: one macOS app with CLI, one relocatable pkg if present,
+one Linux binary, and one AppImage. Cap new vendor downloads at four; record
+unavailable shapes instead of filling the set with unrelated apps.</p>
+<p>Gate: no unexplained record disappearance, no silent loss of required steps,
+all source/collision fixtures pass, and every coverage claim separates load,
+eligibility, derivation evaluation, synthetic replay, and real installs.
+Only then make raw Homebrew source the default and retire the default mirror.</p>
+<h2 id="section-12">12. Focused failure cases</h2>
+<p>Retain checks at the public import/compile interface. Do not add another
+large assurance framework or duplicate the classifier in test code.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Case</th>
+<th>Required result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Interpolation, <code>arch</code>, OS blocks, version helpers, local <code>require_relative</code></td>
+<td>Metadata agrees with the pinned upstream reader under the selected context.</td>
+</tr>
+<tr>
+<td>Two taps publish the same token</td>
+<td>Both qualified IDs exist; shorthand is ambiguous.</td>
+</tr>
+<tr>
+<td>Same source emits a duplicate token or falsifies source identity</td>
+<td>Update fails; prior catalog is unchanged.</td>
+</tr>
+<tr>
+<td>Ruby attempts network access, reads outside the allowed tree, forks without bound, or hangs</td>
+<td>Isolation/limits contain it and a failure is recorded.</td>
+</tr>
+<tr>
+<td>A cask uses staging data to construct artifacts</td>
+<td>Excluded as payload-dependent; no guessed empty artifact list.</td>
+</tr>
+<tr>
+<td>Structured or legacy required install actions</td>
+<td>Preserved and excluded unless a generic builder implements the exact action.</td>
+</tr>
+<tr>
+<td>Missing <code>supported_platforms</code> or incomplete target evidence</td>
+<td>Excluded or source schema failure; no guessed platform support.</td>
+</tr>
+<tr>
+<td>Helper-only commit, exporter bump, target context change</td>
+<td>Source export cache invalidates.</td>
+</tr>
+<tr>
+<td>Failed source, truncated output, missing target</td>
+<td>No partial successful catalog replaces the published one.</td>
+</tr>
+<tr>
+<td>Source disappears or moves</td>
+<td>Existing installs remain; no automatic switch to another source.</td>
+</tr>
+</tbody></table></div>
+<p>Use E2B GLM 5.3 for bounded implementation work as before. The parent owns
+integration, source review, native macOS verification, and final evidence.
+Keep model credentials out of the raw-source export runners. A prebuilt clean
+tool image reduces setup cost; it is never a snapshot of an evaluated tap.</p>
+<h2 id="section-13">13. What this plan does not promise</h2>
+<p>There is no guarantee that every public tap can load offline, that every
+loaded cask can become a Nix package, or that an eligible package has passed
+GUI testing. Arbitrary Ruby, dynamic payload inspection, privileged steps,
+unsupported dependencies, and host-specific behavior can all prevent import.
+The design makes those limits visible and gives compatible taps one generic
+path to native Nix packages.</p>
+
+<footer>This offline page mirrors the OpenSpec design. No external scripts, fonts, or images are loaded. Implementation has not started.</footer>
+</main>
+</div>
+</body>
+</html>
