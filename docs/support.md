@@ -10,38 +10,40 @@ Start with:
 pkg doctor
 ```
 
-To create a support preview:
+`doctor` reads the runtime, profile, and launcher status. It repairs
+nothing. It sends no reports. If the Nix executable is missing or the
+daemon is unavailable, `doctor` states that directly.
+
+## Runtime problems
+
+`pkg` requires an external Nix installation. If `pkg doctor` reports a
+missing runtime, install or repair Nix through
+[Determinate](https://docs.determinate.systems/determinate-nix/). `pkg`
+never installs or repairs the runtime itself.
+
+If `pkg doctor` reports an unavailable daemon, start or enable the Nix
+daemon with your administrator tools. Do not add yourself to
+`trusted-users` for `pkg`.
+
+## Launcher problems on macOS
+
+If a package operation finishes but the launcher sync fails, the command
+reports partial completion. Retry with:
 
 ```console
-pkg doctor --support
+pkg apps sync
 ```
 
-The command prints the complete JSON bundle to standard output and uploads nothing. It remains
-available when ordinary health checks fail. Review or redirect those exact bytes yourself; there is
-no background sender.
+The retry rebuilds launchers only. It does not change package selection.
 
-The V1 bundle contains the CLI version, friendly OS and architecture, typed health statuses,
-coarse recent operation phase/outcome, and aggregate state size/permissions. Channel, managed-runtime,
-and index details stay explicitly `null` or `deferred` until their authenticated observations are
-wired. It excludes command arguments, environment values, package names, paths, file contents,
-network addresses, raw logs, Nix identities, and secrets.
+## Supported runtime range
 
-## Install problems
+The tested baseline is Determinate 3.22.1 with Nix 2.35.2. Record any other
+verified runtime here when it is tested. Report unsupported runtimes with
+`pkg doctor` output.
 
-The terminal installer prints an `Install log:` path before it starts.
-Keep that file if setup fails. It contains the failed stage and the installer
-result. It is private and is not uploaded. Review it before you share it.
+## App limits
 
-If macOS reports `Operation not permitted`, check the terminal app in
-**System Settings > Privacy & Security > Full Disk Access**, then close and
-reopen that app. This setting does not repair an interrupted Nix installation.
-Do not delete installation records or APFS volumes to force a retry.
-
-Alpha.46 can show a false unmanaged-Nix row in `pkg doctor` after a valid
-Determinate install. Alpha.47 contains the correction. Retain the
-support report instead of removing Nix based on this row alone.
-
-For more installer stage details with the terminal wrapper, set
-`PKG_INSTALL_DEBUG=1` when you run the verified `install-preview.sh` script.
-A setup failure returns a nonzero exit code. A successful PackageKit message
-from an older background installer does not prove that setup finished.
+macOS app exposure supports a small set of packages with simple app
+archives or standalone executables. Packages that need a writable
+installation or a native helper are excluded.

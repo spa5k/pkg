@@ -7,13 +7,12 @@
 # Apache-2.0 as recorded in DR-015. Private workspace crates remain ignored by
 # this dependency check because they are not published.
 
-# Dependency graph to check: all features, across all four planned v1 hosts.
+# Dependency graph to check: all features, across both supported hosts
+# (x86_64 Linux and Apple silicon macOS).
 [graph]
 all-features = true
 targets = [
     "x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
     "aarch64-apple-darwin",
 ]
 

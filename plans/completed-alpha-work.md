@@ -24,8 +24,8 @@ historical proof. They remain a separate assurance task.
 | Work | Delivered result |
 | --- | --- |
 | PUBLIC-02 | Automatic verified product service updates; explicit offline mode retained |
-| PUBLIC-03 and PUBLIC-04 | Setup language, shellenv, native package/build/repair/reboot/removal evidence; [report](../tests/macos-clean-host/PUBLIC-04.md) |
-| PUBLIC-05 | Broad pinned Nixpkgs catalog and name-only packages; [report](../tests/macos-clean-host/PUBLIC-05.md) |
+| PUBLIC-03 and PUBLIC-04 | Setup language, shellenv, native package/build/repair/reboot/removal evidence; [report](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/PUBLIC-04.md) |
+| PUBLIC-05 | Broad pinned Nixpkgs catalog and name-only packages; [report](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/PUBLIC-05.md) |
 | PUBLIC-06 and PUBLIC-07 | Unprivileged source evaluation and macOS public flakes; [PR #38](https://github.com/spa5k/pkg/pull/38), [PR #39](https://github.com/spa5k/pkg/pull/39) |
 | PUBLIC-08 | Alpha.49 installation and daily-command improvements; [PR #42](https://github.com/spa5k/pkg/pull/42), [PR #43](https://github.com/spa5k/pkg/pull/43) |
 | PUBLIC-09 | Terminal output and progress; [PR #44](https://github.com/spa5k/pkg/pull/44) |
@@ -39,17 +39,17 @@ historical proof. They remain a separate assurance task.
 | PUBLIC-20 | System-removal cleanup and partial-removal recovery; [PR #58](https://github.com/spa5k/pkg/pull/58) |
 | PUBLIC-21 and PUBLIC-22 | Alpha.54 publication and its installation instructions; [release](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.54), [PR #60](https://github.com/spa5k/pkg/pull/60) |
 | PUBLIC-23 | Bounded doctor startup checks and reliable lock regression; [PR #61](https://github.com/spa5k/pkg/pull/61), merged at `4ab2121`; released in alpha.56 |
-| BUG-01 through BUG-09 | Daily-use, state recovery, repair, and CLI fixes; [PR #62](https://github.com/spa5k/pkg/pull/62), [evidence](../tests/macos-clean-host/BUG-FIXES-2026-09-26.md) |
-| UX-01 through UX-06 | GC measurement/retention, uninstall details, preview notices, and safe shell setup; [PR #63](https://github.com/spa5k/pkg/pull/63), [PR #65](https://github.com/spa5k/pkg/pull/65), [evidence](../tests/macos-clean-host/UX-FIXES-2026-09-26.md) |
+| BUG-01 through BUG-09 | Daily-use, state recovery, repair, and CLI fixes; [PR #62](https://github.com/spa5k/pkg/pull/62), [evidence](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/BUG-FIXES-2026-09-26.md) |
+| UX-01 through UX-06 | GC measurement/retention, uninstall details, preview notices, and safe shell setup; [PR #63](https://github.com/spa5k/pkg/pull/63), [PR #65](https://github.com/spa5k/pkg/pull/65), [evidence](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/UX-FIXES-2026-09-26.md) |
 | Alpha.55 candidate | Withheld after exact native output exposed the old wrapper instructions. Signed files and sequence 55 remain unchanged. |
 | VERIFY-01 fixtures | Bounded broker-stage capture and hosted macOS capacity wait; [PR #66](https://github.com/spa5k/pkg/pull/66), [PR #67](https://github.com/spa5k/pkg/pull/67). Wider assurance work remains open |
-| RELEASE-NEXT | Alpha.56 signed publication, exact native upgrade/reboot/removal, and fresh public Linux/macOS checks; [release proof](../tests/release-lifecycle/ALPHA-56-2026-09-26.md) |
+| RELEASE-NEXT | Alpha.56 signed publication, exact native upgrade/reboot/removal, and fresh public Linux/macOS checks; [release proof](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/release-lifecycle/ALPHA-56-2026-09-26.md) |
 
 The alpha.54 [fresh public checks](https://github.com/spa5k/pkg/actions/runs/36135260608)
 passed on Linux and macOS. Its release notes identify exact native upgrade,
 reboot, removal, and reinstall evidence and their limits.
 Delivered features can still have defects. The later
-[daily-use audit](../tests/macos-clean-host/BUG-HUNT-2026-09-26.md) retains the original
+[daily-use audit](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/BUG-HUNT-2026-09-26.md) retains the original
 concurrency, recovery, repair, and CLI failures. Their fixes are released in
 alpha.56. QUALITY-01 and issue #4 retain measured lint and assurance work; they
 do not reopen completed fixes or superseded feature proposals.
@@ -63,7 +63,7 @@ Do not revive their proposed rename, replacement exit codes, unrestricted
 channel flags, separate uninstall script, or duplicate installer library as
 unfinished requirements. Current public contracts are in
 [commands](../docs/commands.md), [installation](../docs/install.md), and
-[CLI experience](../docs/cli-experience.md).
+[CLI experience: `docs/cli-experience.md` (deleted).
 
 The original custom private-Nix design remains in the
 [legacy archive](archive/2026-08-22-custom-managed-nix-v1/README.md).

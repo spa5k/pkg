@@ -3,6 +3,9 @@
 **/target
 target/
 
+# Client release packaging output (tools/release/package_client.sh).
+/dist/
+
 # Per-crate Cargo registries are transient; keep them local.
 # NOTE: Cargo.lock is intentionally NOT ignored — for a binary/application
 # workspace we commit it for reproducible builds.

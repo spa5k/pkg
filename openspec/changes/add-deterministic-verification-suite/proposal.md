@@ -1,5 +1,10 @@
 # Proposal: Complete deterministic verification
 
+> Superseded on 28 September 2026 by
+> [Simplify pkg to native Nix](../simplify-to-native-nix/proposal.md).
+> Do not execute the remaining old-engine proof campaign for the replacement.
+> Existing completion marks remain historical; this change is not delivered.
+
 Status: partially delivered. Reconciled on 26 September 2026.
 Scope: VERIFY-01 in the [active plan](../../../plans/determinate-nix-stacked-prs.md).
 

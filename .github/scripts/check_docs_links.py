@@ -16,9 +16,9 @@ What it validates
      * the target does **not** escape the repository root.
 2. External schemes (`http:`, `https:`, `ftp:`, `mailto:`, ...) and autolinks
    are ignored — they are out of scope for a repo-local checker.
-3. Structural plan invariants:
-     * `plans/README.md` and the active stacked-PR plan exist;
-     * `README.md` and `CONTRIBUTING.md` link the active plan.
+3. Structural invariants:
+     * the OpenSpec change for the active design exists;
+     * `README.md` and `CONTRIBUTING.md` link that OpenSpec proposal.
 
 Exit code is 0 only when every check passes; otherwise errors are aggregated and
 printed with file + (approximate) reason, and the process exits 1.
@@ -45,13 +45,14 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 # otherwise inflate the author-owned Markdown count). Matched as exact path
 # components, never substrings, so e.g. `my-target/` stays in scope.
 # Installed JavaScript dependencies are third-party files, not repository docs.
-IGNORED_DIR_COMPONENTS: Set[str] = {".git", "target", "node_modules"}
+IGNORED_DIR_COMPONENTS: Set[str] = {".git", "target", "node_modules", ".agents"}
 
-# The plan index names one active implementation plan.
-REQUIRED_PLANS: List[str] = [
-    "plans/README.md",
-    "plans/determinate-nix-stacked-prs.md",
+# The design authority is the OpenSpec change, not plans/.
+REQUIRED_DOCS: List[str] = [
+    "openspec/changes/simplify-to-native-nix/design.md",
+    "openspec/changes/simplify-to-native-nix/proposal.md",
 ]
+ACTIVE_PROPOSAL = "openspec/changes/simplify-to-native-nix/proposal.md"
 
 # ----- Markdown parsing helpers ------------------------------------------------
 
@@ -399,26 +400,26 @@ def check_links(report: Report) -> None:
 
 
 def check_structure(report: Report) -> None:
-    for rel in REQUIRED_PLANS:
+    for rel in REQUIRED_DOCS:
         if not (REPO_ROOT / rel).is_file():
-            report.fail(f"required plan missing: {rel}")
+            report.fail(f"required design document missing: {rel}")
 
     readme = REPO_ROOT / "README.md"
     if not readme.is_file():
         report.fail("required file missing: README.md")
-    elif not _links_to(readme, "plans/determinate-nix-stacked-prs.md"):
+    elif not _links_to(readme, ACTIVE_PROPOSAL):
         report.fail(
-            "README.md must link the active plan "
-            "(plans/determinate-nix-stacked-prs.md)"
+            "README.md must link the active OpenSpec proposal "
+            f"({ACTIVE_PROPOSAL})"
         )
 
     contributing = REPO_ROOT / "CONTRIBUTING.md"
     if not contributing.is_file():
         report.fail("required file missing: CONTRIBUTING.md")
-    elif not _links_to(contributing, "plans/determinate-nix-stacked-prs.md"):
+    elif not _links_to(contributing, ACTIVE_PROPOSAL):
         report.fail(
-            "CONTRIBUTING.md must link the active plan "
-            "(plans/determinate-nix-stacked-prs.md)"
+            "CONTRIBUTING.md must link the active OpenSpec proposal "
+            f"({ACTIVE_PROPOSAL})"
         )
 
 
@@ -469,7 +470,7 @@ def main() -> int:
         f"validated {report.links_checked} local link(s)."
     )
     if report.ok:
-        print("OK: all doc links and active-plan structural checks passed.")
+        print("OK: all doc links and OpenSpec structural checks passed.")
         return 0
 
     print(f"\nFAILED: {len(report.errors)} problem(s):", file=sys.stderr)

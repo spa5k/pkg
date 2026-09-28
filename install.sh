@@ -1,160 +1,155 @@
 #!/bin/sh
-# Publication replaces these values with one reviewed release. No runtime URL overrides.
+# pkg client downloader for one exact release.
+#
+# Downloads and verifies the standalone pkg client archive for this system,
+# reads bin/pkg (plus completions) out of the archive, and installs those
+# files under ~/.local.
+#
+# This script NEVER:
+#   - installs, updates, configures, or removes Nix or any other runtime;
+#   - uses sudo or installs privileged helpers or services;
+#   - changes Nix trust settings or accepts new substituters or keys;
+#   - removes or migrates old pkg installations.
+#
+# Nix must be installed separately, by you, from the vendor:
+#   https://docs.determinate.systems/determinate-nix/
 set -eu
-PKG_RELEASE='v0.1.0-alpha.58'
-PKG_RELEASE_BASE_URL='https://github.com/spa5k/pkg/releases/download'
-PKG_ARTIFACT_X86_64_LINUX='pkg-install-x86_64-linux'
-PKG_SHA256_X86_64_LINUX='4798d96fcce31a68be6a4e416c666d1db4d8da55ebd310f6cb83e36a39a44bc6'
-PKG_SHA256_MACOS_PACKAGE='41a6b2d822e1ac15e1cfcba127e2ad00fd2b7ab83ff27addb4f015afcbe49611'
-PKG_SHA256_MACOS_WRAPPER='e91915d0449177e795b014ba0649aff6721df5f2de5ce6385b488530ab85fed5'
 
-pkg_mode=install
-pkg_color=auto
-pkg_log=
-for pkg_arg in "$@"; do
-    case "$pkg_arg" in
-        --verify-only) pkg_mode=verify ;;
-        --no-color) pkg_color=never ;;
-        -h|--help)
-            printf '%s\n' 'Install or upgrade pkg on Apple silicon macOS or Linux x86-64.' \
-                'Usage: install.sh [--verify-only] [--no-color]' \
-                '  --verify-only  Download and verify. Do not install or request administrator access.' \
-                '  --no-color     Use plain output.'
-            exit 0 ;;
-        *) printf 'pkg: unknown option: %s\nUsage: install.sh [--verify-only] [--no-color]\n' "$pkg_arg" >&2; exit 2 ;;
-    esac
-done
+# The version, tag, archive name, and checksum file must all agree with the
+# release built by tools/release/package_client.sh. package_client.sh takes
+# the version from pkg-cli Cargo metadata, and the client-release workflow
+# rejects a tag that disagrees with that version.
+repo="spa5k/pkg"
+version="0.2.0-alpha.1"
+tag="v${version}"
 
-pkg_note() { printf '  %s\n' "$*"; }
-pkg_ok() {
-    if [ "$pkg_color" = auto ] && [ -t 1 ] && [ -z "${NO_COLOR+x}" ] && [ -z "${CI+x}" ] && [ "${TERM:-dumb}" != dumb ]; then
-        printf '  \033[32m✓\033[0m %s\n' "$*"
-    else
-        printf '  [ok] %s\n' "$*"
-    fi
-}
-pkg_fail() {
-    printf '\npkg: %s\n' "$*" >&2
-    if [ -n "$pkg_log" ]; then
-        printf '\npkg: %s\n' "$*" >>"$pkg_log"
-    fi
+if [ "$#" -ne 0 ]; then
+  echo "Usage: sh pkg-install.sh" >&2
+  echo "  This downloader takes no arguments. It installs release ${tag}." >&2
+  exit 2
+fi
+
+case "$(uname -s):$(uname -m)" in
+  Linux:x86_64) system="x86_64-linux" ;;
+  Darwin:arm64) system="aarch64-darwin" ;;
+  *)
+    echo "error: unsupported system. Supported: x86_64 Linux, Apple silicon macOS." >&2
     exit 1
-}
-pkg_digest() {
-    case "$1" in *[!0-9a-f]*|'') pkg_fail 'Invalid pinned SHA-256.' ;; esac
-    [ "${#1}" -eq 64 ] || pkg_fail 'Invalid pinned SHA-256 length.'
-}
-pkg_fetch() {
-    pkg_note "Downloading $1..."
-    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-        --connect-timeout 20 --retry 2 --output "$pkg_tmp/$1" \
-        "$PKG_RELEASE_BASE_URL/$PKG_RELEASE/$1" || pkg_fail 'Download failed. Check your connection, then run this command again.'
-    if command -v shasum >/dev/null 2>&1; then
-        printf '%s  %s\n' "$2" "$pkg_tmp/$1" | shasum -a 256 --check >/dev/null || pkg_fail 'Checksum mismatch. Nothing was installed. Download the installer again.'
-    else
-        printf '%s  %s\n' "$2" "$pkg_tmp/$1" | sha256sum --check >/dev/null || pkg_fail 'Checksum mismatch. Nothing was installed. Download the installer again.'
-    fi
-    pkg_ok "Verified $1"
-}
-
-case "$PKG_RELEASE $PKG_RELEASE_BASE_URL $PKG_SHA256_X86_64_LINUX $PKG_SHA256_MACOS_PACKAGE $PKG_SHA256_MACOS_WRAPPER" in
-    *'@PKG_'*) pkg_fail 'This installer template belongs to an unpublished release; no download was attempted.' ;;
+    ;;
 esac
-case "$PKG_RELEASE_BASE_URL" in https://*) ;; *) pkg_fail 'Release URL is not HTTPS.' ;; esac
-pkg_kernel=$(uname -s)
-pkg_machine=$(uname -m)
-case "$pkg_kernel:$pkg_machine" in
-    Linux:x86_64) pkg_artifact=$PKG_ARTIFACT_X86_64_LINUX; pkg_sha256=$PKG_SHA256_X86_64_LINUX; pkg_platform='Linux x86-64' ;;
-    Darwin:arm64) pkg_artifact="pkg-${PKG_RELEASE#v}-preview.pkg"; pkg_sha256=$PKG_SHA256_MACOS_PACKAGE; pkg_platform='macOS Apple silicon' ;;
-    *) pkg_fail "Unsupported platform: $pkg_kernel $pkg_machine. Use Apple silicon macOS or Linux x86-64 with systemd." ;;
-esac
-pkg_digest "$pkg_sha256"
-[ "$pkg_kernel" != Darwin ] || pkg_digest "$PKG_SHA256_MACOS_WRAPPER"
-for pkg_tool in curl mktemp tee; do
-    command -v "$pkg_tool" >/dev/null 2>&1 || pkg_fail "$pkg_tool is required. Install it, then retry."
-done
-command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || pkg_fail 'sha256sum or shasum is required.'
-if [ "$pkg_mode" = install ]; then
-    [ "$(id -u)" -ne 0 ] || pkg_fail 'Run this script as your normal user. It will request administrator access when needed.'
-    command -v sudo >/dev/null 2>&1 || pkg_fail 'sudo is required for setup.'
-    if [ "$pkg_kernel" = Linux ]; then
-        command -v systemctl >/dev/null 2>&1 || pkg_fail 'Linux setup requires systemd.'
-        [ -d /run/systemd/system ] || pkg_fail 'Start this script on a Linux host running systemd.'
-    fi
+
+need() { command -v "$1" >/dev/null 2>&1 || { echo "error: missing tool: $1" >&2; exit 1; }; }
+need curl
+need tar
+need install
+need awk
+need grep
+
+# One checksum tool is enough. Check both before use: "need shasum ||
+# need sha256sum" cannot express this, because need exits the script when
+# the first tool is missing.
+if ! command -v shasum >/dev/null 2>&1 && ! command -v sha256sum >/dev/null 2>&1; then
+  echo "error: missing tool: shasum or sha256sum" >&2
+  exit 1
 fi
 
-umask 077
-pkg_tmp=$(mktemp -d "${TMPDIR:-/tmp}/pkg-install.XXXXXXXX")
-trap 'rm -rf "$pkg_tmp"' 0
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
-printf '\npkg %s · %s\n\n' "${PKG_RELEASE#v}" "$pkg_platform"
-pkg_fetch "$pkg_artifact" "$pkg_sha256"
-if [ "$pkg_kernel" = Darwin ]; then
-    pkg_fetch install-preview.sh "$PKG_SHA256_MACOS_WRAPPER"
-fi
-if [ "$pkg_mode" = verify ]; then
-    pkg_ok 'Downloads verified. No changes were made.'
-    exit 0
-fi
+archive="pkg-${version}-${system}.tar.gz"
+root="pkg-${version}-${system}"
+base="https://github.com/${repo}/releases/download/${tag}"
 
-pkg_log=$(mktemp "${TMPDIR:-/tmp}/pkg-install-log.XXXXXXXX")
-pkg_note "Install log: $pkg_log"
-pkg_note 'Administrator access is needed to set up pkg.'
-# Preserve the installer result without relying on POSIX sh pipefail.
-( pkg_status=0
-  if [ "$pkg_kernel" = Darwin ]; then
-      /bin/bash "$pkg_tmp/install-preview.sh" "$pkg_tmp/$pkg_artifact" "$pkg_sha256" || pkg_status=$?
-  else
-      chmod 0700 "$pkg_tmp/$pkg_artifact"
-      sudo "$pkg_tmp/$pkg_artifact" || pkg_status=$?
-  fi
-  printf '%s\n' "$pkg_status" >"$pkg_tmp/status"
-) 2>&1 | tee "$pkg_log"
-pkg_status=$(cat "$pkg_tmp/status")
-if [ "$pkg_status" -ne 0 ]; then
-    printf '\npkg setup failed (exit %s). Keep this log for support: %s\n' "$pkg_status" "$pkg_log" \
-        | tee -a "$pkg_log" >&2
-    exit "$pkg_status"
-fi
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
 
-# Check the installed program as the original user, with its managed commands on PATH.
-pkg_cli=/usr/local/bin/pkg
-ls -ld "${pkg_cli%/*}" "$pkg_cli" >>"$pkg_log" 2>&1 || :
-[ -x "$pkg_cli" ] || pkg_fail "Setup finished, but $pkg_cli is missing or cannot be executed by your user. Keep this log: $pkg_log"
-if pkg_version=$("$pkg_cli" --version 2>&1); then
-    printf 'Installed version: %s\n' "$pkg_version" >>"$pkg_log"
+echo "Downloading ${archive} from release ${tag}..."
+curl -fsSL -o "$tmp/$archive" "${base}/${archive}"
+curl -fsSL -o "$tmp/SHA256SUMS" "${base}/SHA256SUMS"
+
+# Verify the archive against its published checksum.
+want="$(grep " ${archive}\$" "$tmp/SHA256SUMS" | awk '{print $1}')"
+if [ -z "$want" ]; then
+  echo "error: no checksum entry for ${archive} in SHA256SUMS." >&2
+  exit 1
+fi
+if command -v shasum >/dev/null 2>&1; then
+  got="$(shasum -a 256 "$tmp/$archive" | awk '{print $1}')"
 else
-    printf '%s\n' "$pkg_version" >>"$pkg_log"
-    pkg_fail "Setup finished, but $pkg_cli could not start. Keep this log: $pkg_log"
+  got="$(sha256sum "$tmp/$archive" | awk '{print $1}')"
 fi
-[ "$pkg_version" = "pkg ${PKG_RELEASE#v}" ] || pkg_fail "The installed version is not the requested release. Keep this log: $pkg_log"
-case "$pkg_kernel" in
-    Darwin) pkg_user_bin="$HOME/Library/Application Support/pkg/current/bin" ;;
-    Linux) pkg_user_bin="$HOME/.local/share/pkg/current/bin" ;;
-esac
-pkg_note 'Checking the installation...'
-pkg_check_path=$PATH
-case ":$pkg_check_path:" in
-    *:/usr/local/bin:*) ;;
-    *) pkg_check_path="/usr/local/bin:$pkg_check_path" ;;
-esac
-case ":$pkg_check_path:" in
-    *:"$pkg_user_bin":*) ;;
-    *) pkg_check_path="$pkg_user_bin:$pkg_check_path" ;;
-esac
-( pkg_status=0
-  PATH="$pkg_check_path" "$pkg_cli" --no-color doctor || pkg_status=$?
-  printf '%s\n' "$pkg_status" >"$pkg_tmp/health-status"
-) 2>&1 | tee -a "$pkg_log"
-pkg_health_status=$(cat "$pkg_tmp/health-status") || pkg_fail "Could not read the health check result. Keep this log: $pkg_log"
-if [ "$pkg_health_status" != 0 ]; then
-    pkg_fail "Setup finished, but a health check failed. Follow the steps above. Keep this log: $pkg_log"
+if [ "$got" != "$want" ]; then
+  echo "error: checksum mismatch for ${archive}." >&2
+  echo "  expected $want" >&2
+  echo "  got      $got" >&2
+  exit 1
 fi
-pkg_ok 'pkg is ready.'
-# Shell setup is printed for the invoking shell, not evaluated by the installer.
-# shellcheck disable=SC2016
-printf '%s\n' '' 'Open a new terminal, or run:' '  [ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"' \
-    '' 'Start here:' '  pkg search ripgrep' '  pkg install ripgrep' '  pkg list' \
-    '' 'Run this same installer command when you want to update pkg.'
+
+# Read only the exact members this downloader installs. Every member's
+# bytes go to stdout (`tar -xO`) and into a temporary file named below.
+# The archive's directory tree is never extracted to disk, so archive
+# paths (absolute, `..`, deep) and links cannot write outside these files.
+tar -tvf "$tmp/$archive" > "$tmp/listing" || {
+  echo "error: cannot list members of ${archive}." >&2
+  exit 1
+}
+
+# exact_regular MEMBER: succeed only when MEMBER is stored exactly once,
+# as one regular file, with nothing below MEMBER. Duplicate names, mixed
+# member types, links, and directories are refused.
+exact_regular() {
+  awk -v m="$1" '
+    {
+      name = $NF
+      if ($0 ~ / -> /) {
+        line = $0
+        sub(/ -> .*/, "", line)
+        n = split(line, fields, " ")
+        name = fields[n]
+      }
+      if (name == m) {
+        named++
+        if (substr($1, 1, 1) == "-") regular++
+      }
+      if (index($0, m "/")) below = 1
+    }
+    END { exit !(regular == 1 && named == 1 && !below) }
+  ' "$tmp/listing"
+}
+
+# read_member MEMBER DEST: write MEMBER's bytes to DEST, or fail clearly.
+read_member() {
+  tar -xOzf "$tmp/$archive" -- "$1" > "$2" || {
+    echo "error: tar failed while reading ${1} from ${archive}." >&2
+    exit 1
+  }
+}
+
+client="${root}/bin/pkg"
+if ! exact_regular "$client"; then
+  echo "error: ${archive} stores no single regular file ${client}." >&2
+  exit 1
+fi
+read_member "$client" "$tmp/pkg"
+if [ ! -s "$tmp/pkg" ]; then
+  echo "error: ${client} from ${archive} is empty." >&2
+  exit 1
+fi
+
+for shell in bash zsh fish; do
+  member="${root}/completions/${shell}.txt"
+  if exact_regular "$member"; then
+    read_member "$member" "$tmp/${shell}.completion"
+  fi
+done
+
+bindir="${PKG_INSTALL_BIN:-$HOME/.local/bin}"
+compldir="${PKG_INSTALL_COMPLETIONS:-$HOME/.local/share/pkg/completions}"
+mkdir -p "$bindir" "$compldir"
+install -m 0755 "$tmp/pkg" "$bindir/pkg"
+for shell in bash zsh fish; do
+  if [ -f "$tmp/${shell}.completion" ]; then
+    cp "$tmp/${shell}.completion" "$compldir/${shell}.txt"
+  fi
+done
+
+echo "Installed $bindir/pkg and completions under $compldir."
+echo "pkg requires an external Nix installation. pkg does not install Nix."
+echo "Next steps: https://github.com/${repo}/blob/main/docs/install.md"

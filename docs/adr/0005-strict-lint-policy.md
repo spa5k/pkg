@@ -1,8 +1,14 @@
 ---
-Status: Accepted
+Status: Superseded
 ---
 
 # Strict lint policy: make the repository hostile to mediocre code
+
+> Superseded on 28 September 2026 by
+> [Simplify pkg to native Nix](../../openspec/changes/simplify-to-native-nix/design.md).
+> The G-QUALITY gate, its ratchet baseline, and `tools/quality` were deleted
+> with the old engine. CI now runs the ordinary Rust checks only. This record
+> stays as history and is not a current requirement.
 
 ## Context
 

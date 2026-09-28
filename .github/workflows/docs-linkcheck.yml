@@ -1,7 +1,7 @@
-# Docs linkcheck — validates Markdown cross-references across the repo and the
-# PR-0 structural invariants (plans/ as source of truth, threat-model + reviewer
-# links). Runs a deterministic, repository-local Python checker (stdlib only —
-# no package-manager network installs).
+# Docs linkcheck — validates Markdown cross-references across the repo and
+# the structural invariant that README.md and CONTRIBUTING.md link the active
+# OpenSpec change. Runs a deterministic, repository-local Python checker
+# (stdlib only — no package-manager network installs).
 
 name: docs-linkcheck
 
@@ -42,7 +42,7 @@ jobs:
       - name: Check docs links
         run: python3 .github/scripts/check_docs_links.py
 
-      - name: Validate docs site and installer template
+      - name: Validate docs site and installer downloader
         run: |
-          sh -n docs/install.sh
+          sh -n install.sh
           python3 -m unittest discover -s docs/tests -p 'test_*.py' -v

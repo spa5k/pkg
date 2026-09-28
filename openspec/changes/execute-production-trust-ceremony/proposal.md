@@ -1,5 +1,10 @@
 # Proposal: Activate production trust
 
+> Superseded on 28 September 2026 by
+> [Simplify pkg to native Nix](../simplify-to-native-nix/proposal.md).
+> Its standalone client removes the old TUF channel and privileged installer.
+> Do not treat this ceremony as a prerequisite or mark it delivered.
+
 Status: external inputs and final proof pending. Reconciled 26 September 2026.
 Scope: TRUST-01 in the [active plan](../../../plans/determinate-nix-stacked-prs.md).
 

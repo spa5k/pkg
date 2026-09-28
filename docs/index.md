@@ -4,31 +4,25 @@ title: pkg documentation
 
 # pkg
 
-Find and install command-line tools with familiar package commands. pkg uses
-trusted downloads first. If a local build is needed, it shows the build plan
-and asks before it starts.
+`pkg` is a small package command line over one native Nix profile per user.
+Nix owns package state, generations, rollback, and roots. `pkg` owns names,
+commands, output, and desktop app launchers.
 
-[Alpha.56](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.56) is available
-for Apple silicon macOS and Linux x86-64 with systemd. Setup installs
-Determinate Nix for you. The macOS preview is not notarized. The release uses
-a test signing root.
-
-Alpha.56 fixes concurrent command cancellation, interrupted state recovery,
-and activation repair. Install and upgrade previews show a progress notice. System removal
-shows its actions before approval. GC reports unknown space measurements and
-explains its retention rules. Guarded shell setup remains safe after uninstall.
-Run `pkg` for the command guide. Use `pkg uninstall <package>` to remove a package
-and `sudo pkg system uninstall` to remove pkg itself.
+The active design is
+[Simplify pkg to native Nix](../openspec/changes/simplify-to-native-nix/proposal.md).
+The client is in development for x86_64 Linux and Apple silicon macOS.
 
 ## Start here
 
 - [Install pkg and set up your shell](install.md)
-- [Find, install, and manage packages](commands.md)
-- [Fix a problem and collect a support report](support.md)
-- [Privacy and security](privacy.md)
+- [Commands and package IDs](commands.md)
+- [Supported runtimes and app limits](support.md)
+- [Privacy](privacy.md)
 
-Package operations belong to pkg. Determinate owns the Nix installation.
-No Nix repair or update command is exposed in this alpha.
+## Ownership
 
-The [plan index](../plans/README.md) records development work and native proof.
-Source changes are available in public downloads only after a new release.
+- You install and maintain the Nix runtime, or your administrator does.
+- `pkg` installs, lists, upgrades, and removes packages in its own profile.
+- `pkg` never installs or invokes Homebrew. Supported Casks are ordinary Nix
+  packages.
+- `pkg` has no broker, root helper, daemon, or package channel.

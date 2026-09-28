@@ -1,20 +1,13 @@
-//! Stable command-line grammar and public presentation contracts for `pkg`.
+//! The `pkg` client library.
+//!
+//! One crate owns the whole client: the reduced command grammar, configuration
+//! and paths, the concrete native Nix adapter, catalog name routing, command
+//! execution, and output envelopes (design D1).
 
-#![forbid(unsafe_code)]
-#![deny(missing_docs)]
-
-#[cfg(unix)]
-pub mod broker;
+pub mod apps;
+pub mod catalog;
 pub mod cli;
 pub mod commands;
-pub mod completion;
-pub mod crash;
-pub mod exit;
-mod help;
-pub mod log;
-pub mod path;
-pub mod presentation;
-pub mod progress;
-pub mod support;
-pub mod telemetry;
-pub mod ux;
+pub mod config;
+pub mod nix;
+pub mod output;

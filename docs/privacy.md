@@ -4,11 +4,13 @@ title: Privacy and security
 
 # Privacy and security
 
-- Telemetry is disabled by default. The current implementation has no telemetry transmitter.
-- Local logs use an allowlisted schema, private permissions, bounded rotation, and secret redaction.
-- Crash records exclude panic payloads, arguments, environment values, backtraces, and memory dumps.
-- `pkg doctor --support` is explicit and preview-only. Nothing is uploaded.
-- Package management goes through the product broker and closed helper protocol. Users do not get
-  raw access to the managed Nix CLI, daemon, store controls, or trust configuration.
-
-New support-bundle fields require privacy review and redaction tests before release.
+- Telemetry is disabled by default. The client has no telemetry transmitter.
+- `pkg doctor` reads local state and prints a summary. It uploads nothing.
+- `pkg` keeps disposable discovery data under `~/.cache/pkg/`. You can delete
+  it at any time. Deleting it does not affect installed packages.
+- `pkg` accepts package names and validated public flake references. It does
+  not run arbitrary Nix expressions from packages and does not accept
+  source-provided Nix settings, substituters, or signing keys.
+- Package payloads come from their vendor sources through Nix, with native
+  store checks and download hashes. A hash is not publisher identity or
+  approval.
