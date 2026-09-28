@@ -1,5 +1,9 @@
 ---
-Status: Accepted
+Status: Superseded
+
+> Superseded on 28 September 2026 by the native Nix design:
+> [Simplify pkg to native Nix](../../openspec/changes/simplify-to-native-nix/design.md).
+> This record stays as history. It does not describe current or planned behavior.
 ---
 
 # Broker and Root Helper privilege split

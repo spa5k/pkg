@@ -12,12 +12,12 @@ uses the same custom package engine.
 
 The workspace has eleven product crates and the release-tools crate.
 The CLI still exposes the old command grammar in
-[cli.rs](../../../crates/pkg-cli/src/cli.rs).
-[pkg-store](../../../crates/pkg-store/src/lib.rs) owns activation, generations,
+[cli.rs](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/crates/pkg-cli/src/cli.rs).
+[pkg-store](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/crates/pkg-store/src/lib.rs) owns activation, generations,
 roots, and journals.
-[pkg-pipeline](../../../crates/pkg-pipeline/src/lib.rs) owns custom preparation
+[pkg-pipeline](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/crates/pkg-pipeline/src/lib.rs) owns custom preparation
 and commit behavior.
-[pkg-installer](../../../crates/pkg-installer/Cargo.toml) builds three
+[pkg-installer](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/crates/pkg-installer/Cargo.toml) builds three
 privileged or installation executables.
 
 Some prose on main still says alpha.57. The Cargo version, current commands,

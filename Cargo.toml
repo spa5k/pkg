@@ -1,39 +1,23 @@
 # `pkg` root workspace.
 #
-# PR-1 began with `pkg-core`; later dependency-safe milestones add their owned
-# crates here. Keeping every production crate in the root member list makes the
-# standard build, lint, documentation, and dependency gates cover it by default.
+# Design D1: one application crate (`pkg-cli`) owns the whole native Nix
+# client. The old product engine crates were deleted with their callers.
 #
 # Licensed under Apache-2.0. See LICENSE and DR-015.
 
 [workspace]
 resolver = "3"
-members = [
-    "crates/pkg-channel",
-    "crates/pkg-cli",
-    "crates/pkg-core",
-    "crates/pkg-index",
-    "crates/pkg-installer",
-    "crates/pkg-macos-security",
-    "crates/pkg-nix",
-    "crates/pkg-pipeline",
-    "crates/pkg-resolver",
-    "crates/pkg-store",
-    "crates/pkg-testkit",
-    "tools/release",
-]
+members = ["crates/pkg-cli"]
 
 [workspace.package]
-version = "0.1.0-alpha.58"
+version = "0.2.0-alpha.1"
 edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
 publish = false
 
 # Strict lint policy (ADR 0005): the deny set here is clean in every target on
-# every supported platform. Lints with known production debt live in the
-# G-QUALITY gate (tools/quality) as denies on lib/bins, warns with a checked-in
-# ratchet baseline, or both. Suppressions are expensive: every allow/expect
+# every supported platform. Suppressions are expensive: every allow/expect
 # must carry a `reason` (clippy::allow_attributes_without_reason).
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

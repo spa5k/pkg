@@ -1,115 +1,65 @@
-# Package Lifecycle
+# pkg Language
 
-This context defines the language for turning user package intent into trusted, recoverable package state. It separates the vendor-owned Base Nix Lifecycle from the product-owned Package Lifecycle.
+This context defines the words used for the native Nix design. The active
+design authority is the OpenSpec change
+[simplify-to-native-nix](openspec/changes/simplify-to-native-nix/proposal.md).
 
-## Intent and Identity
+## Products and Sources
 
-**Package Selector**:
-The durable statement of what a user wants, including version, output, source, and pin preferences.
-_Avoid_: Package request, installable, package identity
+**Package**:
+One installable thing a user asks for by name, with its source.
+_Avoid_: Package Selector, installable, flake ref
 
-**Realization**:
-The exact package result selected for one Package Selector. Its identity is its Store Path, not its display name or version.
-_Avoid_: Package, artifact, `name@version`
+**Source**:
+A pinned package source that names resolve against, for example a pinned
+Nixpkgs revision.
+_Avoid_: Catalog (for a single source), channel
 
-**Store Path**:
-The unique identity of a Realization in the Nix store.
-_Avoid_: Package path, install path
+**Discovery Data**:
+The disposable, derived data used only for search and info. It is not
+authoritative for installed packages.
+_Avoid_: Index, search database, metadata cache
 
-**Catalog**:
-The exact, pinned package source that selectors resolve against.
-_Avoid_: Package set, package database
+**Fixed Reference**:
+A package reference that does not advance during upgrade. It replaces the
+removed pin state.
+_Avoid_: Pin, pinned version
 
-**Index**:
-The disposable, derived package metadata used only for search and discovery. It is not authoritative.
-_Avoid_: Search database, metadata cache
+## State
 
-**Build Plan**:
-The canonical, private statement of the derivations, outputs, policy, and host facts for one possible local build.
-_Avoid_: Build request
-
-**Build Preview**:
-The public, sanitized statement of one possible local build, shown to the user before approval.
-_Avoid_: Build summary, build report
-
-**Build Approval**:
-Permission for one exact Build Plan under one policy version. It does not authorize later or different builds.
-_Avoid_: Confirmation, global approval
-
-## State and Recovery
-
-**Manifest**:
-The desired state. It holds one user's set of Package Selectors and their constraints.
-_Avoid_: Package list, requirements
-
-**Lock**:
-The realized state. It binds each Package Selector to its exact Realization.
-_Avoid_: Lock file, resolution
-
-**Lifecycle State**:
-The coherent desired and realized package state for one user in the Package Lifecycle.
-_Avoid_: Current state
+**pkg Profile**:
+The one native Nix profile that holds a user's packages. Nix owns its
+entries, generations, and roots.
+_Avoid_: Manifest, lock, package state engine
 
 **Generation**:
-An immutable snapshot of Lifecycle State that can be activated or retained. Rollback produces a new Generation; it does not reuse a retained one.
-_Avoid_: Version, release, snapshot
+An immutable native profile snapshot. Rollback selects an earlier
+generation; it does not restore product state.
+_Avoid_: Version, release, product snapshot
 
-**Activation Forest**:
-The package view exposed by one Generation.
-_Avoid_: Profile, environment, generation directory
+**Rollback**:
+The native return to the previous or a selected generation. Launcher sync
+follows it.
+_Avoid_: Migration, state restore
 
-**GC Root**:
-A reference that pins one realized output so garbage collection keeps it.
-_Avoid_: GC pin, keep-alive link
+**Launcher**:
+A pkg-owned macOS app trampoline derived from an intact store bundle.
+_Avoid_: App install, app copy
 
-**Lifecycle Operation**:
-One recoverable attempt to change Lifecycle State in the Package Lifecycle.
-_Avoid_: Command, transaction, job
+## Runtime
 
-**Base Nix Handoff**:
-The durable product evidence that a started Base Nix operation has an unknown outcome, or that the exact installed Base Nix state was validated and accepted.
-_Avoid_: Handoff, install journal, Vendor Receipt
+**Nix Runtime**:
+The external Nix installation the user owns and installs from a vendor.
+pkg never installs, updates, repairs, or removes it.
+_Avoid_: Managed Nix, Base Nix, bundled Nix
 
-**Unknown Base Nix Outcome**:
-A Base Nix result for which the product cannot prove success or failure.
-_Avoid_: Failure, interrupted install, recoverable install
+**Client**:
+The standalone `pkg` executable delivered as one archive per supported
+system, with completions, license, and notices.
+_Avoid_: Installer, agent, service
 
-**Package Repair**:
-The user-initiated, verified restore of damaged store content. It is not atomic.
-_Avoid_: Repair, Base Nix repair, self-heal, auto-repair
+## Deleted Concepts
 
-**Product Asset**:
-A release-authenticated host object that the product owns. It excludes Base Nix and user packages.
-_Avoid_: Package asset, Nix asset
-
-**Product Asset Repair**:
-The explicit restore of Product Assets from authenticated bytes in the same product release. Product services stay offline during the operation.
-_Avoid_: Package Repair, Base Nix repair, product reinstall
-
-## Lifecycle Ownership
-
-**Base Nix**:
-The machine-wide Nix system whose lifecycle is separate from product and package work.
-_Avoid_: Managed Nix, private Nix, system Nix
-
-**Base Nix Lifecycle**:
-The install, repair, update, and explicit uninstall of Base Nix.
-_Avoid_: Package Lifecycle, package maintenance
-
-**Package Lifecycle**:
-The product-owned work that selects, realizes, activates, repairs, and removes packages for a user.
-_Avoid_: Base Nix Lifecycle, Nix lifecycle
-
-## Trust and Authority
-
-**Channel**:
-An authenticated, monotonic release of product policy, Catalog identity, product assets, and vendor-owned Base Nix assets.
-_Avoid_: Repository, feed, branch
-
-**Broker**:
-The authenticated authority that mediates Package Lifecycle work and machine-wide package admission. It does not own Base Nix Lifecycle changes.
-_Avoid_: Daemon, server, engine
-
-**Root Helper**:
-The authenticated authority for a closed set of privileged Package Lifecycle host changes.
-_Avoid_: Installer, root process, sudo wrapper
+The channel, broker, root helper, build approval, product assets, and
+product repair are deleted by design. Do not reintroduce these words or
+the machinery behind them.

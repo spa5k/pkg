@@ -10,7 +10,7 @@
 Status: alpha product. Reviewed on 27 September 2026. Alpha.57 is public.
 Its installer and bounded test changes are delivered. PREVIEW-01 below records
 the remaining public-source error-category defect. The
-[alpha.56 proof](../tests/release-lifecycle/ALPHA-56-2026-09-26.md) retains the
+[alpha.56 proof](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/release-lifecycle/ALPHA-56-2026-09-26.md) retains the
 earlier nine bug fixes, six UX fixes, and their native/public checks.
 The filename is retained for existing links. The original four-PR migration
 stack is complete. New work branches from current `main`.
@@ -117,9 +117,9 @@ to ownership is recorded in [ADR 0004](../docs/adr/0004-determinate-base-nix-lif
 - **Rollback:** revert the documentation change. No release or user-state
   migration is included.
 
-The [26 September VM audit](../tests/macos-clean-host/ONBOARDING-2026-09-26.md)
+The [26 September VM audit](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/ONBOARDING-2026-09-26.md)
 records measured onboarding and code-quality findings.
-The [daily-use and logic audit](../tests/macos-clean-host/BUG-HUNT-2026-09-26.md)
+The [daily-use and logic audit](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/BUG-HUNT-2026-09-26.md)
 adds 68 VM cases and nine confirmed defects. All nine now have committed fixes
 and native macOS regression evidence. The original failures remain historical
 evidence; they are no longer open implementation tasks.
@@ -128,7 +128,7 @@ Keep observed user failures separate from lint debt. Record the tested release,
 source revision, platform, and exact command. A passing happy path does not
 prove every interruption or security boundary.
 
-The [fix status and evidence](../tests/macos-clean-host/BUG-FIXES-2026-09-26.md)
+The [fix status and evidence](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/BUG-FIXES-2026-09-26.md)
 link the nine separate implementation checkpoints and the final combined checks.
 Independent E and A source reviews found no remaining defects. Native Linux
 source validation and fresh public platform checks passed. VERIFY-01 owns the
@@ -136,7 +136,7 @@ remaining cross-platform and wider interruption matrix; do not recreate the regr
 
 The six onboarding UX findings are implemented in `03c4e3a`, with final shell
 corrections in `23a2de2`. Both are released in alpha.56.
-[UX verification](../tests/macos-clean-host/UX-FIXES-2026-09-26.md) records their
+[UX verification](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/UX-FIXES-2026-09-26.md) records their
 tests and VM checks. They are not additional open implementation tasks.
 
 Remaining code-quality work:
@@ -163,7 +163,7 @@ Remaining code-quality work:
 - **Rollback:** revert the wrapper, bootstrap template, docs, and tests. No
   permission or user-state migration is included.
 
-The [command-access proof](../tests/macos-clean-host/INSTALL-COMMAND-ACCESS-2026-09-27.md)
+The [command-access proof](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/macos-clean-host/INSTALL-COMMAND-ACCESS-2026-09-27.md)
 records the alpha.56 false-success reproduction and candidate correction.
 The correction needs review and release. The coworker's exact failure cause
 still needs direct path and command diagnostics.
@@ -180,9 +180,9 @@ still needs direct path and command diagnostics.
   period before promoting new assurance checks to production prerequisites.
 - **Rollback:** revert new test tooling. Do not weaken an existing passing gate.
 
-The [test cleanup evidence](../tests/test-audit/2026-09-27/cleanup.md) records
+The [test cleanup evidence](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/test-audit/2026-09-27/cleanup.md) records
 the retained contracts and eleven caught defects. The
-[behavior test regression guard](../tools/verify/TEST-CONTRACTS.md) repeats those
+[behavior test regression guard: `tools/verify/TEST-CONTRACTS.md` (deleted) repeats those
 defects in Fast CI. This completes that bounded guard; native repeat proofs,
 fault coverage, and the observation period below remain open.
 

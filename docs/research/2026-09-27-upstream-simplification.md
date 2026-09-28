@@ -114,11 +114,11 @@ proved list of files that can all be deleted.
 
 | Priority | Current code and reason for its existence | Proposed change | Remaining condition |
 | --- | --- | --- | --- |
-| 1 | [Private legacy Base Nix module](../../crates/pkg-installer/src/linux_uninstall.rs), plus old provisioning internals marked with `expect(dead_code)` | Remove the unreachable paths and their obsolete tests after checking callers. | Some managed modules still provide live vendor authentication and release assets. Do not delete by directory name. |
-| 2 | [Activation forest](../../crates/pkg-store/src/activate.rs), [generation commits](../../crates/pkg-pipeline/src/commit.rs), [rollback](../../crates/pkg-pipeline/src/rollback.rs), and [root publication](../../crates/pkg-store/src/roots.rs) | Make a dedicated Nix profile authoritative. Remove the duplicate activation, generation, journal, and root protocols. | Accept profile conflict and history semantics. Keep only product metadata that Nix does not represent. |
-| 3 | [Broker and helper services](../../crates/pkg-installer/src/service.rs), [maintenance capabilities](../../crates/pkg-nix/src/maintenance.rs), and platform service installation | Run the client as the user through the existing Nix daemon. | Drop or separately handle privileged store repair, exact approval enforcement, and product-specific source isolation. Ordinary daemon access must be available. |
-| 4 | [Determinate handoff](../../crates/pkg-installer/src/determinate_handoff.rs), product install journals, and coupled system uninstall | Use a separately managed vendor installation. Distribute only the unprivileged client through a tap or release archive. | This changes the promise that installing/removing pkg also installs/removes Nix. Keeping automatic setup retains a small vendor invocation layer. |
-| 5 | [Catalog projection](../../crates/pkg-index/nix/index-meta.nix), [release index tool](../../tools/release/src/bin/pkg-release-index.rs), and [signed channel](../../crates/pkg-channel/src/tuf.rs) | Compare native search and published channel metadata before retaining a custom publisher. | A source hash identifies content; it does not replace signed publisher authority, expiry, or rollback protection. Keep those controls if the product still requires them. |
+| 1 | [Private legacy Base Nix module](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-installer/src/linux_uninstall.rs), plus old provisioning internals marked with `expect(dead_code)` | Remove the unreachable paths and their obsolete tests after checking callers. | Some managed modules still provide live vendor authentication and release assets. Do not delete by directory name. |
+| 2 | [Activation forest](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-store/src/activate.rs), [generation commits](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-pipeline/src/commit.rs), [rollback](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-pipeline/src/rollback.rs), and [root publication](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-store/src/roots.rs) | Make a dedicated Nix profile authoritative. Remove the duplicate activation, generation, journal, and root protocols. | Accept profile conflict and history semantics. Keep only product metadata that Nix does not represent. |
+| 3 | [Broker and helper services](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-installer/src/service.rs), [maintenance capabilities](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-nix/src/maintenance.rs), and platform service installation | Run the client as the user through the existing Nix daemon. | Drop or separately handle privileged store repair, exact approval enforcement, and product-specific source isolation. Ordinary daemon access must be available. |
+| 4 | [Determinate handoff](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-installer/src/determinate_handoff.rs), product install journals, and coupled system uninstall | Use a separately managed vendor installation. Distribute only the unprivileged client through a tap or release archive. | This changes the promise that installing/removing pkg also installs/removes Nix. Keeping automatic setup retains a small vendor invocation layer. |
+| 5 | [Catalog projection](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-index/nix/index-meta.nix), [release index tool: `tools/release/src/bin/pkg-release-index.rs` (deleted with the index pipeline), and [signed channel](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-channel/src/tuf.rs) | Compare native search and published channel metadata before retaining a custom publisher. | A source hash identifies content; it does not replace signed publisher authority, expiry, or rollback protection. Keep those controls if the product still requires them. |
 
 The broker is not needed merely because Nix has a privileged daemon. It exists
 to enforce additional pkg rules. [ADR 0003](../adr/0003-broker-root-helper-privilege-split.md)
@@ -128,10 +128,10 @@ are not product security barriers. This supports reconsidering the extra
 services. It does not prove that deleting them preserves every current rule.
 
 The repository already delegates Nix parsing and evaluation. The
-[real adapter](../../crates/pkg-nix/src/real/mod.rs) runs `nix eval --json --apply`
+[real adapter](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-nix/src/real/mod.rs) runs `nix eval --json --apply`
 with the small checked-in projection. The
-[flake adapter](../../crates/pkg-nix/src/real/flake.rs) calls Nix for source locks
-and derivation evaluation. The [resolver](../../crates/pkg-resolver/src/lib.rs)
+[flake adapter](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-nix/src/real/flake.rs) calls Nix for source locks
+and derivation evaluation. The [resolver](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-resolver/src/lib.rs)
 uses the index for discovery only. Installing from a result still evaluates
 the selected source. Replacing a Rust parser is therefore not the main task.
 
@@ -150,7 +150,7 @@ to investigate. They are not production-code counts or deletion estimates.
 
 There are two constraints on a smaller design:
 
-- The current [adapter version check](../../crates/pkg-nix/src/real/mod.rs)
+- The current [adapter version check](https://github.com/spa5k/pkg/blob/8bedfbaa11f8ad6def224b85c44ed3fb9bea3268/crates/pkg-nix/src/real/mod.rs)
   requires the exact Determinate 3.22.1 / Nix 2.35.2 version strings. Vendor-led
   upgrades need a tested compatibility policy. Simply allowing the vendor to
   update can make the present client refuse to run.

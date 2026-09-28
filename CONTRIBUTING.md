@@ -1,143 +1,64 @@
 # Contributing to `pkg`
 
-> **OpenSpec is the source of truth for the replacement.** Use
-> [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
-> and its [tasks](openspec/changes/simplify-to-native-nix/tasks.md).
-> The [plan index](plans/README.md) separates active and historical material.
-> The plan defines future implementation work. It does not change current alpha
-> behavior by itself.
-> For this replacement, OpenSpec overrides conflicting rules below.
-> Old behavior and tests need not be preserved. Old proof campaigns and
-> TUF/installer trust ceremonies are not prerequisites.
-> Keep direct checks for the new behavior and ordinary build hygiene.
-
-The remaining process text records the
-[previous alpha plan](plans/determinate-nix-stacked-prs.md).
-Implementation task NN-07 replaces its stale rules and related CI checks.
+**OpenSpec is the source of truth.** The active design is
+[Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
+with its [design](openspec/changes/simplify-to-native-nix/design.md) and
+[tasks](openspec/changes/simplify-to-native-nix/tasks.md).
 
 ## 1. Before you open a PR
 
-- **Map your PR to the [active plan](plans/determinate-nix-stacked-prs.md).**
-  Every implementation change maps to one active work entry. State its identifier
-  in the PR description and copy its
-  `Purpose / Owns / Depends / Tests & gates` fields.
-- **Respect `Depends:`.** A PR may not merge until each listed dependency has
-  merged. Do not invent new dependency edges.
-- **One purpose per PR.** A reviewer must be able to hold the whole change in their head.
-  Target a few hundred lines of *logic* (fixtures/tests excluded); anything larger is split.
-- **Every PR is reversible.** Your PR description must include the rollback strategy from the
-  active-plan entry (usually `git revert` plus any state it leaves behind).
-- **Plans are owned.** Edit a plan document only if you own that area (see reviewer model
-  below) **or** the change is links/typos/cross-references that do not alter a decision.
-  Link-only fixes to plan cross-references are always allowed. Never silently revert another
-  contributor's work — propose the change and let the owner merge it.
+- **Map your PR to a task.** Name the `NN-xx` task number in the PR
+  description. If your change is not covered by a task, propose a design
+  change in OpenSpec first.
+- **One purpose per PR.** A reviewer must be able to hold the whole change
+  in their head.
+- **Do not resurrect removed machinery.** The broker, root helper, package
+  state engine, build approval, TUF channel, central index, and their tests
+  are deleted by design. New work builds on the native Nix profile.
+- **Old plans are history.** Files under `plans/` are superseded or
+  completed records. Do not treat them as requirements. Do not mark
+  superseded proposals as delivered.
 
-## 2. Reviewer model (areas F / E / A)
+## 2. Required checks
 
-Three review roles remain useful:
+- All PRs: the **ci** workflow is green. It runs the ordinary Rust checks —
+  build, test, format, clippy, docs, and dependency policy — on the pinned
+  toolchain (currently Rust 1.96.1 via `rust-toolchain.toml`), plus a small
+  client smoke job on Linux and macOS.
+- All PRs: the **docs-linkcheck** workflow is green. It validates Markdown
+  cross-references and requires README/CONTRIBUTING to link the active
+  OpenSpec change.
+- Run locally:
 
-| Role | Owns | Review focus |
-| --- | --- | --- |
-| **F** — Foundations & Trust | architecture, channel/TUF, Nixpkgs/index, Nix adapter contract | inputs and trust |
-| **E** — Execution & Platform | resolve/install/build, state/locks/gen/GC, CLI/UX, installers | runtime behavior |
-| **A** — Assurance | security, tests, release/ops, roadmap, risks | proof and release safety |
+```sh
+cargo build --locked --all-targets
+cargo test --locked
+cargo fmt --all --check
+cargo clippy --locked --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+python3 .github/scripts/check_docs_links.py
+```
 
-**Every PR requires:**
+## 3. Tests and evidence
 
-1. A **primary reviewer** for the area most touched by the PR.
-2. **≥ 1 cross-area reviewer** — a *different* owner than the primary.
-3. **Mandatory security review by A** for any PR on the **trust surface**:
-   channel/keys, state integrity, privileged helper, substitution, eval purity, uninstall,
-   or release signing. The active plan marks these review gates on each PR.
+- Keep the test suite small and direct. Add a focused test when it catches a
+  real defect in code we own. Do not add a new assurance framework, fault
+  matrix, or mutation campaign.
+- Do not fabricate results. Record only checks you ran, with the system,
+  revisions, and outcomes. Historical proof records from the old engine are archived at the [plan baseline](https://github.com/spa5k/pkg/tree/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests); current evidence lives in `docs/verification/`
+  and dated reports stay as history.
+- Do not mark OpenSpec tasks complete in a PR that does not finish them.
+  The tasks file records completion, not the PR description.
 
-Any spike required by the active plan must complete its stated review and proof
-gate before a dependent PR opens. Do not merge an irreversible architecture
-change before its gate passes.
+## 4. Release
 
-## 3. Required gates
+Client releases are assembled by `tools/release/package_client.sh` through
+the `client-release` workflow: one archive per supported system
+(x86_64 Linux, Apple silicon macOS), with completions, notices, and
+checksums. The client contains no privileged helpers and no private Nix
+bundle. See [tools/release/README.md](tools/release/README.md).
 
-- **All PRs:** the **docs-linkcheck** CI job is green. It validates Markdown cross-references
-  across the repo (including fragments), rejects repository-escaping paths, and enforces the
-  plan-index invariants (`plans/README.md` and the active plan exist; `README.md`
-  and this file link the active plan). Run it locally:
-  ```sh
-  python3 .github/scripts/check_docs_links.py
-  ```
-- **Code PRs:** the lanes in the
-  [active plan](plans/determinate-nix-stacked-prs.md) apply as its PR entry
-  specifies. At minimum, run the Fast-CI **G-LINT** job
-  ([`ci-fast.yml`](.github/workflows/ci-fast.yml): `fmt`, `clippy -D warnings`, `doc`,
-  `build`, `cargo deny check`, `cargo audit`). Do not disable a gate to make CI green; fix
-  the cause or split the PR.
-- **Trust-surface PRs:** the relevant security test lane in the active plan must
-  be green. Record A's security review before merge.
+## 5. Communication
 
-### 3.1 Toolchain, MSRV, and the local G-LINT gate
-
-- **Repo toolchain.** `rust-toolchain.toml` pins the exact channel **`1.96.1`** (profile
-  `minimal`, components `rustfmt` + `clippy`). CI and contributors use this exact toolchain;
-  it is deliberately **not** a mutable `stable`. The workspace **MSRV is `1.96`**
-  (`[workspace.package] rust-version`), matching the repo toolchain.
-- **Local G-LINT gate.** This mirrors `.github/workflows/ci-fast.yml` step-for-step; every
-  command must be green locally before a code PR opens:
-  ```sh
-  cargo fmt --all --check
-  cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
-  cargo build --workspace --all-targets --all-features --locked
-  cargo deny --locked check        # cargo-deny 0.20.2: cargo install --locked cargo-deny@0.20.2
-  cargo audit                      # cargo-audit 0.22.2: cargo install --locked cargo-audit@0.22.2
-  ```
-  `cargo` normally selects the pinned toolchain automatically via `rust-toolchain.toml`,
-  **but an exported `RUSTUP_TOOLCHAIN` environment variable overrides it** (that is how
-  rustup resolves precedence). If your shell has one set — the usual cause of “bare
-  `cargo`/`rustc` used the wrong compiler despite the repo pin” — the final gates will run
-  against the wrong toolchain silently. Clear it, or pin it to the repo channel, before the
-  final gate:
-  ```sh
-  unset RUSTUP_TOOLCHAIN            # let rust-toolchain.toml decide
-  RUSTUP_TOOLCHAIN=1.96.1 cargo --version   # …or pin it to the repo channel explicitly
-  ```
-  The final G-LINT gate must run on exactly `1.96.1`; an older toolchain (below the MSRV
-  of `1.96`) is **not** acceptable for final validation, even temporarily.
-- **Project license.** The project uses Apache-2.0. Keep the workspace package
-  metadata, release archives, and notices consistent with that license.
-
-### 3.2 Behavior tests must remain effective
-
-Prefer real CLI processes, files, cryptographic checks, and lifecycle results.
-A mock call list or source-string check is not proof that a user operation works.
-Keep a narrow test only when it owns a distinct contract without a stronger
-practical keeper. Before deleting or weakening a test, name the replacement
-contract and show that it rejects the relevant defect. Do not use test count or
-line coverage as a substitute for this proof.
-
-The Fast-CI `test-contracts` job deliberately breaks known behaviors in a
-temporary copy. Healthy and restored controls must pass; the broken behavior
-must fail by test assertion. Missing tests, skips, timeouts, and build/import
-errors fail the guard. Its result is included in the required aggregate job.
-Use [the test-audit skill](.agents/skills/test-audit/SKILL.md) and
-[the guard procedure](tools/verify/TEST-CONTRACTS.md) for test changes.
-When an owner changes, update its mutation and keeper together. Preserve the
-observable contract or document the approved product behavior change.
-
-## 4. Rollback evidence
-
-Every merged PR must leave enough trace to roll back cleanly:
-
-- The PR description restates the roadmap **Rollback** field (e.g. `revert`; what state, if
-  any, is left behind, and how it is cleaned up).
-- PRs that lay down files or mutate state (installers, provisioning, migrations) record the
-  manifest/keys/paths needed to undo them, as the roadmap entry requires.
-- For release/channel PRs, rollback is the published higher-`sequence` channel — rehearse key
-  revocation before it is needed.
-
-## 5. Spikes and unresolved questions
-
-Add open go/no-go questions to the active plan. Do not leave an implementation
-decision only in a PR thread. Record the required owner sign-off before the
-decision becomes accepted.
-
----
-
-*This document is process, not product. For design authority, read the active plan.*
+User-facing docs and release notes use short, direct sentences
+(ASD-STE100 Simplified Technical English), one instruction per sentence.

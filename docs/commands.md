@@ -1,191 +1,59 @@
----
-title: Everyday pkg commands
----
+# Commands
 
-# Everyday commands
+`pkg` uses one native Nix profile per user. The profile lives at
+`~/.local/state/nix/profiles/pkg`. Nix owns package state, generations,
+rollback, and roots.
 
-These commands are available in alpha.58.
+Global options: `--help`, `--version`, `--no-color`, `--verbose`.
 
-```console
-pkg search ripgrep
-pkg info ripgrep
-pkg install ripgrep
-pkg list
-pkg remove ripgrep
-pkg update
-pkg outdated
-pkg upgrade ripgrep
-pkg upgrade --all
-pkg history
-pkg rollback
-pkg gc
-pkg repair
-```
+| Command | Behavior |
+| --- | --- |
+| `pkg search QUERY` | Search supported sources. Shows source-qualified names and support status. |
+| `pkg info ID` | Show source, attribute, metadata revision, and known limits. |
+| `pkg install ID…` | Resolve all names, then run one native profile add. |
+| `pkg list` | Read the dedicated profile. Shows native entry IDs and source identity. |
+| `pkg remove ENTRY…` | Remove exact installed entries in one native operation. |
+| `pkg update` | Refresh discovery data. Does not change installed packages. |
+| `pkg upgrade ENTRY…` / `--all` | Follow each entry's original reference. Reports fixed references. |
+| `pkg history` | Show native profile generations. |
+| `pkg rollback [N]` | Use Nix's native previous or selected generation. Refreshes launchers. |
+| `pkg prune --older-than Nd` | Remove only eligible non-current generations. Requires an explicit positive age. |
+| `pkg doctor` | Read-only runtime, profile, and launcher status. Repairs nothing. |
+| `pkg shellenv` | Print idempotent Bash/Zsh path settings. Does not edit shell files. |
+| `pkg completion SHELL` | Generate completions for the current grammar. |
+| `pkg apps sync` | Rebuild pkg-owned macOS launchers from the active profile. |
 
-Downloads from the signed binary cache are preferred. A cache miss is shown before mutation; a
-local sandboxed build runs only after explicit approval and only when platform policy permits it.
-`--dry-run` previews an operation, while `--json` and `--jsonl` provide stable machine output.
+Removed commands: `pin`, `unpin`, `outdated`, `repair`, `gc`, and
+`system uninstall`. Removed options: global dry-run, build approval,
+`--keep-going`, and JSONL progress. Use normal CLI usage errors for them.
 
-Run `pkg` or `pkg -h` for a short command guide. Use `pkg install --help` for install
-examples. `-y` accepts confirmation prompts. `-v` shows more detail. `-q`
-hides progress. Use the long options in scripts when that improves clarity.
+## Package IDs
 
-`pkg list` shows package names and versions in name order. It shows pin status
-when a package is pinned. A different source selector appears below the table.
-`pkg list --name-only` prints one package name per line for scripts.
-`pkg list --size --with-outputs` also shows selected outputs and the recorded size of
-the primary output closure. This includes shared dependencies. It is not the
-space that removal will free. Other selected output closures can use more space.
-`pkg info` shows the package description, homepage, license, and availability.
-`pkg history` shows saved generation IDs, package changes, versions, and the
-active generation. `pkg history <ID>` shows all packages in that saved environment.
-If its parent was deleted, history shows the saved inventory and states that the
-previous generation is not retained. It does not invent a change list.
+- `nixpkgs:<attribute>` selects a Nixpkgs attribute.
+- `cask:<token>` selects a supported Cask package.
+- A bare name is valid only when it has one supported exact match.
+- Ambiguous names require a source-qualified ID.
+- Explicit public GitHub flake installables with an attribute after `#` are
+  accepted.
 
-There is no separate build command. `pkg install` first checks trusted cached
-downloads. If a local build is needed, it shows the plan and asks for approval.
-Dependency and cache checks can take a minute on a fresh system.
-The minimum free disk value is a starting requirement. It is not a peak usage
-estimate. A build can require more disk space. Build percentages appear only
-after the build service reports progress.
+Default source: `github:NixOS/nixpkgs/nixpkgs-unstable`. Configuration at
+`~/.config/pkg/config.toml` can replace the default reference.
 
-## Public flake packages (macOS)
+## Fixed references
 
-Alpha.48 supports public flake packages on macOS. Linux refuses public flake
-references until source evaluation has the same per-process local-file boundary.
+There is no pin state. A fixed package does not advance during normal
+upgrade. To change its reference, remove the entry and install the new
+reference. Retained generations provide rollback.
 
-```sh
-pkg install 'github:Mic92/nix-update#default'
-pkg list
-pkg upgrade 'github:Mic92/nix-update#default'
-pkg pin 'github:Mic92/nix-update#default'
-pkg unpin 'github:Mic92/nix-update#default'
-pkg remove 'github:Mic92/nix-update#default'
-pkg rollback
-```
+## Conflicts
 
-Quote the reference so the shell keeps it as one argument. A reference can
-select a branch, tag, or commit: `github:owner/repository/ref#package`.
-Without a package fragment, pkg selects the flake's default package.
-The package must support your system.
+`pkg` reports Nix's conflict and the conflicting entries. It does not
+resolve file collisions silently. Remove the conflicting entry first.
 
-Pkg saves the exact source commit, content hash, and dependency locks. An
-upgrade checks the original source again. A commit reference stays at that
-commit. Pinning keeps the installed output. Removal and rollback use the same
-commands as Nixpkgs packages.
+## macOS apps
 
-The source must be public and have complete committed dependency locks. Local
-path inputs and private credentials are not supported. Pkg uses its existing
-trusted caches and asks for build approval when needed. The source cannot add
-caches, keys, or Nix settings. Builds that require evaluation-time builds are
-not supported.
-
-Search, info, and the catalog update use Nixpkgs. `pkg outdated` reports public
-flake sources as unchecked. Use `pkg upgrade` to check and install their updates.
-
-## Remove and upgrade packages
-
-`pkg remove fzf` removes a package from your active environment.
-`pkg uninstall fzf` is the same command as `pkg remove fzf`.
-`sudo pkg system uninstall` removes **pkg and its managed Nix installation**.
-Use `sudo pkg system uninstall --dry-run` to inspect that operation first.
-The preview lists verified removal actions, product paths, affected accounts,
-and registered user state. Personal shell startup files stay in place.
-Remove old unguarded `pkg shellenv` lines from those files. Guarded setup lines
-can stay. Open a new shell after uninstall.
-
-Remove, uninstall, pin, unpin, and upgrade accept a unique installed package name.
-For example, `pkg remove just` finds `github:casey/just#default` when its installed
-name is `just`. Exact selectors take priority. If a name matches several
-packages, the command gives valid installed IDs. Use `pkg list` to choose a full selector. No approval is requested for
-an invalid removal. Removal approval shows the resolved names, versions, and sources.
-
-`pkg update` refreshes the signed catalog. It does not change installed packages.
-`pkg outdated` shows available package updates.
-`pkg upgrade fzf` upgrades one installed package.
-`pkg upgrade --all` upgrades all unpinned packages.
-The available versions come from the Nixpkgs revision in the signed channel.
-An upgrade can report no change when that revision has not changed.
-
-`pkg pin fzf` keeps the installed version. `pkg unpin fzf` permits updates again.
-`pkg history` lists saved generations. `pkg rollback` shows changes and asks
-for approval before it restores the previous environment. Use `pkg rollback <ID>`
-for another saved environment. Use `--dry-run` for a preview or `--yes` in scripts.
-Removed files can remain in the store while a saved generation needs them.
-Use `pkg gc --dry-run` to preview cleanup. Use `pkg gc` to perform it.
-By default, GC keeps the active generation, the newest 10 retired generations,
-and all generations no older than 30 days. The count and age rules both protect
-history. `--keep-generations 3 --max-age-days 0` keeps the active generation and
-at least three retired generations. A generation created in the current second
-also remains protected. The preview shows the effective settings.
-
-The GC estimate covers selected generation output closures. Shared dependencies
-can overlap. Other dead paths and build inputs are excluded. Actual freed bytes
-are `null` in JSON, or `unknown` in plain output, when the backend does not
-measure them.
-
-## Package coverage
-
-The signed alpha.58 channel contains 64,412 package records for Apple silicon
-macOS and 69,517 records for x86-64 Linux. It uses metadata generated from
-Nixpkgs, including nested package sets such as `python311Packages.requests`.
-
-Use `pkg search QUERY` to find packages. Use the exact package ID from the
-results with `pkg info ID` and `pkg install ID`.
-Coverage depends on the channel's Nixpkgs revision, your platform, evaluation
-success, and upstream package policy. Some packages have no executable command.
-A missing binary cache entry can require a local build.
-Alpha.48 also accepts valid name-only derivations such as `unixtools.watch`.
-An unknown version appears as `null` in JSON output. Internal Nix build metadata
-stays in the package store and does not cause conflicts in the active environment.
-
-## Shell setup
-
-`pkg shellenv` provides shell setup for Bash and zsh. The guard below also works after uninstall. Remove an old unguarded `eval` line from your shell startup file when you replace it.
-It prints shell settings and does not edit your files:
-
-```sh
-[ ! -x /usr/local/bin/pkg ] || eval "$(/usr/local/bin/pkg shellenv)"
-```
-
-Add this line to `~/.zshrc` or your Bash startup file for future sessions.
-See the [install guide](install.md) for download and upgrade commands.
-
-Nix commands, paths, flags, substituters, and trust keys are not part of the public interface.
-
-## Terminal output and scripts
-
-Terminal output uses compact tables, status marks, and one live build line.
-The line shows reported progress and known download byte counts. It has no elapsed timer. A percentage does not
-mean the package is active. Setup still saves and activates the new environment
-after the build finishes. Long pauses show that no new update has arrived.
-The progress line clears before an approval prompt or error.
-
-Use `--no-color` or `NO_COLOR=1` for static output. `CI` and `TERM=dumb` also
-select a plain transcript. `--quiet` removes progress and keeps the final result.
-`--json` and `--jsonl` keep their existing machine formats. `pkg list --name-only`
-prints names only, including on a terminal.
-
-The same layout applies across the command tree. Wide terminals show tables;
-small terminals show labeled cards. Long values wrap within the terminal width.
-Previews show the planned targets and state that no changes were applied.
-Install previews check installed selectors and available installed-output conflicts.
-New-output collisions and final state validation wait until acquisition.
-Install and rollback results identify the saved environment. History includes
-pin and output changes even when package versions match.
-
-If a command fails after activation, the error identifies the generation that
-needs recovery. Do not repeat the package change. Resolve the state write
-failure, then run `pkg repair --yes`. JSON and JSONL include `error.recovery`
-with `generation` and `outcome`. An `applied` outcome confirms the current
-switch. An `uncertain` outcome means the switch may have completed. Both require
-forward recovery before another change.
-
-The public installer selects alpha.58.
-
-`install --keep-going` and `upgrade --keep-going` are currently refused.
-Omit this option. An install stops at the first failure and does not commit a
-partial package set.
-
-`remove --orphan-check` is currently refused. Omit this option. After removal,
-use `pkg gc --dry-run` to inspect retained generations and GC candidates.
+Supported packages expose their app bundles as launchers in
+`~/Applications/pkg/`. Launchers refresh after install, remove, upgrade, and
+rollback. If a launcher sync fails, the command reports partial completion
+and names `pkg apps sync` as the retry. `pkg apps sync` rebuilds launchers
+only. It does not change package selection.

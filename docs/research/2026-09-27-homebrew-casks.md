@@ -12,7 +12,7 @@ The conversion normally checks and extracts a vendor's existing application arch
 
 `brew-nix` directly exports `packages.aarch64-darwin.<token>` and `packages.x86_64-darwin.<token>`. It also provides an overlay. Home Manager and nix-darwin are not required to select these outputs. [Flake exports](https://github.com/BatteredBunny/brew-nix/blob/16131ae4126c54b1502aa7eaf6573d7fbf16b656/flake.nix)
 
-The existing macOS public-flake route locks GitHub sources and derives packages. This is a starting integration point, not proof of graphical application support. Search and info remain Nixpkgs-only; public-flake outdated checks are not implemented. Cask discovery, source update policy, and application exposure need work. [Public-flake interface](../commands.md#public-flake-packages-macos), [current source adapter](../../crates/pkg-nix/src/real/flake.rs)
+The existing macOS public-flake route locks GitHub sources and derives packages. This is a starting integration point, not proof of graphical application support. Search and info remain Nixpkgs-only; public-flake outdated checks are not implemented. Cask discovery, source update policy, and application exposure need work. [Public-flake interface](../commands.md), [current source adapter](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/crates/pkg-nix/src/real/flake.rs)
 
 Proposed design:
 
@@ -54,9 +54,9 @@ Current pkg activation reconstructs directories with links to individual files.
 For the GUI proof, launch the intact app bundle from its Nix output. Do not
 assume the reconstructed tree preserves signed-app behavior. This is a required
 compatibility check, not a demonstrated failure.
-[Activation implementation](../../crates/pkg-store/src/activate.rs)
+[Activation implementation](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/crates/pkg-store/src/activate.rs)
 
-The current activation code recursively creates file links inside directories, including `.app` bundles. For the first proof, point launchers at the intact `$out/Applications/App.app` in the Nix store. Signed-app behavior through the reconstructed activation tree is untested. [Activation code](../../crates/pkg-store/src/activate.rs)
+The current activation code recursively creates file links inside directories, including `.app` bundles. For the first proof, point launchers at the intact `$out/Applications/App.app` in the Nix store. Signed-app behavior through the reconstructed activation tree is untested. [Activation code](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/crates/pkg-store/src/activate.rs)
 
 Nix generations can retain app versions. They do not restore mutable app data, preferences, accounts, or external services. Test self-updaters against immutable files. Describe rollback as restoring the packaged app version, not all application state.
 

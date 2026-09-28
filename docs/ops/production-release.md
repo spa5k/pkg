@@ -1,4 +1,8 @@
 # Production release preparation
+> Superseded on 28 September 2026 by
+> [Simplify pkg to native Nix](../../openspec/changes/simplify-to-native-nix/design.md).
+> This record describes the deleted TUF release pipeline.
+> It stays as history and does not describe current releases.
 
 Status: tooling prepared; production trust is not active.
 The current alpha still uses the alpha test root and ad-hoc macOS signatures.
@@ -25,8 +29,9 @@ Do not promote the alpha test root to production.
 Command binaries need Developer ID Application signatures. The installer package
 needs a Developer ID Installer signature. Both must belong to the selected team.
 
-Use [packaging/macos/notarize.py](../../packaging/macos/notarize.py) with the exact
-built `pkg`, `pkg-install`, `pkg-nix-broker`, and `pkg-root-helper` executables.
+Use `packaging/macos/notarize.py` (deleted with the TUF pipeline; see Git
+history at the alpha tags) with the exact built `pkg`, `pkg-install`,
+`pkg-nix-broker`, and `pkg-root-helper` executables.
 Use `--help` for its required named inputs. `--check-only` checks input presence
 and naming; it does not claim key access or successful notarization.
 
@@ -67,7 +72,7 @@ receipts or package generations as part of channel recovery.
 
 ## Release gates
 
-Use the [exact-release checks](../../tests/release-lifecycle/README.md).
+The historical exact-release checks are archived at the plan baseline: [tests/release-lifecycle/README.md](https://github.com/spa5k/pkg/blob/5256cfa5a052f64ae4219ac1aaf316a7a00d49a2/tests/release-lifecycle/README.md). The native-Nix client has no exact-release channel; the current release flow is the client archive in `tools/release/package_client.sh`.
 Prepare the old release before the live channel changes. Upgrade after the new
 channel is published. Resume after a real reboot of the same VM. Keep the
 existing interruption/recovery proof as a separate required gate.
