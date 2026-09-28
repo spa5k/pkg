@@ -15,7 +15,7 @@ Homebrew, or ship the maintainer tool in the client archive.
 - [x] 1.1 Add `tools/cask-catalog` as a workspace member with a minimal CLI (`fetch`, `generate` — there is NO `self-test` command; focused `cargo test` suites are the checks) and doc comments; the pinned toolchain, lint set, and `deny.toml` pass for the whole workspace. Evidence: 81 tests, fmt/clippy/doc/deny green.
 - [x] 1.2 Package only the dependency graph reachable from the client. Both full-workspace packaging runs passed: 49 client license sets on macOS, 50 on Linux, exactly one client binary, and no generator, catalog, or generator-only licenses.
 - [x] 1.3 Add the catalog license and attribution file (`nix/casks/lib/README.md`) recording brew-nix's MIT license, the ported revision `16131ae4126c54b1502aa7eaf6573d7fbf16b656`, and the Homebrew data license. Evidence: file present and reviewed.
-- [ ] 1.4 Verify the wired catalog regeneration job on GitHub CI. The local command sequence passes; the pull-request run is pending.
+- [x] 1.4 Verify catalog regeneration on GitHub CI. The [regenerate-and-compare job](https://github.com/spa5k/pkg/actions/runs/36454702967) passed on implementation commit `f97c860`.
 
 ## 2. RC-02: Generator core (depends on RC-01)
 
@@ -39,7 +39,7 @@ Homebrew, or ship the maintainer tool in the client archive.
 - [x] 3.5 Read the bundle minimum macOS version without changing its bytes. Raycast 1.104.25 requires 13.0 and builds on the 15.7.7 baseline. The macOS 26.0 plist fixture is refused with a clear version error.
 - [x] 3.6 `buildPkgPayload` structural rule (payload-only xar; no scripts, plugins, nested pkgs, system payloads; app-bundle layouts only — plain files rejected; no silent drops). Evidence: 13 Nix fixture checks plus the Python archive regressions; the final generator review also rejects the twelve choice-requiring pkg records as `installer-script` at generation, and `meta-quest-remote-desktop` as `unsupported-container`.
 - [x] 3.7 Link completions and manpages from plan data. The real Nix app fixture checks each output and the renamed CLI path. The complete builder suite passed 13 checks.
-- [ ] 3.8 Confirm the GitHub regeneration job passes against the committed pin and data. Local byte comparison passes. CI status will be recorded on the pull request.
+- [x] 3.8 Confirm the GitHub regeneration job passes against the committed pin and data. Local byte comparison and the [GitHub job](https://github.com/spa5k/pkg/actions/runs/36454702967) passed.
 
 ## 4. RC-04: Linux builders and dependencies (depends on RC-03)
 

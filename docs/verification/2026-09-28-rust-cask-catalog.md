@@ -40,7 +40,7 @@ All 81 Rust tests passed: 35 generator library tests, one generator CLI test, 36
 
 The client fixture contains 18 real projected index rows. Every row was compared with the final catalog. A null target version remains null. Versioned and plus-suffixed token attributes were also evaluated by Nix.
 
-The regeneration workflow is wired. Its local generate-and-compare check passed. GitHub CI status is recorded on the pull request.
+The local generate-and-compare check and the [GitHub regeneration job](https://github.com/spa5k/pkg/actions/runs/36454702967) passed on implementation commit `f97c860`. Current CI status is shown on [PR #81](https://github.com/spa5k/pkg/pull/81).
 
 ## Native client journeys
 

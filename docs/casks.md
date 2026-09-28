@@ -105,15 +105,14 @@ Known scope limits, by design:
 
 ## Catalog update procedure
 
-Updates are maintainer-run and reviewed; no scheduler exists. The snapshot
-is fetched at an exact revision and verified against an expected SHA-256
-before anything is written:
+Updates are maintainer-run and reviewed; no scheduler exists. Run these
+commands from the repository root. This example reproduces the current pin.
+For an update, supply the new exact revision and its expected SHA-256:
 
-    cd tools/cask-catalog
-    cargo run -p cask-catalog -- fetch --revision 245947c0b920cbe83f4003bb7c6be737352c8314
-    # expected snapshot SHA-256 (default of `--sha256`, verified on fetch):
-    #   1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251
-    cargo run -p cask-catalog -- generate
+    cargo run --locked -p cask-catalog -- fetch \
+      --revision 245947c0b920cbe83f4003bb7c6be737352c8314 \
+      --sha256 1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251
+    cargo run --locked -p cask-catalog -- generate
     # review the diff, then commit input.json and catalog.json together
 
 `fetch` refuses to replace the pin when the downloaded bytes do not match
@@ -124,8 +123,8 @@ regenerates from the committed pin and fails on any diff.
 Verify evaluation and one build before merging (import-from-derivation
 disabled):
 
-    nix eval --no-allow-import-from-derivation --json .#catalogIndex
-    nix build .#packages.aarch64-darwin.iterm2
+    nix eval --no-allow-import-from-derivation --json ./nix/casks#catalogIndex
+    nix build ./nix/casks#packages.aarch64-darwin.cursor
 
 Installed entries keep their original references. Selecting newer metadata is
 done by native profile upgrade, not by rewriting installed references.
@@ -138,22 +137,23 @@ counts — eligibility only, not build verification:
 
 | Target | Eligible | Total | Largest exclusion reasons |
 | --- | --- | --- | --- |
-| `aarch64-darwin` | 3157 | 7709 | `missing-checksum` 2124, `deprecated` 689, `disabled` 332 |
+| `aarch64-darwin` | 3144 | 7709 | `missing-checksum` 2124, `deprecated` 689, `disabled` 332 |
 | `x86_64-linux` | 160 | 7709 | `unsupported-platform` 3941, `missing-checksum` 1606, `deprecated` 690 |
 
 Evidence on hand (see [verification records](verification/) and the
 [detailed plan](plans/rust-cask-catalog.md)):
 
-- All 74 combined Rust tests, `cargo fmt`, and `cargo clippy` pass on the
-  integrated workspace.
-- The final builder check passed 11 focused checks, including real Linux
-  runs: `op` 2.39.0 and KOReader `--help` (`v2026.07.1`); GUI interaction
-  was not verified.
-- On the macOS VM (15.7.7, Apple silicon): Cursor 3.17.19 built;
-  `codesign --verify --deep --strict` passed; `cursor --version` passed; the
-  app process launched; `op` 2.39.0 passed. GUI visual interaction was not
-  verified.
-- Full final client install flows are still pending; they are not claimed.
+- All 81 Rust tests passed. Formatting, Clippy, rustdoc, dependency policy,
+  documentation links, and strict OpenSpec validation passed.
+- The Nix builder suite passed 13 checks. Real Linux runs verified
+  `op` 2.39.0 and KOReader `--help` (`v2026.07.1`). GUI interaction was not
+  checked.
+- On the macOS VM (15.7.7, Apple silicon), Cursor 3.17.19 and Raycast
+  1.104.25 built with valid deep/strict signatures. Cursor's CLI and op ran.
+  Cursor started an app process. GUI interaction was not checked.
+- Both native client journeys passed search, info, install, update,
+  upgrade, rollback, and removal. The final profiles were empty. Controlled
+  version-label changes verified source re-resolution on both systems.
 
 ## Limits
 

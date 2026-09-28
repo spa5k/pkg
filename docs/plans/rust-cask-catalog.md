@@ -1,6 +1,6 @@
 # Rust Cask catalog — end-to-end plan
 
-Status: substantially implemented and verified on real hosts, with
+Status: implemented and locally verified on both target systems, with
 verification results and limits recorded explicitly. This page is the
 readable plan. The full binding design is
 [openspec/changes/generate-cask-catalog-with-rust/design.md](../../openspec/changes/generate-cask-catalog-with-rust/design.md);
@@ -82,9 +82,9 @@ decode path and its fixture.
 ## Catalog contract (summary)
 
 Envelope: `schema`, `generator{name,version}`, `input{url,revision,sha256,license}`,
-`targets`, `macosBaseline:"15.7.7"`, `entries`. Every entry carries
-`token`, `name`, `description`, `version`, `homepage` (string or
-null) and a `targets` map with one record per target system:
+`targets`, `macosBaseline:"15.7.7"`, `entries`. Every entry carries a
+required `token` string, nullable `name`, `description`, `version`, and
+`homepage` strings, and a `targets` map with one record per target system:
 
 ```json
 {
