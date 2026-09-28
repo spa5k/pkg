@@ -99,7 +99,7 @@ not clear.
 Linux and Apple silicon macOS use pinned Determinate Nix Installer 3.22.1 for
 Base Nix install and terminal uninstall. `pkg` does not own Base Nix update or
 repair. See the
-[active implementation plan](plans/determinate-nix-stacked-prs.md).
+[alpha design record](plans/determinate-nix-stacked-prs.md).
 
 ## Platform status
 
@@ -122,9 +122,11 @@ for checks on the exact release files and known limits.
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain, local checks, and
 review rules.
 
-The [plan index](plans/README.md) identifies the one active
-[active implementation plan](plans/determinate-nix-stacked-prs.md). The
-earlier custom Base Nix design is archived and is not normative.
+The [plan index](plans/README.md) identifies the active future plan:
+[Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md).
+Its [HTML view](artifacts/pkg-simplification-plan.html) explains the final
+design and implementation tasks. This is a planned breaking replacement.
+The alpha behavior documented above has not changed yet.
 
 ## License
 

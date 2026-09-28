@@ -1,4 +1,11 @@
-# Active implementation plan
+# Previous alpha implementation plan
+
+> Superseded for future implementation on 28 September 2026 by
+> [Simplify pkg to native Nix](../openspec/changes/simplify-to-native-nix/proposal.md).
+> Use its [tasks](../openspec/changes/simplify-to-native-nix/tasks.md).
+> The record below describes the old alpha design and historical backlog.
+> It does not require the replacement to preserve old contracts or tests.
+> Some release prose below predates the alpha.58 entry now present on main.
 
 Status: alpha product. Reviewed on 27 September 2026. Alpha.57 is public.
 Its installer and bounded test changes are delivered. PREVIEW-01 below records
@@ -21,9 +28,9 @@ stack is complete. New work branches from current `main`.
 - Production trust is not active. The alpha uses a test root and ad-hoc macOS
   signing. Tooling readiness does not mean production readiness.
 
-The only active implementation plan is this file. OpenSpec files below describe
-remaining work in this plan. Completed and superseded UX proposals have been
-removed; their replacements are in the completed-work record and Git history.
+This file is retained for historical links. The native Nix OpenSpec change
+is the future plan. Completed work remains in the completed-work record and
+Git history. Superseded backlog is not marked delivered.
 
 ## Remaining work
 

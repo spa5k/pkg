@@ -1,12 +1,19 @@
 # Contributing to `pkg`
 
-> **The active plan is the source of truth.** Design decisions, risks, and the
-> remaining work live in the
-> [active implementation plan](plans/determinate-nix-stacked-prs.md).
+> **OpenSpec is the source of truth for the replacement.** Use
+> [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
+> and its [tasks](openspec/changes/simplify-to-native-nix/tasks.md).
 > The [plan index](plans/README.md) separates active and historical material.
 > The plan defines future implementation work. It does not change current alpha
 > behavior by itself.
-> If this file and the active plan disagree, the active plan wins.
+> For this replacement, OpenSpec overrides conflicting rules below.
+> Old behavior and tests need not be preserved. Old proof campaigns and
+> TUF/installer trust ceremonies are not prerequisites.
+> Keep direct checks for the new behavior and ordinary build hygiene.
+
+The remaining process text records the
+[previous alpha plan](plans/determinate-nix-stacked-prs.md).
+Implementation task NN-07 replaces its stale rules and related CI checks.
 
 ## 1. Before you open a PR
 
