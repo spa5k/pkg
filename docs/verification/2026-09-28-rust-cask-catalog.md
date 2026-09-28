@@ -83,3 +83,34 @@ These are packaging checks, not a new published release. The release version was
 - Formula dependencies, cask dependencies, installer actions, fonts, services, and drivers remain outside this version's supported scope.
 - Catalog updates are reviewed maintainer commits. There is no hosted service, scheduler, or automatic update bot.
 - The catalog protocol changes without a compatibility layer. Existing alpha clients need the matching client update.
+
+## PR quality review
+
+Review base: `f5c227032964990a8cb6833f64472f9925777c85`. Reviewed implementation: `62cb751c62bd7870c3344f39b36a59d13c97d20c`. Separate E2B reviewers checked standards and the OpenSpec contract. E2B used the bridge's `glm-5.3-flash` model. The parent reviewed the patches and ran the checks below.
+
+### Standards
+
+One incorrect public doc comment and six code smell findings were resolved. These were repeated search cache logic, an unused plan wrapper, repeated row metadata mapping, an anonymous result tuple, repeated checksum verification, and repeated checksum syntax validation. Native and cask search now use one cache flow. Source errors, stale rows, and unsupported-platform skips keep their prior behavior.
+
+The client and generator keep separate token validators. Sharing them would couple the client to the maintainer tool. The archive helper stays together because its validation and extraction rules need close review.
+
+The parent also found that the builder check script could hide a failed case-list command behind process substitution. The script now checks that command and rejects an empty case list. Two fault-injection checks confirmed exit status 1 after all four positive build stubs had passed. This closes a false-success path in verification.
+
+### Spec
+
+The independent review found no confirmed missing requirements, scope additions, or incorrect behavior. It checked the generator, generic builders, index envelope, client gate, cache behavior, and catalog regeneration against the contract.
+
+Two low-risk observations remain. The flake relies on the generator to emit every target for every token. It would omit a target row if that invariant failed. Also, AppImage launcher naming honors an explicit rename, while the contract describes a source-derived basename. Neither observation produced an incorrect result in the committed catalog. They are not claims of complete coverage of future metadata.
+
+### Checks after cleanup
+
+- All 81 Rust tests, formatting, Clippy with warnings denied, and Rust documentation with warnings denied passed.
+- Catalog regeneration produced exactly the same bytes. The eligible counts remain 3,144 for Darwin and 160 for Linux.
+- Five isolated client probes passed: proven-revision cache reuse, stale fallback with original provenance, cold failures, missing-revision behavior, and unsupported-platform skips.
+- Both full Nix index and status outputs evaluated. Each system still contains all 7,709 rows. All 13 Nix builder checks passed on E2B Linux with Determinate Nix 3.22.5 / Nix 2.35.2.
+- All archive helper regression checks passed after the Python cleanup. A final diagnostic fix now includes the actual name of an invalid root member; a focused check confirmed the message and rejection.
+- Ruff 0.16.9 passed for both Python files: isolated rules `E4,E7,E9,F,B,UP,SIM` and format checking.
+- nixfmt 1.3.1, Statix 0.5.8, and deadnix 1.3.1 passed for the cask flake, builders, and check fixtures.
+- ShellCheck 0.11.0 passed for the builder runner and release packaging script. Actionlint 1.7.12 passed for the new catalog workflow. html-validate 11.16.1 passed for the HTML plan.
+
+The Nix and Python formatters expand some compact statements. The cleanup therefore does not claim an overall line-count reduction. No new test framework or compatibility layer was added. The native macOS journeys above were not repeated for this cleanup; their results apply to the earlier implementation checks.

@@ -16,7 +16,7 @@
 }:
 
 let
-  inherit (lib) optional optionals;
+  inherit (lib) optionals;
   inherit (lib.strings) escapeShellArg;
 
   planPy = pkgs.writeText "cask-plan.py" (builtins.readFile ./plan.py);
@@ -45,11 +45,18 @@ let
     if cleaned == "" then "unknown" else cleaned;
 
   commonMeta =
-    { token, description, homepage, system }: {
+    {
+      token,
+      description,
+      homepage,
+      system,
+    }:
+    {
       description =
-        if description != null && description != ""
-        then description
-        else "Homebrew cask ${token} (native Nix build)";
+        if description != null && description != "" then
+          description
+        else
+          "Homebrew cask ${token} (native Nix build)";
       homepage = if homepage != null then homepage else "https://example.invalid/";
       sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
       license = lib.licenses.unfree;
@@ -57,9 +64,7 @@ let
     };
 
   # Display name for bare-file payloads; only used for sniff naming.
-  sourceName =
-    plan:
-    if plan.source ? url then baseNameOf plan.source.url else "payload";
+  sourceName = plan: if plan.source ? url then baseNameOf plan.source.url else "payload";
 
   # The one derivation for archive kinds `auto` and `raw-binary`.
   buildPlan =
@@ -77,16 +82,18 @@ let
       # verification-harness-only override (tools/cask-build-check): a plain
       # derivation reference used as src; generated catalogs never emit it.
       src =
-        if plan.source ? file then
-          plan.source.file
-        else
-          pkgs.fetchurl {
-            url = plan.source.url;
-            sha256 = plan.source.sha256;
-          };
+        plan.source.file or (pkgs.fetchurl {
+          url = plan.source.url;
+          sha256 = plan.source.sha256;
+        });
       planFile = pkgs.writeText "install-plan.json" (
         builtins.toJSON {
-          inherit token system plan baseline;
+          inherit
+            token
+            system
+            plan
+            baseline
+            ;
         }
       );
     in
@@ -133,12 +140,14 @@ let
             binaries = builtins.filter (a: a.kind == "binary") plan.artifacts;
           in
           if plan.archive.kind == "raw-binary" then
-            (if builtins.length binaries == 1 then
-              ''rawName=${escapeShellArg (builtins.head binaries).source}''
-            else
-              throw "cask-${token}: raw-binary plans need exactly one binary artifact")
+            (
+              if builtins.length binaries == 1 then
+                "rawName=${escapeShellArg (builtins.head binaries).source}"
+              else
+                throw "cask-${token}: raw-binary plans need exactly one binary artifact"
+            )
           else if builtins.length binaries == 1 then
-            ''fallbackName=${escapeShellArg (builtins.head binaries).source}''
+            "fallbackName=${escapeShellArg (builtins.head binaries).source}"
           else
             ""
         }
@@ -147,13 +156,22 @@ let
         python3 ${planPy} install "${toString planFile}" "$staging" "$out"
       '';
 
-      meta = commonMeta { inherit token description homepage system; } // {
-        mainProgram =
-          let
-            bins = builtins.filter (a: a.kind == "binary") plan.artifacts;
-          in
-          if bins == [ ] then token else (builtins.head bins).target;
-      };
+      meta =
+        commonMeta {
+          inherit
+            token
+            description
+            homepage
+            system
+            ;
+        }
+        // {
+          mainProgram =
+            let
+              bins = builtins.filter (a: a.kind == "binary") plan.artifacts;
+            in
+            if bins == [ ] then token else (builtins.head bins).target;
+        };
     };
 
   # AppImage plans: pinned Nixpkgs appimageTools.wrapType2 only (API verified
@@ -168,7 +186,6 @@ let
       version,
       description ? null,
       homepage ? null,
-      baseline,
     }:
     let
       images = builtins.filter (a: a.kind == "appimage") plan.artifacts;
@@ -190,7 +207,9 @@ let
       pkg = "cask-${token}";
     in
     if others != [ ] then
-      throw "cask-${token}: appimage plans support only the appimage artifact (got ${toString (map (a: a.kind) others)})"
+      throw "cask-${token}: appimage plans support only the appimage artifact (got ${
+        toString (map (a: a.kind) others)
+      })"
     else
       pkgs.appimageTools.wrapType2 {
         pname = pkg;
@@ -203,9 +222,18 @@ let
         extraInstallCommands = ''
           mv "$out/bin/${pkg}" "$out/bin/${launcher}"
         '';
-        meta = commonMeta { inherit token description homepage system; } // {
-          mainProgram = launcher;
-        };
+        meta =
+          commonMeta {
+            inherit
+              token
+              description
+              homepage
+              system
+              ;
+          }
+          // {
+            mainProgram = launcher;
+          };
       };
 in
 {
@@ -215,7 +243,6 @@ in
   buildEntry =
     {
       token,
-      entry,
       system,
       plan,
       version,
@@ -228,11 +255,26 @@ in
     in
     if kind == "appimage" then
       buildAppImagePlan {
-        inherit token system plan version description homepage baseline;
+        inherit
+          token
+          system
+          plan
+          version
+          description
+          homepage
+          ;
       }
     else if kind == "auto" || kind == "raw-binary" then
       buildPlan {
-        inherit token system plan version description homepage baseline;
+        inherit
+          token
+          system
+          plan
+          version
+          description
+          homepage
+          baseline
+          ;
       }
     else
       throw "cask-${token}: unresolved archive kind: ${toString kind}";

@@ -29,6 +29,7 @@
   figure { margin: 1rem 0; }
   figcaption { font-size: .9em; color: #666; }
   .flow { font-family: Menlo, Consolas, monospace; font-size: .85em; }
+  .colophon { border-top: 1px solid #999; margin-top: 2rem; padding-top: .8rem; }
   a { color: #0366d6; } a:visited { color: #6a32b7; }
 </style>
 </head>
@@ -124,7 +125,8 @@ client at any time.</p>
 
 <h2 id="ownership">3. Ownership table</h2>
 <table>
-<tr><th>Piece</th><th>Location</th><th>Owner / status</th></tr>
+<thead><tr><th>Piece</th><th>Location</th><th>Owner / status</th></tr></thead>
+<tbody>
 <tr><td>Generator</td><td><code>tools/cask-catalog</code> (Rust workspace member; never shipped)</td><td>This change — <span class="ok">implemented, tested</span></td></tr>
 <tr><td>Builders + build helper</td><td><code>nix/casks/lib/builders.nix</code>, <code>plan.py</code></td><td>This change — <span class="ok">implemented and verified</span></td></tr>
 <tr><td>Generated data + pin</td><td><code>nix/casks/catalog/</code></td><td>Maintainer regeneration, reviewed commits</td></tr>
@@ -132,6 +134,7 @@ client at any time.</p>
 <tr><td>Client</td><td><code>crates/pkg-cli</code></td><td>Client owners — <span class="ok">implemented, journeys verified on macOS and Linux</span></td></tr>
 <tr><td>Release packaging</td><td><code>tools/release/package_client.sh</code></td><td>RC-01 — <span class="ok">verified on macOS and Linux</span></td></tr>
 <tr><td>Integration, final counts, final PR</td><td>—</td><td>Parent</td></tr>
+</tbody>
 </table>
 
 <h2 id="contracts">4. Exact contracts</h2>
@@ -279,7 +282,8 @@ plan, superseded by the binding contract.</p>
 
 <h2 id="artifacts">6. Artifact matrix</h2>
 <table>
-<tr><th>Path</th><th>Kind</th><th>Committed?</th><th>Notes</th></tr>
+<thead><tr><th>Path</th><th>Kind</th><th>Committed?</th><th>Notes</th></tr></thead>
+<tbody>
 <tr><td><code>nix/casks/catalog/input.json</code></td><td>Pin</td><td>Yes</td><td>url, revision, sha256, data license</td></tr>
 <tr><td><code>nix/casks/catalog/catalog.json</code></td><td>Generated data</td><td>Yes</td><td>The one document; byte-identical on regeneration</td></tr>
 <tr><td><code>tools/cask-catalog</code></td><td>Rust binary</td><td>Source only</td><td>Maintainer tool; never in the client archive</td></tr>
@@ -287,6 +291,7 @@ plan, superseded by the binding contract.</p>
 <tr><td><code>nix/casks/lib/plan.py</code></td><td>Build helper</td><td>Yes</td><td>Python stdlib only; build-time only</td></tr>
 <tr><td><code>nix/casks/lib/README.md</code></td><td>Attribution</td><td>Yes</td><td>brew-nix MIT, ported revision, data license</td></tr>
 <tr><td>flake outputs</td><td>API</td><td>—</td><td><code>packages</code>, <code>catalogIndex</code>, <code>catalogStatus</code></td></tr>
+</tbody>
 </table>
 
 <h2 id="build">7. Build path and the safe .pkg boundary</h2>
@@ -355,7 +360,8 @@ committed pin must be byte-identical; a diff means drift. CI runs the same check
 
 <h2 id="phases">10. Implementation phases and acceptance</h2>
 <table>
-<tr><th>Phase</th><th>Content</th><th>Acceptance</th><th>Status</th></tr>
+<thead><tr><th>Phase</th><th>Content</th><th>Acceptance</th><th>Status</th></tr></thead>
+<tbody>
 <tr><td>RC-01 Scaffold</td><td>Workspace member; packaging isolation; attribution; CI regeneration job</td><td>Whole-workspace lint/tests green; archive excludes the generator; attribution findable</td><td><span class="ok">Implemented and locally verified</span></td></tr>
 <tr><td>RC-02 Generator</td><td>fetch/generate; schema gate; variation merge; eligibility; typed plans; integrity</td><td>Focused tests per seam; byte-identical output; fail-closed paths</td><td><span class="ok">Implemented and locally verified</span></td></tr>
 <tr><td>RC-03 Data + macOS source</td><td>Committed catalog; flake outputs; generic builders; pkg rule; plist check</td><td>IFD-free eval; real app+CLI build; fixtures reject scripts/system payloads</td><td><span class="ok">Implemented and locally verified</span></td></tr>
@@ -363,6 +369,7 @@ committed pin must be byte-identical; a diff means drift. CI runs the same check
 <tr><td>RC-05 Client</td><td>Envelope decode; search lane; gates; lifecycle unchanged</td><td>Full macOS journey green; refusals honest</td><td><span class="ok">Implemented and locally verified</span></td></tr>
 <tr><td>RC-06 Removal + docs</td><td>Delete brew-nix input, old decode, old docs</td><td>No old references; linkcheck green</td><td><span class="ok">Implemented and locally verified</span></td></tr>
 <tr><td>RC-07 Evidence</td><td>Coverage; real journeys; packaging integrity; honest limits</td><td>Recorded with hosts, pins, outcomes</td><td><span class="ok">Implemented and locally verified</span></td></tr>
+</tbody>
 </table>
 <p>Per-task truth with evidence links lives in the
 <a href="../openspec/changes/generate-cask-catalog-with-rust/tasks.md">tasks file</a>.
@@ -372,7 +379,8 @@ Only implemented and verified items are checked there.</p>
 <p>Full record: <a href="../docs/verification/2026-09-28-rust-cask-catalog.md">docs/verification/2026-09-28-rust-cask-catalog.md</a>.
 Summary only; do not copy counts elsewhere.</p>
 <table>
-<tr><th>Item</th><th>Result</th></tr>
+<thead><tr><th>Item</th><th>Result</th></tr></thead>
+<tbody>
 <tr><td>Generator + client suites (81 tests: 35+1 generator, 36+9 client), fmt, clippy, doc warnings, deny, docs links, OpenSpec strict</td><td class="ok">Passed</td></tr>
 <tr><td>Byte-identical regeneration from the committed pin</td><td class="ok">Passed</td></tr>
 <tr><td>catalogIndex and catalogStatus evaluate, 7709 records each, IFD disabled</td><td class="ok">Passed</td></tr>
@@ -389,9 +397,10 @@ Summary only; do not copy counts elsewhere.</p>
 <tr><td>macOS packaging: 49 client crates; archive = one bin/pkg, completions, licenses; no generator binary/catalog JSON/sha2/digest licenses</td><td class="ok">Passed</td></tr>
 <tr><td>Linux packaging: 50 client dependency license sets; no generator or catalog data</td><td class="ok">Passed</td></tr>
 <tr><td>CI run</td><td class="no">See pull-request checks</td></tr>
+</tbody>
 </table>
 
-<p style="border-top:1px solid #999; margin-top:2rem; padding-top:.8rem;">
+<p class="colophon">
 Mirror of <a href="../docs/plans/rust-cask-catalog.md">docs/plans/rust-cask-catalog.md</a>.
 OpenSpec change:
 <a href="../openspec/changes/generate-cask-catalog-with-rust/design.md">design</a> is

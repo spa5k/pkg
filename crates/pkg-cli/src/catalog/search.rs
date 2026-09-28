@@ -18,7 +18,23 @@ use super::id::{CatalogId, escape_regex};
 
 /// One resolved row set: results, the reference they were read from, its
 /// revision, and whether the rows are stale cache reuse.
-type LaneRows = Option<(BTreeMap<String, SearchMeta>, String, Option<String>, bool)>;
+struct LaneOutcome {
+    results: BTreeMap<String, SearchMeta>,
+    reference: String,
+    revision: Option<String>,
+    stale: bool,
+}
+
+/// The live half of one lane, run only on a cache miss.
+///
+/// `Fresh` rows refresh the cache, `Skipped` marks the honest platform
+/// skip (an outcome of its own, never a disguised failure), and `Failed`
+/// enters the stale/failed fallback.
+enum LiveRows {
+    Fresh(BTreeMap<String, SearchMeta>),
+    Skipped(Vec<String>),
+    Failed(crate::nix::NixError),
+}
 
 /// Which supported source a discovery query ran against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,83 +313,29 @@ pub fn search_source(
     kind: SourceKind,
 ) -> (Vec<SearchResult>, SourceReport) {
     // The native query is a regex; pkg does not substring-filter results.
-    let identity = nix.source_identity(moving_source);
-    let mut report = SourceReport {
-        source: moving_source.to_string(),
-        display: None,
-        locked_reference: None,
-        revision: None,
-        status: SourceStatus::Fresh,
-        detail: None,
-        support_detail: None,
-    };
-    let (locked, revision, display) = match &identity {
-        Ok(id) => (
-            id.locked_url.clone(),
-            id.revision.clone(),
-            Some(id.display.clone()),
-        ),
-        Err(error) => {
-            report.detail = Some(format!("metadata fetch failed: {error}"));
-            (None, None, None)
-        }
-    };
-    report.locked_reference = locked.clone();
-    report.revision = revision.clone();
-    report.display = display;
-
-    // Exactly one outcome supplies the rows; `stale` marks reused rows.
-    // Fresh reuse requires a proven revision match; None == None is not proof.
-    let rows = if let (Some(rev), Some(locked_ref)) = (&revision, &locked)
-        && let Some(cached) = cache::read_cache(cache_dir, moving_source, system, query)
-        && cached.revision.as_ref() == Some(rev)
-    {
-        Some((cached.results, locked_ref.clone(), revision.clone(), false))
-    } else {
-        let search_ref = locked.clone().unwrap_or_else(|| moving_source.to_string());
-        match nix.search(&search_ref, query) {
-            Ok(results) => {
-                let _ = cache::write_cache(
-                    cache_dir,
-                    &CachedSearch {
-                        schema: cache::CACHE_SCHEMA,
-                        source: moving_source.to_string(),
-                        locked_reference: locked.clone(),
-                        revision: revision.clone(),
-                        system: system.to_string(),
-                        query: query.to_string(),
-                        saved_unix: cache::now_unix(),
-                        results: results.clone(),
-                    },
-                );
-                Some((results, search_ref, revision.clone(), false))
-            }
-            Err(error) => match cache::read_cache(cache_dir, moving_source, system, query) {
-                Some(cached) => {
-                    report.status = SourceStatus::Stale;
-                    report.detail = Some(format!("live query failed: {error}"));
-                    Some((
-                        cached.results,
-                        cached
-                            .locked_reference
-                            .clone()
-                            .unwrap_or_else(|| moving_source.to_string()),
-                        cached.revision.clone(),
-                        true,
-                    ))
-                }
-                None => {
-                    report.status = SourceStatus::Failed;
-                    report.detail = Some(format!("live query failed: {error}"));
-                    None
-                }
-            },
-        }
-    };
-
-    match rows {
-        Some((results, reference, revision, stale)) => (
-            rows_from(&results, kind, &reference, &revision, system, stale),
+    let (outcome, report) = lane_outcome(
+        nix,
+        cache_dir,
+        moving_source,
+        query,
+        system,
+        "live query failed",
+        |search_ref| {
+            nix.search(search_ref, query)
+                .map(LiveRows::Fresh)
+                .unwrap_or_else(LiveRows::Failed)
+        },
+    );
+    match outcome {
+        Some(lane) => (
+            rows_from(
+                &lane.results,
+                kind,
+                &lane.reference,
+                &lane.revision,
+                system,
+                lane.stale,
+            ),
             report,
         ),
         None => (Vec::new(), report),
@@ -402,7 +364,60 @@ pub fn search_catalog(
     query: &str,
     system: &str,
 ) -> (Vec<SearchResult>, SourceReport) {
-    let identity = nix.source_identity(moving_source);
+    let (outcome, report) = lane_outcome(
+        nix,
+        cache_dir,
+        moving_source,
+        query,
+        system,
+        "live index query failed",
+        |eval_ref| match nix.catalog_index(eval_ref) {
+            // The platform rule comes from the envelope alone: an
+            // untargeted system is skipped with the target list shown.
+            Ok(index) if !index.targets.iter().any(|target| target == system) => {
+                LiveRows::Skipped(index.targets)
+            }
+            Ok(index) => filter_catalog(&index, system, query)
+                .map(LiveRows::Fresh)
+                .unwrap_or_else(LiveRows::Failed),
+            Err(error) => LiveRows::Failed(error),
+        },
+    );
+    match outcome {
+        Some(lane) => (
+            catalog_rows_from(
+                &lane.results,
+                &lane.reference,
+                &lane.revision,
+                system,
+                lane.stale,
+            ),
+            report,
+        ),
+        None => (Vec::new(), report),
+    }
+}
+
+/// Run one discovery lane end to end: identity resolution, cache reuse,
+/// the live query, and the stale/failed fallback.
+///
+/// The moving source resolves to a locked reference first; report and rows
+/// describe that identity, and a metadata failure keeps its detail. A
+/// cache is reused only when the freshly resolved revision equals the
+/// cached revision — proven freshness; `None == None` is not proof. On a
+/// cache miss `live` evaluates exactly once: fresh rows refresh the cache,
+/// a platform skip replaces the report and writes nothing, and a failure
+/// reuses cached rows flagged stale or fails honestly. `live_failure`
+/// names the lane in the stale and failure details.
+fn lane_outcome(
+    nix: &Nix,
+    cache_dir: &Path,
+    moving_source: &str,
+    query: &str,
+    system: &str,
+    live_failure: &str,
+    live: impl FnOnce(&str) -> LiveRows,
+) -> (Option<LaneOutcome>, SourceReport) {
     let mut report = SourceReport {
         source: moving_source.to_string(),
         display: None,
@@ -412,6 +427,7 @@ pub fn search_catalog(
         detail: None,
         support_detail: None,
     };
+    let identity = nix.source_identity(moving_source);
     let (locked, revision, display) = match &identity {
         Ok(id) => (
             id.locked_url.clone(),
@@ -427,89 +443,71 @@ pub fn search_catalog(
     report.revision = revision.clone();
     report.display = display;
 
-    // Fresh reuse requires a proven revision match, exactly like the native
-    // lane; None == None is not proof.
-    let rows = if let (Some(rev), Some(locked_ref)) = (&revision, &locked)
+    // Exactly one outcome supplies the rows; `stale` marks reused rows.
+    // Fresh reuse requires a proven revision match; None == None is not proof.
+    let outcome = if let (Some(rev), Some(locked_ref)) = (&revision, &locked)
         && let Some(cached) = cache::read_cache(cache_dir, moving_source, system, query)
         && cached.revision.as_ref() == Some(rev)
     {
-        Some((cached.results, locked_ref.clone(), revision.clone(), false))
+        Some(LaneOutcome {
+            results: cached.results,
+            reference: locked_ref.clone(),
+            revision: cached.revision,
+            stale: false,
+        })
     } else {
         let eval_ref = locked.clone().unwrap_or_else(|| moving_source.to_string());
-        match nix.catalog_index(&eval_ref) {
-            // The platform rule comes from the envelope alone: an untargeted
-            // system is skipped with the target list shown, and no cache is
-            // written for it.
-            Ok(index) if !index.targets.iter().any(|target| target == system) => {
-                report = SourceReport::skipped_platform(moving_source, &index.targets);
+        match live(&eval_ref) {
+            LiveRows::Fresh(results) => {
+                let _ = cache::write_cache(
+                    cache_dir,
+                    &CachedSearch {
+                        schema: cache::CACHE_SCHEMA,
+                        source: moving_source.to_string(),
+                        locked_reference: locked.clone(),
+                        revision: revision.clone(),
+                        system: system.to_string(),
+                        query: query.to_string(),
+                        saved_unix: cache::now_unix(),
+                        results: results.clone(),
+                    },
+                );
+                Some(LaneOutcome {
+                    results,
+                    reference: eval_ref,
+                    revision: revision.clone(),
+                    stale: false,
+                })
+            }
+            LiveRows::Skipped(targets) => {
+                report = SourceReport::skipped_platform(moving_source, &targets);
                 None
             }
-            Ok(index) => match filter_catalog(&index, system, query) {
-                Ok(results) => {
-                    let _ = cache::write_cache(
-                        cache_dir,
-                        &CachedSearch {
-                            schema: cache::CACHE_SCHEMA,
-                            source: moving_source.to_string(),
-                            locked_reference: locked.clone(),
-                            revision: revision.clone(),
-                            system: system.to_string(),
-                            query: query.to_string(),
-                            saved_unix: cache::now_unix(),
-                            results: results.clone(),
-                        },
-                    );
-                    Some((results, eval_ref, revision.clone(), false))
+            LiveRows::Failed(error) => {
+                match cache::read_cache(cache_dir, moving_source, system, query) {
+                    Some(cached) => {
+                        report.status = SourceStatus::Stale;
+                        report.detail = Some(format!("{live_failure}: {error}"));
+                        Some(LaneOutcome {
+                            results: cached.results,
+                            reference: cached
+                                .locked_reference
+                                .clone()
+                                .unwrap_or_else(|| moving_source.to_string()),
+                            revision: cached.revision,
+                            stale: true,
+                        })
+                    }
+                    None => {
+                        report.status = SourceStatus::Failed;
+                        report.detail = Some(format!("{live_failure}: {error}"));
+                        None
+                    }
                 }
-                Err(error) => {
-                    live_index_failure(cache_dir, moving_source, system, query, &mut report, &error)
-                }
-            },
-            Err(error) => {
-                live_index_failure(cache_dir, moving_source, system, query, &mut report, &error)
             }
         }
     };
-
-    match rows {
-        Some((results, reference, revision, stale)) => (
-            catalog_rows_from(&results, &reference, &revision, system, stale),
-            report,
-        ),
-        None => (Vec::new(), report),
-    }
-}
-
-/// Record a live index failure: reuse revision-matching cache data flagged
-/// stale when it exists, otherwise the lane fails honestly.
-fn live_index_failure(
-    cache_dir: &Path,
-    moving_source: &str,
-    system: &str,
-    query: &str,
-    report: &mut SourceReport,
-    error: &crate::nix::NixError,
-) -> LaneRows {
-    match cache::read_cache(cache_dir, moving_source, system, query) {
-        Some(cached) => {
-            report.status = SourceStatus::Stale;
-            report.detail = Some(format!("live index query failed: {error}"));
-            Some((
-                cached.results,
-                cached
-                    .locked_reference
-                    .clone()
-                    .unwrap_or_else(|| moving_source.to_string()),
-                cached.revision.clone(),
-                true,
-            ))
-        }
-        None => {
-            report.status = SourceStatus::Failed;
-            report.detail = Some(format!("live index query failed: {error}"));
-            None
-        }
-    }
+    (outcome, report)
 }
 
 /// Filter the eligible entries of one loaded index with the query pattern.
@@ -556,12 +554,13 @@ fn filter_catalog(
     Ok(results)
 }
 
-/// The cached metadata shape for one eligible index entry.
+/// The row metadata shape for any index entry.
 ///
 /// Nullable index strings become the token (name) and empty strings
 /// (version, description), matching the native lane's non-nullable row
 /// fields; `info` keeps the nullable values.
-fn catalog_meta(token: &str, entry: &CatalogEntry) -> SearchMeta {
+#[must_use]
+pub fn catalog_meta(token: &str, entry: &CatalogEntry) -> SearchMeta {
     SearchMeta {
         pname: entry.name.clone().unwrap_or_else(|| token.to_string()),
         version: entry.version.clone().unwrap_or_default(),

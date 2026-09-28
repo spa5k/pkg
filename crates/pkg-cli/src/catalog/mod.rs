@@ -26,8 +26,9 @@ pub use cache::{CACHE_SCHEMA, CachedSearch, invalidate_cache, read_cache, write_
 pub use cask::{CaskStatus, CatalogOnce, CatalogView, INDEX_ATTRIBUTE, package_attribute};
 pub use id::{CatalogId, ParsedId, canonical_source, escape_regex, parse_id};
 pub use search::{
-    ExactMatch, SearchResult, SourceKind, SourceReport, SourceStatus, SupportBadge, exact_lookup,
-    exact_lookup_in, exposed_attribute, report_for, resolve_bare, search_catalog, search_source,
+    ExactMatch, SearchResult, SourceKind, SourceReport, SourceStatus, SupportBadge, catalog_meta,
+    exact_lookup, exact_lookup_in, exposed_attribute, report_for, resolve_bare, search_catalog,
+    search_source,
 };
 
 /// A catalog routing error.

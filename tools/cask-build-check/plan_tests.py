@@ -6,6 +6,7 @@ year-format bsdtar listings, UDIF content dispatch, HFS+ Mode/Folder link
 records, nested raw-binary sources, exact nested locate, and the release
 whitespace guard. Run: python3 tools/cask-build-check/plan_tests.py
 """
+
 import os
 import subprocess
 import sys
@@ -33,11 +34,10 @@ def ok(name):
 
 def run_case(name):
     """Run fn in a child interpreter so die() exits cleanly."""
-    code = (
-        "import sys; sys.path.insert(0, %r); import plan; plan.%s"
-        % (os.path.join(HERE, "..", "..", "nix", "casks", "lib"), name)
-    )
-    return subprocess.run([PY, "-c", code]).returncode == 0
+    libdir = os.path.join(HERE, "..", "..", "nix", "casks", "lib")
+    code = f"import sys; sys.path.insert(0, {libdir!r}); import plan; plan.{name}"
+    # returncode is checked manually right below (check=False is explicit)
+    return subprocess.run([PY, "-c", code], check=False).returncode == 0
 
 
 def main():
@@ -54,10 +54,10 @@ def main():
         stub = os.path.join(d, "stub")
         os.makedirs(stub)
         with open(os.path.join(stub, "file"), "w") as f:
-            f.write('#!/bin/sh\necho application/x-tar\n')
-        listing = ("-rw-r--r--  0 owner group 3 Dec 31  1982 dir/file.txt\n")
+            f.write("#!/bin/sh\necho application/x-tar\n")
+        listing = "-rw-r--r--  0 owner group 3 Dec 31  1982 dir/file.txt\n"
         with open(os.path.join(stub, "bsdtar"), "w") as f:
-            f.write('#!/bin/sh\nprintf %s "' + listing.replace('\\', '\\\\') + '"\n')
+            f.write('#!/bin/sh\nprintf %s "' + listing.replace("\\", "\\\\") + '"\n')
         os.chmod(os.path.join(stub, "file"), 0o755)
         os.chmod(os.path.join(stub, "bsdtar"), 0o755)
         old_path = os.environ.get("PATH")
@@ -82,9 +82,11 @@ def main():
 
     # 4. HFS+ records: Mode=lrwx... without Symbolic Link, Folder=+ dirs,
     #    hard links rejected, CRLF stripped
-    text = ("Path = Raycast/Applications\r\nFolder = -\nSize = 13\n"
-            "Mode = lrwxr-xr-x\n\n"
-            "Path = Raycast\r\nFolder = +\nMode = drwxr-xr-x\n\n")
+    text = (
+        "Path = Raycast/Applications\r\nFolder = -\nSize = 13\n"
+        "Mode = lrwxr-xr-x\n\n"
+        "Path = Raycast\r\nFolder = +\nMode = drwxr-xr-x\n\n"
+    )
     hard_text = "Path = hard1\nMode = -rwxr-xr-x\nHard Link = hard0\n"
     with tempfile.NamedTemporaryFile("w", suffix=".7z", delete=False) as f:
         f.write(text)
@@ -98,18 +100,21 @@ def main():
     assert recs["Raycast"]["is_dir"] is True
     ok("7zz Mode/Folder/CRLF records parse")
     # hard link rejection needs the listing; run in child for die()
-    code = ("import sys;sys.path.insert(0,%r);import plan;"
-            "plan.run=lambda c,**k:%r;"
-            "plan._is_7z_family=lambda p:True;"
-            "plan.sevenz_members('x')"
-            % (os.path.join(HERE, "..", "..", "nix", "casks", "lib"), hard_text))
-    if subprocess.run([PY, "-c", code]).returncode == 1:
+    libdir = os.path.join(HERE, "..", "..", "nix", "casks", "lib")
+    code = (
+        f"import sys;sys.path.insert(0,{libdir!r});import plan;"
+        f"plan.run=lambda c,**k:{hard_text!r};"
+        "plan._is_7z_family=lambda p:True;"
+        "plan.sevenz_members('x')"
+    )
+    if subprocess.run([PY, "-c", code], check=False).returncode == 1:
         ok("7zz hard link member rejected")
 
     # 5. nested raw-binary source creates parent dirs
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "s.bin")
-        open(src, "wb").write(b"x")
+        with open(src, "wb") as f:
+            f.write(b"x")
         staging = os.path.join(d, "st")
         plan.cmd_unpack(src, staging, "url", "nested/dir/tool")
         assert os.path.isfile(os.path.join(staging, "nested/dir/tool"))
@@ -132,8 +137,14 @@ def main():
         os.makedirs(os.path.join(d, "bin"))
         open(os.path.join(d, "bin/pkg"), "w").close()
         binaries = subprocess.run(
-            ["bash", "-c", f'b="$(find "{d}/bin" -type f | wc -l)"; '
-             '[[ "${b//[[:space:]]/}" == "1" ]]'], ).returncode
+            [
+                "bash",
+                "-c",
+                f'b="$(find "{d}/bin" -type f | wc -l)"; '
+                '[[ "${b//[[:space:]]/}" == "1" ]]',
+            ],
+            check=False,
+        ).returncode
         assert binaries == 0
         ok("release binary count trims wc -l padding")
 
@@ -144,8 +155,12 @@ def main():
     ]
     ex2 = [
         {"name": "b", "is_symlink": True, "is_dir": False, "link_target": "."},
-        {"name": "b/c", "is_symlink": True, "is_dir": False,
-         "link_target": "../escape"},
+        {
+            "name": "b/c",
+            "is_symlink": True,
+            "is_dir": False,
+            "link_target": "../escape",
+        },
     ]
     expect_die(plan.validate_members, ex1)
     expect_die(plan.validate_members, ex2)
@@ -153,6 +168,7 @@ def main():
         ok("composed link escapes die at validation (a->b/.., b->. and b/c)")
     # no payload write happens for a composed escape in a real zip
     import zipfile as zf
+
     with tempfile.TemporaryDirectory() as d:
         zpath = os.path.join(d, "evil.zip")
         with zf.ZipFile(zpath, "w") as z:
@@ -160,7 +176,7 @@ def main():
             z.writestr("b/c", "../escape")
             for zi in z.infolist():  # mark members as symlinks
                 zi.create_system = 3
-                zi.external_attr = (0o120777 << 16)
+                zi.external_attr = 0o120777 << 16
         dest = os.path.join(d, "out")
         os.makedirs(dest)
         expect_die(plan.extract_zip, zpath, dest)
@@ -173,27 +189,54 @@ def main():
     ]
     expect_die(plan.validate_members, cycle)
     fw = [
-        {"name": "Fw.framework/Versions", "is_symlink": False, "is_dir": True,
-         "link_target": None},
-        {"name": "Fw.framework/Versions/A", "is_symlink": False, "is_dir": True,
-         "link_target": None},
-        {"name": "Fw.framework/Versions/A/R", "is_symlink": False, "is_dir": False,
-         "link_target": None},
-        {"name": "Fw.framework/Versions/Current", "is_symlink": True,
-         "is_dir": False, "link_target": "A"},
-        {"name": "Fw.framework/R", "is_symlink": True, "is_dir": False,
-         "link_target": "Versions/Current/R"},
+        {
+            "name": "Fw.framework/Versions",
+            "is_symlink": False,
+            "is_dir": True,
+            "link_target": None,
+        },
+        {
+            "name": "Fw.framework/Versions/A",
+            "is_symlink": False,
+            "is_dir": True,
+            "link_target": None,
+        },
+        {
+            "name": "Fw.framework/Versions/A/R",
+            "is_symlink": False,
+            "is_dir": False,
+            "link_target": None,
+        },
+        {
+            "name": "Fw.framework/Versions/Current",
+            "is_symlink": True,
+            "is_dir": False,
+            "link_target": "A",
+        },
+        {
+            "name": "Fw.framework/R",
+            "is_symlink": True,
+            "is_dir": False,
+            "link_target": "Versions/Current/R",
+        },
     ]
     assert plan.validate_members(fw) == set()
     if not FAILED:
         ok("link cycle dies; framework Current chain resolves")
     wrap = [
-        {"name": "Raycast/Applications", "is_symlink": True, "is_dir": False,
-         "link_target": "/Applications"},
-        {"name": "Raycast/Raycast.app/Contents/Applications", "is_symlink": True,
-         "is_dir": False, "link_target": "/Applications"},
-        {"name": "bin", "is_symlink": True, "is_dir": False,
-         "link_target": "/usr/bin"},
+        {
+            "name": "Raycast/Applications",
+            "is_symlink": True,
+            "is_dir": False,
+            "link_target": "/Applications",
+        },
+        {
+            "name": "Raycast/Raycast.app/Contents/Applications",
+            "is_symlink": True,
+            "is_dir": False,
+            "link_target": "/Applications",
+        },
+        {"name": "bin", "is_symlink": True, "is_dir": False, "link_target": "/usr/bin"},
     ]
     omit = plan.validate_members(wrap[:1])
     assert omit == {"Raycast/Applications"}
@@ -205,6 +248,7 @@ def main():
 
     # 9. gzip fallback keeps declared nested source path
     import gzip as gz
+
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "s.gz")
         with gz.open(src, "wb") as f:
@@ -214,8 +258,7 @@ def main():
         old_iszip = plan.zipfile.is_zipfile
         plan.zipfile.is_zipfile = lambda p: False
         try:
-            plan.cmd_unpack(src, os.path.join(d, "st"), "url",
-                            "", "nested/dir/tool.gz")
+            plan.cmd_unpack(src, os.path.join(d, "st"), "url", "", "nested/dir/tool.gz")
         finally:
             plan._mime = old
             plan.zipfile.is_zipfile = old_iszip
@@ -224,10 +267,18 @@ def main():
 
     # 10. shortcut needs the EXACT /Applications target
     bad_shortcut = [
-        {"name": "Applications", "is_symlink": True, "is_dir": False,
-         "link_target": "/etc"},
-        {"name": "Vol/Applications", "is_symlink": True, "is_dir": False,
-         "link_target": "/etc"},
+        {
+            "name": "Applications",
+            "is_symlink": True,
+            "is_dir": False,
+            "link_target": "/etc",
+        },
+        {
+            "name": "Vol/Applications",
+            "is_symlink": True,
+            "is_dir": False,
+            "link_target": "/etc",
+        },
     ]
     expect_die(plan.validate_members, bad_shortcut[:1])
     expect_die(plan.validate_members, bad_shortcut[1:])
@@ -248,7 +299,7 @@ def main():
             z.writestr("./b/c", "../escape")
             for zi in z.infolist():
                 zi.create_system = 3
-                zi.external_attr = (0o120777 << 16)
+                zi.external_attr = 0o120777 << 16
         dest = os.path.join(d, "out")
         os.makedirs(dest)
         expect_die(plan.extract_zip, zpath, dest)
@@ -257,12 +308,24 @@ def main():
     cpio_like = [
         {"name": "./", "is_symlink": False, "is_dir": True, "link_target": None},
         {"name": "./", "is_symlink": False, "is_dir": True, "link_target": None},
-        {"name": "./Applications", "is_symlink": False, "is_dir": True,
-         "link_target": None},
-        {"name": "./Applications/Foo.app", "is_symlink": False, "is_dir": True,
-         "link_target": None},
-        {"name": "./Applications/Foo.app/Contents/Info.plist",
-         "is_symlink": False, "is_dir": False, "link_target": None},
+        {
+            "name": "./Applications",
+            "is_symlink": False,
+            "is_dir": True,
+            "link_target": None,
+        },
+        {
+            "name": "./Applications/Foo.app",
+            "is_symlink": False,
+            "is_dir": True,
+            "link_target": None,
+        },
+        {
+            "name": "./Applications/Foo.app/Contents/Info.plist",
+            "is_symlink": False,
+            "is_dir": False,
+            "link_target": None,
+        },
     ]
     assert plan.validate_members(cpio_like) == set()
     if not FAILED:

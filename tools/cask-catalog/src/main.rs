@@ -3,6 +3,7 @@
 
 use cask_catalog::{
     CACHE_DIR, Pin, emit, load_pin, read_verified_input, valid_repo, valid_revision, valid_sha256,
+    verify_sha256,
 };
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -135,9 +136,7 @@ fn fetch(
     }
     let bytes = std::fs::read(staged.path())
         .map_err(|e| format!("cannot read the staged download: {e}"))?;
-    use sha2::{Digest, Sha256};
-    let actual = format!("{:x}", Sha256::digest(&bytes));
-    if !actual.eq_ignore_ascii_case(sha256) {
+    if let Err(actual) = verify_sha256(&bytes, sha256) {
         return Err(format!(
             "downloaded snapshot hashes to {actual} but {sha256} was expected; \
              the prior pin and cache are unchanged"

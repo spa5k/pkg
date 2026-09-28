@@ -2,9 +2,10 @@
 # members/links, a fake Mach-O, fake bundles, relocatable and hostile pkgs.
 # stdlib python3 + bsdtar only; no network; deterministic contents.
 {
-  pkgs ? import
-    (fetchTarball "https://github.com/NixOS/nixpkgs/archive/567a49d1913ce81ac6e9582e3553dd90a955875f.tar.gz")
-    { },
+  pkgs ?
+    import
+      (fetchTarball "https://github.com/NixOS/nixpkgs/archive/567a49d1913ce81ac6e9582e3553dd90a955875f.tar.gz")
+      { },
 }:
 let
   mkFixture =
@@ -102,83 +103,113 @@ let
                       cwd=stage, check=True)
   '';
 
-  pyRun =
-    lib: body:
-    ''
-      cat > make.py <<'EOF'
-      ${lib}
-      ${body}
-      EOF
-      python3 make.py
-    '';
+  pyRun = lib: body: ''
+    cat > make.py <<'EOF'
+    ${lib}
+    ${body}
+    EOF
+    python3 make.py
+  '';
 in
 {
-  good-app = mkFixture "good-app.zip" (pyRun zipLib ''
-    files = {f"HI 1.0/{k}": v for k, v in app_files().items()}
-    files["hi.1"] = b".TH HI 1\n"
-    files["hi.bash"] = b"# bash completion\n"
-    files["hi.zsh"] = b"#compdef hi\n"
-    files["hi.fish"] = b"# fish completion\n"
-    # standard DMG shortcut (top-level, absolute: omitted) + legit in-tree link
-    write(files, {"Applications": "/Applications",
-               "HI 1.0/HI.app/Contents/Resources/cur": "tool"})
-  '');
+  good-app = mkFixture "good-app.zip" (
+    pyRun zipLib ''
+      files = {f"HI 1.0/{k}": v for k, v in app_files().items()}
+      files["hi.1"] = b".TH HI 1\n"
+      files["hi.bash"] = b"# bash completion\n"
+      files["hi.zsh"] = b"#compdef hi\n"
+      files["hi.fish"] = b"# fish completion\n"
+      # standard DMG shortcut (top-level, absolute: omitted) + legit in-tree link
+      write(files, {"Applications": "/Applications",
+                 "HI 1.0/HI.app/Contents/Resources/cur": "tool"})
+    ''
+  );
 
-  min26-app = mkFixture "min26-app.zip" (pyRun zipLib ''
-    write(app_files("26.0"))
-  '');
+  min26-app = mkFixture "min26-app.zip" (
+    pyRun zipLib ''
+      write(app_files("26.0"))
+    ''
+  );
 
-  evil-traversal = mkFixture "evil-traversal.zip" (pyRun zipLib ''
-    with zipfile.ZipFile(out, "w") as zf:
-        zf.writestr("../evil.txt", "no")
-  '');
+  evil-traversal = mkFixture "evil-traversal.zip" (
+    pyRun zipLib ''
+      with zipfile.ZipFile(out, "w") as zf:
+          zf.writestr("../evil.txt", "no")
+    ''
+  );
 
-  evil-link = mkFixture "evil-link.zip" (pyRun zipLib ''
-    write(app_files(),
-          {"HI.app/Contents/Resources/out": "../../../../outside"})
-  '');
+  evil-link = mkFixture "evil-link.zip" (
+    pyRun zipLib ''
+      write(app_files(),
+            {"HI.app/Contents/Resources/out": "../../../../outside"})
+    ''
+  );
 
   macho-bin = mkFixture "macho.bin" ''
     printf '\376\355\372\317' > "$out"
     head -c 100 /dev/zero >> "$out"
   '';
 
-  good-pkg = mkFixture "good.pkg" (pyRun pkgLib ''
-    make_pkg(payload_tree=app_files("11.0"))
-  '');
+  good-pkg = mkFixture "good.pkg" (
+    pyRun pkgLib ''
+      make_pkg(payload_tree=app_files("11.0"))
+    ''
+  );
 
-  evil-scripts-pkg = mkFixture "evil-scripts.pkg" (pyRun pkgLib ''
-    make_pkg(extra_files={"Scripts": gzip.compress(b"#!/bin/sh\nexit 0")},
-             payload_tree={"HI.app/Contents/Info.plist": plist("11.0")})
-  '');
+  evil-scripts-pkg = mkFixture "evil-scripts.pkg" (
+    pyRun pkgLib ''
+      make_pkg(extra_files={"Scripts": gzip.compress(b"#!/bin/sh\nexit 0")},
+               payload_tree={"HI.app/Contents/Info.plist": plist("11.0")})
+    ''
+  );
 
-  evil-dist-pkg = mkFixture "evil-dist.pkg" (pyRun pkgLib ''
-    make_pkg(extra_files={"Distribution": b"<?xml?><installer-script/>"},
-             payload_tree={"HI.app/Contents/Info.plist": plist("11.0")})
-  '');
+  evil-dist-pkg = mkFixture "evil-dist.pkg" (
+    pyRun pkgLib ''
+      make_pkg(extra_files={"Distribution": b"<?xml?><installer-script/>"},
+               payload_tree={"HI.app/Contents/Info.plist": plist("11.0")})
+    ''
+  );
 
-  evil-sys-pkg = mkFixture "evil-sys.pkg" (pyRun pkgLib ''
-    make_pkg(payload_tree={"Library/LaunchDaemons/evil.plist": b"launchd",
-                           "HI.app/Contents/Info.plist": plist("11.0")})
-  '');
+  evil-sys-pkg = mkFixture "evil-sys.pkg" (
+    pyRun pkgLib ''
+      make_pkg(payload_tree={"Library/LaunchDaemons/evil.plist": b"launchd",
+                             "HI.app/Contents/Info.plist": plist("11.0")})
+    ''
+  );
   # dynamic ELF with a HOST-style interpreter and no rpath - what vendor
   # Linux binaries look like; bytes generated with the pinned toolchain,
   # no host library guessing
-  dyn-elf-ok = pkgs.runCommand "cask-fixture-dyn-elf"
-    { nativeBuildInputs = with pkgs; [ stdenv.cc patchelf zlib ]; } ''
-    set -euo pipefail
-    printf '#include <stdio.h>\n#include <zlib.h>\nint main(void){printf("ZLIB_OK %%s\\n", zlibVersion());return 0;}\n' > t.c
-    $CC t.c -lz -o "$out"
-    patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 --remove-rpath "$out"
-  '';
+  dyn-elf-ok =
+    pkgs.runCommand "cask-fixture-dyn-elf"
+      {
+        nativeBuildInputs = with pkgs; [
+          stdenv.cc
+          patchelf
+          zlib
+        ];
+      }
+      ''
+        set -euo pipefail
+        printf '#include <stdio.h>\n#include <zlib.h>\nint main(void){printf("ZLIB_OK %%s\\n", zlibVersion());return 0;}\n' > t.c
+        $CC t.c -lz -o "$out"
+        patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 --remove-rpath "$out"
+      '';
 
   # dynamic ELF that NEEDS libpkg-intentionally-missing.so: the build must
   # fail naming that soname, never silently ignore it
-  dyn-elf-missing = pkgs.runCommand "cask-fixture-dyn-elf-missing"
-    { nativeBuildInputs = with pkgs; [ stdenv.cc patchelf zlib ]; } ''
-    set -euo pipefail
-    printf '#include <stdio.h>\n#include <zlib.h>\nint main(void){printf("ZLIB_OK %%s\\n", zlibVersion());return 0;}\n' > t.c
-    $CC t.c -lz -o "$out"
-    patchelf --add-needed libpkg-intentionally-missing.so "$out"
-  '';
+  dyn-elf-missing =
+    pkgs.runCommand "cask-fixture-dyn-elf-missing"
+      {
+        nativeBuildInputs = with pkgs; [
+          stdenv.cc
+          patchelf
+          zlib
+        ];
+      }
+      ''
+        set -euo pipefail
+        printf '#include <stdio.h>\n#include <zlib.h>\nint main(void){printf("ZLIB_OK %%s\\n", zlibVersion());return 0;}\n' > t.c
+        $CC t.c -lz -o "$out"
+        patchelf --add-needed libpkg-intentionally-missing.so "$out"
+      '';
 }

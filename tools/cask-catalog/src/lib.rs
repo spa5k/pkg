@@ -39,9 +39,6 @@ pub struct Pin {
     pub license: String,
 }
 
-/// Load and strictly decode the committed pin file.
-///
-/// A malformed pin is a hard error; there is no fallback pin.
 /// Whether every character is ASCII hexadecimal.
 #[must_use = "the result states whether the text is hexadecimal"]
 pub fn is_hex(text: &str) -> bool {
@@ -103,7 +100,7 @@ pub fn load_pin(path: &Path) -> Result<Pin, String> {
         ));
     }
     let sha = pin.sha256.trim().to_ascii_lowercase();
-    if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !valid_sha256(&sha) {
         return Err(format!(
             "pin {} sha256 is not 64 hex characters",
             path.display()
@@ -112,20 +109,31 @@ pub fn load_pin(path: &Path) -> Result<Pin, String> {
     Ok(Pin { sha256: sha, ..pin })
 }
 
+/// Verify raw bytes against an expected SHA-256, case-insensitively.
+///
+/// The error carries the actual hash, so each caller reports its own
+/// context around the mismatch.
+pub fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let actual = format!("{:x}", Sha256::digest(bytes));
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err(actual)
+    }
+}
+
 /// Read the raw snapshot bytes and verify them against the pin.
 pub fn read_verified_input(path: &Path, pin: &Pin) -> Result<Vec<u8>, String> {
     let bytes =
         std::fs::read(path).map_err(|e| format!("cannot read input {}: {e}", path.display()))?;
-    use sha2::{Digest, Sha256};
-    let actual = Sha256::digest(&bytes);
-    let actual = format!("{actual:x}");
-    if !actual.eq_ignore_ascii_case(&pin.sha256) {
-        return Err(format!(
+    verify_sha256(&bytes, &pin.sha256).map_err(|actual| {
+        format!(
             "input {} hashes to {actual} but the pin {} expects {}; refusing to generate",
             path.display(),
             pin.url,
             pin.sha256
-        ));
-    }
+        )
+    })?;
     Ok(bytes)
 }

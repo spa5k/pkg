@@ -4,12 +4,9 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
 
   outputs =
-    {
-      self,
-      nixpkgs,
-    }:
+    { nixpkgs, ... }:
     let
-      lib = nixpkgs.lib;
+      inherit (nixpkgs) lib;
 
       # Committed generated catalog (schema pkg-cask-catalog/2), plain JSON:
       # no IFD, no compiler, no per-token Nix files.
@@ -32,28 +29,30 @@
           };
           builders = import ./lib/builders.nix { inherit pkgs; };
         in
-        lib.mapAttrs (
-          token: entry:
-          let
-            t = entry.targets.${system};
-          in
-          builders.buildEntry {
-            inherit token entry system;
-            plan = t.plan;
-            version = t.version or entry.version;
-            description = entry.description;
-            homepage = t.homepage or entry.homepage;
-            baseline = catalog.macosBaseline;
-          }
-        ) (
-          lib.filterAttrs (
+        lib.mapAttrs
+          (
             token: entry:
-            tokenOk token
-            && entry ? targets.${system}
-            && entry.targets.${system}.status == "eligible"
-            && entry.targets.${system}.plan != null
-          ) catalog.entries
-        );
+            let
+              t = entry.targets.${system};
+            in
+            builders.buildEntry {
+              inherit token system;
+              inherit (t) plan;
+              version = t.version or entry.version;
+              inherit (entry) description;
+              homepage = t.homepage or entry.homepage;
+              baseline = catalog.macosBaseline;
+            }
+          )
+          (
+            lib.filterAttrs (
+              token: entry:
+              tokenOk token
+              && entry ? targets.${system}
+              && entry.targets.${system}.status == "eligible"
+              && entry.targets.${system}.plan != null
+            ) catalog.entries
+          );
 
       tokenOk =
         token:
@@ -68,76 +67,83 @@
       # Client index envelope: same provenance, entries replaced by a
       # per-system entry map; effective version/homepage per target; no
       # plans exposed to the client.
-      catalogIndex =
-        (removeAttrs catalog [ "entries" ])
-        // {
-          systems = lib.genAttrs systems (
-            system: {
-              entries = lib.mapAttrs (
-                token: entry:
-                let
-                  t = entry.targets.${system};
-                in
-                {
-                  inherit token;
-                  name = entry.name;
-                  description = entry.description;
-                  version = t.version or entry.version;
-                  homepage = t.homepage or entry.homepage;
-                  inherit (t) status kind reason detail;
-                }
-              ) (lib.filterAttrs (token: entry: entry ? targets.${system}) catalog.entries);
+      catalogIndex = (removeAttrs catalog [ "entries" ]) // {
+        systems = lib.genAttrs systems (system: {
+          entries = lib.mapAttrs (
+            token: entry:
+            let
+              t = entry.targets.${system};
+            in
+            {
+              inherit token;
+              inherit (entry) name description;
+              version = t.version or entry.version;
+              homepage = t.homepage or entry.homepage;
+              inherit (t)
+                status
+                kind
+                reason
+                detail
+                ;
             }
-          );
-        };
+          ) (lib.filterAttrs (_: entry: entry ? targets.${system}) catalog.entries);
+        });
+      };
 
       perSystemStatus =
         system:
         let
-          entries = lib.filterAttrs (token: entry: entry ? targets.${system}) catalog.entries;
-          statuses = lib.mapAttrsToList (token: entry: entry.targets.${system}.status) entries;
+          entries = lib.filterAttrs (_: entry: entry ? targets.${system}) catalog.entries;
+          statuses = lib.mapAttrsToList (_: entry: entry.targets.${system}.status) entries;
           eligible = lib.length (lib.filter (s: s == "eligible") statuses);
           total = lib.length statuses;
           reasons = lib.sort (a: b: a < b) (
             lib.unique (
               lib.filter (r: r != null) (
-                lib.mapAttrsToList (
-                  token: entry: entry.targets.${system}.reason or null
-                ) entries
+                lib.mapAttrsToList (_: entry: entry.targets.${system}.reason or null) entries
               )
             )
           );
         in
         {
-          inherit total;
-          eligible = eligible;
+          inherit total eligible;
           excluded = total - eligible;
           byReason = lib.genAttrs reasons (
-            r: lib.length (
-              lib.filter (
-                e: e.targets.${system}.status == "excluded" && e.targets.${system}.reason == r
-              ) (lib.attrValues entries)
+            r:
+            lib.length (
+              lib.filter (e: e.targets.${system}.status == "excluded" && e.targets.${system}.reason == r) (
+                lib.attrValues entries
+              )
             )
           );
         };
 
       catalogStatusRaw = {
         schema = "pkg-cask-catalog-status/1";
-        generator = catalog.generator;
-        input = catalog.input;
-        targets = catalog.targets;
-        macosBaseline = catalog.macosBaseline;
+        inherit (catalog)
+          generator
+          input
+          targets
+          macosBaseline
+          ;
         systems = lib.genAttrs systems perSystemStatus;
       };
     in
     {
       packages =
-        if schemaOk && validTokens
-        then lib.genAttrs systems forSystem
-        else throw "catalog: schema or token integrity failure";
+        if schemaOk && validTokens then
+          lib.genAttrs systems forSystem
+        else
+          throw "catalog: schema or token integrity failure";
       catalogIndex =
-        if schemaOk && validTokens then catalogIndex else throw "catalog: schema or token integrity failure";
+        if schemaOk && validTokens then
+          catalogIndex
+        else
+          throw "catalog: schema or token integrity failure";
       catalogStatus =
-        if schemaOk && validTokens then catalogStatusRaw else throw "catalog: schema or token integrity failure";
+        if schemaOk && validTokens then
+          catalogStatusRaw
+        else
+          throw "catalog: schema or token integrity failure";
     };
 }

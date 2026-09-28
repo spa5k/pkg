@@ -20,6 +20,7 @@ Safety model, in order:
      inside the output (realpath + commonpath, chains resolved).
 """
 
+import contextlib
 import gzip
 import json
 import os
@@ -75,14 +76,18 @@ def die(msg):
 
 
 def run(cmd, **kw):
-    p = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    # returncode is checked manually right below (check=False is explicit)
+    p = subprocess.run(cmd, capture_output=True, text=True, check=False, **kw)
     if p.returncode != 0:
-        die(f"command failed ({cmd[0]} {cmd[1] if len(cmd) > 1 else ''}): "
-            f"{p.stderr.strip()[:300]}")
+        die(
+            f"command failed ({cmd[0]} {cmd[1] if len(cmd) > 1 else ''}): "
+            f"{p.stderr.strip()[:300]}"
+        )
     return p.stdout
 
 
 # ------------------------------------------------------------- path rules
+
 
 def safe_rel_path(p, what, allow_dir=False):
     """Strict relative path; trailing '/' allowed for directory members."""
@@ -132,7 +137,7 @@ def validate_members(members):
         if name == "":
             # the root directory member ('.'/'./', common in cpio)
             if not m.get("is_dir"):
-                die("unsafe archive member: {m['name']!r}")
+                die(f"unsafe archive member: {m['name']!r}")
             seen[""] = "d"
             continue
         names.append((name, m))
@@ -152,7 +157,8 @@ def validate_members(members):
                     len(parts) <= 2
                     and parts[-1] == "Applications"
                     and t == "/Applications"
-                    and not any(p.endswith(".app") for p in parts[:-1]))
+                    and not any(p.endswith(".app") for p in parts[:-1])
+                )
                 if at_shortcut_root and not m.get("is_dir"):
                     omit.add(name)
                     continue
@@ -173,7 +179,9 @@ def validate_members(members):
                 die(f"duplicate resolved destination: {name} -> {resolved}")
             dests.add(resolved)
         else:
-            dest = resolve_graph(links, os.path.join(os.path.dirname(name), links[name]))
+            dest = resolve_graph(
+                links, os.path.join(os.path.dirname(name), links[name])
+            )
             if dest and dest not in existing:
                 die(f"dangling link in archive: {name} -> {links[name]}")
     return omit
@@ -181,17 +189,22 @@ def validate_members(members):
 
 # ------------------------------------------------------- listing adapters
 
+
 def zip_members(zf):
     out = []
     for zi in zf.infolist():
         mode = zi.external_attr >> 16
         is_link = stat.S_ISLNK(mode)
-        out.append({
-            "name": zi.filename,
-            "is_symlink": is_link,
-            "is_dir": zi.is_dir(),
-            "link_target": zf.read(zi).decode("utf-8", "replace") if is_link else None,
-        })
+        out.append(
+            {
+                "name": zi.filename,
+                "is_symlink": is_link,
+                "is_dir": zi.is_dir(),
+                "link_target": zf.read(zi).decode("utf-8", "replace")
+                if is_link
+                else None,
+            }
+        )
     return out
 
 
@@ -217,13 +230,21 @@ def bsdtar_members(archive):
     if _is_7z_family(archive):
         return sevenz_members(archive), None
     import re
+
     # LC_ALL=C format: perms links owner group size mmm DD (HH:MM|YYYY) name[ -> target]
     row = re.compile(
         r"^([dl-][rwxsStT-]{9})\s+\d+\s+\S+\s+\S+\s+\d+\s+"
-        r"[A-Z][a-z]{2}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4})\s+(.+)$")
+        r"[A-Z][a-z]{2}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4})\s+(.+)$"
+    )
     env = dict(os.environ, LC_ALL="C")
-    p = subprocess.run(["bsdtar", "-tv", "-f", archive],
-                       capture_output=True, text=True, env=env)
+    # returncode is checked manually right below (check=False is explicit)
+    p = subprocess.run(
+        ["bsdtar", "-tv", "-f", archive],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
     if p.returncode != 0:
         die(f"bsdtar listing failed: {p.stderr.strip()[:200]}")
     out = []
@@ -236,11 +257,23 @@ def bsdtar_members(archive):
             if " -> " not in rest:
                 die(f"unparseable bsdtar symlink line {lineno}: {line!r}")
             name, target = rest.split(" -> ", 1)
-            out.append({"name": name, "is_symlink": True, "is_dir": False,
-                        "link_target": target.strip()})
+            out.append(
+                {
+                    "name": name,
+                    "is_symlink": True,
+                    "is_dir": False,
+                    "link_target": target.strip(),
+                }
+            )
         else:
-            out.append({"name": rest, "is_symlink": False,
-                        "is_dir": m.group(1).startswith("d"), "link_target": None})
+            out.append(
+                {
+                    "name": rest,
+                    "is_symlink": False,
+                    "is_dir": m.group(1).startswith("d"),
+                    "link_target": None,
+                }
+            )
     return out, validate_members(out)
 
 
@@ -277,11 +310,19 @@ def sevenz_members(archive):
             die(f"unsupported hard link member: {p}")
         mode = r.get("mode", "")
         is_link = mode.startswith("l") or "sym" in r
-        is_dir = (not is_link
-                  and (r.get("folder") == "+" or mode.startswith("d")
-                       or ("D" in r.get("attrs", "").split("_")[0])))
-        out.append({"name": p, "is_symlink": is_link, "is_dir": is_dir,
-                    "link_target": r.get("sym")})
+        is_dir = not is_link and (
+            r.get("folder") == "+"
+            or mode.startswith("d")
+            or ("D" in r.get("attrs", "").split("_")[0])
+        )
+        out.append(
+            {
+                "name": p,
+                "is_symlink": is_link,
+                "is_dir": is_dir,
+                "link_target": r.get("sym"),
+            }
+        )
     return out
 
 
@@ -319,6 +360,7 @@ def _mime(path):
 
 
 # ------------------------------------------------------------- extractors
+
 
 def _check_target_path(dest, name):
     """Parent AND final path must stay inside dest (no writing through a
@@ -395,7 +437,9 @@ def extract_7zz(src, dest):
             # the glob guard; plain extracted members keep their exact names
             # (real DMGs carry bracketed HFS+ metadata folders)
             if GLOB_META & set(m["name"]):
-                die(f"cannot safely exclude member with glob metacharacters: {m['name']}")
+                die(
+                    f"cannot safely exclude member with glob metacharacters: {m['name']}"
+                )
             if m["is_symlink"] and name not in omit:
                 links[name] = m["link_target"]
             excludes += ["-x!" + m["name"]]
@@ -407,10 +451,9 @@ def extract_7zz(src, dest):
         if ":com.apple." in n:
             p = os.path.join(dest, n)
             shutil.rmtree(p, ignore_errors=True)
-            try:
+            # plain-file AppleDouble remnants only; OSError is expected noise
+            with contextlib.suppress(OSError):
                 os.remove(p)
-            except OSError:
-                pass
     for name, target in sorted(links.items()):
         _check_target_path(dest, name)
         if not link_target_ok(os.path.dirname(name), target):
@@ -450,21 +493,38 @@ def cmd_unpack(src, staging, url_name, raw_name="", fallback_name=""):
         shutil.copy(src, os.path.join(staging, os.path.basename(base)))
     elif _is_7z_family(src):
         extract_7zz(src, staging)
-    elif mime in ("application/x-tar", "application/gzip", "application/x-bzip2",
-                  "application/x-xz", "application/zstd", "application/x-lzma"):
+    elif mime in (
+        "application/x-tar",
+        "application/gzip",
+        "application/x-bzip2",
+        "application/x-xz",
+        "application/zstd",
+        "application/x-lzma",
+    ):
         try:
             extract_tar(src, staging)
         except tarfile.TarError:
             if mime == "application/gzip":
                 # single gzipped binary: the declared artifact source names
                 # the file; URL basenames can carry query params or no hint
-                stage_payload(src, staging, fallback_name, url_name,
-                              "payload.bin", strip_suffix=".gz")
+                stage_payload(
+                    src,
+                    staging,
+                    fallback_name,
+                    url_name,
+                    "payload.bin",
+                    strip_suffix=".gz",
+                )
             else:
                 die(f"unresolved archive format (mime: {mime})")
-    elif mime in ("application/x-executable", "application/x-pie-executable",
-                  "application/x-mach-binary", "application/x-sharedlib",
-                  "text/x-shellscript", "application/octet-stream"):
+    elif mime in (
+        "application/x-executable",
+        "application/x-pie-executable",
+        "application/x-mach-binary",
+        "application/x-sharedlib",
+        "text/x-shellscript",
+        "application/octet-stream",
+    ):
         stage_payload(src, staging, fallback_name, url_name, "payload.bin")
     else:
         die(f"unresolved archive format (mime: {mime}, url: {url_name})")
@@ -477,8 +537,16 @@ COMP_DIRS = {
     "zsh-completion": "share/zsh/site-functions",
     "fish-completion": "share/fish/vendor_completions.d",
 }
-KNOWN_KINDS = {"app", "binary", "pkg", "appimage", "manpage",
-               "bash-completion", "zsh-completion", "fish-completion"}
+KNOWN_KINDS = {
+    "app",
+    "binary",
+    "pkg",
+    "appimage",
+    "manpage",
+    "bash-completion",
+    "zsh-completion",
+    "fish-completion",
+}
 MAN_RE = None  # compiled lazily
 
 
@@ -490,12 +558,25 @@ def locate(staging, name):
     if os.path.lexists(direct):
         return direct
     # exact relative suffix under volume nesting (find -name never
-    # matches '/' and treats the name as a glob); ambiguous hits die
+    # matches '/' and treats the name as a glob); ambiguous hits die.
+    # find failures surface as zero hits and die below (check=False is
+    # explicit; the return code is not inspected).
     hits = subprocess.run(
-        ["find", staging, "-mindepth", "2",
-         "-maxdepth", str(MAX_NESTING_DEPTH + name.count("/") + 2),
-         "-path", os.path.join(staging, "*", name), "-print"],
-        capture_output=True, text=True).stdout.splitlines()
+        [
+            "find",
+            staging,
+            "-mindepth",
+            "2",
+            "-maxdepth",
+            str(MAX_NESTING_DEPTH + name.count("/") + 2),
+            "-path",
+            os.path.join(staging, "*", name),
+            "-print",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.splitlines()
     hits = [h for h in hits if h]
     if len(hits) > 1:
         die(f"ambiguous artifact source, multiple matches for: {name}")
@@ -524,8 +605,10 @@ def plist_min_ok(bundle, baseline):
     except ValueError:
         die(f"malformed LSMinimumSystemVersion {req!r} in {bundle}")
     if nums > baseline:
-        die(f"{os.path.basename(bundle)} requires macOS {req}, "
-            f"baseline is {'.'.join(map(str, baseline))}")
+        die(
+            f"{os.path.basename(bundle)} requires macOS {req}, "
+            f"baseline is {'.'.join(map(str, baseline))}"
+        )
 
 
 def one_component(name, what):
@@ -541,16 +624,23 @@ def elf_ok_for_linux(path, arch):
         machine = int.from_bytes(head[18:20], "little")
         want = {"x86_64-linux": 62, "aarch64-linux": 183}.get(arch)
         if want is None or machine != want:
-            die(f"binary {os.path.basename(path)} is ELF for another "
-                f"architecture (machine {machine}, expected {want} for {arch})")
+            die(
+                f"binary {os.path.basename(path)} is ELF for another "
+                f"architecture (machine {machine}, expected {want} for {arch})"
+            )
         return
-    if head[:4] in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",
-                    b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
-        die(f"binary {os.path.basename(path)} is a Mach-O payload; "
-            "not a Linux binary")
+    if head[:4] in (
+        b"\xfe\xed\xfa\xce",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+        b"\xce\xfa\xed\xfe",
+    ):
+        die(f"binary {os.path.basename(path)} is a Mach-O payload; not a Linux binary")
     if head[:2] == b"MZ":
-        die(f"binary {os.path.basename(path)} is a Windows PE payload; "
-            "not a Linux binary")
+        die(
+            f"binary {os.path.basename(path)} is a Windows PE payload; "
+            "not a Linux binary"
+        )
     if head[:2] == b"#!":
         return  # bounded script format
     die(f"binary {os.path.basename(path)} is not ELF, script, or known payload")
@@ -581,24 +671,30 @@ def install_pkg(ctx, plan, staging, out, baseline):
     if not os.path.isfile(pkg_path):
         # a bare XAR download is kept under the sniff display name; map the
         # single staged xar file to the declared pkg artifact source
-        cands = [os.path.join(staging, n) for n in os.listdir(staging)
-                 if os.path.isfile(os.path.join(staging, n))
-                 and _mime(os.path.join(staging, n)) == "application/x-xar"]
-        if len(cands) == 1:
-            pkg_path = cands[0]
-        else:
-            pkg_path = locate(staging, pkg_art["source"])
+        cands = [
+            os.path.join(staging, n)
+            for n in os.listdir(staging)
+            if os.path.isfile(os.path.join(staging, n))
+            and _mime(os.path.join(staging, n)) == "application/x-xar"
+        ]
+        pkg_path = cands[0] if len(cands) == 1 else locate(staging, pkg_art["source"])
     xdir = os.path.join(staging, ".xar")
     os.makedirs(xdir, exist_ok=True)
     members, _ = bsdtar_members(pkg_path)
     for m in members:
         n = m["name"].rstrip("/")
-        if n == "Scripts" or n.startswith("Scripts/") or n.endswith("/Scripts") \
-                or "/Scripts/" in n:
+        if (
+            n == "Scripts"
+            or n.startswith("Scripts/")
+            or n.endswith("/Scripts")
+            or "/Scripts/" in n
+        ):
             die(f"pkg carries installer scripts: {n}")
         if n == "Distribution" or "/Distribution" in n or n.endswith("/Distribution"):
-            die("pkg carries Distribution installer logic; "
-                "choice-requiring pkgs are unsupported")
+            die(
+                "pkg carries Distribution installer logic; "
+                "choice-requiring pkgs are unsupported"
+            )
         if "Plugins" in n.split("/"):
             die(f"pkg carries installer plugins: {n}")
         if n.endswith(".pkg"):
@@ -630,17 +726,25 @@ def install_pkg(ctx, plan, staging, out, baseline):
     for entry in sorted(os.listdir(paydir)):
         p = os.path.join(paydir, entry)
         rel = safe_rel_path(entry, "pkg payload component", allow_dir=True)
-        if rel == "Library" or rel.startswith("Library/") or rel == "System" \
-                or rel.startswith("System/") or rel.endswith(".kext") \
-                or "LaunchDaemons" in rel or "LaunchAgents" in rel \
-                or "PrivilegedHelperTools" in rel:
+        if (
+            rel == "Library"
+            or rel.startswith("Library/")
+            or rel == "System"
+            or rel.startswith("System/")
+            or rel.endswith(".kext")
+            or "LaunchDaemons" in rel
+            or "LaunchAgents" in rel
+            or "PrivilegedHelperTools" in rel
+        ):
             die(f"pkg payload carries system component: {rel}")
         if os.path.isdir(p) and not os.path.islink(p):
             if rel == "Applications":
                 for child in sorted(os.listdir(p)):
                     if not child.endswith(".app"):
-                        die(f"pkg Applications payload must contain only .app "
-                            f"bundles, found: {child}")
+                        die(
+                            f"pkg Applications payload must contain only .app "
+                            f"bundles, found: {child}"
+                        )
                     dest = os.path.join(apps_dir, child)
                     if os.path.lexists(dest):
                         die(f"duplicate bundle in pkg payload: {child}")
@@ -651,17 +755,23 @@ def install_pkg(ctx, plan, staging, out, baseline):
                 shutil.copytree(p, os.path.join(apps_dir, rel), symlinks=True)
             elif rel == "Contents":
                 name = one_component(
-                    str(plist_load(os.path.join(p, "Info.plist"))
-                        .get("CFBundleName") or ctx["token"]),
-                    "CFBundleName")
+                    str(
+                        plist_load(os.path.join(p, "Info.plist")).get("CFBundleName")
+                        or ctx["token"]
+                    ),
+                    "CFBundleName",
+                )
                 os.makedirs(apps_dir, exist_ok=True)
-                shutil.copytree(p, os.path.join(apps_dir, f"{name}.app", "Contents"),
-                                symlinks=True)
+                shutil.copytree(
+                    p, os.path.join(apps_dir, f"{name}.app", "Contents"), symlinks=True
+                )
             else:
                 die(f"pkg payload component outside supported layouts: {rel}")
         else:
-            die(f"pkg payload component outside supported layouts "
-                f"(plain files unsupported): {rel}")
+            die(
+                f"pkg payload component outside supported layouts "
+                f"(plain files unsupported): {rel}"
+            )
     if os.path.isdir(apps_dir):
         for b in os.listdir(apps_dir):
             plist_min_ok(os.path.join(apps_dir, b), baseline)
@@ -716,12 +826,14 @@ def cmd_install(plan_file, staging, out):
             if os.path.lexists(dest):
                 die(f"duplicate binary target: {tgt}")
             if src.startswith("$APPDIR/"):
-                rest = safe_rel_path(src[len("$APPDIR/"):], "$APPDIR binary source")
+                rest = safe_rel_path(src[len("$APPDIR/") :], "$APPDIR binary source")
                 declared_app, _, inner = rest.partition("/")
                 installed = app_targets.get(declared_app, declared_app)
                 if installed not in app_targets.values():
-                    die(f"$APPDIR binary {src} does not name a declared app "
-                        "(bundle source or renamed target required)")
+                    die(
+                        f"$APPDIR binary {src} does not name a declared app "
+                        "(bundle source or renamed target required)"
+                    )
                 resolved = os.path.join(apps_dir, installed, inner)
                 if not os.path.lexists(resolved):
                     die(f"$APPDIR binary points at a missing file: {src}")
@@ -734,6 +846,7 @@ def cmd_install(plan_file, staging, out):
                 os.chmod(dest, 0o555)
         elif kind == "manpage":
             import re
+
             m = re.search(r"\.([1-8])$", tgt)
             if not m:
                 die(f"manpage target must end in .N (N=1..8): {tgt!r}")
@@ -751,9 +864,13 @@ def main():
     if len(sys.argv) < 2:
         die("usage: cask-plan.py unpack|install ...")
     if sys.argv[1] == "unpack":
-        cmd_unpack(sys.argv[2], sys.argv[3], sys.argv[4],
-                   sys.argv[5] if len(sys.argv) > 5 else "",
-                   sys.argv[6] if len(sys.argv) > 6 else "")
+        cmd_unpack(
+            sys.argv[2],
+            sys.argv[3],
+            sys.argv[4],
+            sys.argv[5] if len(sys.argv) > 5 else "",
+            sys.argv[6] if len(sys.argv) > 6 else "",
+        )
     elif sys.argv[1] == "install":
         cmd_install(sys.argv[2], sys.argv[3], sys.argv[4])
     else:

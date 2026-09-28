@@ -239,15 +239,6 @@ fn item_pairs(items: &[Value]) -> Result<Vec<(String, Option<String>)>, PlanErro
 /// owned by classify (the single strict parser of `depends_on macos`); the
 /// plan is built with it null and classify fills it in.
 pub fn build_plan(eff: &Value, system: &str) -> Result<Plan, PlanError> {
-    let min_macos: Option<String> = None;
-    build_plan_inner(eff, system, min_macos)
-}
-
-fn build_plan_inner(
-    eff: &Value,
-    system: &str,
-    min_macos: Option<String>,
-) -> Result<Plan, PlanError> {
     let url = eff
         .get("url")
         .and_then(Value::as_str)
@@ -399,7 +390,7 @@ fn build_plan_inner(
         source: PlanSource { url, sha256: sha },
         archive: PlanArchive { kind: archive_kind },
         artifacts,
-        min_macos,
+        min_macos: None,
     })
 }
 

@@ -340,11 +340,7 @@ fn cask_info(
         });
     }
     let record = view.record(system, token);
-    let meta = record.map(|entry| nix::SearchMeta {
-        pname: entry.name.clone().unwrap_or_else(|| token.to_string()),
-        version: entry.version.clone().unwrap_or_default(),
-        description: entry.description.clone().unwrap_or_default(),
-    });
+    let meta = record.map(|entry| catalog::catalog_meta(token, entry));
     Ok(InfoData {
         attribute,
         matched_attribute: None,
