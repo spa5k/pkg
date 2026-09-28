@@ -63,11 +63,20 @@ jobs:
       - name: Install cargo-deny (0.20.2, locked)
         run: cargo install --locked cargo-deny@0.20.2
 
+      # The build and test steps above only download crates for the Linux
+      # target, but cargo-deny resolves the dependency graph for every
+      # target. Windows-only crates such as windows-sys and anstyle-wincon
+      # were therefore absent from the local registry, and the offline
+      # policy check below failed by trying to fetch them. cargo fetch
+      # downloads the complete all-target crate set first.
+      - name: Fetch all-target dependencies (locked)
+        run: cargo fetch --locked
+
       # cargo-deny 0.20.2 has no --disable-fetch flag; the cold-safe form is
       # the root-level --offline, which forbids fetching crates, advisory
       # databases, and std-replacement data. The check set excludes
       # advisories, so no advisory database is needed. bans/licenses/sources
-      # read the local cargo registry populated by the build step above.
+      # read the local cargo registry populated by the fetch step above.
       - name: Dependency policy (cargo-deny)
         run: cargo deny --locked --offline check bans licenses sources
 
