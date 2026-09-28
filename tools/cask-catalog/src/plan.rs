@@ -111,7 +111,7 @@ fn safe_source(source: &str, allow_appdir: bool) -> Result<(), String> {
     if source.is_empty() {
         return Err("empty source".to_string());
     }
-    if source.contains('\0') || source.contains('\n') || source.contains('\r') {
+    if source.chars().any(|c| c.is_ascii_control()) {
         return Err(format!("control character in source {source:?}"));
     }
     let anchored = source.strip_prefix("$APPDIR/");
@@ -139,9 +139,7 @@ fn safe_target_name(name: &str) -> Result<(), String> {
         || name.contains('/')
         || name == "."
         || name == ".."
-        || name.contains('\0')
-        || name.contains('\n')
-        || name.contains('\r')
+        || name.chars().any(|c| c.is_ascii_control())
     {
         return Err(format!("unsafe link name {name:?}"));
     }
@@ -429,8 +427,10 @@ fn normalize_item(
         }
         "app_image" => {
             safe_source(source, false)?;
-            let named = rename.unwrap_or(source);
-            let target = named.strip_suffix(".AppImage").unwrap_or(named);
+            // The target is the basename of the metadata name without
+            // the `.AppImage` suffix; renames stay single-segment names.
+            let named = basename(rename.unwrap_or(source));
+            let target = named.strip_suffix(".AppImage").unwrap_or(&named);
             safe_target_name(target)?;
             Ok((source.to_string(), Some(target.to_string())))
         }
@@ -640,6 +640,36 @@ mod tests {
             "x86_64-linux",
         );
         assert!(matches!(nested, Err(PlanError::Malformed(d)) if d.contains("bin/tool")));
+    }
+
+    #[test]
+    fn appimage_target_derives_from_basename_for_nested_sources() {
+        // Renames are upstream metadata; a nested AppImage source is safe
+        // and its target is the basename without the suffix (contract 3).
+        let plan = build_plan(
+            &eff(&json!([{"app_image": ["linux/koreader-v2026.AppImage"]}])),
+            "x86_64-linux",
+        )
+        .expect("nested AppImage source must plan with a basename target");
+        assert_eq!(plan.artifacts[0].kind, "appimage");
+        assert_eq!(plan.artifacts[0].source, "linux/koreader-v2026.AppImage");
+        assert_eq!(plan.artifacts[0].target.as_deref(), Some("koreader-v2026"));
+    }
+
+    #[test]
+    fn control_characters_in_link_names_and_sources_are_rejected() {
+        for bad in ["to\u{1}ol", "tool\t", "tool\u{7f}", "tool\u{1b}[31m"] {
+            let err = build_plan(
+                &eff(&json!([{"binary": ["tool", {"target": bad}]}])),
+                "x86_64-linux",
+            );
+            assert!(
+                matches!(err, Err(PlanError::Malformed(_))),
+                "{bad:?}: {err:?}"
+            );
+        }
+        let src = build_plan(&eff(&json!([{"binary": ["a\u{b}tool"]}])), "x86_64-linux");
+        assert!(matches!(src, Err(PlanError::Malformed(_))));
     }
 
     #[test]

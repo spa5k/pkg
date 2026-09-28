@@ -197,13 +197,26 @@ let
       others = builtins.filter (a: a.kind != "appimage") plan.artifacts;
       # wrapType2's launcher is bin/<pname>. The exposed launcher name is
       # exactly the metadata-derived target; the store name stays the token.
+      # A launcher must be one safe POSIX path component: a non-empty string
+      # that is neither "." nor ".." and contains no "/" or control
+      # characters. Spaces, quotes, dollar signs, backticks, semicolons,
+      # leading dashes, and Unicode are legitimate in vendor names, so they
+      # are preserved verbatim — the shell below only ever sees the value
+      # through escapeShellArg, and `mv --` defeats a leading dash.
       launcher =
-        if image.target == null || image.target == "" then
+        let
+          t = image.target;
+        in
+        if !builtins.isString t then
+          throw "cask-${token}: appimage artifact target must be a string"
+        else if t == "" then
           throw "cask-${token}: appimage artifact needs a target"
-        else if lib.strings.match "[A-Za-z0-9][A-Za-z0-9._+-]*" image.target == null then
-          throw "cask-${token}: appimage target is not a safe launcher name: ${image.target}"
+        else if t == "." || t == ".." then
+          throw "cask-${token}: appimage target is not a safe launcher name: ${t}"
+        else if builtins.match ".*[[:cntrl:]/].*" t != null then
+          throw "cask-${token}: appimage target is not a safe launcher name: ${t}"
         else
-          image.target;
+          t;
       pkg = "cask-${token}";
     in
     if others != [ ] then
@@ -218,9 +231,11 @@ let
           url = plan.source.url;
           sha256 = plan.source.sha256;
         };
-        # rename the helper launcher to the exact metadata target
+        # rename the helper launcher to the exact metadata target; both
+        # operands are single-quoted shell words (never double-quoted
+        # interpolation, which would allow injection from the name)
         extraInstallCommands = ''
-          mv "$out/bin/${pkg}" "$out/bin/${launcher}"
+          mv -- "$out/bin/"${escapeShellArg pkg} "$out/bin/"${escapeShellArg launcher}
         '';
         meta =
           commonMeta {

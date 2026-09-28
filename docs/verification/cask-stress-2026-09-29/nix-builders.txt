@@ -1,0 +1,15 @@
+PASS: static op builds and runs
+PASS: app archive: rename, anchored CLIs, docs
+PASS: relocatable pkg payload installs bundles
+PASS: dynamic ELF: interpreter/rpath repaired to store, runs, no host libs
+PASS: scratch-evil-traversal rejected: unsafe archive member
+PASS: scratch-evil-link rejected: above staging root
+PASS: scratch-min26 rejected: requires macOS 26
+PASS: scratch-macho rejected: Mach-O
+PASS: scratch-pkg-scripts rejected: installer scripts
+PASS: scratch-pkg-dist rejected: Distribution installer logic
+PASS: scratch-pkg-sys rejected: system component
+PASS: scratch-dangling rejected: missing file
+PASS: scratch-dyn-elf-missing rejected: libpkg-intentionally-missing
+----
+pass=13 fail=0

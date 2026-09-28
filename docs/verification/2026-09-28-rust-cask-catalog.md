@@ -1,5 +1,8 @@
 # Rust Cask catalog verification
 
+The later [pre-merge stress review](2026-09-29-cask-stress.md) records fixes,
+top-1,000 coverage, full derivation evaluation, and native archive regressions.
+
 Date: 28 September 2026. GLM 5.3 implemented the change in E2B. The parent reviewed the patches and repeated the final Rust, macOS, and Linux lifecycle checks.
 
 ## Sources and systems

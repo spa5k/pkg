@@ -34,6 +34,7 @@ import zipfile
 
 MAX_NESTING_DEPTH = 4
 MAX_LINK_HOPS = 64
+MAX_LINK_TARGET = 4096  # PATH_MAX bound; macOS symlink targets are < 1024
 
 
 def resolve_graph(links, path):
@@ -122,10 +123,20 @@ def _norm_dots(name):
     return "/".join(p for p in name.split("/") if p != ".")
 
 
+def _member_key(raw):
+    """Canonical member key: validate_members, the omit set, and every
+    extractor comparison share it, so stored spellings like
+    './Applications' and 'Applications' are the SAME member everywhere
+    (bsdtar/cpio and tar list names exactly as stored)."""
+    return _norm_dots(safe_rel_path(raw, "archive member", allow_dir=True))
+
+
 def validate_members(members):
     """members: iterable of dicts {name, is_symlink, link_target, is_dir}.
     Validates the COMPLETE symlink graph before any payload write: names,
-    duplicates, type conflicts, and every member destination resolved with
+    duplicates, type conflicts, special members (fifo/device), hard links
+    (fail closed, same policy as 7zz), and every member destination
+    resolved with
     symlink substitution (composed escapes and cycles die). Returns the
     omit set: the conventional DMG /Applications shortcut at the archive
     root or directly under a single volume-wrapper root, outside any .app.
@@ -133,7 +144,7 @@ def validate_members(members):
     links, omit, seen, dests = {}, set(), {}, set()
     names = []
     for m in members:
-        name = _norm_dots(safe_rel_path(m["name"], "archive member", allow_dir=True))
+        name = _member_key(m["name"])
         if name == "":
             # the root directory member ('.'/'./', common in cpio)
             if not m.get("is_dir"):
@@ -149,8 +160,22 @@ def validate_members(members):
         if name in seen and kind != "d":
             die(f"duplicate archive member: {name}")
         seen[name] = kind
+        if m.get("is_special"):
+            die(f"unsupported special archive member (fifo/device): {name}")
+        if m.get("hard_target") is not None:
+            # tar hard links are refused pre-write, same policy as 7zz. A
+            # hard-link graph (chains, cycles, targets routed through
+            # symlink members) is the composed-path class resolve_graph
+            # covers for symlinks; validating it needs a second resolver.
+            # This builder does not support hard links. Fail closed.
+            die(f"unsupported hard link member: {name} -> {m['hard_target']}")
         if m["is_symlink"]:
             t = m["link_target"] or ""
+            if not t:
+                # a real symlink always has a nonempty target; empty means
+                # a corrupt/lying record and must fail closed, not pass as
+                # a zero-length link (resolves to its own parent dir)
+                die(f"empty link target for: {name}")
             if t.startswith("/"):
                 parts = name.split("/")
                 at_shortcut_root = (
@@ -195,14 +220,22 @@ def zip_members(zf):
     for zi in zf.infolist():
         mode = zi.external_attr >> 16
         is_link = stat.S_ISLNK(mode)
+        link_target = None
+        if is_link:
+            # a symlink-flagged member is a payload read, so bound it BEFORE
+            # reading: an oversized "target" is a decompression bomb, and
+            # control characters mean a corrupt link (same rule as 7zz)
+            if zi.file_size > MAX_LINK_TARGET:
+                die(f"symlink member target too large: {zi.filename}")
+            link_target = zf.read(zi).decode("utf-8", "replace")
+            if any(c in link_target for c in "\x00\n\r"):
+                die(f"corrupt link target bytes for: {zi.filename}")
         out.append(
             {
                 "name": zi.filename,
                 "is_symlink": is_link,
                 "is_dir": zi.is_dir(),
-                "link_target": zf.read(zi).decode("utf-8", "replace")
-                if is_link
-                else None,
+                "link_target": link_target,
             }
         )
     return out
@@ -214,6 +247,8 @@ def tar_members(tf):
             "name": m.name,
             "is_symlink": m.issym(),
             "is_dir": m.isdir(),
+            "is_special": m.isfifo() or m.isdev(),
+            "hard_target": m.linkname if m.islnk() else None,
             "link_target": m.linkname if m.issym() else None,
         }
         for m in tf.getmembers()
@@ -306,21 +341,36 @@ def sevenz_members(archive):
     for p, r in records:
         if not p or "\r" in p or "\n" in p:
             die(f"unparseable 7zz listing entry: {p!r}")
-        if "hard" in r:
+        if r.get("hard"):
+            # APFS records also emit `Hard Link = ` with an EMPTY value for
+            # ordinary members; only a nonempty value is a real hard link
             die(f"unsupported hard link member: {p}")
         mode = r.get("mode", "")
-        is_link = mode.startswith("l") or "sym" in r
+        # -snl archives on Linux carry the POSIX mode in Attributes
+        # ("A lrwxrwxrwx"), with no Mode/Symbolic Link field; take the
+        # last attribute token as the mode when it looks like one
+        attr_tokens = r.get("attrs", "").replace("_", " ").split()
+        posix = attr_tokens[-1] if attr_tokens else ""
+        # APFS listings emit `Symbolic Link = ` with an EMPTY value for
+        # ordinary dirs/files too; the Mode (d.../-r...) is authoritative.
+        # A link is: NONEMPTY Symbolic Link, or Mode/Attributes 'l...'.
+        # An empty value is treated as absent, so dirs/files are never
+        # misread as dangling zero-length links. mode=l with an empty
+        # value (HFS+) keeps link_target=None for the `-so` byte read.
+        sym = r.get("sym", "")
+        is_link = bool(sym) or mode.startswith("l") or posix.startswith("l")
         is_dir = not is_link and (
             r.get("folder") == "+"
             or mode.startswith("d")
-            or ("D" in r.get("attrs", "").split("_")[0])
+            or posix.startswith("d")
+            or "D" in attr_tokens
         )
         out.append(
             {
                 "name": p,
                 "is_symlink": is_link,
                 "is_dir": is_dir,
-                "link_target": r.get("sym"),
+                "link_target": sym or None,
             }
         )
     return out
@@ -334,6 +384,8 @@ def _7z_link_target(archive, name):
     if GLOB_META & set(name):
         die(f"cannot safely read link target with glob metacharacters: {name}")
     target = run(["7zz", "x", "-so", "--", archive, name])
+    if not target:
+        die(f"empty link target for: {name}")
     if any(c in target for c in "\r\n\x00"):
         die(f"corrupt link target bytes for: {name}")
     return target
@@ -380,7 +432,7 @@ def extract_zip(src, dest):
         omit = validate_members(zip_members(zf))
         for zi in zf.infolist():
             name = safe_rel_path(zi.filename, "zip member", allow_dir=True)
-            if zi.filename.rstrip("/") in omit:
+            if _norm_dots(name) in omit:  # canonical: './Applications' too
                 continue
             _check_target_path(dest, name)
             target = os.path.join(dest, name)
@@ -402,19 +454,22 @@ def extract_zip(src, dest):
 def extract_tar(src, dest):
     with tarfile.open(src) as tf:
         omit = validate_members(tar_members(tf))
-        members = [m for m in tf.getmembers() if m.name.rstrip("/") not in omit]
+        members = [m for m in tf.getmembers() if _member_key(m.name) not in omit]
         tf.extractall(dest, members=members, filter="data")
 
 
 def extract_bsdtar(src, dest):
     """xar/cpio: libarchive secure extraction refuses absolute and
-    '..' members by default; inert shortcuts are excluded by pattern."""
-    _members, omit = bsdtar_members(src)
+    '..' members by default; inert shortcuts are excluded by their RAW
+    stored name ('./Applications'), matched via the canonical key."""
+    members, omit = bsdtar_members(src)
     excludes = []
-    for name in omit:
-        if GLOB_META & set(name):
-            die(f"cannot safely exclude member with glob metacharacters: {name}")
-        excludes += ["--exclude", name]
+    for m in members:
+        raw = m["name"].rstrip("/")
+        if _member_key(m["name"]) in omit:
+            if GLOB_META & set(raw):
+                die(f"cannot safely exclude member with glob metacharacters: {raw}")
+            excludes += ["--exclude", raw]
     run(["bsdtar", "-x", "-f", src, "-C", dest] + excludes)
 
 
@@ -432,7 +487,7 @@ def extract_7zz(src, dest):
     excludes, links = [], {}
     for m in members:
         name = m["name"].rstrip("/")
-        if name in omit or m["is_symlink"]:
+        if _norm_dots(name) in omit or m["is_symlink"]:
             # only names handed to 7zz as exclusion/selection patterns need
             # the glob guard; plain extracted members keep their exact names
             # (real DMGs carry bracketed HFS+ metadata folders)
@@ -852,11 +907,17 @@ def cmd_install(plan_file, staging, out):
                 die(f"manpage target must end in .N (N=1..8): {tgt!r}")
             d = os.path.join(out, "share", "man", f"man{m.group(1)}")
             os.makedirs(d, exist_ok=True)
-            shutil.copy2(locate(staging, a["source"]), os.path.join(d, tgt))
+            dest = os.path.join(d, tgt)
+            if os.path.lexists(dest):
+                die(f"duplicate {kind} target: {tgt}")
+            shutil.copy2(locate(staging, a["source"]), dest)
         else:
             d = os.path.join(out, COMP_DIRS[kind])
             os.makedirs(d, exist_ok=True)
-            shutil.copy2(locate(staging, a["source"]), os.path.join(d, tgt))
+            dest = os.path.join(d, tgt)
+            if os.path.lexists(dest):
+                die(f"duplicate {kind} target: {tgt}")
+            shutil.copy2(locate(staging, a["source"]), dest)
     audit_output(out)
 
 

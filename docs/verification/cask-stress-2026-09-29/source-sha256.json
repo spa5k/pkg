@@ -1,0 +1,10 @@
+{
+  "nix/casks/lib/plan.py": "36da1147ee5cf176bf45245b1c2b0a6fa4c3328eaad013b8330668d9110c811c",
+  "nix/casks/lib/builders.nix": "3048b96d9eb998e26459a75f733f1a9249bcf0eafa2e0ea9508f86571480a9f8",
+  "tools/cask-catalog/src/plan.rs": "6b5e0960a99a2073c2139cb92305f753d1095d17b95334e3458f6e96576aa672",
+  "tools/cask-catalog/src/classify.rs": "53ff65a90a3f42aa814ce8e4440ea8904e890b68ec080157c7f02383ec78681f",
+  "tools/cask-build-check/catalog_plans.py": "14e2da58d2bc1948f2ee09ded1d11d6ec20500aa51c59da66ea3386a21e06296",
+  "tools/cask-build-check/appimage_names.py": "0a65e63b6fa51779ae2f6ed69a0fc9b5ab81940cb8ed1374cd14eb5bf5570d54",
+  "tools/cask-build-check/plan_tests.py": "d104a563eacf5c5172031e314be8dabab0ac4018707a08c45b7ac058096f9ecd",
+  "tools/cask-catalog/audit.py": "e40d63b411d7806afdf2c2bbb6332d8389fff075daa9654e1d1ef8e132434fbb"
+}

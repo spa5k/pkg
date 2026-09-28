@@ -1,0 +1,63 @@
+cask-build: extraction path escapes staging: esc/child
+cask-build: unsupported hard link member: hard1
+cask-build: empty link target for: lnk
+cask-build: ambiguous artifact source, multiple matches for: nested/tool
+cask-build: member resolves above staging root: a
+cask-build: member resolves above staging root: b/../escape
+cask-build: member resolves above staging root: b/../escape
+cask-build: symlink resolution exceeds hop budget: x
+cask-build: reject absolute vendor link: Raycast/Raycast.app/Contents/Applications -> /Applications
+cask-build: reject absolute vendor link: bin -> /usr/bin
+cask-build: reject absolute vendor link: Applications -> /etc
+cask-build: reject absolute vendor link: Vol/Applications -> /etc
+cask-build: member resolves above staging root: a
+cask-build: member resolves above staging root: b/../escape
+cask-build: symlink member target too large: link
+cask-build: corrupt link target bytes for: link
+cask-build: unsupported special archive member (fifo/device): p
+cask-build: unsupported hard link member: h -> f
+cask-build: unsupported hard link member: h -> a/../f
+cask-build: unsupported hard link member: h1 -> h2
+cask-build: unsupported hard link member: h -> missing
+cask-build: duplicate zsh-completion target: tool
+cask-build: reject absolute vendor link: Applications -> /tmp
+cask-build: reject absolute vendor link: Applications -> /tmp
+cask-build: member resolves above staging root: evil
+PASS: pre-write boundary rejects symlinked ancestor
+PASS: bsdtar year-format listing parses
+PASS: UDIF koly trailer detected
+PASS: 7zz Mode/Folder/CRLF records parse
+PASS: 7zz hard link member rejected
+PASS: 7zz APFS empty Symbolic Link fields handled by Mode
+PASS: 7zz empty actual link target rejected
+PASS: nested raw-binary source staged with parents
+PASS: nested locate finds unique volume-nested artifact
+PASS: ambiguous nested locate dies
+PASS: release binary count trims wc -l padding
+PASS: composed link escapes die at validation (a->b/.., b->. and b/c)
+PASS: composed-escape zip dies before any payload write
+PASS: link cycle dies; framework Current chain resolves
+PASS: volume-wrapper Applications shortcut omitted
+PASS: non-shortcut absolute links rejected inside .app and elsewhere
+PASS: gzip fallback stages declared nested source with parents
+PASS: Applications link with wrong absolute target rejected
+PASS: './'-prefixed composed escape dies before any payload write
+PASS: cpio-style './Applications' bundle with root dir passes
+PASS: oversized and control-char zip link targets die before write
+PASS: tar fifo hard/special member dies before any write
+PASS: tar in-tree-link hard/special member dies before any write
+PASS: tar composed-link hard/special member dies before any write
+PASS: tar cycle-link hard/special member dies before any write
+PASS: tar dangling-link hard/special member dies before any write
+PASS: duplicate completion/manpage targets die; first artifact stays
+PASS: real xar pkg: ordinary relocatable payload installs
+PASS: pkg scripts component refused, no output bundle
+PASS: pkg distribution component refused, no output bundle
+PASS: pkg plugins component refused, no output bundle
+PASS: pkg nested component refused, no output bundle
+PASS: zip './Applications' shortcut omitted; payload and refusal both kept
+PASS: tar './Applications' shortcut omitted; payload and refusal both kept
+PASS: real 7zz -snl extract: file kept, relative link re-created, shortcut omitted
+PASS: real 7zz -snl dangerous relative link dies before any write
+PASS: native APFS DMG: dirs kept, internal link preserved, shortcut omitted, CLI prints fixture-ok
+all plan.py regression checks passed

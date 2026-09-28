@@ -1,0 +1,31 @@
+{
+  "scope": "synthetic helper replay, not vendor installs",
+  "mode": "selected-tokens",
+  "catalog_sha256": "956ae8a7c698c6abe6ccc9bb642e85d2f8697b9a907f82dad653917080c1433f",
+  "tokens_sha256": "8d8b4171ffefb21ea120740c3495b650106913a1edfbe09d062afe03b2d247fa",
+  "summary": {
+    "pass": 575,
+    "missing-token": 3
+  },
+  "by_system": {
+    "aarch64-darwin": {
+      "pass": 551,
+      "not-eligible": 372,
+      "skip-pkg": 74
+    },
+    "x86_64-linux": {
+      "pass": 24,
+      "not-eligible": 930,
+      "skip-appimage": 43
+    }
+  },
+  "missing_tokens": [
+    "homebrew-app",
+    "crisp",
+    "unsloth"
+  ],
+  "expected_applicable": 575,
+  "processed": 575,
+  "count_check_ok": true,
+  "failures": []
+}

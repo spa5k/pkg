@@ -37,3 +37,11 @@ Homebrew's BSD-2-Clause, whose actual text we preserve in
 sha256 `431d9708f8f5009fe4f5518790e471ad589c23e4350f53404e5620dcc5a5048f`).
 Attribution is also embedded in every generated catalog's `input.license`
 field; do not strip it when regenerating or vendoring data.
+
+## Archive limits
+
+Tar hard links and special files are unsupported. They are refused before
+extraction. ZIP symlink targets are limited to 4,096 bytes. This is not a
+general archive size quota. See the
+[stress-check report](../../../docs/verification/2026-09-29-cask-stress.md)
+for verified formats, regressions, and remaining limits.

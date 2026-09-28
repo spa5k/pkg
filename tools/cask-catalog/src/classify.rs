@@ -265,11 +265,12 @@ fn classify_effective(eff: &Value, system: &str, baseline: &str) -> TargetStatus
     if !platform_supported(tags, system) {
         return excluded("unsupported-platform");
     }
-    // A declared linux requirement scopes the cask away from macOS.
+    // A declared linux requirement scopes the cask away from macOS;
+    // an explicit null clears it, as null clears fields everywhere.
     if system == "aarch64-darwin"
         && eff
             .get("depends_on")
-            .is_some_and(|d| d.get("linux").is_some())
+            .is_some_and(|d| d.get("linux").is_some_and(|v| !v.is_null()))
     {
         return excluded("unsupported-platform");
     }
@@ -335,6 +336,12 @@ fn classify_effective(eff: &Value, system: &str, baseline: &str) -> TargetStatus
         return excluded_with_detail(
             "unsupported-url",
             &format!("scheme is not http/https: {url}"),
+        );
+    }
+    if url.chars().any(|c| c.is_ascii_control()) {
+        return excluded_with_detail(
+            "unsupported-url",
+            &format!("URL contains control characters: {url:?}"),
         );
     }
     let sha = eff.get("sha256").and_then(Value::as_str).unwrap_or("");
@@ -727,6 +734,43 @@ mod tests {
                 }
                 _ => unreachable!(),
             }
+        }
+    }
+
+    #[test]
+    fn null_linux_requirement_clears_the_darwin_exclusion() {
+        // Explicit null clears a requirement everywhere else in the
+        // reader; a null linux requirement must not scope darwin away.
+        let both = ["arm64_sequoia", "x86_64_linux"];
+        let rec = record(&both, &json!({"depends_on": {"linux": null}}));
+        assert_eq!(
+            classify_target(&rec, "aarch64-darwin", BASE).status,
+            "eligible"
+        );
+        // A non-null linux requirement still excludes darwin.
+        let linux_req = record(&both, &json!({"depends_on": {"linux": "true"}}));
+        assert_eq!(
+            classify_target(&linux_req, "aarch64-darwin", BASE)
+                .reason
+                .as_deref(),
+            Some("unsupported-platform")
+        );
+    }
+
+    #[test]
+    fn urls_with_control_characters_are_not_fetchable() {
+        for bad in [
+            "https://v/a\u{1}b",
+            "https://v/a\tb",
+            "https://v/a\u{d}\u{a}b",
+        ] {
+            let rec = record(&["arm64_sequoia"], &json!({"url": bad}));
+            let status = classify_target(&rec, "aarch64-darwin", BASE);
+            assert_eq!(
+                status.reason.as_deref(),
+                Some("unsupported-url"),
+                "{bad:?} must not become a fetchable plan URL"
+            );
         }
     }
 

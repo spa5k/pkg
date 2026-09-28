@@ -71,3 +71,14 @@ Homebrew, or ship the maintainer tool in the client archive.
 - [x] 7.4 Verify actual installer, formula-dependency, cask-dependency, and unknown-token refusals. Verify generation-time minimum constraints and the build-time macOS 26.0 plist refusal. No vendor installer runs.
 - [x] 7.5 Package the client on both systems. The archives contain one client binary, completions, notices, and only client dependency licenses. No generator binary, generated catalog, or generator-only license sets are present.
 - [x] 7.6 Record final coverage, strict client journeys, signed macOS bundles, gzip and native pbzx package fixtures, Linux dynamic linking, archive-path checks, and packaging in the dated verification note. State the limits: metadata eligibility is not universal compatibility, and Linux GUI use was not tested.
+
+## 8. RC-08: Pre-merge cask stress checks
+
+Evidence: [stress report](../../../docs/verification/2026-09-29-cask-stress.md).
+
+- [x] 8.1 Pin a real Homebrew popularity response. Report the top 1,000 tokens without replacing missing records. Check the full catalog and evaluate every eligible derivation without app downloads or import-from-derivation.
+- [x] 8.2 Exercise real catalog plans with tiny synthetic payloads. Separate successful plan execution, package exclusions, skipped formats, and vendor compatibility claims.
+- [x] 8.3 Reproduce and fix generator, launcher-name, and archive defects. Retain focused regressions. Run archive checks on Linux and macOS.
+- [x] 8.4 Adapt relevant, pinned Homebrew test scenarios with license attribution. Execute the adapted cases against this implementation. Record upstream behavior that is outside this project's scope.
+- [x] 8.5 Verify an independent source's metadata on both targets. Record the public-tap extension contract, source identity, collision policy, and unsupported raw Ruby input.
+- [x] 8.6 Record the results, costs, limits, and remaining risks. Run lint and the required project checks. Keep this PR open for review.

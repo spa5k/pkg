@@ -21,7 +21,9 @@ delivers. All items below are implemented as stated.
    and its target is the renamed bundle ending `.app`. A binary source
    may start with `$APPDIR`; its target comes from the metadata rename
    or the source basename. An AppImage source is the metadata name; its
-   target is the derived basename without `.AppImage`. No wrapper is
+   target is the metadata rename or source basename without `.AppImage`.
+   It must be one path component with no ASCII control characters. Spaces
+   and Unicode are preserved. No wrapper is
    guessed; only explicit binary artifacts exist.
 
 4. **Plan shape.** A plan is
