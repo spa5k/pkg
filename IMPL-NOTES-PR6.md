@@ -1,5 +1,10 @@
 # DN-1 PR-6 implementation notes (repeat-run loopback proof)
 
+> **Historical record — superseded.** This note documents the deleted
+> channel engine's repeat-proof work (DN-1). The active design is
+> [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md).
+> The file is kept as research history; it describes no current behavior.
+
 ## Scope
 
 Implements the workflow half of PR6-GROUNDING.md. The mint script landed in

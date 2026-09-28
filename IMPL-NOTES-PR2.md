@@ -1,5 +1,10 @@
 # DN-1 PR-2 implementation notes (hermetic runner hardening)
 
+> **Historical record — superseded.** This note documents the deleted
+> channel engine's CI hardening (DN-1). The active design is
+> [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md).
+> The file is kept as research history; it describes no current behavior.
+
 ## Verdicts from the CI spike (three iterations, runs 33674556472 → 33679126631)
 
 1. **Userns spike (review M7/R17)**: GitHub ubuntu runners BLOCK unprivileged
