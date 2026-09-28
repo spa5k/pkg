@@ -1,0 +1,46 @@
+{
+  "before": {
+    "aarch64-darwin": {
+      "evaluated": 3144,
+      "failedTokens": []
+    },
+    "x86_64-linux": {
+      "evaluated": 160,
+      "failedTokens": [
+        "beaver-notes",
+        "beekeeper-studio",
+        "billy-frontier",
+        "buckets@beta",
+        "bugdom2",
+        "candy-crisis",
+        "cc-switch",
+        "cherry-studio",
+        "clash-mi",
+        "claude-devtools",
+        "cmtrace-open",
+        "codexmonitor",
+        "colour-contrast-analyser",
+        "cro-mag-rally",
+        "esphome-device-builder",
+        "ferdium@nightly",
+        "github-copilot-app",
+        "koodo-reader",
+        "lm-studio",
+        "t3-code",
+        "t3-code@nightly",
+        "unity-hub",
+        "unity-hub@beta"
+      ]
+    }
+  },
+  "after": {
+    "aarch64-darwin": {
+      "evaluated": 3144,
+      "failedTokens": []
+    },
+    "x86_64-linux": {
+      "evaluated": 160,
+      "failedTokens": []
+    }
+  }
+}

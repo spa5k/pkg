@@ -3,7 +3,9 @@
 **OpenSpec is the source of truth.** The active design is
 [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
 with its [design](openspec/changes/simplify-to-native-nix/design.md) and
-[tasks](openspec/changes/simplify-to-native-nix/tasks.md).
+[tasks](openspec/changes/simplify-to-native-nix/tasks.md). The cask source
+redesign is
+[Generate the Cask catalog with a Rust tool](openspec/changes/generate-cask-catalog-with-rust/proposal.md).
 
 ## 1. Before you open a PR
 

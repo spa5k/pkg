@@ -36,12 +36,17 @@ impl CatalogId {
     /// The moving source reference and attribute this identity names.
     ///
     /// This is the one place that knows where each identity form lives;
-    /// every caller derives installables and lookups from it.
+    /// every caller derives installables and lookups from it. Cask tokens
+    /// resolve to the ordinary `packages.<system>.<token>` attribute of the
+    /// casks source, with the token kept as one attribute segment.
     #[must_use]
-    pub fn source_and_attribute(&self, sources: &Sources) -> (String, String) {
+    pub fn source_and_attribute(&self, sources: &Sources, system: &str) -> (String, String) {
         match self {
             Self::Nixpkgs(attr) => (sources.nixpkgs.clone(), attr.clone()),
-            Self::Cask(token) => (sources.casks.clone(), token.clone()),
+            Self::Cask(token) => (
+                sources.casks.clone(),
+                super::cask::package_attribute(system, token),
+            ),
             Self::Explicit {
                 reference,
                 attribute,
@@ -54,8 +59,8 @@ impl CatalogId {
     /// Installation always uses the original moving reference; locking is
     /// native behavior at install time.
     #[must_use]
-    pub fn installable(&self, sources: &Sources) -> String {
-        let (reference, attribute) = self.source_and_attribute(sources);
+    pub fn installable(&self, sources: &Sources, system: &str) -> String {
+        let (reference, attribute) = self.source_and_attribute(sources, system);
         format!("{reference}#{attribute}")
     }
 }
@@ -129,20 +134,19 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
 
 /// Validate a cask token.
 ///
-/// Homebrew tokens may also use `@` (versioned tokens such as
-/// `1password@nightly`) and `.`; refusing them would hide the recorded
-/// exclusion reason for exactly those tokens.
+/// The rule is the generator's token identifier rule
+/// (`[a-z0-9][a-z0-9+._@-]*` without `..` components): `@` versioned
+/// tokens such as `1password-cli@beta` and `+` tokens such as `xournal++`
+/// are real catalog identifiers and must parse, while a token can never
+/// shape the attribute path it installs through.
 fn validate_cask_token(token: &str, prefix: &str) -> Result<(), String> {
     if token.is_empty() {
         return Err(format!("{prefix} needs a nonempty token"));
     }
-    if !token
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '@' | '.'))
-    {
+    if !crate::nix::valid_catalog_token(token) {
         return Err(format!(
             "`{token}` is not a valid cask token; \
-             tokens may use letters, digits, `_`, `-`, `@`, and `.`"
+             tokens may use lowercase letters, digits, `+`, `.`, `_`, `-`, and `@`"
         ));
     }
     Ok(())
@@ -308,15 +312,50 @@ mod tests {
     }
 
     #[test]
-    fn cask_tokens_may_carry_known_extra_characters() {
-        // `@` tokens must parse so their exclusion reason can be shown.
+    fn cask_tokens_follow_the_generated_identifier_rule() {
+        // `@` and `+` tokens are real catalog identifiers and must parse.
         assert_eq!(
-            parse_id("cask:1password@nightly"),
+            parse_id("cask:1password-cli@beta"),
             Ok(ParsedId::Qualified(CatalogId::Cask(String::from(
-                "1password@nightly"
+                "1password-cli@beta"
             ))))
         );
+        assert_eq!(
+            parse_id("cask:xournal++"),
+            Ok(ParsedId::Qualified(CatalogId::Cask(String::from(
+                "xournal++"
+            ))))
+        );
+        // The rule is lowercase: display-case input is refused, and a
+        // token can never smuggle a nested path.
+        assert!(parse_id("cask:Iterm2").is_err());
+        assert!(parse_id("cask:a..b").is_err());
         assert!(parse_id("cask:to ken").is_err());
         assert!(parse_id("cask:").is_err());
+    }
+
+    #[test]
+    fn cask_identities_install_through_the_package_attribute() {
+        let sources = Sources::default();
+        let id = CatalogId::Cask(String::from("iterm2"));
+        let (reference, attribute) = id.source_and_attribute(&sources, "aarch64-darwin");
+        assert_eq!(reference, sources.casks);
+        assert_eq!(attribute, "packages.aarch64-darwin.iterm2");
+        assert_eq!(
+            id.installable(&sources, "aarch64-darwin"),
+            "github:spa5k/pkg/main?dir=nix/casks#packages.aarch64-darwin.iterm2"
+        );
+        // A token with special characters stays one quoted segment.
+        let versioned = CatalogId::Cask(String::from("firefox@beta"));
+        assert_eq!(
+            versioned.installable(&sources, "x86_64-linux"),
+            "github:spa5k/pkg/main?dir=nix/casks#packages.x86_64-linux.\"firefox@beta\""
+        );
+        // Other identity forms ignore the system.
+        let nixpkgs = CatalogId::Nixpkgs(String::from("ripgrep"));
+        assert_eq!(
+            nixpkgs.installable(&sources, "aarch64-darwin"),
+            format!("{}#ripgrep", sources.nixpkgs)
+        );
     }
 }

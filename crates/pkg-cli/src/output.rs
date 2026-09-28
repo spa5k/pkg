@@ -102,7 +102,7 @@ pub fn render_search(rows: &[crate::catalog::SearchResult]) -> String {
     for row in rows {
         let stale = if row.stale { "  [stale cache]" } else { "" };
         let support = match &row.support {
-            Some(crate::catalog::SupportBadge::Supported) => "  [supported]",
+            Some(crate::catalog::SupportBadge::Eligible) => "  [eligible]",
             Some(crate::catalog::SupportBadge::Excluded { reason, .. }) => {
                 &format!("  [excluded: {reason}]")
             }

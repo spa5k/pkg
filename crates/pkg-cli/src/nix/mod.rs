@@ -25,8 +25,9 @@ use std::process::Command;
 
 pub use error::NixError;
 pub use manifest::{
-    CASK_SUPPORT_SCHEMA, CaskExcluded, CaskSourceRef, CaskSupport, CaskSupported, ProfileEntry,
-    SearchMeta, SourceIdentity,
+    CATALOG_INDEX_SCHEMA, CatalogEntry, CatalogGenerator, CatalogIndex, CatalogInput,
+    CatalogSystem, EntryStatus, ProfileEntry, SearchMeta, SourceIdentity, decode_catalog_index,
+    valid_catalog_token,
 };
 use process::{IoMode, Reaped, run_child};
 pub use process::{Outcome, run_direct};
@@ -389,34 +390,19 @@ impl Nix {
         self.capture(&["store", "info"])
     }
 
-    /// Evaluate and decode the cask support manifest for `system`.
+    /// Evaluate and decode the cask catalog index envelope.
     ///
-    /// `reference` must be the same source reference used for native search
-    /// over the casks source, so search results and support exclusions come
-    /// from one source and one locked revision (design D6).
-    pub fn cask_support(&self, reference: &str, system: &str) -> Result<CaskSupport, NixError> {
-        let installable = format!("{reference}#caskSupport.{system}");
-        let support =
-            self.json::<CaskSupport>("cask support manifest", &["eval", "--json", &installable])?;
-        if support.schema != CASK_SUPPORT_SCHEMA {
-            return Err(NixError::Decode {
-                what: "cask support manifest",
-                detail: format!(
-                    "schema {:?} is not the decoded schema {CASK_SUPPORT_SCHEMA:?}",
-                    support.schema
-                ),
-            });
-        }
-        if support.system != system {
-            return Err(NixError::Decode {
-                what: "cask support manifest",
-                detail: format!(
-                    "manifest system {:?} does not match the requested system {system:?}",
-                    support.system
-                ),
-            });
-        }
-        Ok(support)
+    /// `reference` must be the same source reference used for search rows
+    /// over the casks source, so index status and search rows always
+    /// describe one locked revision (design D6). The attribute is generated
+    /// JSON data: evaluating it forces no package derivations, and it is not
+    /// per-system, so a system outside the catalog targets is detected from
+    /// the envelope's own target list instead of a failed attribute probe.
+    pub fn catalog_index(&self, reference: &str) -> Result<CatalogIndex, NixError> {
+        let installable = format!("{reference}#catalogIndex");
+        let value = self
+            .json::<serde_json::Value>("cask catalog index", &["eval", "--json", &installable])?;
+        manifest::decode_catalog_index(&value)
     }
 }
 

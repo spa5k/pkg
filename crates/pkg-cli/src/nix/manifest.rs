@@ -16,8 +16,96 @@ use super::reference::locked_revision;
 /// string `attrPath` and locked `url` fields in that version.
 pub const PROFILE_MANIFEST_VERSION: u64 = 3;
 
-/// The cask support manifest schema this client decodes (design D6).
-pub const CASK_SUPPORT_SCHEMA: &str = "pkg-cask-support/1";
+/// The cask catalog index schema this client decodes (design D6).
+///
+/// The index is the generated `pkg-cask-catalog/2` envelope exposed by the
+/// casks flake as `catalogIndex`. It carries provenance, the target system
+/// list, and per-system status entries without build plans.
+pub const CATALOG_INDEX_SCHEMA: &str = "pkg-cask-catalog/2";
+
+/// The generator provenance recorded in a catalog index.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct CatalogGenerator {
+    /// The generator name, for example `cask-catalog`.
+    pub name: String,
+    /// The generator version.
+    pub version: String,
+}
+
+/// The pinned input provenance recorded in a catalog index.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct CatalogInput {
+    /// The pinned source URL the catalog was generated from.
+    pub url: String,
+    /// The exact pinned revision.
+    pub revision: String,
+    /// The SHA-256 of the pinned input.
+    pub sha256: String,
+    /// The upstream data license attribution.
+    pub license: String,
+}
+
+/// Whether one index entry is installable on its system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryStatus {
+    /// The entry has a generated plan; a metadata claim, not a verified
+    /// build.
+    Eligible,
+    /// The entry is excluded with a recorded reason.
+    Excluded,
+}
+
+/// One per-system status entry of the catalog index.
+///
+/// Null rules (validated in [`decode_catalog_index`]): `name`,
+/// `description`, `version`, and `homepage` are string or null; an eligible
+/// entry has a non-null `kind` and null `reason`/`detail`; an excluded entry
+/// has a null `kind`, a non-null `reason`, and a string-or-null `detail`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct CatalogEntry {
+    /// The cask token; must equal the map key it sits under.
+    pub token: String,
+    /// The upstream name, when the metadata provides one.
+    pub name: Option<String>,
+    /// The upstream description, when the metadata provides one.
+    pub description: Option<String>,
+    /// The effective version for this system, when known.
+    pub version: Option<String>,
+    /// The effective homepage for this system, when known.
+    pub homepage: Option<String>,
+    /// Whether the token is eligible or excluded on this system.
+    pub status: EntryStatus,
+    /// The package kind, for example `app+cli`; present when eligible.
+    pub kind: Option<String>,
+    /// The machine-readable exclusion reason; present when excluded.
+    pub reason: Option<String>,
+    /// Human-readable exclusion detail, when present.
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
+/// One system section of the catalog index.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct CatalogSystem {
+    /// The status entries for this system, keyed by token.
+    pub entries: BTreeMap<String, CatalogEntry>,
+}
+
+/// The decoded `catalogIndex` envelope of the casks flake.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogIndex {
+    /// The generator provenance.
+    pub generator: CatalogGenerator,
+    /// The pinned input provenance.
+    pub input: CatalogInput,
+    /// The target systems the catalog was generated for.
+    pub targets: Vec<String>,
+    /// The declared macOS baseline, for example `15.7.7`.
+    pub macos_baseline: String,
+    /// The per-system status sections.
+    pub systems: BTreeMap<String, CatalogSystem>,
+}
 
 /// One installed profile element decoded from `nix profile list --json`.
 ///
@@ -94,71 +182,6 @@ pub struct SourceIdentity {
     pub revision: Option<String>,
     /// A short human description such as `github:NixOS/nixpkgs`.
     pub display: String,
-}
-
-/// One source record inside the cask support manifest.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-pub struct CaskSourceRef {
-    /// The source URL the record describes.
-    pub url: String,
-    /// The locked revision, when the source provides one.
-    #[serde(default)]
-    pub rev: Option<String>,
-}
-
-/// One supported cask record (schema `pkg-cask-support/1`).
-///
-/// Field types follow the actual generated manifest: `override` is a
-/// boolean, and `version`/`homepage` may be null by flake interface.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-pub struct CaskSupported {
-    /// The cask token.
-    pub token: String,
-    /// The package kind, for example `app` or `app+cli`.
-    pub kind: String,
-    /// The upstream version, when the flake interface provides one.
-    pub version: Option<String>,
-    /// The upstream homepage, when the flake interface provides one.
-    pub homepage: Option<String>,
-    /// The artifact kinds the package provides.
-    #[serde(rename = "artifactKinds")]
-    pub artifact_kinds: Vec<String>,
-    /// Whether an override is applied on top of upstream.
-    #[serde(rename = "override", default)]
-    pub override_applied: bool,
-}
-
-/// One excluded cask record with the exclusion reason.
-///
-/// `version` and `detail` may be null in the actual generated manifest.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-pub struct CaskExcluded {
-    /// The cask token.
-    pub token: String,
-    /// The upstream version that was excluded, when known.
-    pub version: Option<String>,
-    /// A short machine-readable reason.
-    pub reason: String,
-    /// Human-readable detail for the exclusion, when present.
-    #[serde(default)]
-    pub detail: Option<String>,
-}
-
-/// The cask support manifest exported by the casks flake (design D6).
-///
-/// Decoded from `caskSupport.<system>` with schema `pkg-cask-support/1`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-pub struct CaskSupport {
-    /// The manifest schema identifier; must equal [`CASK_SUPPORT_SCHEMA`].
-    pub schema: String,
-    /// The system triple the manifest describes.
-    pub system: String,
-    /// The provenance records for the sources the manifest was built from.
-    pub sources: BTreeMap<String, CaskSourceRef>,
-    /// The casks supported on this system.
-    pub supported: Vec<CaskSupported>,
-    /// The casks excluded on this system, with reasons.
-    pub excluded: Vec<CaskExcluded>,
 }
 
 /// Decode one captured `nix profile list --json` document.
@@ -244,6 +267,179 @@ pub(super) fn decode_source_identity(reference: &str, value: &serde_json::Value)
             display
         },
     }
+}
+
+/// Decode one captured `catalogIndex` envelope.
+///
+/// The schema gate is strict: an envelope whose `schema` is absent or is
+/// not [`CATALOG_INDEX_SCHEMA`] fails naming the schema found and the
+/// schema supported, so an old client meeting a new catalog (or the
+/// reverse) is a clear error instead of a misread. Required provenance
+/// fields and the `systems` map must be present, and every target system
+/// must have exactly one system section.
+///
+/// The envelope is generated protocol data, so a record that breaks the
+/// entry null rules or the token identifier rule fails the decode as a
+/// whole with the token named. Malformed raw Homebrew records are already
+/// isolated by the generator as excluded entries; the client keeps no
+/// second classification or salvage layer.
+pub fn decode_catalog_index(raw: &serde_json::Value) -> Result<CatalogIndex, super::NixError> {
+    let gate = |detail: String| super::NixError::Decode {
+        what: "cask catalog index",
+        detail,
+    };
+    let found = raw.get("schema").and_then(serde_json::Value::as_str);
+    let Some(schema) = found else {
+        return Err(gate(format!(
+            "the index reports no schema; schema {CATALOG_INDEX_SCHEMA:?} is required"
+        )));
+    };
+    if schema != CATALOG_INDEX_SCHEMA {
+        return Err(gate(format!(
+            "index schema {schema:?} is not the decoded schema {CATALOG_INDEX_SCHEMA:?}"
+        )));
+    }
+    let generator: CatalogGenerator = serde_json::from_value(
+        raw.get("generator")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .map_err(|error| gate(format!("generator provenance is invalid: {error}")))?;
+    let input: CatalogInput =
+        serde_json::from_value(raw.get("input").cloned().unwrap_or(serde_json::Value::Null))
+            .map_err(|error| gate(format!("input provenance is invalid: {error}")))?;
+    let Some(targets) = raw.get("targets").and_then(serde_json::Value::as_array) else {
+        return Err(gate(String::from(
+            "the `targets` system list is absent; it must be read before any system data",
+        )));
+    };
+    let targets: Vec<String> = targets
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(ToString::to_string)
+                .ok_or_else(|| gate(String::from("`targets` must be a list of system strings")))
+        })
+        .collect::<Result<_, _>>()?;
+    let Some(macos_baseline) = raw.get("macosBaseline").and_then(serde_json::Value::as_str) else {
+        return Err(gate(String::from(
+            "the declared `macosBaseline` string is absent",
+        )));
+    };
+    let Some(systems_raw) = raw.get("systems").and_then(serde_json::Value::as_object) else {
+        return Err(gate(String::from(
+            "the `systems` map is absent from the index",
+        )));
+    };
+    for target in &targets {
+        if !systems_raw.contains_key(target) {
+            return Err(gate(format!(
+                "target system {target:?} has no `systems` section; \
+             the envelope is inconsistent"
+            )));
+        }
+    }
+    for system in systems_raw.keys() {
+        if !targets.contains(system) {
+            return Err(gate(format!(
+                "`systems` carries {system:?} which is not a declared target"
+            )));
+        }
+    }
+
+    let mut systems = BTreeMap::new();
+    for (system, section) in systems_raw {
+        let entries_raw = section
+            .get("entries")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| gate(format!("system {system:?} has no `entries` map")))?;
+        let mut entries = BTreeMap::new();
+        for (token, record) in entries_raw {
+            let entry = validate_entry(token, record)
+                .map_err(|detail| gate(format!("{system}/{token}: {detail}")))?;
+            entries.insert(token.clone(), entry);
+        }
+        systems.insert(system.clone(), CatalogSystem { entries });
+    }
+    Ok(CatalogIndex {
+        generator,
+        input,
+        targets,
+        macos_baseline: macos_baseline.to_string(),
+        systems,
+    })
+}
+
+/// Validate one index entry record against the token and null rules.
+fn validate_entry(token: &str, record: &serde_json::Value) -> Result<CatalogEntry, String> {
+    let entry: CatalogEntry = serde_json::from_value(record.clone())
+        .map_err(|error| format!("does not follow the schema: {error}"))?;
+    if !valid_catalog_token(token) {
+        return Err(String::from(
+            "the token is not a valid catalog token identifier",
+        ));
+    }
+    if entry.token != token {
+        return Err(format!(
+            "record token {:?} does not match its key {token:?}",
+            entry.token
+        ));
+    }
+    match entry.status {
+        EntryStatus::Eligible => {
+            if entry.kind.is_none() {
+                return Err(String::from(
+                    "an eligible entry must carry a non-null `kind`",
+                ));
+            }
+            if entry.reason.is_some() {
+                return Err(String::from("an eligible entry must carry a null `reason`"));
+            }
+            if entry.detail.is_some() {
+                return Err(String::from("an eligible entry must carry a null `detail`"));
+            }
+        }
+        EntryStatus::Excluded => {
+            if entry.kind.is_some() {
+                return Err(String::from("an excluded entry must carry a null `kind`"));
+            }
+            if entry.reason.is_none() {
+                return Err(String::from(
+                    "an excluded entry must carry a non-null `reason`",
+                ));
+            }
+        }
+    }
+    Ok(entry)
+}
+
+/// Whether `token` is a valid catalog token identifier.
+///
+/// Same rule as the generator: `^[a-z0-9][a-z0-9+._@-]*$` without `..`
+/// path components. `@` and `+` are real Homebrew token characters
+/// (versioned tokens such as `1password-cli@beta`, `xournal++`), so they
+/// must parse and resolve, and a token can never shape the attribute path
+/// it is installed through.
+#[must_use]
+pub fn valid_catalog_token(token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let mut previous_dot = false;
+    for (index, c) in token.chars().enumerate() {
+        let allowed = c.is_ascii_lowercase()
+            || c.is_ascii_digit()
+            || matches!(c, '+' | '.' | '_' | '-' | '@');
+        if index == 0 && !(c.is_ascii_lowercase() || c.is_ascii_digit()) {
+            return false;
+        }
+        if !allowed || (previous_dot && c == '.') {
+            return false;
+        }
+        previous_dot = c == '.';
+    }
+    true
 }
 
 #[cfg(test)]
@@ -354,68 +550,187 @@ mod tests {
         assert!(decode_profile_manifest(&element_without_fields).is_err());
     }
 
-    /// Decodes the actual generated cask support manifest fixture
-    /// (Determinate 3.22.1 / Nix 2.35.2 host output), not an invented shape.
+    /// Decodes the fixture: an actual generated-catalog slice (revision
+    /// `245947c0`, schema `pkg-cask-catalog/2`) projected to the flake
+    /// `catalogIndex` shape by the same rule `nix/casks/flake.nix` uses.
+    /// Values are real generated data, not invented examples.
     #[test]
-    fn decodes_the_real_cask_support_manifest_fixture() {
-        let manifest = include_str!("../../tests/fixtures/cask-support.json");
-        let support: CaskSupport = serde_json::from_str(manifest).expect("decodes real fixture");
-        assert_eq!(support.schema, CASK_SUPPORT_SCHEMA);
-        assert_eq!(support.system, "aarch64-darwin");
-        assert_eq!(support.supported.len(), 3);
-        assert_eq!(support.excluded.len(), 5);
-
-        let raycast = &support.excluded[4];
-        assert_eq!(raycast.token, "raycast");
-        assert_eq!(raycast.reason, "minimum-os");
-        // A real on-device exclusion detail; it is a non-null string here.
-        assert!(
-            raycast
-                .detail
-                .as_deref()
-                .is_some_and(|d| d.contains("LSMinimumSystemVersion"))
-        );
-        assert_eq!(raycast.version.as_deref(), Some("2.0.5.0"));
-
-        let iterm2 = &support.supported[0];
-        assert_eq!(iterm2.token, "iterm2");
-        assert_eq!(iterm2.kind, "app");
-        assert!(!iterm2.override_applied, "override is a boolean");
-        assert_eq!(iterm2.version.as_deref(), Some("3.6.11"));
-        assert!(
-            iterm2
-                .homepage
-                .as_deref()
-                .is_some_and(|url| url.starts_with("https://"))
-        );
-        assert!(iterm2.artifact_kinds.contains(&String::from("app")));
-
-        let cursor = &support.supported[2];
-        assert_eq!(cursor.token, "cursor");
-        assert!(cursor.override_applied, "cursor applies an override");
-        // Version carries the appended source revision in the real manifest.
-        assert!(cursor.version.as_deref().is_some_and(|v| v.contains(',')));
-
-        let zoom = &support.excluded[0];
-        assert_eq!(zoom.token, "zoom");
-        assert_eq!(zoom.reason, "native-installer");
-        assert_eq!(zoom.detail, None, "excluded detail can be null");
-        assert_eq!(zoom.version.as_deref(), Some("7.1.5.84650"));
-
-        let nightly = &support.excluded[3];
-        assert_eq!(nightly.token, "1password@nightly");
-        assert_eq!(nightly.version.as_deref(), Some("latest"));
-
-        let brew_nix = &support.sources["brew-nix"];
+    fn decodes_the_actual_catalog_index_slice() {
+        let manifest = include_str!("../../tests/fixtures/catalog-index.json");
+        let raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
+        let index = decode_catalog_index(&raw).expect("decodes actual slice");
+        assert_eq!(index.generator.name, "cask-catalog");
+        assert_eq!(index.generator.version, "0.1.0");
         assert_eq!(
-            brew_nix.rev.as_deref(),
-            Some("16131ae4126c54b1502aa7eaf6573d7fbf16b656")
+            index.input.revision,
+            "245947c0b920cbe83f4003bb7c6be737352c8314"
         );
-        assert!(
-            brew_nix
-                .url
-                .ends_with("16131ae4126c54b1502aa7eaf6573d7fbf16b656")
+        assert_eq!(
+            index.input.sha256,
+            "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251"
         );
+        assert_eq!(index.input.license, "BSD-2-Clause (Homebrew Cask data)");
+        assert_eq!(index.targets, ["aarch64-darwin", "x86_64-linux"]);
+        assert_eq!(index.macos_baseline, "15.7.7");
+
+        let macos = &index.systems["aarch64-darwin"].entries;
+        let iterm2 = &macos["iterm2"];
+        assert_eq!(iterm2.status, EntryStatus::Eligible);
+        assert_eq!(iterm2.kind.as_deref(), Some("app"));
+        assert_eq!(iterm2.version.as_deref(), Some("3.6.11"));
+        assert_eq!(iterm2.name.as_deref(), Some("iTerm2"));
+        // Special token characters are real identifiers in the catalog.
+        assert_eq!(macos["1password@7"].status, EntryStatus::Eligible);
+        assert_eq!(macos["4k-video-downloader+"].status, EntryStatus::Eligible);
+        // One token can be eligible on one target and excluded on another,
+        // with a target-effective version that differs from the entry.
+        let cursor_linux = &index.systems["x86_64-linux"].entries["cursor"];
+        assert_eq!(cursor_linux.status, EntryStatus::Eligible);
+        assert_eq!(cursor_linux.kind.as_deref(), Some("appimage"));
+        let raycast_mac = &macos["raycast"];
+        assert_eq!(raycast_mac.status, EntryStatus::Eligible);
+        assert_eq!(raycast_mac.version.as_deref(), Some("1.104.25"));
+        let raycast_linux = &index.systems["x86_64-linux"].entries["raycast"];
+        assert_eq!(raycast_linux.status, EntryStatus::Excluded);
+        assert_eq!(
+            raycast_linux.reason.as_deref(),
+            Some("unsupported-platform")
+        );
+        // The Linux variation sets `version` to null; Nix `or` does not
+        // coalesce a present null to the base value, so the real index
+        // carries null here — the fixture must match that exactly.
+        assert_eq!(raycast_linux.version, None);
+        // Excluded records carry their generated reason; detail stays
+        // string-or-null.
+        let zoom = &macos["zoom"];
+        assert_eq!(zoom.status, EntryStatus::Excluded);
+        assert_eq!(zoom.reason.as_deref(), Some("installer-script"));
+        assert_eq!(zoom.kind, None);
+        let firefox = &macos["firefox"];
+        assert_eq!(firefox.reason.as_deref(), Some("unsupported-artifact"));
+        // The Linux lane that was probed for real is eligible here.
+        let koreader = &index.systems["x86_64-linux"].entries["koreader"];
+        assert_eq!(koreader.status, EntryStatus::Eligible);
+        assert_eq!(koreader.version.as_deref(), Some("2026.07.1"));
+    }
+
+    /// Nullable metadata is part of the protocol: a synthetic minimal
+    /// record proves null name/description/version/homepage decode without
+    /// inventing values (the real slice carries non-null strings).
+    #[test]
+    fn nullable_metadata_stays_null_in_decode() {
+        let raw: serde_json::Value = serde_json::json!({
+            "schema": CATALOG_INDEX_SCHEMA,
+            "generator": {"name": "cask-catalog", "version": "0.1.0"},
+            "input": {"url": "u", "revision": "245947c0b920cbe83f4003bb7c6be737352c8314",
+                       "sha256": "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251",
+                       "license": "BSD-2-Clause (Homebrew Cask data)"},
+            "targets": ["x86_64-linux"],
+            "macosBaseline": "15.7.7",
+            "systems": {"x86_64-linux": {"entries": {
+                "bare": {"token": "bare", "name": null, "description": null,
+                          "version": null, "homepage": null,
+                          "status": "eligible", "kind": "binary",
+                          "reason": null, "detail": null}}}}
+        });
+        let index = decode_catalog_index(&raw).expect("decodes nullable record");
+        let bare = &index.systems["x86_64-linux"].entries["bare"];
+        assert_eq!(bare.name, None);
+        assert_eq!(bare.description, None);
+        assert_eq!(bare.version, None);
+        assert_eq!(bare.homepage, None);
+        assert_eq!(bare.status, EntryStatus::Eligible);
+    }
+
+    /// The schema gate names the schema found and the schema supported, so a
+    /// future catalog (or an old envelope) is a clear error, never a misread.
+    #[test]
+    fn catalog_index_schema_gate_names_both_schemas() {
+        let manifest = include_str!("../../tests/fixtures/catalog-index.json");
+        let mut raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
+        raw["schema"] = serde_json::json!("pkg-cask-catalog/3");
+        let error = decode_catalog_index(&raw).expect_err("future schema is refused");
+        let text = error.to_string();
+        assert!(text.contains("pkg-cask-catalog/3"), "{text}");
+        assert!(text.contains(CATALOG_INDEX_SCHEMA), "{text}");
+        raw.as_object_mut().unwrap().remove("schema");
+        let error = decode_catalog_index(&raw).expect_err("missing schema is refused");
+        assert!(error.to_string().contains("no schema"));
+    }
+
+    /// A record that breaks the null rules or the token rule fails the
+    /// whole decode with the token named; a missing target section or an
+    /// undeclared system section fails the envelope as inconsistent.
+    #[test]
+    fn broken_records_fail_the_whole_decode_named() {
+        let manifest = include_str!("../../tests/fixtures/catalog-index.json");
+        let mut raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
+        // An eligible entry without a kind breaks the null rules.
+        raw["systems"]["x86_64-linux"]["entries"]["koreader"]["kind"] = serde_json::Value::Null;
+        let error = decode_catalog_index(&raw).expect_err("broken record fails the decode");
+        let text = error.to_string();
+        assert!(text.contains("koreader"), "{text}");
+        assert!(text.contains("kind"), "{text}");
+
+        // A record token that does not match its key fails the decode.
+        let mut mismatched = raw.clone();
+        mismatched["systems"]["x86_64-linux"]["entries"]["koreader"]["token"] =
+            serde_json::json!("other-token");
+        let error = decode_catalog_index(&mismatched).expect_err("token mismatch fails");
+        assert!(error.to_string().contains("other-token"));
+
+        // A token that is not a valid identifier cannot be a map key.
+        let mut keyed = raw.clone();
+        keyed["systems"]["x86_64-linux"]["entries"]["Iterm2"] =
+            keyed["systems"]["x86_64-linux"]["entries"]["koreader"].clone();
+        let error = decode_catalog_index(&keyed).expect_err("invalid token key fails");
+        assert!(error.to_string().contains("Iterm2"));
+
+        // A declared target without a system section is an inconsistent
+        // envelope and fails as a whole.
+        let mut broken = raw.clone();
+        broken["systems"]
+            .as_object_mut()
+            .unwrap()
+            .remove("aarch64-darwin");
+        let error = decode_catalog_index(&broken).expect_err("missing target section");
+        assert!(error.to_string().contains("aarch64-darwin"));
+        // An undeclared system section fails too.
+        let mut extra = raw.clone();
+        extra["systems"]["x86_64-darwin"] = extra["systems"]["x86_64-linux"].clone();
+        let error = decode_catalog_index(&extra).expect_err("undeclared system section");
+        assert!(error.to_string().contains("x86_64-darwin"));
+    }
+
+    /// The token rule matches the generator's identifier rule, including
+    /// the real `@` versioned tokens and `+` tokens of the snapshot.
+    #[test]
+    fn catalog_tokens_follow_the_generated_identifier_rule() {
+        for token in [
+            "a",
+            "iterm2",
+            "1password-cli",
+            "1password-cli@beta",
+            "1password@nightly",
+            "xournal++",
+            "4k-video-downloader+",
+            "telegram+bot",
+            "v2.0",
+        ] {
+            assert!(valid_catalog_token(token), "{token}");
+        }
+        for token in [
+            "",
+            "Iterm2",
+            "-lead",
+            ".lead",
+            "a..b",
+            "a/b",
+            "to ken",
+            "1password cli",
+        ] {
+            assert!(!valid_catalog_token(token), "{token}");
+        }
     }
 
     /// Captured `nix flake metadata --json` for a moving `git+file`

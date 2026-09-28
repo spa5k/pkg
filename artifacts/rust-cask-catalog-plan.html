@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pkg — Rust Cask Catalog Plan</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: Georgia, "Times New Roman", serif; line-height: 1.55;
+         max-width: 60rem; margin: 0 auto; padding: 1rem 1.5rem 4rem; }
+  h1, h2, h3 { font-family: "Helvetica Neue", Arial, sans-serif; line-height: 1.2; }
+  h1 { border-bottom: 3px solid #444; padding-bottom: .4rem; }
+  h2 { border-bottom: 1px solid #bbb; padding-bottom: .2rem; margin-top: 2.2rem; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .92em; }
+  code { background: rgba(127,127,127,.14); padding: .08em .3em; border-radius: .25em; }
+  pre { background: rgba(127,127,127,.12); padding: .8rem 1rem; border-radius: .4em;
+        overflow-x: auto; white-space: pre; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #999; padding: .35rem .6rem; text-align: left;
+           vertical-align: top; }
+  th { background: rgba(127,127,127,.15); font-family: Arial, sans-serif; }
+  details { border: 1px solid #999; border-radius: .4em; padding: .4rem .8rem;
+            margin: .8rem 0; }
+  summary { cursor: pointer; font-weight: bold; font-family: Arial, sans-serif; }
+  nav ol { columns: 2; }
+  .ok  { color: #0a6b2d; font-weight: bold; }
+  .no  { color: #a11; font-weight: bold; }
+  .warn{ color: #946200; font-weight: bold; }
+  figure { margin: 1rem 0; }
+  figcaption { font-size: .9em; color: #666; }
+  .flow { font-family: Menlo, Consolas, monospace; font-size: .85em; }
+  .colophon { border-top: 1px solid #999; margin-top: 2rem; padding-top: .8rem; }
+  a { color: #0366d6; } a:visited { color: #6a32b7; }
+</style>
+</head>
+<body>
+
+<h1>Rust Cask Catalog — End-to-End Plan</h1>
+
+<p>Product: <strong>pkg</strong>. Change: <code>generate-cask-catalog-with-rust</code>.
+Date: 28 September 2026. This page is a self-contained, offline plan.
+It uses plain, short English. It carries no external scripts, fonts,
+or assets.</p>
+
+<p><strong>Documents.</strong> OpenSpec is authoritative:
+<a href="../openspec/changes/generate-cask-catalog-with-rust/proposal.md">proposal</a> ·
+<a href="../openspec/changes/generate-cask-catalog-with-rust/design.md">design</a> ·
+<a href="../openspec/changes/generate-cask-catalog-with-rust/contract.md">contract</a> ·
+<a href="../openspec/changes/generate-cask-catalog-with-rust/tasks.md">tasks</a>.
+Readable markdown plan:
+<a href="../docs/plans/rust-cask-catalog.md">docs/plans/rust-cask-catalog.md</a>.
+Evidence:
+<a href="../docs/verification/2026-09-28-rust-cask-catalog.md">verification note (2026-09-28)</a>.</p>
+
+<nav>
+<h2>Contents</h2>
+<ol>
+  <li><a href="#goal">Goal</a></li>
+  <li><a href="#architecture">Architecture flow</a></li>
+  <li><a href="#ownership">Ownership table</a></li>
+  <li><a href="#contracts">Exact contracts</a></li>
+  <li><a href="#scope">Scope and deletions</a></li>
+  <li><a href="#artifacts">Artifact matrix</a></li>
+  <li><a href="#build">Build path and the safe .pkg boundary</a></li>
+  <li><a href="#client">Client lifecycle</a></li>
+  <li><a href="#update">Catalog update procedure</a></li>
+  <li><a href="#phases">Implementation phases and acceptance</a></li>
+  <li><a href="#evidence">Verified evidence vs remaining limits</a></li>
+</ol>
+</nav>
+
+<h2 id="goal">1. Goal</h2>
+<p>Turn one pinned Homebrew Cask snapshot into native Nix packages on
+two systems: <code>aarch64-darwin</code> and <code>x86_64-linux</code>.
+No Brew. No Ruby. No token allowlists. No hosted API. No scheduler.
+No auto-updater. Breaking changes are allowed. There is no
+compatibility layer, because the product has not launched.</p>
+
+<h2 id="architecture">2. Architecture flow</h2>
+<figure>
+<pre class="flow">brew-api snapshot (exact revision, SHA-256 pinned)
+        │  cask-catalog fetch      (maintainer, network)
+        ▼
+nix/casks/catalog/input.json      (the ONE pin: url, revision, sha256, license)
+        │  cask-catalog generate  (maintainer, offline, deterministic)
+        ▼
+nix/casks/catalog/catalog.json    (schema pkg-cask-catalog/2; the ONE committed document)
+        │  builtins.fromJSON      (Nix, plain data; no IFD, no compiler at eval)
+        ▼
+nix/casks flake ── packages.&lt;system&gt;.&lt;token&gt;   (lazy: one token, one plan)
+        │                ├─ catalogIndex      (client search and status)
+        │                └─ catalogStatus     (provenance + counts)
+        │  generic builders (builders.nix) + stdlib-Python build-time helper (plan.py)
+        ▼
+pkg client ── search / info / install / update / upgrade / rollback / remove / apps sync
+</pre>
+<figcaption>Generation runs in Rust at catalog-update time. The Nix
+build stays generic Nix plus a small build-time Python helper. The
+client converts nothing per install.</figcaption></figure>
+
+<p><strong>Why two tools.</strong> Generation holds complex logic:
+variation merge, eligibility, typed plans. Rust gives an offline,
+unit-testable binary under the workspace lint policy. The Nix build
+must stay data-driven and generic, so a small build-time helper written
+in Python (standard library only) takes the plan as JSON and does the
+extraction steps. The helper is build machinery. No Python runs on the
+client at any time.</p>
+
+<details>
+<summary>Input pin and upstream attribution</summary>
+<ul>
+  <li>Snapshot: brew-api <code>cask.json</code>, revision
+      <code>245947c0b920cbe83f4003bb7c6be737352c8314</code>, SHA-256
+      <code>1f19ecee…29251</code> (full hash in the pin file).
+      Data license: BSD-2-Clause (Homebrew Cask data).</li>
+  <li>Builder logic ported from brew-nix at
+      <code>16131ae4126c54b1502aa7eaf6573d7fbf16b656</code> (MIT);
+      license kept in <code>nix/casks/lib/README.md</code>.</li>
+  <li>nixpkgs input:
+      <code>github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f</code>.</li>
+  <li>The pin is written once. No consumer re-pins raw metadata. This
+      change's work did not modify the pin.</li>
+</ul>
+</details>
+
+<h2 id="ownership">3. Ownership table</h2>
+<table>
+<thead><tr><th>Piece</th><th>Location</th><th>Owner / status</th></tr></thead>
+<tbody>
+<tr><td>Generator</td><td><code>tools/cask-catalog</code> (Rust workspace member; never shipped)</td><td>This change — <span class="ok">implemented, tested</span></td></tr>
+<tr><td>Builders + build helper</td><td><code>nix/casks/lib/builders.nix</code>, <code>plan.py</code></td><td>This change — <span class="ok">implemented and verified</span></td></tr>
+<tr><td>Generated data + pin</td><td><code>nix/casks/catalog/</code></td><td>Maintainer regeneration, reviewed commits</td></tr>
+<tr><td>Flake outputs</td><td><code>nix/casks/flake.nix</code> (only input: nixpkgs)</td><td>Nix owner — <span class="ok">implemented</span></td></tr>
+<tr><td>Client</td><td><code>crates/pkg-cli</code></td><td>Client owners — <span class="ok">implemented, journeys verified on macOS and Linux</span></td></tr>
+<tr><td>Release packaging</td><td><code>tools/release/package_client.sh</code></td><td>RC-01 — <span class="ok">verified on macOS and Linux</span></td></tr>
+<tr><td>Integration, final counts, final PR</td><td>—</td><td>Parent</td></tr>
+</tbody>
+</table>
+
+<h2 id="contracts">4. Exact contracts</h2>
+<p>One committed document: <code>catalog.json</code>, schema
+<code>pkg-cask-catalog/2</code>. Envelope fields:
+<code>schema</code>, <code>generator{name,version}</code>,
+<code>input{url,revision,sha256,license}</code>, <code>targets</code>
+(<code>aarch64-darwin</code>, <code>x86_64-linux</code>),
+<code>macosBaseline:"15.7.7"</code>, and <code>entries</code> keyed by
+token. Provenance carries no field-coverage data; the coverage summary
+prints to the terminal and lands in the dated verification note.</p>
+
+<p>Every entry carries a required <code>token</code> string, plus <code>name</code>,
+<code>description</code>, <code>version</code>, <code>homepage</code>
+(each string or null) and a <code>targets</code> map. A target record
+carries <code>status</code> (<code>eligible</code> or
+<code>excluded</code>), <code>kind</code>, <code>reason</code>,
+<code>detail</code>, effective <code>version</code> and
+<code>homepage</code>, and <code>plan</code>. Eligible ⇒ kind string,
+null reason, null detail, and a plan. Excluded ⇒ null kind, a reason
+code, a nullable detail, and a null plan. Every target system is
+present for every valid token. A token absent from <code>entries</code>
+is unknown — never eligible.</p>
+
+<details open>
+<summary>Valid example (real shape, abridged URLs)</summary>
+<pre>{
+  "schema": "pkg-cask-catalog/2",
+  "generator": { "name": "cask-catalog", "version": "0.1.0" },
+  "input": { "url": "https://raw.../245947c0/cask.json",
+             "revision": "245947c0b920cbe83f4003bb7c6be737352c8314",
+             "sha256": "1f19ecee…", "license": "BSD-2-Clause (Homebrew Cask data)" },
+  "targets": ["aarch64-darwin", "x86_64-linux"],
+  "macosBaseline": "15.7.7",
+  "entries": {
+    "cursor": {
+      "token": "cursor", "name": "Cursor", "description": "AI-first IDE",
+      "version": "3.17.19", "homepage": "https://cursor.com",
+      "targets": {
+        "aarch64-darwin": {
+          "status": "eligible", "kind": "app+cli", "reason": null,
+          "detail": null, "version": "3.17.19", "homepage": "https://cursor.com",
+          "plan": {
+            "source": { "url": "https://down…/Cursor.dmg", "sha256": "…" },
+            "archive": { "kind": "auto" },
+            "artifacts": [
+              { "kind": "app", "source": "Cursor.app", "target": "Cursor.app" },
+              { "kind": "binary",
+                "source": "$APPDIR/Cursor.app/Contents/Resources/app/bin/cursor",
+                "target": "cursor" }
+            ],
+            "minMacos": null
+          }
+        },
+        "x86_64-linux": {
+          "status": "eligible", "kind": "appimage", "reason": null,
+          "detail": null, "version": "3.17.19", "homepage": "https://cursor.com",
+          "plan": {
+            "source": { "url": "https://down…/Cursor-x64.AppImage", "sha256": "…" },
+            "archive": { "kind": "appimage" },
+            "artifacts": [
+              { "kind": "appimage", "source": "cursor.AppImage", "target": "cursor" }
+            ],
+            "minMacos": null
+          }
+        }
+      }
+    },
+    "zoom": {
+      "token": "zoom", "name": "Zoom", "description": null,
+      "version": null, "homepage": null,
+      "targets": {
+        "aarch64-darwin": { "status": "excluded", "kind": null,
+          "reason": "installer-script", "detail": null,
+          "version": null, "homepage": null, "plan": null },
+        "x86_64-linux": { "status": "excluded", "kind": null,
+          "reason": "unsupported-platform", "detail": null,
+          "version": null, "homepage": null, "plan": null }
+      }
+    }
+  }
+}</pre>
+</details>
+
+<details>
+<summary>Reason codes (bounded; exactly what the generator emits)</summary>
+<p><code>installer-script</code>, <code>unsupported-artifact</code>,
+<code>unsupported-container</code>,
+<code>no-installable-artifact</code>, <code>missing-url</code>,
+<code>missing-checksum</code>, <code>minimum-os</code>,
+<code>unsupported-platform</code>, <code>arch-unsupported</code>,
+<code>disabled</code>, <code>deprecated</code>,
+<code>formula-dependency</code>,
+<code>cask-dependency-integration</code>,
+<code>unsupported-download-spec</code>,
+<code>malformed-record</code>. There is no
+<code>native-installer</code> code.</p>
+</details>
+
+<details>
+<summary>Failure model: one bad record vs a corrupt document</summary>
+<ul>
+  <li><strong>Raw malformed record</strong> (missing field, bad path,
+      unknown kind): isolated. That token is excluded with a reason.
+      The catalog still generates. Search over the index returns every
+      other row.</li>
+  <li><strong>Corrupt generated index</strong> (wrong schema, broken
+      JSON): the client rejects the whole document with an error naming
+      the schema found and the schema supported. There is no second
+      client-side classifier and no partial read.</li>
+  <li><strong>Whole-catalog integrity</strong> (generator, fails
+      before any output is replaced): duplicate tokens; a token that is
+      not a usable key; pin hash mismatch; snapshot root not a nonempty
+      JSON array; snapshot where no record carries
+      <code>supported_platforms</code>. There is no "conflicting
+      versions" check — wholesale variation replacement makes conflicts
+      impossible — and no generator schema self-check.</li>
+</ul>
+</details>
+
+<p><strong>OS support is collected, not inferred.</strong> The
+generator reads the actual target list and explicit constraints:
+<code>supported_platforms</code> membership (exact tags
+<code>arm64_sequoia</code>, <code>x86_64_linux</code>) and
+<code>depends_on</code> OS/arch entries. Variation keys and artifact
+kinds are never OS evidence.</p>
+
+<h2 id="scope">5. Scope and deletions</h2>
+<p><strong>In.</strong> macOS app bundles with CLI paths, completions,
+and manpages; pure-payload <code>.pkg</code> under the structural rule
+(build path, section 7); Linux binaries through autoPatchelf with a
+bounded runtime-library closure; AppImages through
+<code>appimageTools.wrapType2</code>.</p>
+<p><strong>Out.</strong> No dependency graph, no closure expansion, no
+cycle handling: records with formula or cask dependencies are excluded
+with recorded reasons and installs stay single-package. No fonts, no
+services, no drivers, no privileged installers, no formula bottles.
+No hosted API, no scheduler, no auto-updater.</p>
+<p><strong>Deleted.</strong> The brew-nix flake input; curated token
+lists and overrides; client <code>CASK_SYSTEM</code>,
+<code>casks_supported_on</code>, and the
+<code>pkg-cask-support/1</code> decode path with its fixture. Abandoned
+draft scope (dependency graphs, per-package files) is removed from the
+plan, superseded by the binding contract.</p>
+
+<h2 id="artifacts">6. Artifact matrix</h2>
+<table>
+<thead><tr><th>Path</th><th>Kind</th><th>Committed?</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>nix/casks/catalog/input.json</code></td><td>Pin</td><td>Yes</td><td>url, revision, sha256, data license</td></tr>
+<tr><td><code>nix/casks/catalog/catalog.json</code></td><td>Generated data</td><td>Yes</td><td>The one document; byte-identical on regeneration</td></tr>
+<tr><td><code>tools/cask-catalog</code></td><td>Rust binary</td><td>Source only</td><td>Maintainer tool; never in the client archive</td></tr>
+<tr><td><code>nix/casks/lib/builders.nix</code></td><td>Nix builders</td><td>Yes</td><td>Generic; data-driven</td></tr>
+<tr><td><code>nix/casks/lib/plan.py</code></td><td>Build helper</td><td>Yes</td><td>Python stdlib only; build-time only</td></tr>
+<tr><td><code>nix/casks/lib/README.md</code></td><td>Attribution</td><td>Yes</td><td>brew-nix MIT, ported revision, data license</td></tr>
+<tr><td>flake outputs</td><td>API</td><td>—</td><td><code>packages</code>, <code>catalogIndex</code>, <code>catalogStatus</code></td></tr>
+</tbody>
+</table>
+
+<h2 id="build">7. Build path and the safe .pkg boundary</h2>
+<p><strong>Generic path.</strong> <code>fetchurl</code> fetches the
+pinned URL and hash. The helper unpacks with pre-write validation:
+member names and symlink targets are checked before any write;
+duplicates and conflicts are rejected; zip/tar use stdlib extraction
+with realpath checks; xar/cpio go through libarchive secure
+extraction; 7z/DMG extract regular files only, then links are
+re-created after validation. Artifacts are placed, then a post-install
+audit resolves every output link. macOS bundles stay byte-identical:
+no strip, no shebang patching — signatures survive.</p>
+<p><strong>.pkg boundary (structural, not a token list).</strong> The
+build accepts only relocatable app-bundle layouts: a payload
+<code>Applications</code> directory of <code>.app</code> bundles, a
+top-level <code>.app</code>, or a bare <code>Contents</code> directory
+rebuilt as a bundle from its <code>Info.plist</code>
+<code>CFBundleName</code>. Plain files and any other shape fail the
+build naming the component. The build rejects <code>Scripts</code>, a
+<code>Distribution</code> stanza (choice-requiring installers are
+unsupported), nested component pkgs, plugins, and system locations
+(Library/System files, launchd services, kexts, privileged helpers).
+Essential payload is never silently dropped. Nothing runs
+<code>/usr/sbin/installer</code> or any privileged installer.</p>
+<p><strong>Resolved 2026-09-28.</strong> Twelve pkg records whose
+upstream <code>Distribution</code> requires choices are excluded at
+generation as <code>installer-script</code>;
+<code>meta-quest-remote-desktop</code> is excluded as
+<code>unsupported-container</code>. The final review also made
+malformed dependency/option/variation shapes strict, rejects
+duplicate artifact targets, and validates macOS constraint shapes on
+all targets while baseline comparison and <code>minMacos</code> apply
+only to <code>aarch64-darwin</code>, never Linux.</p>
+
+<h2 id="client">8. Client lifecycle</h2>
+<p>Search reads <code>catalogIndex</code> once per query (existing
+cache and stale rules apply) and filters locally with the declared
+<code>regex</code> crate — Rust regex grammar, documented as such; the
+Nixpkgs lane passes patterns to <code>nix search</code> unchanged. The
+client reads <code>targets</code> before any per-system data, so an
+untargeted system is platform-skipped without probing attributes.
+<code>info</code> and <code>install</code> resolve
+<code>packages.&lt;system&gt;.&lt;token&gt;</code>; excluded tokens are
+refused with their recorded reason; unknown tokens are refused as
+unknown. Installs keep the original moving reference, so native
+upgrade, rollback, removal, and launcher sync behave like every other
+package. Homebrew cleanup hooks (<code>zap</code>,
+<code>uninstall</code>) never run.</p>
+
+<h2 id="update">9. Catalog update procedure</h2>
+<p>Maintainer commands, copy and run from the repository root:</p>
+<pre>cargo run -p cask-catalog -- fetch \
+  --revision 245947c0b920cbe83f4003bb7c6be737352c8314 \
+  --sha256 1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251 \
+  --pin nix/casks/catalog/input.json
+
+cargo run -p cask-catalog -- generate \
+  --pin nix/casks/catalog/input.json \
+  --out-dir nix/casks/catalog
+
+git diff --stat nix/casks/catalog/   # review, then commit pin and catalog together</pre>
+<p>Actual flags: <code>fetch --revision --repo --sha256 --cache-dir
+--pin</code>; <code>generate --pin --input --cache-dir
+--out-dir</code> (defaults shown above). Regeneration from the
+committed pin must be byte-identical; a diff means drift. CI runs the same check on catalog changes.</p>
+
+<h2 id="phases">10. Implementation phases and acceptance</h2>
+<table>
+<thead><tr><th>Phase</th><th>Content</th><th>Acceptance</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>RC-01 Scaffold</td><td>Workspace member; packaging isolation; attribution; CI regeneration job</td><td>Whole-workspace lint/tests green; archive excludes the generator; attribution findable</td><td><span class="ok">Implemented and locally verified</span></td></tr>
+<tr><td>RC-02 Generator</td><td>fetch/generate; schema gate; variation merge; eligibility; typed plans; integrity</td><td>Focused tests per seam; byte-identical output; fail-closed paths</td><td><span class="ok">Implemented and locally verified</span></td></tr>
+<tr><td>RC-03 Data + macOS source</td><td>Committed catalog; flake outputs; generic builders; pkg rule; plist check</td><td>IFD-free eval; real app+CLI build; fixtures reject scripts/system payloads</td><td><span class="ok">Implemented and locally verified</span></td></tr>
+<tr><td>RC-04 Linux</td><td>buildBinary; buildAppImage; dependency exclusion; lazy isolation</td><td>Real binary runs; real AppImage runs; exclusion reasons shown</td><td><span class="ok">Implemented and locally verified</span></td></tr>
+<tr><td>RC-05 Client</td><td>Envelope decode; search lane; gates; lifecycle unchanged</td><td>Full macOS journey green; refusals honest</td><td><span class="ok">Implemented and locally verified</span></td></tr>
+<tr><td>RC-06 Removal + docs</td><td>Delete brew-nix input, old decode, old docs</td><td>No old references; linkcheck green</td><td><span class="ok">Implemented and locally verified</span></td></tr>
+<tr><td>RC-07 Evidence</td><td>Coverage; real journeys; packaging integrity; honest limits</td><td>Recorded with hosts, pins, outcomes</td><td><span class="ok">Implemented and locally verified</span></td></tr>
+</tbody>
+</table>
+<p>Per-task truth with evidence links lives in the
+<a href="../openspec/changes/generate-cask-catalog-with-rust/tasks.md">tasks file</a>.
+Only implemented and verified items are checked there.</p>
+
+<h2 id="evidence">11. Verified evidence vs remaining limits</h2>
+<p>Full record: <a href="../docs/verification/2026-09-28-rust-cask-catalog.md">docs/verification/2026-09-28-rust-cask-catalog.md</a>.
+Summary only; do not copy counts elsewhere.</p>
+<table>
+<thead><tr><th>Item</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>Generator + client suites (81 tests: 35+1 generator, 36+9 client), fmt, clippy, doc warnings, deny, docs links, OpenSpec strict</td><td class="ok">Passed</td></tr>
+<tr><td>Byte-identical regeneration from the committed pin</td><td class="ok">Passed</td></tr>
+<tr><td>catalogIndex and catalogStatus evaluate, 7709 records each, IFD disabled</td><td class="ok">Passed</td></tr>
+<tr><td>Coverage at this date: 3144 eligible darwin (4565 excluded), 160 eligible linux (7549 excluded); installer-script 141, unsupported-container 12</td><td class="ok">Recorded; metadata eligibility only</td></tr>
+<tr><td>macOS VM 15.7.7 (arm64), Nix 2.35.2 / Determinate 3.22.1: search, info, install Cursor 3.17.19 and 1password-cli 2.39.0; list, update, upgrade, rollback, remove, apps sync</td><td class="ok">Passed</td></tr>
+<tr><td>Cursor: codesign --verify --deep --strict; cursor --version; app process launch (GUI interaction not verified)</td><td class="ok">Passed as stated</td></tr>
+<tr><td>Moving-ref probe: controlled local version-label change 2.39.0 → 2.39.0-profile-probe, vendor bytes preserved; upgrade changed the store path; originalUrl retained; rollback restored</td><td class="ok">Passed (explicit probe, not a vendor upgrade)</td></tr>
+<tr><td>Zoom info/install refused (installer-script); unknown token refused</td><td class="ok">Passed</td></tr>
+<tr><td>Linux B: op 2.39.0 real run; KOReader --help v2026.07.1</td><td class="ok">Passed (headless)</td></tr>
+<tr><td>Linux full client journey, strict shell checks, controlled catalog revision, rollback, final empty profile</td><td class="ok">Passed</td></tr>
+<tr><td>13 Nix builder checks and archive-path regression checks, including dynamic ELF repair, composed links, and installer rejection</td><td class="ok">Passed</td></tr>
+<tr><td>Raycast 1.104.25 DMG and signature; compatible macOS 13.0 minimum; macOS 26.0 fixture refusal; gzip and native pbzx package payloads</td><td class="ok">Passed</td></tr>
+<tr><td>12 pkg records with choice-requiring Distribution; meta-quest-remote-desktop (naked + pkg)</td><td class="ok">Now rejected (installer-script / unsupported-container)</td></tr>
+<tr><td>macOS packaging: 49 client crates; archive = one bin/pkg, completions, licenses; no generator binary/catalog JSON/sha2/digest licenses</td><td class="ok">Passed</td></tr>
+<tr><td>Linux packaging: 50 client dependency license sets; no generator or catalog data</td><td class="ok">Passed</td></tr>
+<tr><td>CI run</td><td class="no">See pull-request checks</td></tr>
+</tbody>
+</table>
+
+<p class="colophon">
+Mirror of <a href="../docs/plans/rust-cask-catalog.md">docs/plans/rust-cask-catalog.md</a>.
+OpenSpec change:
+<a href="../openspec/changes/generate-cask-catalog-with-rust/design.md">design</a> is
+authoritative. Updated 2026-09-28.</p>
+
+</body>
+</html>

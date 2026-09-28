@@ -1,0 +1,150 @@
+{
+ "note": "Independent manual expectations derived from classify/plan/effective rules BEFORE running the generator; the comparison run is logged separately. BSD-2-Clause attribution: adapted from Homebrew/brew test fixtures at cc9ff034b1d98cdd4061f68cf715bb967c483a8f (see LICENSE.txt in this directory). URLs are synthetic https://fixtures.invalid/... so nothing downloads; sha256 values are copied from the upstream fixtures, not of any real bytes.",
+ "with-alt-target": {
+  "aarch64-darwin": {
+   "status": "eligible",
+   "kind": "app",
+   "reason": null,
+   "planArtifacts": [
+    {
+     "kind": "app",
+     "source": "Caffeine.app",
+     "target": "AnotherName.app"
+    }
+   ],
+   "why": "string source plus following {target:} object is the raw rename shape; relative target preserves the declared rename intent"
+  },
+  "x86_64-linux": {
+   "status": "excluded",
+   "kind": null,
+   "reason": "unsupported-platform",
+   "plan": null,
+   "why": "supported_platforms carries no x86_64_linux tag"
+  }
+ },
+ "depends-on-arch-arm64": {
+  "aarch64-darwin": {
+   "status": "eligible",
+   "kind": "app",
+   "reason": null,
+   "planArtifacts": [
+    {
+     "kind": "app",
+     "source": "Caffeine.app",
+     "target": "Caffeine.app"
+    }
+   ],
+   "why": "brew-api arch shape {type: arm, bits: 64} matches aarch64-darwin; no rename declared so target is the source bundle name"
+  },
+  "x86_64-linux": {
+   "status": "excluded",
+   "kind": null,
+   "reason": "unsupported-platform",
+   "plan": null,
+   "why": "no x86_64_linux tag; the arm64-only arch list is not even reached on linux"
+  }
+ },
+ "with-allow-untrusted": {
+  "aarch64-darwin": {
+   "status": "eligible",
+   "kind": "pkg",
+   "reason": null,
+   "planArtifacts": [
+    {
+     "kind": "pkg",
+     "source": "Fancy.pkg",
+     "target": null
+    }
+   ],
+   "why": "plan.rs treats an entry-level allow_untrusted side key and the uninstall pkgutil stanza as inert, so the pkg plan builds with a null target; this was checked against the builder, not assumed"
+  },
+  "x86_64-linux": {
+   "status": "excluded",
+   "kind": null,
+   "reason": "unsupported-platform",
+   "plan": null,
+   "why": "macos-only supported_platforms; pkg is not an installable linux kind either"
+  }
+ },
+ "with-binary": {
+  "aarch64-darwin": {
+   "status": "eligible",
+   "kind": "app+cli",
+   "reason": null,
+   "planArtifacts": [
+    {
+     "kind": "app",
+     "source": "App.app",
+     "target": "App.app"
+    },
+    {
+     "kind": "binary",
+     "source": "binary",
+     "target": "binary"
+    }
+   ],
+   "why": "upstream fixture has both app and binary stanzas; summary kind app+cli"
+  },
+  "x86_64-linux": {
+   "status": "excluded",
+   "kind": null,
+   "reason": "unsupported-platform",
+   "plan": null,
+   "why": "no x86_64_linux tag in this adapted fixture"
+  }
+ },
+ "with-appimage": {
+  "aarch64-darwin": {
+   "status": "excluded",
+   "kind": null,
+   "reason": "unsupported-platform",
+   "plan": null,
+   "why": "platform gate runs before artifacts; app_image would also be darwin-refused"
+  },
+  "x86_64-linux": {
+   "status": "eligible",
+   "kind": "appimage",
+   "reason": null,
+   "planArtifacts": [
+    {
+     "kind": "appimage",
+     "source": "naked.AppImage",
+     "target": "naked"
+    }
+   ],
+   "archiveKind": "appimage",
+   "why": "app_image is linux-installable; the .AppImage suffix is stripped from the target name"
+  }
+ },
+ "on-linux-blocks": {
+  "aarch64-darwin": {
+   "status": "eligible",
+   "kind": "app",
+   "reason": null,
+   "planArtifacts": [
+    {
+     "kind": "app",
+     "source": "Caffeine.app",
+     "target": "Caffeine.app"
+    }
+   ],
+   "planSourceUrl": "https://fixtures.invalid/cask/caffeine.zip",
+   "why": "no arm64_sequoia variation exists, so the base record serves darwin"
+  },
+  "x86_64-linux": {
+   "status": "eligible",
+   "kind": "appimage",
+   "reason": null,
+   "planArtifacts": [
+    {
+     "kind": "appimage",
+     "source": "Caffeine.AppImage",
+     "target": "Caffeine"
+    }
+   ],
+   "planSourceUrl": "https://fixtures.invalid/cask/caffeine-linux.zip",
+   "archiveKind": "appimage",
+   "why": "the x86_64_linux variation replaces the artifacts array wholesale (no merge with the base app artifact) and swaps url/sha256"
+  }
+ }
+}

@@ -1,0 +1,26 @@
+{
+  "scope": "synthetic helper replay, not vendor installs",
+  "mode": "all-catalog",
+  "catalog_sha256": "956ae8a7c698c6abe6ccc9bb642e85d2f8697b9a907f82dad653917080c1433f",
+  "tokens_sha256": null,
+  "summary": {
+    "pass": 2822
+  },
+  "by_system": {
+    "aarch64-darwin": {
+      "pass": 2778,
+      "not-eligible": 4565,
+      "skip-pkg": 366
+    },
+    "x86_64-linux": {
+      "pass": 44,
+      "not-eligible": 7549,
+      "skip-appimage": 116
+    }
+  },
+  "missing_tokens": [],
+  "expected_applicable": 2822,
+  "processed": 2822,
+  "count_check_ok": true,
+  "failures": []
+}

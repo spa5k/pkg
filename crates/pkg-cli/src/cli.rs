@@ -36,7 +36,9 @@ pub struct Cli {
 pub enum Command {
     /// Search supported sources.
     Search {
-        /// Regex or substring query.
+        /// Regex query. The nixpkgs lane passes it to native `nix search`;
+        /// the cask lane matches it locally (Rust regex, case-insensitive)
+        /// against token, name, and description.
         query: String,
     },
     /// Show source, attribute, revision, and limits for one ID.

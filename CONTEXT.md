@@ -18,7 +18,14 @@ _Avoid_: Catalog (for a single source), channel
 **Discovery Data**:
 The disposable, derived data used only for search and info. It is not
 authoritative for installed packages.
-_Avoid_: Index, search database, metadata cache
+_Avoid_: Search database, metadata cache
+
+**Catalog Index**:
+The generated status envelope the cask source exposes as `catalogIndex`:
+provenance, target systems, and per-system eligible/excluded entries keyed
+by token. It is generated data, not a client-side classification and not
+the discovery cache.
+_Avoid_: Support manifest, classifier, hosted API
 
 **Fixed Reference**:
 A package reference that does not advance during upgrade. It replaces the

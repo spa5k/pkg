@@ -1,117 +1,166 @@
-# Cask source (`nix/casks`)
+# Cask catalog source (`nix/casks`)
 
-This directory is the `cask:` catalog source for `pkg`. It turns a supported
-subset of Homebrew Casks into ordinary Nix packages. There is no Brew, no
-Ruby evaluation, no import-from-derivation, and no second installer.
+This directory is the `cask:` catalog source for `pkg`. It turns a broad,
+generated subset of Homebrew Cask metadata into ordinary Nix packages. There
+is no Brew, no Ruby evaluation, no import-from-derivation, no hosted API, and
+no second installer.
 
-## What this flake is
+The active design is the OpenSpec change
+[Generate the Cask catalog with a Rust tool](../openspec/changes/generate-cask-catalog-with-rust/proposal.md).
 
-`nix/casks/flake.nix` wraps the pinned
-[`brew-nix`](https://github.com/BatteredBunny/brew-nix) converter. All four
-inputs are locked in `flake.lock`:
+## What this source is
 
-| Input | Role |
-| --- | --- |
-| `brew-nix` | Cask-to-derivation converter |
-| `brew-api` | Cask metadata (`cask.json`) |
-| `nixpkgs` | Package set the converter builds against |
-| `nix-darwin` | Only used by brew-nix's own checks output; pinned for completeness |
+A maintainer-only Rust generator (`tools/cask-catalog`) reads a pinned
+offline Homebrew Cask JSON snapshot and emits one deterministic catalog file
+(`nix/casks/catalog/catalog.json`, schema `pkg-cask-catalog/2`). The Nix
+flake reads that committed data with plain `builtins.fromJSON` and builds
+generic packages from it. The client converts nothing per install.
 
-The revisions published in `caskSupport` are read from the locked inputs at
-evaluation time (`input.rev`). They are never copied into the flake by hand,
-so they cannot drift from `flake.lock` when the lock is updated.
+- The input is pinned exactly: source URL, revision, content SHA-256, and the
+  upstream data license are recorded in the catalog's provenance.
+- Generation is deterministic and atomic: same pin plus same generator
+  version always produce byte-identical output, and a failed run replaces
+  nothing.
+- The only flake input is a pinned `nixpkgs` revision. The generated catalog
+  is committed data, not a live service.
 
-The `brew-api` metadata input is pinned explicitly in this flake. Upstream
-warns that its default metadata input can be stale; `pkg` never relies on the
-default. The converter reads `cask.json` with plain JSON import, so the whole
-source evaluates with import-from-derivation disabled.
+## Targets and eligibility
+
+The catalog names exactly two target systems: `aarch64-darwin` and
+`x86_64-linux`. The declared macOS baseline is `15.7.7`.
+
+Each token carries one status per target system:
+
+- `eligible` — the generator found a plan a generic builder can express.
+  This is a metadata claim, not a verification promise. The first build
+  proves the payload; a raw `.pkg` plan must still pass the strict payload
+  script and layout checks at build time.
+- `excluded` — with a machine-readable reason (for example
+  `installer-script`, `formula-dependency`, `minimum-os`,
+  `unsupported-platform`) and optional detail.
+
+There are no package allowlists and no per-token flags. The full catalog
+output and the index state eligibility only; they never state compatibility.
+Verification results live in `docs/verification/` as observational records.
+
+Known scope limits, by design:
+
+- All records with Homebrew formula dependencies are excluded as
+  `formula-dependency`. No nixpkgs names are guessed.
+- All records with cask dependencies are excluded as
+  `cask-dependency-integration` for this version. There is no dependency
+  closure engine and no second dependency manager; the native Nix lifecycle
+  stays single-package.
+- Fonts, services, drivers, and privileged installers are unsupported.
+- Linux AppImage and binary support was verified headless only (for example
+  `1password-cli` 2.39.0 and KOReader `v2026.07.1 --help`); no GUI launch is
+  claimed.
+- History note: the alpha Raycast exclusion came from a hidden bundle
+  `Info.plist` found in on-device verification, not from visible cask
+  metadata. That is why the generic build-time minimum check exists, and why
+  eligibility is not a launch promise.
 
 ## Outputs
 
-- `packages.aarch64-darwin.<token>` — one derivation per supported Cask.
-  Install, list, upgrade, and remove go through the same native profile path
-  as Nixpkgs packages. No Cask-specific installer exists.
-- `caskSupport.aarch64-darwin` — the only published form of the support
-  list, a JSON-valued eval output for the CLI:
-  `nix eval --json github:spa5k/pkg/main?dir=nix/casks#caskSupport.aarch64-darwin`
+- `packages.<system>.<token>` — one lazy derivation per eligible token and
+  target system. Install, list, upgrade, and remove go through the same
+  native profile path as Nixpkgs packages.
+- `catalogIndex` — the client status index, one cheap eval output with no
+  per-system attribute:
 
-Support metadata has schema `pkg-cask-support/1` and contains `sources`
-(pinned revisions), `supported` (token, kind, version, homepage, artifact
-kinds, whether a bounded override is applied), and `excluded` (token, version,
-reason, detail). Reasons are computed from the pinned metadata at evaluation
-time; they are never hand-copied strings.
+  ```sh
+  nix eval --json <casks-source>#catalogIndex
+  ```
 
-## Initial support list (aarch64-darwin)
+  The envelope carries the same provenance fields as the catalog plus
+  `systems.<system>.entries.<token>` records of `token`, `name`,
+  `description`, `version`, `homepage`, `status`, `kind`, `reason`, and
+  `detail`. Null rules: `name`, `description`, `version`, and `homepage`
+  are string or null; eligible entries have a non-null `kind` and null
+  `reason`/`detail`; excluded entries have a null `kind` and a non-null
+  `reason`. Build plans are not exposed to the client. The client checks
+  `targets` before reading any system data.
+- `catalogStatus` — provenance plus per-system counts (total, eligible,
+  excluded, by reason) for coverage reporting.
 
-| Token | Kind | Notes |
-| --- | --- | --- |
-| `iterm2` | app | App archive (`iTerm.app`), checksum taken from the cask metadata; built and verified on macOS 15.7.7 (`codesign --verify --deep --strict`, `open`). |
-| `chromedriver` | binary | Standalone executable from a zip archive; `--version` verified on macOS 15.7.7. |
-| `cursor` | app+cli | App archive plus a bounded override that links the vendored CLI the cask declares (`Cursor.app/Contents/Resources/app/bin/code`) as `bin/cursor`, the link name the cask metadata declares. The build fails if that file is missing. |
+## How the client uses the index
 
-### Why overrides append to `installPhase`
+- Search reads `catalogIndex` once per query and filters locally with a Rust
+  regex, matched case-insensitively against the token, the name, and the
+  description. The Nixpkgs lane keeps passing patterns to `nix search`
+  unchanged. See [commands](commands.md) for both grammars.
+- Search lists eligible entries only. Excluded tokens stay discoverable
+  through `pkg info`, which shows the recorded reason and detail.
+- A bare name resolves to a cask only when it equals one token exactly. A
+  display name is never a bare-name resolution.
+- `info` and `install` resolve tokens to the ordinary
+  `packages.<system>.<token>` attribute. Tokens with `@`, `+`, or `.` in the
+  name stay one quoted attribute segment.
+- Install refuses excluded tokens with the recorded reason and refuses
+  unknown tokens. Nothing invalid becomes eligible.
+- Installs keep the original moving source reference, so a normal native
+  upgrade re-resolves to the current generated catalog. Rollback, removal,
+  and launcher sync use the ordinary native profile path. Homebrew cleanup
+  hooks (`zap`, `uninstall`) never run.
 
-The converter defines `installPhase` as a plain string. In Nixpkgs stdenv, a
-plain-string phase replaces the phase function, so `postInstall` hooks never
-run for these derivations. Cask overrides therefore append to `installPhase`
-itself. This was verified against the locked brew-nix revision and the
-stdenv `runPhase` implementation.
+## Catalog update procedure
 
-The `cursor` override also replaces the converter's generated `bin/cursor`
-GUI wrapper, because the cask metadata declares `cursor` as the name of the
-CLI link. The GUI stays exposed as the `.app` bundle, not as a PATH wrapper.
+Updates are maintainer-run and reviewed; no scheduler exists. Run these
+commands from the repository root. This example reproduces the current pin.
+For an update, supply the new exact revision and its expected SHA-256:
 
-Explicitly inspected exclusions, with computed reasons:
+    cargo run --locked -p cask-catalog -- fetch \
+      --revision 245947c0b920cbe83f4003bb7c6be737352c8314 \
+      --sha256 1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251
+    cargo run --locked -p cask-catalog -- generate
+    # review the diff, then commit input.json and catalog.json together
 
-| Token | Reason |
-| --- | --- |
-| `zoom` | `native-installer` (pkg payload, privileged helper and launchctl services) |
-| `4peaks` | `missing-checksum` (`no_check`) |
-| `1password@nightly` | `missing-checksum` (`no_check`, `latest` download) |
-| `font-0xproto` | `unsupported-artifact` (font, not an app or binary) |
-| `raycast` | `minimum-os` (metadata ships `LSMinimumSystemVersion` 26.0; `open` fails with -10825 on supported macOS 15.7.7, verified on-device) |
+`fetch` refuses to replace the pin when the downloaded bytes do not match
+the expected hash. `generate` is offline and deterministic: the committed
+pin plus the generator version always produce the same catalog bytes. CI
+regenerates from the committed pin and fails on any diff.
 
-Policy: support immutable vendor downloads with verified hashes, simple app
-archives, standalone executables, and curated app-plus-CLI cases. Exclude
-native installer actions, privileged helpers, services, unsupported artifact
-variants, and missing checksums. Extracting a `.pkg` payload is not proof
-that its installer behavior works, so pkg payloads stay excluded.
+Verify evaluation and one build before merging (import-from-derivation
+disabled):
 
-`zap` and `uninstall` Cask stanzas are cleanup lifecycle data. `pkg` does not
-execute them. Removing a package removes the Nix package only.
+    nix eval --no-allow-import-from-derivation --json ./nix/casks#catalogIndex
+    nix build ./nix/casks#packages.aarch64-darwin.cursor
 
-## Lock-update procedure
+Installed entries keep their original references. Selecting newer metadata is
+done by native profile upgrade, not by rewriting installed references.
 
-Updates are ordinary reviewed changes on `main`. The outer reference
-`github:spa5k/pkg/main?dir=nix/casks` moves; the inputs in each published
-revision stay locked. Input URLs in `flake.nix` pin exact commits, so a
-plain `nix flake update` cannot advance them. To update an input, edit
-its revision in the `flake.nix` input URL and re-lock it:
+## Current catalog state and evidence
 
-    cd nix/casks
-    $EDITOR flake.nix          # advance one input URL to the new commit
-    nix flake lock --update-input brew-api   # repeat per edited input
+The committed catalog was generated from input revision
+`245947c0b920cbe83f4003bb7c6be737352c8314` (7709 records). Metadata-eligible
+counts — eligibility only, not build verification:
 
-Commit `flake.nix` and `flake.lock` together in the same change. The
-`caskSupport` source revisions follow the lock automatically because they
-are derived from `input.rev` at evaluation time.
+| Target | Eligible | Total | Largest exclusion reasons |
+| --- | --- | --- | --- |
+| `aarch64-darwin` | 3144 | 7709 | `missing-checksum` 2124, `deprecated` 689, `disabled` 332 |
+| `x86_64-linux` | 160 | 7709 | `unsupported-platform` 3941, `missing-checksum` 1606, `deprecated` 690 |
 
-Then verify before merging:
+Evidence on hand (see [verification records](verification/) and the
+[detailed plan](plans/rust-cask-catalog.md)):
 
-    nix eval --no-allow-import-from-derivation --json .#caskSupport.aarch64-darwin
-    nix build .#packages.aarch64-darwin.iterm2 .#packages.aarch64-darwin.chromedriver .#packages.aarch64-darwin.cursor
-
-The evaluation throws if a curated token stops classifying as supported in
-the new metadata, so a metadata update that breaks support cannot merge
-silently. Update the tables above in the same change when tokens change.
-Installed entries keep their original references; selecting newer metadata
-is done by native profile upgrade, not by rewriting installed references.
+- All 81 Rust tests passed. Formatting, Clippy, rustdoc, dependency policy,
+  documentation links, and strict OpenSpec validation passed.
+- The Nix builder suite passed 13 checks. Real Linux runs verified
+  `op` 2.39.0 and KOReader `--help` (`v2026.07.1`). GUI interaction was not
+  checked.
+- On the macOS VM (15.7.7, Apple silicon), Cursor 3.17.19 and Raycast
+  1.104.25 built with valid deep/strict signatures. Cursor's CLI and op ran.
+  Cursor started an app process. GUI interaction was not checked.
+- Both native client journeys passed search, info, install, update,
+  upgrade, rollback, and removal. The final profiles were empty. Controlled
+  version-label changes verified source re-resolution on both systems.
 
 ## Limits
 
-- Apple silicon macOS only for now.
+- Two target systems only. Other systems need new verification, not a list
+  edit.
 - Some applications reject Nix store locations or self-update against
-  immutable files; such apps are removed from the support list rather than
-  worked around.
+  immutable files. Such apps surface as build or runtime failures, not as
+  catalog changes; no per-token workaround exists.
 - Rollback restores the packaged app version, not application data such as
   preferences, accounts, or databases.

@@ -1,0 +1,204 @@
+[
+ {
+  "token": "with-alt-target",
+  "full_token": "with-alt-target",
+  "old_tokens": [],
+  "name": [],
+  "desc": null,
+  "homepage": "https://brew.sh/",
+  "version": "1.2.3",
+  "url": "https://fixtures.invalid/cask/caffeine.zip",
+  "url_specs": {},
+  "sha256": "67cdb8a02803ef37fdbf7e0be205863172e41a561ca446cd84f0d7ab35a99d94",
+  "artifacts": [
+   {
+    "app": [
+     "Caffeine.app",
+     {
+      "target": "AnotherName.app"
+     }
+    ]
+   }
+  ],
+  "depends_on": {},
+  "container": null,
+  "deprecated": false,
+  "disabled": false,
+  "supported_platforms": [
+   "arm64_sequoia"
+  ],
+  "variations": {}
+ },
+ {
+  "token": "depends-on-arch-arm64",
+  "full_token": "depends-on-arch-arm64",
+  "old_tokens": [],
+  "name": [],
+  "desc": null,
+  "homepage": "https://brew.sh/",
+  "version": "1.2.3",
+  "url": "https://fixtures.invalid/cask/caffeine-arm-darwin.zip",
+  "url_specs": {},
+  "sha256": "67cdb8a02803ef37fdbf7e0be205863172e41a561ca446cd84f0d7ab35a99d94",
+  "artifacts": [
+   {
+    "app": [
+     "Caffeine.app"
+    ]
+   }
+  ],
+  "depends_on": {
+   "arch": [
+    {
+     "type": "arm",
+     "bits": 64
+    }
+   ]
+  },
+  "container": null,
+  "deprecated": false,
+  "disabled": false,
+  "supported_platforms": [
+   "arm64_sequoia"
+  ],
+  "variations": {}
+ },
+ {
+  "token": "with-allow-untrusted",
+  "full_token": "with-allow-untrusted",
+  "old_tokens": [],
+  "name": [],
+  "desc": null,
+  "homepage": "https://brew.sh/fancy-pkg",
+  "version": "1.2.3",
+  "url": "https://fixtures.invalid/cask/MyFancyPkg.zip",
+  "url_specs": {},
+  "sha256": "8c62a2b791cf5f0da6066a0a4b6e85f62949cd60975da062df44adf887f4370b",
+  "artifacts": [
+   {
+    "pkg": [
+     "Fancy.pkg"
+    ],
+    "allow_untrusted": true
+   },
+   {
+    "uninstall": [
+     {
+      "pkgutil": "my.fancy.package.*"
+     }
+    ]
+   }
+  ],
+  "depends_on": {},
+  "container": null,
+  "deprecated": false,
+  "disabled": false,
+  "supported_platforms": [
+   "arm64_sequoia"
+  ],
+  "variations": {}
+ },
+ {
+  "token": "with-binary",
+  "full_token": "with-binary",
+  "old_tokens": [],
+  "name": [
+   "With Binary"
+  ],
+  "desc": "Cask with a binary stanza",
+  "homepage": "https://brew.sh/with-binary",
+  "version": "1.2.3",
+  "url": "https://fixtures.invalid/cask/AppWithBinary.zip",
+  "url_specs": {},
+  "sha256": "d5b2dfbef7ea28c25f7a77cd7fa14d013d82b626db1d82e00e25822464ba19e2",
+  "artifacts": [
+   {
+    "app": [
+     "App.app"
+    ]
+   },
+   {
+    "binary": [
+     "binary"
+    ]
+   }
+  ],
+  "depends_on": {},
+  "container": null,
+  "deprecated": false,
+  "disabled": false,
+  "supported_platforms": [
+   "arm64_sequoia"
+  ],
+  "variations": {}
+ },
+ {
+  "token": "with-appimage",
+  "full_token": "with-appimage",
+  "old_tokens": [],
+  "name": [
+   "With AppImage"
+  ],
+  "desc": "Cask with an app_image stanza",
+  "homepage": "https://brew.sh/with-appimage",
+  "version": "1.2.3",
+  "url": "https://fixtures.invalid/cask/naked.AppImage",
+  "url_specs": {},
+  "sha256": "73e5daee562b151389dc3e0751579c9f69f8be05b6b057f9c058c7a6e00a10f7",
+  "artifacts": [
+   {
+    "app_image": [
+     "naked.AppImage"
+    ]
+   }
+  ],
+  "depends_on": {},
+  "container": null,
+  "deprecated": false,
+  "disabled": false,
+  "supported_platforms": [
+   "x86_64_linux"
+  ],
+  "variations": {}
+ },
+ {
+  "token": "on-linux-blocks",
+  "full_token": "on-linux-blocks",
+  "old_tokens": [],
+  "name": [],
+  "desc": null,
+  "homepage": "https://brew.sh/",
+  "version": "1.2.3",
+  "url": "https://fixtures.invalid/cask/caffeine.zip",
+  "url_specs": {},
+  "sha256": "67cdb8a02803ef37fdbf7e0be205863172e41a561ca446cd84f0d7ab35a99d94",
+  "artifacts": [
+   {
+    "app": [
+     "Caffeine.app"
+    ]
+   }
+  ],
+  "depends_on": {},
+  "container": null,
+  "deprecated": false,
+  "disabled": false,
+  "supported_platforms": [
+   "arm64_sequoia",
+   "x86_64_linux"
+  ],
+  "variations": {
+   "x86_64_linux": {
+    "url": "https://fixtures.invalid/cask/caffeine-linux.zip",
+    "sha256": "244d413861cecb3707cfbcc5c4346d5367daa827da5ea08fb3f3bc2b6276d239",
+    "artifacts": [
+     {
+      "app_image": [
+       "Caffeine.AppImage"
+      ]
+     }
+    ]
+   }
+  }
+ }
+]

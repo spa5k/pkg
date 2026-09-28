@@ -13,7 +13,7 @@ use crate::cli::Cli;
 use crate::nix::{self, ProfileEntry};
 
 use super::{
-    CommandError, Session, apps_refresh_after_mutation, configured_sources, installed_entries,
+    CommandError, apps_refresh_after_mutation, configured_sources, installed_entries,
     mutation_failed, session,
 };
 
@@ -29,18 +29,25 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     }
     let session = session(cli)?;
     let system = session.nix.system()?;
+    // One index evaluation is shared by every bare resolution and every
+    // cask gate in this command run.
+    let mut catalog_handle = catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks);
     let mut installables = Vec::new();
     for parsed in parsed_ids {
         let resolved = match parsed {
             ParsedId::Qualified(qualified) => qualified,
-            ParsedId::Bare(name) => {
-                catalog::resolve_bare(&session.nix, &session.config.sources, &name, &system)?
-            }
+            ParsedId::Bare(name) => catalog::resolve_bare(
+                &session.nix,
+                &session.config.sources,
+                &name,
+                &system,
+                &mut catalog_handle,
+            )?,
         };
         if let catalog::CatalogId::Cask(token) = &resolved {
-            gate_cask(&session, &system, token).map_err(CommandError::Message)?;
+            gate_cask(&mut catalog_handle, &system, token).map_err(CommandError::Message)?;
         }
-        installables.push(resolved.installable(&session.config.sources));
+        installables.push(resolved.installable(&session.config.sources, &system));
     }
     session
         .nix
@@ -51,34 +58,39 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     apps_refresh_after_mutation(&session)
 }
 
-/// Refuse cask installs that the platform or the support manifest excludes.
+/// Refuse cask installs the generated catalog excludes or does not list.
+///
+/// The gate reads the generated index: the platform rule is the envelope's
+/// target list, eligibility and exclusion reasons are generated data, and
+/// an index failure is a failure — never a platform skip. An unknown token
+/// never becomes eligible.
 ///
 /// Returns `Err(message)` when the token must not be installed on `system`.
-fn gate_cask(session: &Session, system: &str, token: &str) -> Result<(), String> {
-    if !catalog::casks_supported_on(system) {
+fn gate_cask(
+    catalog: &mut catalog::CatalogOnce<'_>,
+    system: &str,
+    token: &str,
+) -> Result<(), String> {
+    let view = catalog.load().map_err(|error| error.to_string())?;
+    if !view.targeted(system) {
         return Err(format!(
-            "cask:{token} requires macOS ({}); this system is {system}",
-            catalog::CASK_SYSTEM
+            "cask:{token} needs a catalog target system ({}); this system is {system}",
+            view.targets().join(", ")
         ));
     }
-    match catalog::cask_status(&session.nix, &session.config.sources.casks, system, token) {
-        Ok(lookup) => match lookup.status {
-            catalog::CaskStatus::Supported { .. } => Ok(()),
-            catalog::CaskStatus::Excluded {
-                version,
-                reason,
-                detail,
-                ..
-            } => Err(format!(
-                "cask:{token} {} is excluded on {system}: {reason}: {}",
-                version.as_deref().unwrap_or("unknown version"),
-                detail.as_deref().unwrap_or("no detail")
-            )),
-            catalog::CaskStatus::Unlisted { .. } => Err(format!(
-                "cask:{token} is not in the cask support manifest for {system}"
-            )),
-        },
-        Err(error) => Err(error.to_string()),
+    let version = view
+        .record(system, token)
+        .and_then(|entry| entry.version.clone())
+        .unwrap_or_else(|| String::from("unknown version"));
+    match view.entry(system, token) {
+        catalog::CaskStatus::Eligible => Ok(()),
+        catalog::CaskStatus::Excluded { reason, detail } => Err(format!(
+            "cask:{token} {version} is excluded on {system}: {reason}: {}",
+            detail.as_deref().unwrap_or("no detail")
+        )),
+        catalog::CaskStatus::Unknown => Err(format!(
+            "cask:{token} is not in the generated catalog for {system}"
+        )),
     }
 }
 
@@ -117,19 +129,11 @@ pub(super) fn remove(cli: &Cli, entries: &[String]) -> Result<(), CommandError> 
 
 pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
     let session = session(cli)?;
-    let system = session.nix.system()?;
     // Refresh metadata natively (--refresh) so TTL-cached metadata is not
-    // reported as current, then drop the discovery cache.
-    for (kind, source) in configured_sources(&session.config) {
-        // The cask source is macOS-only; on other systems it is skipped,
-        // not fetched or failed.
-        if kind == catalog::SourceKind::Cask && !catalog::casks_supported_on(&system) {
-            println!(
-                "{source} -> skipped (cask source supports {} only)",
-                catalog::CASK_SYSTEM
-            );
-            continue;
-        }
+    // reported as current, then drop the discovery cache. Both sources are
+    // refreshed on every system: source metadata is not per-system, and the
+    // catalog decides per-system reach from its own target list.
+    for (_kind, source) in configured_sources(&session.config) {
         match session.nix.refresh_source_identity(source) {
             Ok(identity) => {
                 let revision = identity
