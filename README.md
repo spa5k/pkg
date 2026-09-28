@@ -11,8 +11,10 @@ repair, or remove Nix. Install Determinate Nix from
 [the vendor](https://docs.determinate.systems/determinate-nix/) first.
 
 > [!WARNING]
-> `pkg` is a technical preview. Breaking changes can occur before v1. The
-> native Nix redesign is implemented as an unreleased candidate. See
+> `pkg` is a technical preview. Breaking changes can occur before v1.
+> [v0.2.0-alpha.1](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.1)
+> starts from a fresh state: old alpha installations are not migrated,
+> adopted, or erased. See
 > [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
 > and its [verification record](docs/verification/native-nix-2026-09-28.md).
 
@@ -20,12 +22,20 @@ repair, or remove Nix. Install Determinate Nix from
 
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
-2. Build the client candidate from a checkout of this repository:
-   `tools/release/package_client.sh x86_64-linux` (or `aarch64-darwin`).
+2. Install the client from the
+   [v0.2.0-alpha.1 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.1):
 
-The candidate is unpublished. Build it from a checkout until a release
-exists. The `install.sh` in this checkout is client-only: it downloads and
-verifies the client archive and never installs Nix.
+   ```sh
+   curl -fsSL -o pkg-install.sh \
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.1/install.sh
+   sh pkg-install.sh
+   ```
+
+The downloader installs `~/.local/bin/pkg` and completions under
+`~/.local/share/pkg/completions`. It is client-only: it downloads and
+verifies the release archive, never installs Nix, and never uses `sudo`.
+You can also build the archive from a checkout of this repository:
+`tools/release/package_client.sh x86_64-linux` (or `aarch64-darwin`).
 
 Details are in the [install guide](docs/install.md).
 

@@ -13,9 +13,31 @@ Supported systems: x86_64 Linux and Apple silicon macOS.
 
 ## 2. Install the client
 
-`v0.2.0-alpha.1` is an **unreleased candidate**. No download is published
-yet. Build the archive from a checkout of this repository and install it by
-hand:
+Download the client downloader for the exact release and run it:
+
+```sh
+version="0.2.0-alpha.1"
+curl -fsSL -o pkg-install.sh \
+  "https://raw.githubusercontent.com/spa5k/pkg/v${version}/install.sh"
+sh pkg-install.sh
+```
+
+The downloader is pinned to one tag. It fetches
+`pkg-${version}-${system}.tar.gz` and `SHA256SUMS` from the
+[v0.2.0-alpha.1 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.1),
+verifies the archive checksum, and installs only:
+
+- `~/.local/bin/pkg` — the whole client;
+- `~/.local/share/pkg/completions/{bash,zsh,fish}.txt` — completions.
+
+Everything lands under `~/.local`. Until `~/.local/bin` is on your `PATH`,
+invoke the client by its full path, for example `~/.local/bin/pkg doctor`.
+
+The downloader fetches and verifies the client archive only. It does not
+install Nix. It does not use `sudo`. It does not change Nix trust settings.
+It does not remove or migrate old installations.
+
+### Build from a checkout instead
 
 ```sh
 # on x86_64 Linux; use aarch64-darwin on Apple silicon macOS
@@ -31,15 +53,7 @@ install -m 0755 "pkg-${version}-${system}/bin/pkg" ~/.local/bin/pkg
 ```
 
 `~/.local/bin/pkg` is the whole client. The archive also ships shell
-completions under `completions/` and license notices. Until your `PATH`
-includes `~/.local/bin`, invoke the client by its full path, for example
-`~/.local/bin/pkg doctor`.
-
-The release downloader, once published, will only fetch and verify the
-client archive. It will not install Nix. It will not use `sudo`. It will
-not change Nix trust settings. It will not remove or migrate old
-installations. Until a release exists, build the archive from a checkout;
-the `install.sh` in this checkout is the client-only downloader.
+completions under `completions/` and license notices.
 
 ## 3. Set up your shell
 
@@ -66,20 +80,12 @@ Then put the same `eval "$(pkg shellenv)"` line in `~/.bashrc` or
 `~/.zshrc`. `pkg shellenv` prints idempotent settings. It never edits your
 shell files.
 
-On Apple silicon macOS, before the casks source merges upstream, point pkg
-at your local checkout of this repository so `cask:` names resolve. Use an
-absolute path with the `nix/casks` subdirectory:
+On Apple silicon macOS, `cask:` names resolve through the default source
+`github:spa5k/pkg/main?dir=nix/casks`. No local checkout is needed. See
+[casks](casks.md).
 
-```toml
-# ~/.config/pkg/config.toml
-[sources]
-casks = "path:/ABSOLUTE/PATH/TO/pkg-checkout/nix/casks"
-```
-
-The default GitHub reference works only after `nix/casks` is merged and
-published on `main`.
-
-Completions for Bash, Zsh, and Fish ship inside the archive under
+The downloader installs completions under
+`~/.local/share/pkg/completions/`; the archive also carries them under
 `completions/`.
 
 ## 4. Check the setup
@@ -93,8 +99,10 @@ nothing and sends no reports.
 
 ## Update the client
 
-Build the new archive and replace `~/.local/bin/pkg` with its `bin/pkg`.
-Your packages and the native profile stay unchanged.
+Run the downloader for the new release tag. It replaces `~/.local/bin/pkg`
+and the completions. You can also build the new archive and replace
+`~/.local/bin/pkg` with its `bin/pkg`. Your packages and the native
+profile stay unchanged.
 
 ## Remove the client
 

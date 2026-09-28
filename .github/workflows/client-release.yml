@@ -12,7 +12,8 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-permissions: contents: read
+permissions:
+  contents: read
 
 concurrency:
   group: client-release
