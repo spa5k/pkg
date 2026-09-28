@@ -26,7 +26,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use crate::config::Paths;
-use crate::nix::{DirectOutcome, Nix, run_direct};
+use crate::nix::{Nix, Outcome, run_direct};
 
 /// The only helper used for launcher and Dock sync, pinned to one exact
 /// commit. Verified at this commit: builds with import-from-derivation
@@ -398,83 +398,85 @@ fn scan_apps(
 /// Returns the helper binary, installing the pinned reference first if the
 /// helper profile is empty.
 ///
-/// Native entry names are opaque (Determinate macOS uses
-/// `originalUrl#attrPath` keys), so identity is verified from the entry's
-/// own native fields instead of its map key: exactly one active entry,
-/// whose `original_url` points at the pinned repository and whose locked
-/// revision is the pinned commit. Anything else is an error for the user
-/// to resolve; an existing profile is never blindly reused and never
-/// silently modified.
+/// The profile is read, installed into and re-read only when empty, and
+/// then checked by one verifier: exactly one active entry pinned to the
+/// helper repository and revision, with the helper binary present. Native
+/// entry names are opaque (Determinate macOS uses `originalUrl#attrPath`
+/// keys), so identity is verified from the entry's own native fields
+/// instead of its map key. Anything else is an error for the user to
+/// resolve; an existing profile is never blindly reused and never silently
+/// modified.
 fn ensure_helper(nix: &Nix, paths: &Paths) -> Result<PathBuf, String> {
     let profile = &paths.helper_profile;
-    let entries = nix
+    let mut entries = nix
         .profile_list(profile)
         .map_err(|e| format!("could not list helper profile {}: {e}", profile.display()))?;
-
-    if !entries.is_empty() {
-        if entries.len() != 1 {
-            let ids: Vec<String> = entries.keys().cloned().collect();
-            return Err(format!(
-                "helper profile {} contains unexpected entries: [{}]; \
-                 remove what you do not want and run `pkg apps sync` again",
-                profile.display(),
-                ids.join(", ")
-            ));
-        }
-        let entry = entries.values().next().ok_or("helper profile is empty")?;
-        if !entry.active {
-            return Err(format!(
-                "helper profile {} holds an inactive entry; remove it and rerun \
-                 `pkg apps sync`",
-                profile.display()
-            ));
-        }
-        if !entry.original_url.starts_with(HELPER_REPO_PREFIX)
-            || entry.locked_revision() != Some(HELPER_REVISION)
-        {
-            return Err(format!(
-                "helper profile {} does not hold the pinned helper {HELPER_FLAKE_REF} \
-                 (found original {}, locked revision {}); remove the entry and rerun \
-                 `pkg apps sync`",
-                profile.display(),
-                entry.original_url,
-                entry.locked_revision().unwrap_or("none")
-            ));
-        }
-        return helper_binary_in(&entry.store_paths).ok_or_else(|| {
+    if entries.is_empty() {
+        nix.profile_add(profile, &[HELPER_FLAKE_REF.to_string()])
+            .map_err(|e| format!("could not install helper {HELPER_FLAKE_REF}: {e}"))?;
+        entries = nix.profile_list(profile).map_err(|e| {
             format!(
-                "helper profile entry in {} has no {HELPER_BINARY_RELATIVE} binary in its \
-                 store paths",
+                "could not re-read helper profile {}: {e}",
                 profile.display()
             )
-        });
+        })?;
+        if entries.is_empty() {
+            return Err(format!(
+                "installing {HELPER_FLAKE_REF} produced no profile entry"
+            ));
+        }
     }
+    verify_pinned_helper(profile, &entries)
+}
 
-    nix.profile_add(profile, &[HELPER_FLAKE_REF.to_string()])
-        .map_err(|e| format!("could not install helper {HELPER_FLAKE_REF}: {e}"))?;
-    let entries = nix.profile_list(profile).map_err(|e| {
-        format!(
-            "could not re-read helper profile {}: {e}",
+/// Verify the helper profile holds exactly one active entry pinned to the
+/// helper repository and revision, and return its binary.
+///
+/// One verifier serves the freshly installed and the pre-existing profile
+/// alike; the entry-count check applies to both.
+fn verify_pinned_helper(
+    profile: &Path,
+    entries: &BTreeMap<String, crate::nix::ProfileEntry>,
+) -> Result<PathBuf, String> {
+    if entries.len() != 1 {
+        let ids: Vec<String> = entries.keys().cloned().collect();
+        return Err(format!(
+            "helper profile {} contains unexpected entries: [{}]; \
+             remove what you do not want and run `pkg apps sync` again",
+            profile.display(),
+            ids.join(", ")
+        ));
+    }
+    let Some(entry) = entries.values().next() else {
+        return Err(format!(
+            "installing {HELPER_FLAKE_REF} produced no profile entry"
+        ));
+    };
+    if !entry.active {
+        return Err(format!(
+            "helper profile {} holds an inactive entry; remove it and rerun \
+             `pkg apps sync`",
             profile.display()
-        )
-    })?;
-    let entry = entries
-        .values()
-        .next()
-        .ok_or_else(|| format!("installing {HELPER_FLAKE_REF} produced no profile entry"))?;
-    if !entry.active
-        || !entry.original_url.starts_with(HELPER_REPO_PREFIX)
+        ));
+    }
+    if !entry.original_url.starts_with(HELPER_REPO_PREFIX)
         || entry.locked_revision() != Some(HELPER_REVISION)
     {
         return Err(format!(
-            "helper installed from {HELPER_FLAKE_REF} does not verify against its native \
-             profile identity (original {}, locked revision {})",
+            "helper profile {} does not hold the pinned helper {HELPER_FLAKE_REF} \
+             (found original {}, locked revision {}); remove the entry and rerun \
+             `pkg apps sync`",
+            profile.display(),
             entry.original_url,
             entry.locked_revision().unwrap_or("none")
         ));
     }
     helper_binary_in(&entry.store_paths).ok_or_else(|| {
-        format!("helper {HELPER_FLAKE_REF} has no {HELPER_BINARY_RELATIVE} binary in its outputs")
+        format!(
+            "helper profile entry in {} has no {HELPER_BINARY_RELATIVE} binary in its \
+             store paths",
+            profile.display()
+        )
     })
 }
 
@@ -498,15 +500,15 @@ fn run_sync_trampolines(helper: &Path, from: &Path, to: &Path) -> Result<(), Str
         to.to_string_lossy().into_owned(),
     ];
     match run_direct(helper, &args) {
-        Ok(DirectOutcome::Success) => Ok(()),
-        Ok(DirectOutcome::Interrupted { signal }) => Err(format!(
+        Ok(Outcome::Success) => Ok(()),
+        Ok(Outcome::Interrupted { signal }) => Err(format!(
             "mac-app-util sync-trampolines was interrupted by signal {signal} \
              ({} -> {}); the launcher folder may be partially replaced; \
              run `pkg apps sync` again",
             from.display(),
             to.display()
         )),
-        Ok(DirectOutcome::Failure { status, stderr }) => Err(format!(
+        Ok(Outcome::Failed { status, stderr }) => Err(format!(
             "mac-app-util sync-trampolines failed ({} -> {}; {}): {}",
             from.display(),
             to.display(),

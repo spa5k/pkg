@@ -1,5 +1,10 @@
 # DN-1 PR-1 implementation notes (time injection)
 
+> **Historical record — superseded.** This note documents the deleted
+> channel engine (DN-1). The active design is
+> [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md).
+> The file is kept as research history; it describes no current behavior.
+
 ## Scope
 
 Implemented per design Amendment 2 (owner decision, 2026-09-03): the clock

@@ -160,7 +160,10 @@ impl Default for Sources {
 /// Output preferences.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Display {
-    /// Color policy: `auto`, `always`, or `never`.
+    /// Color policy. Only `never` has an effect: it disables colored
+    /// output, including for native text pkg passes through. Any other
+    /// value is accepted and leaves color handling unchanged; `pkg` has
+    /// no setting that forces color on.
     #[serde(default = "default_color")]
     pub color: String,
 }
