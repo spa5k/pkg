@@ -1,6 +1,8 @@
 # Simplify pkg to native Nix
 
-Final implementation plan, 28 September 2026. Implementation has not started.
+Final implementation plan, 28 September 2026. Implementation is
+complete and merged to `main` (PR #77, PR #78). The release is
+`v0.2.0-alpha.1`.
 Baseline: fetched origin/main at `5256cfa5a052f64ae4219ac1aaf316a7a00d49a2`
 (alpha.58). The user accepts breaking changes and removal of old tests.
 

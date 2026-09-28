@@ -21,8 +21,10 @@ the third-party Rust dependency license texts and notices plus
 `licenses/THIRDPARTY.md`. It contains no privileged helper, private Nix
 bundle, or product catalog asset.
 
-The recipe has not yet been run against the final one-crate workspace.
-Run it and inspect `dist/` before the first release tag.
+The recipe was run for the `v0.2.0-alpha.1` candidate; the produced
+archive is covered by the
+[verification records](../../docs/verification/native-client-quality-2026-09-28.md).
+Inspect `dist/` after any local run.
 
 The old channel, TUF, installer, and proof-pair tooling was deleted with its
 subjects. Historical release evidence stays under `tests/`.
