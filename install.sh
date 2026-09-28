@@ -20,7 +20,7 @@ set -eu
 # the version from pkg-cli Cargo metadata, and the client-release workflow
 # rejects a tag that disagrees with that version.
 repo="spa5k/pkg"
-version="0.2.0-alpha.1"
+version="0.2.0-alpha.2"
 tag="v${version}"
 
 if [ "$#" -ne 0 ]; then

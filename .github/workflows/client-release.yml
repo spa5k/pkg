@@ -31,7 +31,10 @@ jobs:
         include:
           # macos-15 is the arm64 (Apple silicon) image; macos-15-intel is
           # the x64 one. aarch64-darwin therefore builds on macos-15.
-          - runner: ubuntu-latest
+          # Linux builds on ubuntu-22.04 so the client links against the
+          # glibc 2.35 baseline; ubuntu-latest (24.04) produced binaries
+          # that fail on older glibc with "GLIBC_2.39 not found".
+          - runner: ubuntu-22.04
             system: x86_64-linux
           - runner: macos-15
             system: aarch64-darwin
