@@ -1,0 +1,70 @@
+# Cask catalog regeneration check.
+#
+# Regenerates catalog.json from the committed pin and the pinned snapshot
+# bytes and fails when the committed catalog differs by a single byte.
+# This is the published-state twin of the generator's integrity checks:
+# tampered or stale data cannot ship.
+
+name: cask-catalog
+
+on:
+  pull_request:
+    paths:
+      - "tools/cask-catalog/**"
+      - "nix/casks/catalog/**"
+      - ".github/workflows/cask-catalog.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/cask-catalog/**"
+      - "nix/casks/catalog/**"
+      - ".github/workflows/cask-catalog.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: "1.96.1"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  regenerate:
+    name: regenerate and compare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Fetch the pinned snapshot
+        run: |
+          set -eu
+          mkdir -p /tmp/cask-catalog
+          revision="$(python3 -c 'import json;print(json.load(open("nix/casks/catalog/input.json"))["revision"])')"
+          sha="$(python3 -c 'import json;print(json.load(open("nix/casks/catalog/input.json"))["sha256"])')"
+          url="$(python3 -c 'import json;print(json.load(open("nix/casks/catalog/input.json"))["url"])')"
+          test "$url" = "https://raw.githubusercontent.com/BatteredBunny/brew-api/$revision/cask.json"
+          curl --fail --location --silent --show-error --connect-timeout 20 --max-time 120 \
+            "$url" -o "/tmp/cask-catalog/$revision.json"
+          echo "$sha  /tmp/cask-catalog/$revision.json" | sha256sum --check --strict -
+
+      - name: Regenerate the catalog from the pin
+        run: cargo run --locked -p cask-catalog -- generate --out-dir nix/casks/catalog
+
+      - name: Compare with the committed catalog
+        run: |
+          set -eu
+          git diff --exit-code -- nix/casks/catalog/catalog.json nix/casks/catalog/input.json
+
+      - name: Generator tests
+        run: cargo test --locked -p cask-catalog

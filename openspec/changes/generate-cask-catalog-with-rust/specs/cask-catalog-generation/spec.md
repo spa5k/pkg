@@ -31,8 +31,10 @@ regenerating from the committed pin changes the committed catalog.
 
 Each generated catalog SHALL embed the input source URL, the exact
 input revision, the input content hash, the generator name and version,
-the target systems, the declared macOS baseline, and the snapshot field
-coverage. The pin record and the generated catalog SHALL be committed
+the target systems, and the declared macOS baseline. Snapshot field
+coverage is not part of provenance; it is printed by the generator and
+recorded in the dated verification note. The pin record and the
+generated catalog SHALL be committed
 together. The metadata input SHALL be pinned exactly once; no consumer
 SHALL re-pin the raw snapshot.
 
@@ -45,9 +47,11 @@ SHALL re-pin the raw snapshot.
 ### Requirement: Required platform scope fields, fail closed
 
 The accepted input schema SHALL require the `supported_platforms` field
-on every record. A snapshot that has lost a required field family SHALL
-fail generation before any existing output is replaced. A record
-missing a required field SHALL be excluded as malformed. OS support
+family. A snapshot where no record carries it SHALL fail generation
+before any existing output is replaced. One record missing the field
+SHALL be excluded as malformed in isolation. The aarch64-darwin target
+SHALL require the exact `arm64_sequoia` tag; the x86_64-linux target
+SHALL require the exact `x86_64_linux` tag. OS support
 SHALL be decided only from explicit complete constraints
 (`supported_platforms` membership and `depends_on` OS and arch
 entries). Variation keys and artifact kinds SHALL NOT be used as
@@ -82,8 +86,8 @@ variation SHALL NOT by itself decide support either way.
 
 Eligibility SHALL be computed per token and target from the effective
 record: OS and arch intent, allowed artifact kinds for that OS, present
-verified checksum, present URL, absent executable installer stanzas,
-resolvable dependencies, and declared OS minimums compatible with the
+verified checksum, present URL, absent executable installer stanzas, no formula or cask dependencies
+(excluded, not resolved), and declared OS minimums compatible with the
 declared baseline. Unsupported tokens SHALL be published as excluded
 entries with a machine-readable reason from a fixed vocabulary. Unknown
 artifact kinds and malformed records SHALL exclude that token only,
@@ -99,9 +103,10 @@ rejected.
 ### Requirement: Whole-catalog integrity and atomic publication
 
 The generator SHALL fail without replacing any published output when
-the input contains duplicate tokens, one token carries conflicting
-versions, the input content hash does not match the pin, or the
-snapshot lacks a required field family. Output SHALL be staged
+the input contains duplicate tokens, a token is not
+a usable catalog key, the input content hash does not match the pin,
+the snapshot root is not a nonempty JSON array, or the snapshot lacks
+a required field family. Output SHALL be staged
 temporarily and moved into place only after every check passes.
 
 #### Scenario: Duplicate token aborts generation
@@ -132,15 +137,15 @@ the generator SHALL NOT emit Nix or shell syntax.
 - **THEN** the token is excluded as malformed and the reason names the
   field
 
-### Requirement: Dependency resolution at generation time
+### Requirement: Dependencies exclude instead of resolving
 
-The generator SHALL resolve cask dependency closures and SHALL exclude
-tokens with unresolvable or cyclic cask dependencies. Records depending
-on Homebrew formulae SHALL be excluded with a formula-dependency
-reason; the generator SHALL NOT guess nixpkgs attributes for Brew
-tokens and SHALL NOT commit a per-formula map. Records whose declared
-cask dependency implies vendor integration beyond generic presence
-SHALL be excluded with an integration reason.
+Records with any Homebrew formula dependency SHALL be excluded with a
+formula-dependency reason; the generator SHALL NOT guess nixpkgs
+attributes for Brew tokens and SHALL NOT commit a per-formula map.
+Records with any cask dependency SHALL be excluded with a
+cask-dependency-integration reason. Plans SHALL carry no dependency
+output and the client SHALL NOT expand any closure; the native Nix
+lifecycle stays single-package.
 
 #### Scenario: Formula dependency
 
@@ -148,11 +153,11 @@ SHALL be excluded with an integration reason.
 - **THEN** the token is excluded with a formula-dependency reason
   instead of guessing a nixpkgs attribute
 
-#### Scenario: Runtime presence is concrete
+#### Scenario: Cask dependency
 
-- **WHEN** an eligible token declares a cask dependency
-- **THEN** installing the token also installs the full resolved cask
-  closure into the same profile in one operation
+- **WHEN** a token depends on another cask
+- **THEN** the token is excluded with a cask-dependency-integration
+  reason and no closure is computed
 
 ### Requirement: Known and unknown tokens stay distinct
 

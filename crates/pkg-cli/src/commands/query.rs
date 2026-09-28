@@ -5,12 +5,12 @@
 
 use std::process::ExitCode;
 
-use crate::catalog::{self, CaskStatus, ParsedId};
+use crate::catalog::{self, ParsedId};
 use crate::cli::Cli;
 use crate::nix::{self, ProfileEntry};
 use crate::output::{self, ListRow};
 
-use super::{CommandError, Session, installed_entries, print_json, session};
+use super::{CommandError, installed_entries, print_json, session};
 
 pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
     let session = session(cli)?;
@@ -18,20 +18,28 @@ pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
     let mut reports = Vec::new();
     let mut rows = Vec::new();
     for (kind, moving) in super::configured_sources(&session.config) {
-        // The cask source is macOS-only; on other systems it is skipped with
-        // an honest status instead of a fatal requirement.
-        if kind == catalog::SourceKind::Cask && !catalog::casks_supported_on(&system) {
-            reports.push(catalog::SourceReport::skipped_platform(moving));
-            continue;
-        }
-        let (source_rows, report) = catalog::search_source(
-            &session.nix,
-            &session.paths.cache_dir,
-            moving,
-            query,
-            &system,
-            kind,
-        );
+        // The Nixpkgs lane passes the pattern to native search unchanged.
+        // The cask lane reads the generated catalog index once and filters
+        // locally; a system outside the catalog targets is skipped from the
+        // envelope alone inside that lane, and an index failure is a
+        // failure, never a skip.
+        let (source_rows, report) = match kind {
+            catalog::SourceKind::Nixpkgs => catalog::search_source(
+                &session.nix,
+                &session.paths.cache_dir,
+                moving,
+                query,
+                &system,
+                kind,
+            ),
+            catalog::SourceKind::Cask => catalog::search_catalog(
+                &session.nix,
+                &session.paths.cache_dir,
+                moving,
+                query,
+                &system,
+            ),
+        };
         reports.push(report);
         rows.extend(source_rows);
     }
@@ -93,19 +101,24 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
     let parsed = catalog::parse_id(id)?;
     let session = session(cli)?;
     let system = session.nix.system()?;
+    let mut catalog_handle = catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks);
     let resolved = match parsed {
         ParsedId::Qualified(qualified) => qualified,
-        ParsedId::Bare(name) => {
-            catalog::resolve_bare(&session.nix, &session.config.sources, &name, &system)?
-        }
+        ParsedId::Bare(name) => catalog::resolve_bare(
+            &session.nix,
+            &session.config.sources,
+            &name,
+            &system,
+            &mut catalog_handle,
+        )?,
     };
-    let (reference, attribute) = resolved.source_and_attribute(&session.config.sources);
-    let installable = resolved.installable(&session.config.sources);
-    // Cask platform and support are checked before any derivation lookup, so
-    // excluded and unlisted tokens report their recorded reason instead of
-    // exiting on a nonexistent derivation.
+    let (reference, attribute) = resolved.source_and_attribute(&session.config.sources, &system);
+    let installable = resolved.installable(&session.config.sources, &system);
+    // Cask status and metadata come from the generated index before any
+    // derivation lookup: excluded and unknown tokens report their recorded
+    // state without forcing a package evaluation.
     let data = if let catalog::CatalogId::Cask(token) = &resolved {
-        cask_info(&session, &system, &reference, token).map_err(CommandError::Message)?
+        cask_info(&mut catalog_handle, &system, &reference, token).map_err(CommandError::Message)?
     } else {
         match catalog::exact_lookup(&session.nix, &reference, &attribute) {
             Ok((exact, report)) => InfoData {
@@ -168,21 +181,17 @@ fn info_json(
             "locked_url": entry.locked_url,
         })
     });
-    let cask_version = match &data.cask {
-        Some(CaskDisplay::Status(CaskStatus::Supported { version, .. })) => version.clone(),
-        Some(CaskDisplay::Status(CaskStatus::Excluded { version, .. })) => version.clone(),
-        _ => None,
-    };
     let name = data
         .meta
         .as_ref()
         .map(|meta| meta.pname.clone())
         .unwrap_or_else(|| data.attribute.clone());
+    // Null and empty versions stay null; only a real value is claimed.
     let version = data
         .meta
         .as_ref()
         .map(|meta| meta.version.clone())
-        .or(cask_version);
+        .filter(|version| !version.is_empty());
     let description = data
         .meta
         .as_ref()
@@ -207,47 +216,38 @@ fn info_json(
 }
 
 /// Build the JSON value for one cask display state.
+///
+/// `status` mirrors the generated index vocabulary: `eligible` is a
+/// metadata claim, never a verification promise.
 fn cask_json(display: &CaskDisplay) -> serde_json::Value {
     match display {
-        CaskDisplay::UnsupportedPlatform { system } => serde_json::json!({
+        CaskDisplay::UnsupportedPlatform { system, targets } => serde_json::json!({
             "status": "unsupported-platform",
             "system": system,
-            "required": catalog::CASK_SYSTEM,
+            "targets": targets,
         }),
-        CaskDisplay::Unavailable(detail) => serde_json::json!({
-            "status": "unavailable",
-            "detail": detail,
-        }),
-        CaskDisplay::Status(catalog::CaskStatus::Supported {
+        CaskDisplay::Status {
+            status: catalog::CaskStatus::Eligible,
             kind,
-            version,
             homepage,
-            artifact_kinds,
-            override_applied,
-            source_revision,
-        }) => serde_json::json!({
-            "status": "supported",
+        } => serde_json::json!({
+            "status": "eligible",
             "kind": kind,
-            "version": version,
             "homepage": homepage,
-            "artifactKinds": artifact_kinds,
-            "override": override_applied,
-            "sourceRevision": source_revision,
         }),
-        CaskDisplay::Status(catalog::CaskStatus::Excluded {
-            version,
-            reason,
-            detail,
-            source_revision,
-        }) => serde_json::json!({
+        CaskDisplay::Status {
+            status: catalog::CaskStatus::Excluded { reason, detail },
+            ..
+        } => serde_json::json!({
             "status": "excluded",
-            "version": version,
             "reason": reason,
             "detail": detail,
-            "sourceRevision": source_revision,
         }),
-        CaskDisplay::Status(catalog::CaskStatus::Unlisted { .. }) => serde_json::json!({
-            "status": "unlisted",
+        CaskDisplay::Status {
+            status: catalog::CaskStatus::Unknown,
+            ..
+        } => serde_json::json!({
+            "status": "unknown",
         }),
     }
 }
@@ -271,10 +271,7 @@ fn info_text(
         .meta
         .as_ref()
         .map(|meta| meta.version.clone())
-        .or_else(|| match &data.cask {
-            Some(CaskDisplay::Status(status)) => cask_display_version(status),
-            _ => None,
-        });
+        .filter(|version| !version.is_empty());
     let _ = writeln!(
         out,
         "{}  {}  {}",
@@ -316,140 +313,113 @@ fn info_text(
     out
 }
 
-/// The version a cask classification carries, when it has one.
-fn cask_display_version(status: &CaskStatus) -> Option<String> {
-    match status {
-        CaskStatus::Supported { version, .. } => version.clone(),
-        CaskStatus::Excluded { version, .. } => version.clone(),
-        CaskStatus::Unlisted { .. } => None,
-    }
-}
-
-/// Build info data for one cask token.
+/// Build info data for one cask token from the generated catalog index.
 ///
-/// Platform and the support manifest are consulted before any derivation
-/// lookup: excluded and unlisted tokens return their recorded metadata from
-/// the same locked source without searching for a derivation that does not
-/// exist.
+/// The index is evaluated once per command run and answers entirely from
+/// recorded data: no package derivation is evaluated for cask metadata.
+/// Eligible, excluded, and unknown tokens all report their recorded state,
+/// and a system outside the catalog targets reports the target list.
 fn cask_info(
-    session: &Session,
+    catalog: &mut catalog::CatalogOnce<'_>,
     system: &str,
     reference: &str,
     token: &str,
 ) -> Result<InfoData, String> {
-    if !catalog::casks_supported_on(system) {
+    let view = catalog.load().map_err(|error| error.to_string())?;
+    let attribute = catalog::package_attribute(system, token);
+    if !view.targeted(system) {
         return Ok(InfoData {
-            attribute: token.to_string(),
+            attribute,
             matched_attribute: None,
             meta: None,
-            report: catalog::SourceReport::skipped_platform(reference),
+            report: catalog::SourceReport::skipped_platform(reference, view.targets()),
             cask: Some(CaskDisplay::UnsupportedPlatform {
                 system: system.to_string(),
+                targets: view.targets().to_vec(),
             }),
         });
     }
-    let lookup = match catalog::cask_status(&session.nix, reference, system, token) {
-        Ok(lookup) => lookup,
-        Err(error) => {
-            // The manifest is unavailable. A derivation lookup may still
-            // work; the unavailability stays visible in the result.
-            let detail = error.to_string();
-            let (exact, report) =
-                catalog::exact_lookup(&session.nix, reference, token).map_err(|lookup_error| {
-                    format!(
-                        "cask support manifest unavailable ({detail}); \
-                             and no exact derivation match either: {lookup_error}"
-                    )
-                })?;
-            return Ok(InfoData {
-                attribute: token.to_string(),
-                matched_attribute: Some(exact.attribute),
-                meta: Some(exact.meta),
-                report,
-                cask: Some(CaskDisplay::Unavailable(detail)),
-            });
-        }
-    };
-    match lookup.status {
-        catalog::CaskStatus::Supported { .. } => {
-            // Metadata comes from the same locked source as the support
-            // decision.
-            let (exact, report) =
-                catalog::exact_lookup_in(&session.nix, reference, &lookup.identity, token)
-                    .map_err(|error| error.to_string())?;
-            Ok(InfoData {
-                attribute: token.to_string(),
-                matched_attribute: Some(exact.attribute),
-                meta: Some(exact.meta),
-                report,
-                cask: Some(CaskDisplay::Status(lookup.status)),
-            })
-        }
-        status @ (catalog::CaskStatus::Excluded { .. } | catalog::CaskStatus::Unlisted { .. }) => {
-            Ok(InfoData {
-                attribute: token.to_string(),
-                matched_attribute: None,
-                meta: None,
-                report: catalog::report_for(reference, &lookup.identity),
-                cask: Some(CaskDisplay::Status(status)),
-            })
-        }
-    }
+    let record = view.record(system, token);
+    let meta = record.map(|entry| nix::SearchMeta {
+        pname: entry.name.clone().unwrap_or_else(|| token.to_string()),
+        version: entry.version.clone().unwrap_or_default(),
+        description: entry.description.clone().unwrap_or_default(),
+    });
+    Ok(InfoData {
+        attribute,
+        matched_attribute: None,
+        meta,
+        report: catalog::report_for(reference, &view.identity),
+        cask: Some(CaskDisplay::Status {
+            status: view.entry(system, token),
+            kind: record.and_then(|entry| entry.kind.clone()),
+            homepage: record.and_then(|entry| entry.homepage.clone()),
+        }),
+    })
 }
 
-/// Cask support display state for one token.
+/// Cask status display state for one token.
 #[derive(Debug)]
 enum CaskDisplay {
-    /// The system cannot run casks at all.
+    /// The system is outside the catalog's target list.
     UnsupportedPlatform {
         /// The system pkg is running on.
         system: String,
+        /// The catalog's declared target systems.
+        targets: Vec<String>,
     },
-    /// The support manifest could not be evaluated.
-    Unavailable(String),
-    /// The manifest classify result.
-    Status(catalog::CaskStatus),
+    /// The generated index status, with the recorded kind and homepage.
+    Status {
+        /// Eligible, excluded, or unknown.
+        status: catalog::CaskStatus,
+        /// The package kind, when the record is eligible.
+        kind: Option<String>,
+        /// The effective homepage, when the record has one.
+        homepage: Option<String>,
+    },
 }
 
 fn render_cask_display(display: &CaskDisplay) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     match display {
-        CaskDisplay::UnsupportedPlatform { system } => {
+        CaskDisplay::UnsupportedPlatform { system, targets } => {
             let _ = writeln!(
                 out,
-                "cask support: unsupported platform ({system}; casks need {})",
-                catalog::CASK_SYSTEM
+                "cask status: unsupported platform ({system}; catalog targets {})",
+                targets.join(", ")
             );
         }
-        CaskDisplay::Unavailable(detail) => {
-            let _ = writeln!(out, "cask support: unavailable ({detail})");
-        }
-        CaskDisplay::Status(catalog::CaskStatus::Supported {
+        CaskDisplay::Status {
+            status: catalog::CaskStatus::Eligible,
             kind,
-            source_revision,
-            ..
-        }) => {
-            let _ = writeln!(out, "cask support: supported ({kind})");
-            if let Some(revision) = source_revision {
-                let _ = writeln!(out, "cask source revision: {revision}");
+            homepage,
+        } => {
+            let kind = kind.as_deref().unwrap_or("unknown kind");
+            let _ = writeln!(out, "cask status: eligible ({kind})");
+            if let Some(homepage) = homepage {
+                let _ = writeln!(out, "cask homepage: {homepage}");
             }
-        }
-        CaskDisplay::Status(catalog::CaskStatus::Excluded {
-            version,
-            reason,
-            detail,
-            ..
-        }) => {
-            let version = version.as_deref().unwrap_or("unknown version");
-            let detail = detail.as_deref().unwrap_or("no detail");
             let _ = writeln!(
                 out,
-                "cask support: excluded at {version} ({reason}: {detail})"
+                "cask eligibility is a metadata claim; the build proves the payload"
             );
         }
-        CaskDisplay::Status(catalog::CaskStatus::Unlisted { .. }) => {
-            let _ = writeln!(out, "cask support: not listed for this system");
+        CaskDisplay::Status {
+            status: catalog::CaskStatus::Excluded { reason, detail },
+            ..
+        } => {
+            let detail = detail.as_deref().unwrap_or("no detail");
+            let _ = writeln!(out, "cask status: excluded ({reason}: {detail})");
+        }
+        CaskDisplay::Status {
+            status: catalog::CaskStatus::Unknown,
+            ..
+        } => {
+            let _ = writeln!(
+                out,
+                "cask status: not in the generated catalog for this system"
+            );
         }
     }
     out

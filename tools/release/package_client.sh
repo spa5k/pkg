@@ -90,14 +90,18 @@ EOF
 
 # Collect third-party Rust dependency license texts and notices (D9).
 # Driven by the locked Cargo dependency metadata at package time, filtered
-# to the crates reachable on the actual Rust target being packaged: one
+# to the crates reachable from pkg-cli on the actual Rust target being
+# packaged: the resolve graph is seeded from the pkg-cli package id and
+# walked over normal and build dependency edges (dev-only edges are
+# excluded), so workspace siblings such as the maintainer-only cask-catalog
+# generator and their dependencies can never enter the client archive. One
 # licenses/<crate>-<version>/ directory per registry crate with the license,
 # copying, copyright, and notice files from the unpacked crate source in the
 # local registry, plus licenses/THIRDPARTY.md listing every crate with its
-# version, declared license, and collected files. Crates that exist only for
-# other targets (for example UEFI-only code) are not distributed and are not
-# indexed. A crate with no license file and no declared license fails the
-# packaging.
+# version, declared license, and collected files. Crates that exist only
+# for other targets (for example UEFI-only code) are not distributed and
+# are not indexed. A crate with no license file and no declared license
+# fails the packaging.
 python3 - "$stage" "$rust_triple" <<'PY'
 import json
 import re
@@ -115,9 +119,35 @@ meta = json.loads(subprocess.check_output(
 registry_src = Path.home() / ".cargo" / "registry" / "src"
 license_name = re.compile(r"^(licen[cs]e|copying|copyright|notice)", re.IGNORECASE)
 
+packages = {p["id"]: p for p in meta["packages"]}
+resolve = meta.get("resolve") or {}
+nodes = {n["id"]: n for n in resolve.get("nodes", [])}
+
+# Seed from pkg-cli itself and walk normal/build dependency edges only.
+# Dev-only edges (kind == "dev") never distribute a crate, and workspace
+# members are skipped as non-distributed local packages but still walked
+# through so a future client-side workspace split stays honest.
+seeds = [pid for pid, p in packages.items() if p["name"] == "pkg-cli"]
+if not seeds:
+    sys.exit("pkg-cli package not found in workspace metadata")
+reachable, queue = set(), list(seeds)
+while queue:
+    pid = queue.pop()
+    if pid in reachable:
+        continue
+    reachable.add(pid)
+    node = nodes.get(pid)
+    if not node:
+        continue
+    for dep in node.get("deps", []):
+        kinds = [k.get("kind") for k in dep.get("dep_kinds", [])]
+        if any(kind in (None, "build") for kind in kinds):
+            queue.append(dep["pkg"])
+
 rows = []
 out = stage / "licenses"
-for pkg in sorted(meta["packages"], key=lambda p: (p["name"], p["version"])):
+for pid in sorted(reachable, key=lambda pid: (packages[pid]["name"], packages[pid]["version"])):
+    pkg = packages[pid]
     source = pkg.get("source") or ""
     if not source:
         continue  # workspace member, not a distributed dependency
@@ -156,8 +186,10 @@ lines = [
     "",
     f"One directory per crate holds the license and notice files copied",
     "from the crate source in the local Cargo registry. The list comes from",
-    f"Cargo metadata for the locked dependency graph on the packaged Rust",
-    f"target ({rust_triple}) at package time; crates reachable only on other",
+    f"Cargo metadata for the locked dependency graph reachable from pkg-cli",
+    f"through normal and build edges on the packaged Rust target",
+    f"({rust_triple}) at package time; dev-only dependencies, workspace",
+    "siblings such as maintainer tools, and crates reachable only on other",
     "targets are not distributed and are not listed. An",
     "empty file list means the crate declares a license without shipping",
     "a license file.",
@@ -171,6 +203,17 @@ for name, version, declared, copied in rows:
 (out / "THIRDPARTY.md").write_text("\n".join(lines) + "\n")
 print(f"collected license files for {len(rows)} third-party crates")
 PY
+
+# Packaging isolation guard (RC-01): the archive carries client outputs
+# only — no maintainer-tool binary, no generator license text, no catalog
+# data. Fail closed on any staged path that names the generator.
+if find "$stage" -name '*cask-catalog*' | grep -q .; then
+  echo "archive would contain maintainer-tool output (cask-catalog); refusing" >&2
+  exit 1
+fi
+binaries="$(find "${stage}/bin" -type f | wc -l)"
+[[ "${binaries//[[:space:]]/}" == "1" ]] \
+  || { echo "archive must contain exactly one client binary; found $binaries" >&2; exit 1; }
 
 mkdir -p dist
 out="dist/pkg-${version}-${system}.tar.gz"

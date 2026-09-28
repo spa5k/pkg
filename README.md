@@ -68,8 +68,8 @@ On macOS, `pkg` exposes app bundles from supported packages as launchers in
 - `pkg` does not install, update, repair, or remove the Nix runtime.
 - `pkg` does not run a broker, root helper, daemon, or privileged service.
 - `pkg` does not sign or host a package channel or central index.
-- `pkg` does not install or invoke Homebrew. Supported Casks are converted
-  to ordinary Nix packages.
+- `pkg` does not install or invoke Homebrew. Casks come from a generated
+  catalog of ordinary Nix packages; no package allowlists exist.
 - `pkg` does not migrate, adopt, or erase old installations.
 - `pkg` does not remove your machine's Nix installation when removed.
 
@@ -80,10 +80,14 @@ Removing the client removes only the client. Your Nix installation and the
 
 | Platform | Status |
 | --- | --- |
-| Linux x86-64 | In development |
-| macOS Apple silicon | In development; supported app subset only |
+| Linux x86-64 | In development; cask binary and AppImage journeys verified headless only |
+| macOS Apple silicon | In development; generated cask catalog, macOS baseline 15.7.7 |
 | macOS Intel | Not supported |
 | Linux arm64 | Not supported |
+
+The cask source covers a broad generated catalog on both target systems.
+Catalog eligibility is a metadata claim, not a verification promise. See
+[casks](docs/casks.md).
 
 ## Contribute
 

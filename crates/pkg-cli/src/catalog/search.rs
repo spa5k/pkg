@@ -9,12 +9,16 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::config::Sources;
-use crate::nix::{CaskSupport, Nix, SearchMeta};
+use crate::nix::{CatalogEntry, Nix, SearchMeta};
 
 use super::CatalogError;
 use super::cache::{self, CachedSearch};
-use super::cask::{self, CaskStatus};
+use super::cask::{self, CatalogOnce};
 use super::id::{CatalogId, escape_regex};
+
+/// One resolved row set: results, the reference they were read from, its
+/// revision, and whether the rows are stale cache reuse.
+type LaneRows = Option<(BTreeMap<String, SearchMeta>, String, Option<String>, bool)>;
 
 /// Which supported source a discovery query ran against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,18 +61,19 @@ pub struct SourceReport {
 
 impl SourceReport {
     /// The report for a source this system cannot query at all.
+    ///
+    /// The target list comes from the catalog index envelope itself, so a
+    /// system outside the targets is an honest skip, never a disguised
+    /// network failure.
     #[must_use]
-    pub fn skipped_platform(source: &str) -> Self {
+    pub fn skipped_platform(source: &str, targets: &[String]) -> Self {
         Self {
             source: source.to_string(),
             display: None,
             locked_reference: None,
             revision: None,
             status: SourceStatus::SkippedPlatform,
-            detail: Some(format!(
-                "cask source supports {} only",
-                super::cask::CASK_SYSTEM
-            )),
+            detail: Some(format!("cask catalog targets {} only", targets.join(", "))),
             support_detail: None,
         }
     }
@@ -105,8 +110,11 @@ impl SourceStatus {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum SupportBadge {
-    /// The token is supported on this system.
-    Supported,
+    /// The token is eligible on this system.
+    ///
+    /// Eligible is the generated metadata status; it is not a verification
+    /// promise.
+    Eligible,
     /// The token is excluded on this system.
     Excluded {
         /// A short machine-readable reason.
@@ -189,14 +197,20 @@ fn strip_output_set<'a>(attr: &'a str, system: Option<&str>) -> &'a str {
 
 /// Resolve a bare name to exactly one supported output.
 ///
-/// On systems without cask support the macOS-only cask source is not queried
-/// at all, so it can never be a fatal requirement there. Ambiguous names are
-/// refused with the qualified choices.
+/// The Nixpkgs lane runs the anchored native search as before. The cask
+/// lane resolves through the generated index: the name must equal one
+/// token exactly (fully anchored, token only — a display name is never a
+/// resolution). `catalog` is the shared once-per-command index handle, so
+/// a bare name and a later gate or info lookup evaluate the index once.
+///
+/// On a system the catalog does not target, the cask lane contributes no
+/// choices at all, so it can never be a fatal requirement there.
 pub fn resolve_bare(
     nix: &Nix,
     sources: &Sources,
     name: &str,
     system: &str,
+    catalog: &mut CatalogOnce<'_>,
 ) -> Result<CatalogId, CatalogError> {
     let pattern = format!("^{}$", escape_regex(name));
     let mut choices = Vec::new();
@@ -213,20 +227,13 @@ pub fn resolve_bare(
             exposed_attribute(&attr, system).to_string(),
         ));
     }
-    if cask::casks_supported_on(system) {
-        let casks = nix
-            .search(&sources.casks, &pattern)
-            .map_err(CatalogError::from)?;
-        for attr in exact_attribute_matches(&casks, name)
-            .into_iter()
-            .map(|(attr, _)| attr)
-        {
-            // Cask search keys are `packages.<system>.<token>`; routing uses
-            // the exposed token so the choice round-trips to install.
-            choices.push(CatalogId::Cask(
-                exposed_attribute(&attr, system).to_string(),
-            ));
-        }
+    let view = catalog.load();
+    if let Ok(view) = view
+        && view.targeted(system)
+        && view.exact_token(system, name).is_some()
+    {
+        // Bare cask resolution is the exact token; nothing else matches.
+        choices.push(CatalogId::Cask(name.to_string()));
     }
     match choices.len() {
         1 => Ok(choices.swap_remove(0)),
@@ -365,35 +372,200 @@ pub fn search_source(
     };
 
     match rows {
-        Some((results, reference, revision, stale)) => {
-            let support = cask_manifest_for(nix, kind, system, &reference, &mut report);
-            (
-                rows_from(
-                    &results, kind, &reference, &revision, system, stale, &support,
-                ),
-                report,
-            )
-        }
+        Some((results, reference, revision, stale)) => (
+            rows_from(&results, kind, &reference, &revision, system, stale),
+            report,
+        ),
         None => (Vec::new(), report),
     }
 }
 
-fn cask_manifest_for(
+/// Query the cask catalog index for `query` with local filtering.
+///
+/// The lane evaluates the generated `catalogIndex` attribute once from the
+/// locked reference of the moving source — the same source identity and
+/// revision rules as the native lane — and filters locally. No package
+/// derivation is forced. The pattern is a Rust regex (documented in
+/// docs/commands.md), compiled case-insensitively and matched against the
+/// token, the name, and the description of each entry; only eligible
+/// entries are returned, so search rows stay installable and unambiguous.
+/// Excluded tokens stay discoverable through `info` with their reason.
+///
+/// The platform rule is read from the envelope: a system outside `targets`
+/// is skipped with the target list shown, and an index evaluation failure
+/// is a failure — never a platform skip.
+#[must_use]
+pub fn search_catalog(
     nix: &Nix,
-    kind: SourceKind,
+    cache_dir: &Path,
+    moving_source: &str,
+    query: &str,
     system: &str,
-    locked_ref: &str,
-    report: &mut SourceReport,
-) -> Option<CaskSupport> {
-    if kind != SourceKind::Cask {
-        return None;
-    }
-    match nix.cask_support(locked_ref, system) {
-        Ok(support) => Some(support),
+) -> (Vec<SearchResult>, SourceReport) {
+    let identity = nix.source_identity(moving_source);
+    let mut report = SourceReport {
+        source: moving_source.to_string(),
+        display: None,
+        locked_reference: None,
+        revision: None,
+        status: SourceStatus::Fresh,
+        detail: None,
+        support_detail: None,
+    };
+    let (locked, revision, display) = match &identity {
+        Ok(id) => (
+            id.locked_url.clone(),
+            id.revision.clone(),
+            Some(id.display.clone()),
+        ),
         Err(error) => {
-            report.support_detail = Some(format!("cask support manifest unavailable: {error}"));
+            report.detail = Some(format!("metadata fetch failed: {error}"));
+            (None, None, None)
+        }
+    };
+    report.locked_reference = locked.clone();
+    report.revision = revision.clone();
+    report.display = display;
+
+    // Fresh reuse requires a proven revision match, exactly like the native
+    // lane; None == None is not proof.
+    let rows = if let (Some(rev), Some(locked_ref)) = (&revision, &locked)
+        && let Some(cached) = cache::read_cache(cache_dir, moving_source, system, query)
+        && cached.revision.as_ref() == Some(rev)
+    {
+        Some((cached.results, locked_ref.clone(), revision.clone(), false))
+    } else {
+        let eval_ref = locked.clone().unwrap_or_else(|| moving_source.to_string());
+        match nix.catalog_index(&eval_ref) {
+            // The platform rule comes from the envelope alone: an untargeted
+            // system is skipped with the target list shown, and no cache is
+            // written for it.
+            Ok(index) if !index.targets.iter().any(|target| target == system) => {
+                report = SourceReport::skipped_platform(moving_source, &index.targets);
+                None
+            }
+            Ok(index) => match filter_catalog(&index, system, query) {
+                Ok(results) => {
+                    let _ = cache::write_cache(
+                        cache_dir,
+                        &CachedSearch {
+                            schema: cache::CACHE_SCHEMA,
+                            source: moving_source.to_string(),
+                            locked_reference: locked.clone(),
+                            revision: revision.clone(),
+                            system: system.to_string(),
+                            query: query.to_string(),
+                            saved_unix: cache::now_unix(),
+                            results: results.clone(),
+                        },
+                    );
+                    Some((results, eval_ref, revision.clone(), false))
+                }
+                Err(error) => {
+                    live_index_failure(cache_dir, moving_source, system, query, &mut report, &error)
+                }
+            },
+            Err(error) => {
+                live_index_failure(cache_dir, moving_source, system, query, &mut report, &error)
+            }
+        }
+    };
+
+    match rows {
+        Some((results, reference, revision, stale)) => (
+            catalog_rows_from(&results, &reference, &revision, system, stale),
+            report,
+        ),
+        None => (Vec::new(), report),
+    }
+}
+
+/// Record a live index failure: reuse revision-matching cache data flagged
+/// stale when it exists, otherwise the lane fails honestly.
+fn live_index_failure(
+    cache_dir: &Path,
+    moving_source: &str,
+    system: &str,
+    query: &str,
+    report: &mut SourceReport,
+    error: &crate::nix::NixError,
+) -> LaneRows {
+    match cache::read_cache(cache_dir, moving_source, system, query) {
+        Some(cached) => {
+            report.status = SourceStatus::Stale;
+            report.detail = Some(format!("live index query failed: {error}"));
+            Some((
+                cached.results,
+                cached
+                    .locked_reference
+                    .clone()
+                    .unwrap_or_else(|| moving_source.to_string()),
+                cached.revision.clone(),
+                true,
+            ))
+        }
+        None => {
+            report.status = SourceStatus::Failed;
+            report.detail = Some(format!("live index query failed: {error}"));
             None
         }
+    }
+}
+
+/// Filter the eligible entries of one loaded index with the query pattern.
+///
+/// The catalog targets `system` (checked by the caller). An invalid regex is
+/// an honest error; the pattern grammar is documented, so a broken pattern
+/// is reported instead of silently matching nothing.
+fn filter_catalog(
+    index: &crate::nix::CatalogIndex,
+    system: &str,
+    query: &str,
+) -> Result<BTreeMap<String, SearchMeta>, crate::nix::NixError> {
+    let empty = BTreeMap::new();
+    let entries = index
+        .systems
+        .get(system)
+        .map(|section| &section.entries)
+        .unwrap_or(&empty);
+    let pattern = regex::RegexBuilder::new(query)
+        .case_insensitive(true)
+        .build()
+        .map_err(|error| crate::nix::NixError::Decode {
+            what: "cask catalog search pattern",
+            detail: format!("invalid regex `{query}`: {error}"),
+        })?;
+    let mut results = BTreeMap::new();
+    for (token, entry) in entries {
+        if entry.status != crate::nix::EntryStatus::Eligible {
+            continue;
+        }
+        let matches = pattern.is_match(token)
+            || entry
+                .name
+                .as_deref()
+                .is_some_and(|name| pattern.is_match(name))
+            || entry
+                .description
+                .as_deref()
+                .is_some_and(|description| pattern.is_match(description));
+        if matches {
+            results.insert(token.clone(), catalog_meta(token, entry));
+        }
+    }
+    Ok(results)
+}
+
+/// The cached metadata shape for one eligible index entry.
+///
+/// Nullable index strings become the token (name) and empty strings
+/// (version, description), matching the native lane's non-nullable row
+/// fields; `info` keeps the nullable values.
+fn catalog_meta(token: &str, entry: &CatalogEntry) -> SearchMeta {
+    SearchMeta {
+        pname: entry.name.clone().unwrap_or_else(|| token.to_string()),
+        version: entry.version.clone().unwrap_or_default(),
+        description: entry.description.clone().unwrap_or_default(),
     }
 }
 
@@ -404,36 +576,51 @@ pub(super) fn rows_from(
     revision: &Option<String>,
     system: &str,
     stale: bool,
-    support: &Option<CaskSupport>,
 ) -> Vec<SearchResult> {
     results
         .iter()
-        .map(|(attr, meta)| {
-            // A manifest present but token unlisted yields no badge; pkg does
-            // not claim support the manifest does not state.
-            let support_badge = support.as_ref().and_then(|manifest| {
-                let token = exposed_attribute(attr, system);
-                match cask::classify_cask(manifest, token, None) {
-                    CaskStatus::Supported { .. } => Some(SupportBadge::Supported),
-                    CaskStatus::Excluded { reason, detail, .. } => {
-                        Some(SupportBadge::Excluded { reason, detail })
-                    }
-                    CaskStatus::Unlisted { .. } => None,
-                }
-            });
-            SearchResult {
-                id: format!("{}:{}", kind.label(), exposed_attribute(attr, system)),
-                attribute: attr.clone(),
-                name: meta.pname.clone(),
-                version: meta.version.clone(),
-                description: meta.description.clone(),
-                source: kind.label().to_string(),
-                reference: Some(reference.to_string()),
-                revision: revision.clone(),
-                system: system.to_string(),
-                stale,
-                support: support_badge,
-            }
+        .map(|(attr, meta)| SearchResult {
+            id: format!("{}:{}", kind.label(), exposed_attribute(attr, system)),
+            attribute: attr.clone(),
+            name: meta.pname.clone(),
+            version: meta.version.clone(),
+            description: meta.description.clone(),
+            source: kind.label().to_string(),
+            reference: Some(reference.to_string()),
+            revision: revision.clone(),
+            system: system.to_string(),
+            stale,
+            support: None,
+        })
+        .collect()
+}
+
+/// Build cask search rows from locally filtered index results.
+///
+/// Keys are catalog tokens; every row points at the ordinary
+/// `packages.<system>.<token>` attribute the token installs through, and
+/// every row is eligible by construction of the filter.
+pub(super) fn catalog_rows_from(
+    results: &BTreeMap<String, SearchMeta>,
+    reference: &str,
+    revision: &Option<String>,
+    system: &str,
+    stale: bool,
+) -> Vec<SearchResult> {
+    results
+        .iter()
+        .map(|(token, meta)| SearchResult {
+            id: format!("cask:{token}"),
+            attribute: cask::package_attribute(system, token),
+            name: meta.pname.clone(),
+            version: meta.version.clone(),
+            description: meta.description.clone(),
+            source: SourceKind::Cask.label().to_string(),
+            reference: Some(reference.to_string()),
+            revision: revision.clone(),
+            system: system.to_string(),
+            stale,
+            support: Some(SupportBadge::Eligible),
         })
         .collect()
 }
@@ -567,6 +754,61 @@ mod tests {
         );
         // Bare attributes pass through.
         assert_eq!(exposed_attribute("cursor", system), "cursor");
+    }
+
+    /// The catalog lane filters the generated index locally: eligible
+    /// entries only, Rust-regex semantics, matched case-insensitively
+    /// against token, name, and description. Data is the actual catalog
+    /// slice fixture.
+    #[test]
+    fn catalog_lane_filters_eligible_entries_locally() {
+        let raw: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/catalog-index.json"))
+                .expect("valid json");
+        let index = crate::nix::decode_catalog_index(&raw).expect("decodes fixture");
+
+        // Token, name, and description each match, case-insensitively.
+        let token_hit = filter_catalog(&index, "x86_64-linux", "koreader").expect("filters");
+        assert!(token_hit.contains_key("koreader"));
+        let name_hit = filter_catalog(&index, "x86_64-linux", "1password").expect("filters");
+        assert!(name_hit.contains_key("1password-cli"));
+        let desc_hit = filter_catalog(&index, "aarch64-darwin", "command-line").expect("filters");
+        assert!(desc_hit.contains_key("1password-cli"));
+
+        // Search shows eligible entries only: the excluded `iterm2` on
+        // Linux and the installer-script `zoom` never appear.
+        let any = filter_catalog(&index, "x86_64-linux", ".").expect("filters");
+        assert!(any.contains_key("koreader"));
+        assert!(!any.contains_key("iterm2"));
+        assert!(!any.contains_key("zoom"));
+        // An excluded token stays discoverable through info instead; the
+        // `@` and `+` tokens stay searchable when eligible.
+        let macos_any = filter_catalog(&index, "aarch64-darwin", ".").expect("filters");
+        assert!(!macos_any.contains_key("zoom"));
+        assert!(macos_any.contains_key("1password@7"));
+        assert!(macos_any.contains_key("4k-video-downloader+"));
+
+        // A broken pattern is an honest error, not a silent empty result.
+        let error = filter_catalog(&index, "x86_64-linux", "(").expect_err("invalid regex");
+        assert!(error.to_string().contains("invalid regex"));
+
+        // Rows point at the ordinary package attribute of each token.
+        let rows = catalog_rows_from(
+            &token_hit,
+            "locked-ref",
+            &Some(String::from("rev")),
+            "x86_64-linux",
+            false,
+        );
+        let row = &rows[0];
+        assert_eq!(row.id, "cask:koreader");
+        assert_eq!(row.attribute, "packages.x86_64-linux.koreader");
+        assert_eq!(row.support, Some(SupportBadge::Eligible));
+        assert_eq!(row.source, "cask");
+        // Row shape carries non-nullable strings; `info` keeps the nullable
+        // values.
+        assert_eq!(row.name, "KOReader");
+        assert_eq!(row.version, "2026.07.1");
     }
 
     #[test]

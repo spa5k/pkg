@@ -1,73 +1,73 @@
 # Rust Cask catalog implementation tasks
 
-These tasks implement the [design](design.md). All tasks are open.
-Implementation is delegated; verification on real hosts is split:
-Linux checks run in the E2B sandbox (headless; no GUI launch claims),
-macOS checks run in the parent's Tart VM. Keep groups in this order;
-each group is one reviewable work unit and the notes state
-dependencies.
+These tasks implement the [design](design.md) under the binding
+[contract](contract.md). A box is checked only when the item is
+implemented AND verified with recorded evidence (see
+[docs/verification/2026-09-28-rust-cask-catalog.md](../../../docs/verification/2026-09-28-rust-cask-catalog.md)).
+Unchecked boxes are open work or verified-partial work; notes say
+which. Keep group order; each group is one reviewable unit.
 
 No task may run a vendor installer, install Nix on a Mac, execute
 Homebrew, or ship the maintainer tool in the client archive.
 
 ## 1. RC-01: Workspace scaffolding and packaging isolation
 
-- [ ] 1.1 Add `tools/cask-catalog` as a workspace member with a minimal CLI (`fetch`, `generate`, `self-test`) and doc comments; verify the pinned toolchain, lint set, and `deny.toml` pass for the whole workspace.
-- [ ] 1.2 Fix `tools/release/package_client.sh` license collection (owned by this group for the change): traverse only the resolve graph reachable from `pkg-cli` for the packaged target — seed from the `pkg-cli` package id in the platform-filtered `cargo metadata` and walk `deps` edges (or use `cargo tree -p pkg-cli --target <triple>`) — excluding every workspace member and dependency not in that graph, so generator dependencies and licenses cannot enter the client archive; add a check that the archive contains no `cask-catalog` binary, license text, or catalog data.
-- [ ] 1.3 Add the catalog license and attribution file (`nix/casks/lib/README.md` or equivalent) recording brew-nix's MIT license, the ported revision, and the Homebrew data license; verify a reviewer can find every upstream origin from it.
-- [ ] 1.4 Add the CI regeneration check job placeholder wiring (job may fail until RC-03 commits data); verify CI stays green on non-catalog paths until then.
+- [x] 1.1 Add `tools/cask-catalog` as a workspace member with a minimal CLI (`fetch`, `generate` — there is NO `self-test` command; focused `cargo test` suites are the checks) and doc comments; the pinned toolchain, lint set, and `deny.toml` pass for the whole workspace. Evidence: 81 tests, fmt/clippy/doc/deny green.
+- [x] 1.2 Package only the dependency graph reachable from the client. Both full-workspace packaging runs passed: 49 client license sets on macOS, 50 on Linux, exactly one client binary, and no generator, catalog, or generator-only licenses.
+- [x] 1.3 Add the catalog license and attribution file (`nix/casks/lib/README.md`) recording brew-nix's MIT license, the ported revision `16131ae4126c54b1502aa7eaf6573d7fbf16b656`, and the Homebrew data license. Evidence: file present and reviewed.
+- [ ] 1.4 Verify the wired catalog regeneration job on GitHub CI. The local command sequence passes; the pull-request run is pending.
 
 ## 2. RC-02: Generator core (depends on RC-01)
 
-- [ ] 2.1 Implement `fetch`: download `cask.json` at an exact revision, verify SHA-256, and write `nix/casks/catalog/input.json` (url, revision, sha256, license attribution); verify a wrong hash aborts without writing the pin.
-- [ ] 2.2 Implement the accepted input schema with `supported_platforms` (and the other required fields) mandatory: a snapshot missing a required field family fails generation atomically with no output replacement; a record missing a required field is excluded as `malformed-record`; verify both fail-closed paths with focused tests.
-- [ ] 2.3 Implement the per-target effective-record merge with wholesale variation replacement including the artifacts array; verify against the research-note examples (sha-only variation, artifacts-replacing variation) with focused unit tests.
-- [ ] 2.4 Implement eligibility ordering and the bounded reason vocabulary from the design, with OS support decided only from `supported_platforms` and `depends_on` constraints — never from variation keys or artifact kinds; verify each reason with one minimal record fixture, including disabled/deprecated and minimum-os against the declared baseline.
-- [ ] 2.5 Implement the typed plan builder: apps, binaries with renames, completions, manpages, archive kind, resolved cask depends, minMacos; verify multi-app and renamed-CLI records produce complete plans with no token-specific branches.
-- [ ] 2.6 Implement plan safety validation: anchor normalization, absolute/traversal/unresolved-expansion rejection, link-name hygiene; verify each rejection names the field and excludes only that token.
-- [ ] 2.7 Implement cask dependency closure resolution with cycle detection; exclude records with any Homebrew formula dependency (`formula-dependency` reason, no guessed nixpkgs attributes, no committed formula map); exclude records whose declared dependency implies vendor integration generic builders cannot provide (`cask-dependency-integration`); verify each case with focused tests.
-- [ ] 2.8 Implement whole-catalog integrity checks (duplicate tokens, conflicting versions, pin hash mismatch, missing required field families) failing atomically with no output replacement; verify no partial catalog file is left behind on failure.
-- [ ] 2.9 Implement deterministic serialization and provenance embedding; verify byte-identical output across runs and machines, including sorted keys and no timestamps.
-- [ ] 2.10 Add the generator's focused test suite over the seams above; keep fixtures small and real-shaped; no mock campaign.
+- [x] 2.1 `fetch`: downloads `cask.json` at an exact revision, verifies SHA-256 before replacing anything, writes `nix/casks/catalog/input.json` (url, revision, sha256, license). Flags: `--revision --repo --sha256 --cache-dir --pin`. Evidence: committed pin + tests.
+- [x] 2.2 Accepted input schema with `supported_platforms` required: snapshot missing the field family fails atomically; one record missing it is excluded `malformed-record`. Evidence: emit/classify tests, both fail-closed paths covered.
+- [x] 2.3 Per-target effective-record merge with wholesale variation replacement including the artifacts array. Evidence: focused unit tests over research-note examples.
+- [x] 2.4 Eligibility ordering and bounded reason vocabulary; OS support only from `supported_platforms` and `depends_on`. Evidence: per-reason fixtures in classify tests; committed catalog shows exactly the documented reasons.
+- [x] 2.5 Typed plan builder: apps, binaries with renames, completions, manpages, archive kind, minMacos; no token-specific branches. Evidence: plan tests + committed catalog plans.
+- [x] 2.6 Plan safety validation: anchors, absolute/traversal/unresolved-expansion rejection, link-name hygiene; each rejection names the field and excludes only that token. Evidence: plan tests.
+- [x] 2.7 Every record with any formula dependency excluded (`formula-dependency`); every record with any cask dependency excluded (`cask-dependency-integration`); no closure engine, no depends output. Evidence: focused tests.
+- [x] 2.8 Whole-catalog integrity (duplicate tokens, unusable keys, empty/non-array snapshot, pin hash mismatch) failing atomically; failed publish leaves the previous catalog untouched. Evidence: emit tests including read-only-directory case.
+- [x] 2.9 Deterministic serialization and provenance; byte-identical output, sorted keys, no timestamps. Evidence: local byte-identical regeneration recorded.
+- [x] 2.10 Focused generator test suite over these seams; fixtures small and real-shaped (one real-catalog fixture regenerated from actual output). Evidence: 81 tests green, final review strictness included (malformed dependency/option/variation shapes reject; duplicate artifact targets reject; macOS constraints validated on all targets while baseline comparison and minMacos apply only to aarch64-darwin, never Linux).
 
 ## 3. RC-03: Generated data and the macOS Nix source (depends on RC-02)
 
-- [ ] 3.1 Run `fetch` + `generate` against the pinned brew-api revision and commit `nix/casks/catalog/{input.json,catalog.json}`; record input revision, size, and coverage counts in the change description.
-- [ ] 3.2 Rewrite `nix/casks/flake.nix` to read the committed catalog with `builtins.fromJSON`, keep `nixpkgs` as the only input, and expose `packages.<system>.<token>` lazily plus the single `catalogIndex` envelope and `catalogStatus`; verify evaluation with import-from-derivation disabled.
-- [ ] 3.3 Implement `buildAppArchive` (port from brew-nix `casks.nix`: archive dispatch, bundle placement, binary linking, wrapper) driven only by plan data with `escapeShellArg`-quoted interpolation; verify an app+CLI token builds and the CLI link name comes from the plan.
-- [ ] 3.4 Implement pre-write path and link validation (members stay inside the staging root; vendor links resolve in-tree, allowing legitimate in-tree `..` chains) plus the post-install verification distinguishing vendor payload links from builder-created links into `$out` or declared Nix store inputs; verify an escaping member fails before any write and a wrapper link to a declared input is accepted.
-- [ ] 3.5 Implement the generic build-time Info.plist minimum check (major/minor comparison against the declared baseline); verify a too-new bundle fails with a clear message naming the required version.
-- [ ] 3.6 Implement `buildPkgPayload` with the structural relocatable-layout rule (payload-only xar; no scripts, plugins, or choice-requiring distribution; no system Library files, services, drivers, or privileged helpers; no silent dropping of essential payload); verify a scripts-carrying pkg and a system-payload pkg both fail without invoking any installer, and a pure relocatable payload extracts and installs.
-- [ ] 3.7 Implement completion/manpage linking from plan data; verify a plan without them builds unchanged and a plan with missing files fails naming the file.
-- [ ] 3.8 Turn on the CI regeneration check; verify it passes on the committed data and fails on a tampered catalog or pin.
+- [x] 3.1 Run `fetch` + `generate` against the pinned brew-api revision and commit `nix/casks/catalog/{input.json,catalog.json}`; revision, size, and counts recorded in the dated verification note (not duplicated here).
+- [x] 3.2 (Nix owner) `nix/casks/flake.nix` reads the ONE committed `catalog.json` with `builtins.fromJSON`, keeps `nixpkgs` as the only input, derives `catalogIndex` and `catalogStatus`, exposes `packages.<system>.<token>` lazily. Evidence: both outputs evaluate over all 7709 records with IFD disabled.
+- [x] 3.3 Generic archive builder (brew-nix port: archive dispatch, bundle placement, binary linking) driven only by plan data through the stdlib-Python helper; vendor strings never reach the shell. Evidence: Cursor 3.17.19 app+CLI built, installed, CLI ran, codesign deep-strict valid.
+- [x] 3.4 Pre-write member and link validation plus post-install verification distinguishing vendor links from builder links. Evidence: B11 fixture checks pass.
+- [x] 3.5 Read the bundle minimum macOS version without changing its bytes. Raycast 1.104.25 requires 13.0 and builds on the 15.7.7 baseline. The macOS 26.0 plist fixture is refused with a clear version error.
+- [x] 3.6 `buildPkgPayload` structural rule (payload-only xar; no scripts, plugins, nested pkgs, system payloads; app-bundle layouts only — plain files rejected; no silent drops). Evidence: 13 Nix fixture checks plus the Python archive regressions; the final generator review also rejects the twelve choice-requiring pkg records as `installer-script` at generation, and `meta-quest-remote-desktop` as `unsupported-container`.
+- [x] 3.7 Link completions and manpages from plan data. The real Nix app fixture checks each output and the renamed CLI path. The complete builder suite passed 13 checks.
+- [ ] 3.8 Confirm the GitHub regeneration job passes against the committed pin and data. Local byte comparison passes. CI status will be recorded on the pull request.
 
 ## 4. RC-04: Linux builders and dependencies (depends on RC-03)
 
-- [ ] 4.1 Implement `buildBinary` with the static passthrough and Nixpkgs `autoPatchelfHook` against the bounded generic runtime-library closure maintained in `builders.nix`; verify a static binary runs unchanged, a dynamic binary in the closure runs against store paths with no host `/usr` or `/lib` dependence, and an out-of-closure library fails naming the soname.
-- [ ] 4.2 Implement `buildAppImage` using the pinned Nixpkgs `appimageTools.wrapType2` (API verified in the locked nixpkgs revision); no hand-rolled extraction environment tricks and no blanket auto-patching over the image; verify the built launcher runs a real AppImage; claim runnability only for what was executed.
-- [ ] 4.3 Make cask dependencies concrete at runtime: the client expands installs to the full resolved cask closure in one profile operation, and wrapped binaries get explicit wrapper paths over declared dependency outputs; verify one `nix profile add` installs a token with its closure and the dependency binaries are on the profile path.
-- [ ] 4.4 Verify lazy isolation on Linux: building one token forces only its plan; the index evaluates with no builds; one unbuildable record never fails other requests.
+- [x] 4.1 Build static and dynamic Linux binaries. op 2.39.0 ran. A dynamic zlib fixture had its host loader and rpath replaced with store paths and ran. A missing-soname fixture failed and named its required library.
+- [x] 4.2 `buildAppImage` via pinned Nixpkgs `appimageTools.wrapType2`; no hand-rolled extraction tricks. Evidence: KOReader AppImage `--help` printed `v2026.07.1` (headless run only).
+- [x] 4.3 Refuse formula and cask dependencies through the actual client gate. Beutl was refused with formula-dependency. Acronis True Image was refused with cask-dependency-integration. No dependency expansion exists.
+- [x] 4.4 Evaluate the full index without builds or IFD. Install only the requested Linux op and KOReader plans from the full catalog. Other plans remain unforced.
 
 ## 5. RC-05: Client integration (depends on RC-03; parallel with RC-04)
 
-- [ ] 5.1 Replace `cask.rs` classification with envelope lookups; delete `CASK_SYSTEM` and `casks_supported_on`; read `targets` from the envelope before any per-system data so an untargeted system reports platform-skipped without evaluating a nonexistent attribute.
-- [ ] 5.2 Add the `pkg-cask-catalog/2` envelope decode with the strict schema gate and the documented null rules in `manifest.rs`; regenerate the fixture from real generator output; verify an unknown schema fails naming both schemas.
-- [ ] 5.3 Route cask search through the cheap envelope eval with local filtering via the declared `regex` dependency (Rust regex grammar, documented; Nixpkgs lane unchanged), reusing the existing cache, source identity, and stale logic; verify a broad search forces no derivations and one bad record cannot fail the query set.
-- [ ] 5.4 Point `info` and `install` resolution at `packages.<system>.<token>`, keep `gate_cask` on generated status, and expand installs to the resolved cask closure; verify excluded and unknown tokens are refused with reasons and eligible tokens install through the ordinary profile path.
-- [ ] 5.5 Verify the native lifecycle end to end after the change: original moving references, upgrade re-resolution, rollback, and launcher sync behave exactly as before; no Homebrew cleanup hooks run.
+- [x] 5.1 Cask classification replaced with envelope lookups; `CASK_SYSTEM` and `casks_supported_on` deleted; `targets` read before per-system data. Evidence: full client suite green after the change.
+- [x] 5.2 `pkg-cask-catalog/2` envelope decode with the strict schema gate and documented null rules in `manifest.rs`; fixture regenerated from real generator output; unknown schema names both schemas. Evidence: tests green on the real fixture.
+- [x] 5.3 Catalog search through the cheap envelope eval with local Rust-regex filtering (declared `regex` dependency); existing cache/stale rules reused; no derivations forced; one bad record cannot fail the query set. Evidence: macOS `pkg search` journey passed; 7709-record index eval without IFD.
+- [x] 5.4 `info`/`install` resolve `packages.<system>.<token>`; `gate_cask` on generated status; excluded (Zoom, `installer-script`) and unknown tokens refused. Evidence: Cursor + 1password-cli installs passed.
+- [x] 5.5 Native lifecycle end to end: moving references, upgrade re-resolution, rollback, launcher sync. Evidence: list/update/upgrade/rollback/remove/apps-sync journey on the macOS VM, including the controlled version-label probe with vendor bytes preserved.
 
 ## 6. RC-06: Removal and documentation (depends on RC-03, RC-05)
 
-- [ ] 6.1 Delete the brew-nix flake input, the curated token and override machinery, and the old `caskSupport` output; verify the flake lock no longer carries brew-nix or brew-api and attribution remains per RC-01.
-- [ ] 6.2 Delete the `pkg-cask-support/1` decode path and old fixture; verify no production or test code references the old schema or `CASK_SYSTEM`.
-- [ ] 6.3 Rewrite `docs/casks.md`, the catalog update procedure, the search grammar documentation, and any PRODUCT/CONTEXT text naming the curated set or macOS-only casks; verify docs describe the generated catalog, both targets, and the honest eligibility distinction.
-- [ ] 6.4 Update the docs-linkcheck expectations and CONTRIBUTING pointer if the active change link must move; verify the docs-linkcheck workflow is green.
+- [x] 6.1 Delete the brew-nix flake input and curated token/override machinery; only `nixpkgs` remains; attribution retained in `nix/casks/lib/README.md`. Evidence: flake.nix has exactly one input.
+- [x] 6.2 Delete the `pkg-cask-support/1` decode path and old fixture; no production or test code references the old schema or `CASK_SYSTEM`. Evidence: full test suite green; no references remain.
+- [x] 6.3 Rewrite cask, command, install, product, and context documentation. The detailed HTML plan, update procedure, and index semantics match the final implementation. Local documentation links pass.
+- [x] 6.4 Docs-linkcheck expectations updated and green. Evidence: docs-links check passed with this change's links.
 
 ## 7. RC-07: Verification and evidence (depends on RC-04, RC-05, RC-06)
 
-- [ ] 7.1 Run the full-catalog evaluation on both systems; record total, eligible, and excluded-by-reason counts as eligibility coverage, explicitly not a compatibility promise, in `docs/verification/`.
-- [ ] 7.2 Linux (E2B, headless): real journeys with a real generated catalog — search, info, install of one binary and one AppImage, CLI execution, upgrade across one catalog revision, remove; verify runnable behavior only and make no GUI launch claims; record systems, revisions, outcomes.
-- [ ] 7.3 macOS (parent Tart VM): install one app+CLI token and one binary-only token; verify app launch, CLI run, and `codesign --verify --deep --strict` on the intact bundle; record outcomes.
-- [ ] 7.4 Verify one exclusion honestly: an installer-carrying token and a too-new-macOS token (hidden-plist case included via the build check) are refused with their recorded reasons in `info` and `install`.
-- [ ] 7.5 Confirm release integrity: package the client on both systems with the RC-01 collector fix and verify the archive contains no generator binary, no maintainer-tool license texts, and no catalog data.
-- [ ] 7.6 Record known limits and the pending observational probes (the `1password-cli` binary and `koreader` AppImage runs in the second sandbox) in the verification note when results arrive; do not mark tasks complete beyond the evidence.
+- [x] 7.1 Full-catalog evaluation on both systems; total/eligible/by-reason counts recorded as eligibility coverage (not a compatibility promise) in the dated verification note.
+- [x] 7.2 Run the full Linux client journey in E2B with strict shell error handling: search, info, install, execution, update, upgrade, rollback, removal. A controlled catalog version-label change selected a new output while preserving the original reference. Rollback restored the old output. The final profile was empty. KOReader was checked headless.
+- [x] 7.3 macOS (parent Tart VM): app+CLI token (Cursor 3.17.19) and binary-only token (1password-cli 2.39.0) installed; app process launched; `cursor --version` ran; `codesign --verify --deep --strict` passed. GUI interaction not verified (recorded as such).
+- [x] 7.4 Verify actual installer, formula-dependency, cask-dependency, and unknown-token refusals. Verify generation-time minimum constraints and the build-time macOS 26.0 plist refusal. No vendor installer runs.
+- [x] 7.5 Package the client on both systems. The archives contain one client binary, completions, notices, and only client dependency licenses. No generator binary, generated catalog, or generator-only license sets are present.
+- [x] 7.6 Record final coverage, strict client journeys, signed macOS bundles, gzip and native pbzx package fixtures, Linux dynamic linking, archive-path checks, and packaging in the dated verification note. State the limits: metadata eligibility is not universal compatibility, and Linux GUI use was not tested.

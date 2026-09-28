@@ -8,7 +8,7 @@ Global options: `--help`, `--version`, `--no-color`, `--verbose`.
 
 | Command | Behavior |
 | --- | --- |
-| `pkg search QUERY` | Search supported sources. Shows source-qualified names and support status. |
+| `pkg search QUERY` | Search supported sources. Shows source-qualified names and eligibility. |
 | `pkg info ID` | Show source, attribute, metadata revision, and known limits. |
 | `pkg install ID…` | Resolve all names, then run one native profile add. |
 | `pkg list` | Read the dedicated profile. Shows native entry IDs and source identity. |
@@ -53,6 +53,17 @@ usable cache exists, `search` exits nonzero instead of reporting an empty
 success. Rows reused from cache after a live failure carry
 `"stale": true`.
 
+Search pattern grammar, per lane:
+
+- The `nixpkgs` lane passes the pattern to native `nix search` unchanged;
+  native regex semantics apply.
+- The `cask` lane evaluates the generated catalog index once and filters
+  locally: the pattern is a Rust regex (the `regex` crate), compiled
+  case-insensitively and matched against each entry's token, name, and
+  description. An invalid pattern is reported as a source failure with the
+  regex error. Only eligible entries are listed; excluded tokens stay
+  discoverable through `pkg info`.
+
 Source report fields:
 
 | Field | Type | Meaning |
@@ -77,7 +88,7 @@ Row fields:
 | `revision` | string, nullable | Locked revision of that reference. |
 | `system` | string | System the row was evaluated for. |
 | `stale` | boolean | Row reused from cache after a live query failure. |
-| `support` | object, nullable | `{"status":"supported"}` or `{"status":"excluded","reason":…,"detail":…}` for cask rows; `null` for nixpkgs rows, unlisted tokens, and when the support manifest is unavailable. |
+| `support` | object, nullable | `{"status":"eligible"}` or `{"status":"excluded","reason":…,"detail":…}` for cask rows; `null` for nixpkgs rows. Eligible is the generated metadata status, not a verification promise. |
 
 ### `info`
 
@@ -98,11 +109,15 @@ Row fields:
 
 `cask` is one of:
 
-- `{"status":"supported","kind":…,"version":…,"homepage":…,"artifactKinds":[…],"override":…,"sourceRevision":…}`
-- `{"status":"excluded","version":…,"reason":…,"detail":…,"sourceRevision":…}`
-- `{"status":"unlisted"}` — the token is not in the support manifest for this system.
-- `{"status":"unsupported-platform","system":…,"required":"aarch64-darwin"}`
-- `{"status":"unavailable","detail":…}` — the support manifest could not be evaluated.
+- `{"status":"eligible","kind":…,"homepage":…}` — the generated index
+  marks the token eligible on this system. This is a metadata claim; the
+  build proves the payload.
+- `{"status":"excluded","reason":…,"detail":…}` — the recorded exclusion
+  reason and detail.
+- `{"status":"unknown"}` — the token is not in the generated catalog for
+  this system.
+- `{"status":"unsupported-platform","system":…,"targets":[…]}` — this
+  system is outside the catalog's target list.
 
 ### `list`
 
@@ -130,8 +145,10 @@ never repairs anything.
 ## Package IDs
 
 - `nixpkgs:<attribute>` selects a Nixpkgs attribute.
-- `cask:<token>` selects a supported Cask package.
-- A bare name is valid only when it has one supported exact match.
+- `cask:<token>` selects a Cask package from the generated catalog. Tokens
+  may use lowercase letters, digits, `+`, `.`, `_`, `-`, and `@`.
+- A bare name is valid only when it has one supported exact match. A cask
+  bare name must equal one token exactly; a display name never resolves.
 - Ambiguous names require a source-qualified ID.
 - Explicit public GitHub flake installables with an attribute after `#` are
   accepted.

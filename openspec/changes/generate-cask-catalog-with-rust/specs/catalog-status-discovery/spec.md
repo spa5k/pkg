@@ -10,15 +10,16 @@ platform constant.
 ### Requirement: One generated index envelope
 
 The Cask source SHALL expose exactly one index attribute
-(`catalogIndex`) whose value is a single envelope: schema identifier,
+(`catalogIndex`), derived by the flake from the single committed
+`catalog.json`, whose value is a single envelope: schema identifier,
 generator and input provenance, the target system list, the declared
 macOS baseline, and per-system entries keyed by token. Each entry SHALL
 carry `token`, `name`, `description`, `version`, `homepage`,
-`status`, `kind`, `reason`, `detail`, and `depends`. Null rules:
-`name`, `description`, `version`, and `homepage` are string or null;
-eligible entries have non-null `kind`, null `reason` and `detail`, and
-a present `depends`; excluded entries have null `kind`, non-null
-`reason`, string-or-null `detail`, and null `depends`. The client SHALL
+`status`, `kind`, `reason`, and `detail`; there is no `depends`
+field. Null rules: `name`, `description`, `version`, and `homepage`
+are string or null; eligible entries have non-null `kind` and null
+`reason` and `detail`; excluded entries have null `kind`, non-null
+`reason`, and string-or-null `detail`. The client SHALL
 read status only from this envelope, evaluated from the same locked
 source reference used for search rows, and SHALL NOT recompute
 eligibility from raw cask metadata. The API SHALL live on the flake
@@ -73,6 +74,13 @@ NOT fail the whole search.
 - **THEN** the search returns rows from the index and no derivation is
   forced
 
+#### Scenario: One bad source record is isolated
+
+- **WHEN** the raw snapshot holds one unsupported record
+- **THEN** it is excluded with its reason and search over the index
+  still returns every other row, while a structurally corrupt generated
+  document is rejected whole with no second client-side classifier
+
 #### Scenario: Pattern grammar is declared
 
 - **WHEN** a user reads the search documentation
@@ -87,15 +95,14 @@ NOT fail the whole search.
 - **THEN** cached rows are returned labeled stale with the failure
   recorded
 
-### Requirement: Install gates on generated status and expands the closure
+### Requirement: Install gates on generated status
 
 Install and info SHALL resolve cask tokens to the ordinary package
 attribute of the casks source. Install SHALL refuse tokens whose
 generated status is excluded, with the recorded reason, and SHALL
-refuse unknown tokens. Installing a token with declared cask
-dependencies SHALL add the full resolved closure in the same profile
-operation. Unknown or invalid tokens SHALL NOT become eligible
-automatically.
+refuse unknown tokens. Dependency-dependent tokens are excluded at
+generation time, so installs stay single-package. Unknown or invalid
+tokens SHALL NOT become eligible automatically.
 
 #### Scenario: Excluded token install attempt
 

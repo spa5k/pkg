@@ -1,18 +1,76 @@
-# Implementation contract
+# Final manager contract (binding for this change)
 
-This contract records the final review decisions. It takes precedence over
-the draft examples until those examples are updated.
+This contract overrides earlier drafts. It records what the change
+delivers. All items below are implemented as stated.
 
-FINAL MANAGER CONTRACT (amends planning draft; applies to all workers):
-- All nonempty formula dependencies are excluded as formula-dependency. ALL nonempty cask dependencies are excluded as cask-dependency-integration for this version. No dependency closure engine, profile expansion, wrapper sibling logic, or depends output. Native Nix lifecycle stays single-package. This avoids unprovable vendor integration and a second dependency manager.
-- macosBaseline is exactly "15.7.7"; compare numeric major/minor/patch with missing components zero.
-- Artifact plans uniformly use {kind,source,target}. kind app/binary/pkg/appimage/manpage/bash-completion/zsh-completion/fish-completion. source and target strings; pkg target is null. app source bundle relative path, target bundle rename ending .app. binary source may start $APPDIR/; target basename from metadata rename or source basename. AppImage source metadata name; target derived basename without .AppImage, no token condition. No guessed app CLI wrappers; only explicit binary artifacts.
-- plan = {source:{url,sha256},archive:{kind:"auto"|"raw-binary"|"appimage"},artifacts:[...],minMacos:string|null}. auto content sniff supports extensionless archive URLs. pkg is an artifact inside auto container or raw xar.
-- generated catalog top = {schema:"pkg-cask-catalog/2",generator:{name:"cask-catalog",version:"0.1.0"},input:{url,revision,sha256,license},targets:["aarch64-darwin","x86_64-linux"],macosBaseline:"15.7.7",entries:{TOKEN:{token,name,description,version,homepage,targets:{SYSTEM:{status,kind,reason,detail,version,homepage,plan}}}}}. name/description/version/homepage nullable strings at entry; target version/homepage are effective merged values. eligible -> kind string, reason/detail null, plan object; excluded -> kind null, reason code, detail nullable string, plan null. All targets present for all valid token identifiers. Reject invalid token IDs as whole-catalog integrity errors (not usable as map keys/path names). Unique valid token regex [a-z0-9][a-z0-9+._-]* without .. path components.
-- Nix catalogIndex = SAME top provenance fields, but replaces entries with systems:{SYSTEM:{entries:{TOKEN:{token,name,description,version,homepage,status,kind,reason,detail}}}}. target's effective version/homepage used. No plan exposed to client. targets checked first. No depends field.
-- Nix catalogStatus = provenance + per-system counts total/eligible/excluded/byReason. Flake only nixpkgs pinned existing rev567a49d1. Allow vendor proprietary binaries through explicit Nix import config.allowUnfree=true, no --impure client requirement.
-- strict required supported_platforms. No OS guesses from variations/artifacts. Retain exact pinned input245947c0b920cbe83f4003bb7c6be737352c8314.
-- Do not add production self-test command; focused cargo test suffices.
-- Linux probes succeeded (1password-cli2.39.0 and KOReader v2026.07.1 --help). GUI untested.
-- Full catalog output and index represent metadata eligibility, not verification. No per-token flags/allowlists. A raw .pkg eligible plan must still pass strict payload script/layout checks at build.
-- Parent owns integration/verification and final PR. No user confirmation needed.
+1. **Dependencies.** There is no dependency graph and no profile
+   expansion. A record with any Homebrew formula dependency is excluded
+   as `formula-dependency`. A record with any cask dependency is excluded
+   as `cask-dependency-integration`. The native Nix lifecycle stays
+   single-package. There is no `depends` output and no client closure
+   expansion.
+
+2. **macOS baseline.** The declared baseline is exactly `15.7.7`.
+   Version comparisons are numeric on major, minor, and patch, with
+   missing components treated as zero.
+
+3. **Plans.** Artifact plans uniformly use `{kind, source, target}`.
+   Kinds: `app`, `binary`, `pkg`, `appimage`, `manpage`,
+   `bash-completion`, `zsh-completion`, `fish-completion`. A `pkg`
+   artifact has a null target. An app source is a bundle-relative path
+   and its target is the renamed bundle ending `.app`. A binary source
+   may start with `$APPDIR`; its target comes from the metadata rename
+   or the source basename. An AppImage source is the metadata name; its
+   target is the derived basename without `.AppImage`. No wrapper is
+   guessed; only explicit binary artifacts exist.
+
+4. **Plan shape.** A plan is
+   `{source:{url,sha256}, archive:{kind}, artifacts:[…], minMacos}` with
+   `kind` one of `auto`, `raw-binary`, `appimage`. `auto` sniffs archive
+   content, so extensionless URLs work. Only an explicit naked container
+   selects `raw-binary`; unsupported container shapes are excluded as
+   `unsupported-container`. A `.pkg` is an artifact inside an `auto`
+   container or a raw xar.
+
+5. **Catalog file.** One generated JSON file, schema
+   `pkg-cask-catalog/2`, with `generator{name:"cask-catalog",version}`,
+   `input{url,revision,sha256,license}`, `targets`
+   (`aarch64-darwin`, `x86_64-linux`), `macosBaseline:"15.7.7"`, and
+   `entries` keyed by token with per-target `status`, `kind`, `reason`,
+   `detail`, effective `version`/`homepage`, and `plan`. Entry-level
+   `name`, `description`, `version`, and `homepage` are string or null.
+   Eligible entries carry a kind string, null reason and detail, and a
+   plan; excluded entries carry a null kind, a reason code, a nullable
+   detail, and a null plan. Every target is present for every valid
+   token. Invalid token identifiers are whole-catalog integrity errors.
+
+6. **Client index.** The flake exposes `catalogIndex`: the same
+   provenance fields, but `systems.<system>.entries.<token>` status
+   records without plans and without a `depends` field. The client
+   checks `targets` first. The flake also exposes `catalogStatus` with
+   provenance and per-system counts (total, eligible, excluded,
+   by reason).
+
+7. **Nix source.** The only flake input is the existing pinned
+   `nixpkgs` revision `567a49d1…`. Vendor archives are proprietary, so
+   the flake imports Nixpkgs with `config.allowUnfree = true`; clients
+   need no `--impure` flag.
+
+8. **Input discipline.** `supported_platforms` is strictly required; OS
+   support is never guessed from variations or artifacts. The exact
+   pinned input revision is
+   `245947c0b920cbe83f4003bb7c6be737352c8314`.
+
+9. **No production self-test command.** Focused `cargo test` suites are
+   the checks.
+
+10. **Evidence, honestly stated.** Linux probes passed headless
+    (`op` 2.39.0, KOReader `v2026.07.1 --help`); GUI was not tested.
+    The macOS VM (15.7.7) built and launched Cursor 3.17.19 with a valid
+    deep codesign and a working `cursor --version`. Full catalog output
+    states metadata eligibility only, never verification. There are no
+    per-token flags or allowlists. A raw `.pkg` plan must still pass the
+    strict payload script and layout checks at build time.
+
+11. **Ownership.** Integration, verification, and the final PR belong to
+    the parent. No user confirmation is required for this change.

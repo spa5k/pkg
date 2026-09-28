@@ -82,9 +82,9 @@ Then put the same `eval "$(pkg shellenv)"` line in `~/.bashrc` or
 `~/.zshrc`. `pkg shellenv` prints idempotent settings. It never edits your
 shell files.
 
-On Apple silicon macOS, `cask:` names resolve through the default source
-`github:spa5k/pkg/main?dir=nix/casks`. No local checkout is needed. See
-[casks](casks.md).
+On Apple silicon macOS and x86-64 Linux, `cask:` names resolve through the
+default source `github:spa5k/pkg/main?dir=nix/casks`. No local checkout is
+needed. See [casks](casks.md).
 
 The downloader installs completions under
 `~/.local/share/pkg/completions/`; the archive also carries them under

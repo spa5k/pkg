@@ -10,8 +10,8 @@
 //! revisions.
 //!
 //! Layout: `id` parses and normalizes user IDs, `search` queries sources
-//! with provenance and looks up exact matches, `cask` classifies cask
-//! support, and `cache` holds the disposable derived data.
+//! with provenance and looks up exact matches, `cask` reads the generated
+//! catalog index, and `cache` holds the disposable derived data.
 
 mod cache;
 mod cask;
@@ -23,13 +23,11 @@ use std::fmt;
 use crate::nix::NixError;
 
 pub use cache::{CACHE_SCHEMA, CachedSearch, invalidate_cache, read_cache, write_cache};
-pub use cask::{
-    CASK_SYSTEM, CaskLookup, CaskStatus, cask_status, casks_supported_on, classify_cask,
-};
+pub use cask::{CaskStatus, CatalogOnce, CatalogView, INDEX_ATTRIBUTE, package_attribute};
 pub use id::{CatalogId, ParsedId, canonical_source, escape_regex, parse_id};
 pub use search::{
     ExactMatch, SearchResult, SourceKind, SourceReport, SourceStatus, SupportBadge, exact_lookup,
-    exact_lookup_in, exposed_attribute, report_for, resolve_bare, search_source,
+    exact_lookup_in, exposed_attribute, report_for, resolve_bare, search_catalog, search_source,
 };
 
 /// A catalog routing error.

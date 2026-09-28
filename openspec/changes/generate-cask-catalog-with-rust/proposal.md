@@ -1,7 +1,10 @@
 # Generate the Cask catalog with a Rust tool
 
-Planning change, 28 September 2026. Not implemented. Implementation is
-delegated and staged by the [tasks](tasks.md).
+Planning change, 28 September 2026. Implementation is substantially
+complete and verified on real hosts; per-task status and evidence
+live in the [tasks](tasks.md) and the [verification
+note](../../../docs/verification/2026-09-28-rust-cask-catalog.md).
+Pending items are marked there, not hidden.
 
 Baseline: workspace sync at `f5c227032964990a8cb6833f64472f9925777c85`
 (`0.2.0-alpha.2`) on `feat/rust-cask-catalog`, including the research note
@@ -37,6 +40,11 @@ compatibility layers.
   and its MIT attribution is retained. No per-package Nix source files,
   no import-from-derivation, no compiler at Nix evaluation, lazy
   per-token derivations.
+- **BREAKING:** There is no dependency graph and no profile expansion:
+  every record with a formula dependency is excluded
+  (`formula-dependency`) and every record with a cask dependency is
+  excluded (`cask-dependency-integration`). The native Nix lifecycle stays
+  single-package.
 - **BREAKING:** Scope grows from `aarch64-darwin` only to
   `aarch64-darwin` plus `x86_64-linux`: macOS apps with app+CLI paths,
   Linux static/simple ELF binaries and AppImages through Nixpkgs tools,

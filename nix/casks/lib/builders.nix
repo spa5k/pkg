@@ -1,0 +1,239 @@
+# Generic cask-plan builders (see ./README.md for provenance).
+#
+# Data-driven only: every input comes from a generated `pkg-cask-catalog/2`
+# plan. Vendor strings never reach the shell: the plan travels as JSON into
+# the stdlib Python helper (./plan.py) which does sniffing, pre-write member
+# and link validation, extraction, artifact placement, plist checks, and the
+# post-install audit. One derivation shape covers app/binary/pkg/manpage and
+# completion artifacts; AppImages go through Nixpkgs `appimageTools.wrapType2`.
+#
+# Ported from brew-nix at 16131ae4126c54b1502aa7eaf6573d7fbf16b656 (MIT; see
+# ./brew-nix-LICENSE): archive dispatch, DMG volume nesting, bundle
+# placement, binary linking, xar/pbzx/cpio pkg extraction.
+{
+  pkgs,
+  lib ? pkgs.lib,
+}:
+
+let
+  inherit (lib) optional optionals;
+  inherit (lib.strings) escapeShellArg;
+
+  planPy = pkgs.writeText "cask-plan.py" (builtins.readFile ./plan.py);
+
+  # Bounded generic runtime-library closure for Linux dynamic ELF patching.
+  # autoPatchelf fails naming any soname outside this list; no host provision.
+  linuxRuntimeLibs =
+    with pkgs;
+    optionals stdenv.hostPlatform.isLinux [
+      stdenv.cc.cc.lib # glibc + dynamic loader
+      glib
+      zlib
+      bzip2
+      xz
+      openssl
+    ];
+
+  stdenv = if pkgs.stdenv.hostPlatform.isLinux then pkgs.stdenv else pkgs.stdenvNoCC;
+
+  # version strings come from vendor metadata; sanitize for store names.
+  safeVersion =
+    v:
+    let
+      cleaned = builtins.replaceStrings [ " " "/" ":" ] [ "-" "" "" ] (toString v);
+    in
+    if cleaned == "" then "unknown" else cleaned;
+
+  commonMeta =
+    { token, description, homepage, system }: {
+      description =
+        if description != null && description != ""
+        then description
+        else "Homebrew cask ${token} (native Nix build)";
+      homepage = if homepage != null then homepage else "https://example.invalid/";
+      sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
+      license = lib.licenses.unfree;
+      platforms = [ system ];
+    };
+
+  # Display name for bare-file payloads; only used for sniff naming.
+  sourceName =
+    plan:
+    if plan.source ? url then baseNameOf plan.source.url else "payload";
+
+  # The one derivation for archive kinds `auto` and `raw-binary`.
+  buildPlan =
+    {
+      token,
+      system,
+      plan,
+      version,
+      description ? null,
+      homepage ? null,
+      baseline,
+    }:
+    let
+      # Contract source is {url,sha256} through fetchurl. `file` is a
+      # verification-harness-only override (tools/cask-build-check): a plain
+      # derivation reference used as src; generated catalogs never emit it.
+      src =
+        if plan.source ? file then
+          plan.source.file
+        else
+          pkgs.fetchurl {
+            url = plan.source.url;
+            sha256 = plan.source.sha256;
+          };
+      planFile = pkgs.writeText "install-plan.json" (
+        builtins.toJSON {
+          inherit token system plan baseline;
+        }
+      );
+    in
+    stdenv.mkDerivation {
+      pname = "cask-${token}";
+      version = safeVersion version;
+
+      inherit src;
+
+      dontUnpack = true;
+      dontConfigure = true;
+      dontBuild = true;
+      # Native vendor payloads (macOS bundles) must stay byte-identical:
+      # no strip, no shebang patching, no libtool pruning, no config-script
+      # rewriting — any of these invalidates code signatures.
+      dontStrip = true;
+      dontPatchShebangs = true;
+      dontPruneLibtoolFiles = true;
+      dontUpdateAutotoolsGnuConfigScripts = true;
+
+      nativeBuildInputs =
+        with pkgs;
+        [
+          python3
+          file
+          unzip
+          libarchive
+          _7zz
+          xar
+          cpio
+          gzip
+          pbzx
+        ]
+        ++ optionals stdenv.hostPlatform.isLinux [ autoPatchelfHook ];
+      buildInputs = linuxRuntimeLibs;
+
+      installPhase = ''
+        set -euo pipefail
+        staging="$(mktemp -d)"
+        rawName=""
+        fallbackName=""
+        ${
+          let
+            binaries = builtins.filter (a: a.kind == "binary") plan.artifacts;
+          in
+          if plan.archive.kind == "raw-binary" then
+            (if builtins.length binaries == 1 then
+              ''rawName=${escapeShellArg (builtins.head binaries).source}''
+            else
+              throw "cask-${token}: raw-binary plans need exactly one binary artifact")
+          else if builtins.length binaries == 1 then
+            ''fallbackName=${escapeShellArg (builtins.head binaries).source}''
+          else
+            ""
+        }
+        python3 ${planPy} unpack "$src" "$staging" \
+          ${escapeShellArg (sourceName plan)} "$rawName" "$fallbackName"
+        python3 ${planPy} install "${toString planFile}" "$staging" "$out"
+      '';
+
+      meta = commonMeta { inherit token description homepage system; } // {
+        mainProgram =
+          let
+            bins = builtins.filter (a: a.kind == "binary") plan.artifacts;
+          in
+          if bins == [ ] then token else (builtins.head bins).target;
+      };
+    };
+
+  # AppImage plans: pinned Nixpkgs appimageTools.wrapType2 only (API verified
+  # against nixpkgs 567a49d1: pname+version required; build-time extraction is
+  # libarchive via appimage-exec -x; runtime is the bubblewrap FHS env).
+  # Launcher name = the metadata-derived target. Extra artifacts reject clear.
+  buildAppImagePlan =
+    {
+      token,
+      system,
+      plan,
+      version,
+      description ? null,
+      homepage ? null,
+      baseline,
+    }:
+    let
+      images = builtins.filter (a: a.kind == "appimage") plan.artifacts;
+      image =
+        if builtins.length images != 1 then
+          throw "cask-${token}: appimage plans need exactly one appimage artifact"
+        else
+          builtins.head images;
+      others = builtins.filter (a: a.kind != "appimage") plan.artifacts;
+      # wrapType2's launcher is bin/<pname>. The exposed launcher name is
+      # exactly the metadata-derived target; the store name stays the token.
+      launcher =
+        if image.target == null || image.target == "" then
+          throw "cask-${token}: appimage artifact needs a target"
+        else if lib.strings.match "[A-Za-z0-9][A-Za-z0-9._+-]*" image.target == null then
+          throw "cask-${token}: appimage target is not a safe launcher name: ${image.target}"
+        else
+          image.target;
+      pkg = "cask-${token}";
+    in
+    if others != [ ] then
+      throw "cask-${token}: appimage plans support only the appimage artifact (got ${toString (map (a: a.kind) others)})"
+    else
+      pkgs.appimageTools.wrapType2 {
+        pname = pkg;
+        version = safeVersion version;
+        src = pkgs.fetchurl {
+          url = plan.source.url;
+          sha256 = plan.source.sha256;
+        };
+        # rename the helper launcher to the exact metadata target
+        extraInstallCommands = ''
+          mv "$out/bin/${pkg}" "$out/bin/${launcher}"
+        '';
+        meta = commonMeta { inherit token description homepage system; } // {
+          mainProgram = launcher;
+        };
+      };
+in
+{
+  # Entry point used by the flake. `plan` comes from the generated catalog;
+  # `version`/`description`/`homepage` are the entry's effective merged
+  # values passed explicitly by the flake (the plan has none of them).
+  buildEntry =
+    {
+      token,
+      entry,
+      system,
+      plan,
+      version,
+      description ? null,
+      homepage ? null,
+      baseline,
+    }:
+    let
+      kind = plan.archive.kind;
+    in
+    if kind == "appimage" then
+      buildAppImagePlan {
+        inherit token system plan version description homepage baseline;
+      }
+    else if kind == "auto" || kind == "raw-binary" then
+      buildPlan {
+        inherit token system plan version description homepage baseline;
+      }
+    else
+      throw "cask-${token}: unresolved archive kind: ${toString kind}";
+}

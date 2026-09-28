@@ -225,3 +225,86 @@ fn doctor_forwards_verbose_and_no_color_to_native_children() {
         "no ambient NO_COLOR: stdout: {stdout}\nstderr: {stderr}"
     );
 }
+
+/// The cask lane answers from the generated catalog index through a fake
+/// Nix runtime: info reports an excluded token with its recorded reason,
+/// install refuses excluded and unknown tokens before any profile change,
+/// and search returns eligible cask rows without evaluating derivations.
+#[test]
+fn cask_flows_read_the_generated_index() {
+    let bin = tempfile::tempdir().expect("tempdir");
+    let home = tempfile::tempdir().expect("tempdir");
+    let nix = bin.path().join("nix");
+    let catalog = r#"{"schema":"pkg-cask-catalog/2",
+      "generator":{"name":"cask-catalog","version":"0.1.0"},
+      "input":{"url":"github:BatteredBunny/brew-api/245947c0","revision":"245947c0",
+        "sha256":"9f3b1c47ae5d2801c6a1b74f0e39c4d2a8f60c15d7e3b28a4c05f6e9d1a7b3c2",
+        "license":"Homebrew license"},
+      "targets":["aarch64-darwin","x86_64-linux"],
+      "macosBaseline":"15.7.7",
+      "systems":{"aarch64-darwin":{"entries":{}},
+        "x86_64-linux":{"entries":{
+        "1password-cli":{"token":"1password-cli","name":"1Password CLI",
+          "description":"The 1Password command-line tool","version":"2.39.0",
+          "homepage":"https://developer.1password.com/docs/cli/",
+          "status":"eligible","kind":"binary","reason":null,"detail":null},
+        "iterm2":{"token":"iterm2","name":"iTerm2","description":null,
+          "version":"3.6.11","homepage":"https://iterm2.com/","status":"excluded",
+          "kind":null,"reason":"unsupported-platform","detail":null}}}}}"#;
+    std::fs::write(
+        &nix,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"2403040105060708090a0b0c0d0e0f1011121314\"}}}}';;\n  *'eval --json'*) cat <<'JSON'\n{catalog}\nJSON\n;;\n  *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n"
+        ),
+    )
+    .expect("write fake nix");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut permissions = std::fs::metadata(&nix).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(nix, permissions).expect("chmod");
+    }
+    let run = |args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+        command
+            .args(args)
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("XDG_CACHE_HOME")
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
+            .env("HOME", home.path())
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"));
+        let output = command.output().expect("spawn pkg");
+        (
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // An excluded token reports its recorded reason through info.
+    let (code, stdout, _) = run(&["info", "cask:iterm2"]);
+    assert_eq!(code, 0, "info reports recorded exclusion");
+    assert!(stdout.contains("excluded"), "{stdout}");
+    assert!(stdout.contains("unsupported-platform"), "{stdout}");
+
+    // Install refuses the excluded token and an unknown token before any
+    // profile mutation; the unexpected-call guard proves no install ran.
+    let (code, _, stderr) = run(&["install", "cask:iterm2"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("unsupported-platform"), "{stderr}");
+    let (code, _, stderr) = run(&["install", "cask:missing-token"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("not in the generated catalog"), "{stderr}");
+
+    // Search lists only eligible cask rows and never calls nix search.
+    let (code, stdout, _) = run(&["search", "iterm|1password"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("cask:1password-cli"), "{stdout}");
+    assert!(
+        !stdout.contains("cask:iterm2"),
+        "excluded rows stay hidden: {stdout}"
+    );
+    assert!(stdout.contains("eligible"), "{stdout}");
+}

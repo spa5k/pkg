@@ -1,0 +1,764 @@
+#!/usr/bin/env python3
+"""Build-time helper for generic cask-plan builders (stdlib only).
+
+The Nix derivation passes the plan as JSON; vendor strings never become
+shell syntax. Subcommands:
+
+  unpack <src> <staging> <url-name> [raw-name]  sniff + pre-validate + extract
+  install <plan.json> <staging> <out>           place artifacts, audit, plist
+
+Safety model, in order:
+  1. members (names AND symlink targets) are validated BEFORE extraction;
+     duplicates and conflicting types are rejected; the inert top-level
+     absolute DMG shortcut (/Applications) is omitted, never dereferenced;
+  2. zip/tar use stdlib extraction with parent/target realpath checks;
+     xar/cpio use bsdtar (libarchive secure extraction); 7z/dmg extract
+     REGULAR FILES ONLY via 7zz with link members excluded, then links are
+     re-created manually after validation (-snld is NOT a safety flag:
+     upstream sets link check level 9; -snld20 disables checks entirely);
+  3. after install, every output symlink (file or directory) must resolve
+     inside the output (realpath + commonpath, chains resolved).
+"""
+
+import gzip
+import json
+import os
+import plistlib
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import zipfile
+
+MAX_NESTING_DEPTH = 4
+MAX_LINK_HOPS = 64
+
+
+def resolve_graph(links, path):
+    """Resolve relative `path` against the symlink map `links` (member
+    name -> target). Components are substituted BEFORE any `..` is
+    applied, so composed links (a -> b/.. with b -> .) cannot escape:
+    `..` above the resolved root dies. Bounded hop budget kills cycles.
+    Returns the resolved in-tree path."""
+    parts, resolved, hops = path.split("/") if path else [], [], 0
+    guard = 0
+    while parts:
+        guard += 1
+        if guard > MAX_LINK_HOPS * MAX_NESTING_DEPTH:
+            die(f"symlink resolution exceeds hop budget: {path}")
+        head, parts = parts[0], parts[1:]
+        if head in ("", "."):
+            continue
+        if head == "..":
+            if not resolved:
+                die(f"member resolves above staging root: {path}")
+            resolved.pop()
+            continue
+        candidate = "/".join(resolved + [head])
+        if candidate in links:
+            hops += 1
+            if hops > MAX_LINK_HOPS:
+                die(f"symlink resolution exceeds hop budget: {path}")
+            target = links[candidate]
+            if target.startswith("/"):
+                die(f"reject absolute vendor link: {candidate} -> {target}")
+            parts = target.split("/") + parts  # keep '..' for after
+            continue
+        resolved.append(head)
+    return "/".join(resolved)
+
+
+def die(msg):
+    sys.stderr.write(f"cask-build: {msg}\n")
+    sys.exit(1)
+
+
+def run(cmd, **kw):
+    p = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    if p.returncode != 0:
+        die(f"command failed ({cmd[0]} {cmd[1] if len(cmd) > 1 else ''}): "
+            f"{p.stderr.strip()[:300]}")
+    return p.stdout
+
+
+# ------------------------------------------------------------- path rules
+
+def safe_rel_path(p, what, allow_dir=False):
+    """Strict relative path; trailing '/' allowed for directory members."""
+    if not p or "\x00" in p or "\n" in p or p.startswith("/"):
+        die(f"unsafe {what}: {p!r}")
+    norm = p[:-1] if allow_dir and p.endswith("/") else p
+    parts = norm.split("/")
+    if any(part in ("", "..") for part in parts):
+        die(f"unsafe {what}: {p!r}")
+    return norm
+
+
+def inside(root, candidate):
+    root = os.path.realpath(root)
+    cand = os.path.realpath(candidate)
+    return cand == root or os.path.commonpath([root, cand]) == root
+
+
+def link_target_ok(rel_dir, target):
+    """Relative symlink target stays inside the tree (legit in-bundle
+    '..' chains that land back inside are allowed)."""
+    if target.startswith("/"):
+        return False
+    base = os.path.normpath(os.path.join(rel_dir, target))
+    return base == "." or (base != ".." and not base.startswith("../"))
+
+
+def _norm_dots(name):
+    """Drop harmless '.' path segments ('./a' -> 'a') so graph keys, seen,
+    existing and omit sets share one canonical form; a lone '.'/'./' is the
+    root directory. '..' is rejected by safe_rel_path, never here."""
+    return "/".join(p for p in name.split("/") if p != ".")
+
+
+def validate_members(members):
+    """members: iterable of dicts {name, is_symlink, link_target, is_dir}.
+    Validates the COMPLETE symlink graph before any payload write: names,
+    duplicates, type conflicts, and every member destination resolved with
+    symlink substitution (composed escapes and cycles die). Returns the
+    omit set: the conventional DMG /Applications shortcut at the archive
+    root or directly under a single volume-wrapper root, outside any .app.
+    Legitimate framework chains (Versions/Current -> A) resolve and pass."""
+    links, omit, seen, dests = {}, set(), {}, set()
+    names = []
+    for m in members:
+        name = _norm_dots(safe_rel_path(m["name"], "archive member", allow_dir=True))
+        if name == "":
+            # the root directory member ('.'/'./', common in cpio)
+            if not m.get("is_dir"):
+                die("unsafe archive member: {m['name']!r}")
+            seen[""] = "d"
+            continue
+        names.append((name, m))
+    # pass 1: names, duplicates, absolute/escaping targets, omit set, graph
+    for name, m in names:
+        kind = "d" if m.get("is_dir") else ("l" if m["is_symlink"] else "f")
+        if name in seen and seen[name] != kind:
+            die(f"conflicting archive member types for: {name}")
+        if name in seen and kind != "d":
+            die(f"duplicate archive member: {name}")
+        seen[name] = kind
+        if m["is_symlink"]:
+            t = m["link_target"] or ""
+            if t.startswith("/"):
+                parts = name.split("/")
+                at_shortcut_root = (
+                    len(parts) <= 2
+                    and parts[-1] == "Applications"
+                    and t == "/Applications"
+                    and not any(p.endswith(".app") for p in parts[:-1]))
+                if at_shortcut_root and not m.get("is_dir"):
+                    omit.add(name)
+                    continue
+                die(f"reject absolute vendor link: {name} -> {t}")
+            links[name] = t
+    existing = set(seen)
+    for name in list(existing):
+        parts = name.split("/")
+        for i in range(1, len(parts)):
+            existing.add("/".join(parts[:i]))  # implicit parent dirs
+    # pass 2: full graph resolution of every member and link destination
+    for name, m in names:
+        if name in omit:
+            continue
+        resolved = resolve_graph(links, name)
+        if not m["is_symlink"]:  # only writers can collide on a destination
+            if resolved in dests:
+                die(f"duplicate resolved destination: {name} -> {resolved}")
+            dests.add(resolved)
+        else:
+            dest = resolve_graph(links, os.path.join(os.path.dirname(name), links[name]))
+            if dest and dest not in existing:
+                die(f"dangling link in archive: {name} -> {links[name]}")
+    return omit
+
+
+# ------------------------------------------------------- listing adapters
+
+def zip_members(zf):
+    out = []
+    for zi in zf.infolist():
+        mode = zi.external_attr >> 16
+        is_link = stat.S_ISLNK(mode)
+        out.append({
+            "name": zi.filename,
+            "is_symlink": is_link,
+            "is_dir": zi.is_dir(),
+            "link_target": zf.read(zi).decode("utf-8", "replace") if is_link else None,
+        })
+    return out
+
+
+def tar_members(tf):
+    return [
+        {
+            "name": m.name,
+            "is_symlink": m.issym(),
+            "is_dir": m.isdir(),
+            "link_target": m.linkname if m.issym() else None,
+        }
+        for m in tf.getmembers()
+    ]
+
+
+GLOB_META = set("*?[]")
+
+
+def bsdtar_members(archive):
+    """Strict listing for xar/cpio via `bsdtar -tvf` (stable 8-column
+    format) and raw 7z/DMG records via `7zz l -ba -slt`. Unparseable
+    output fails clear; nothing is silently skipped."""
+    if _is_7z_family(archive):
+        return sevenz_members(archive), None
+    import re
+    # LC_ALL=C format: perms links owner group size mmm DD (HH:MM|YYYY) name[ -> target]
+    row = re.compile(
+        r"^([dl-][rwxsStT-]{9})\s+\d+\s+\S+\s+\S+\s+\d+\s+"
+        r"[A-Z][a-z]{2}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4})\s+(.+)$")
+    env = dict(os.environ, LC_ALL="C")
+    p = subprocess.run(["bsdtar", "-tv", "-f", archive],
+                       capture_output=True, text=True, env=env)
+    if p.returncode != 0:
+        die(f"bsdtar listing failed: {p.stderr.strip()[:200]}")
+    out = []
+    for lineno, line in enumerate(p.stdout.splitlines(), 1):
+        m = row.match(line)
+        if not m:
+            die(f"unparseable bsdtar listing line {lineno}: {line!r}")
+        rest = m.group(2).strip()
+        if m.group(1).startswith("l"):
+            if " -> " not in rest:
+                die(f"unparseable bsdtar symlink line {lineno}: {line!r}")
+            name, target = rest.split(" -> ", 1)
+            out.append({"name": name, "is_symlink": True, "is_dir": False,
+                        "link_target": target.strip()})
+        else:
+            out.append({"name": rest, "is_symlink": False,
+                        "is_dir": m.group(1).startswith("d"), "link_target": None})
+    return out, validate_members(out)
+
+
+def sevenz_members(archive):
+    """Raw (unvalidated) member records from `7zz l -ba -slt`. Real DMG
+    listings use `Folder = +/-` and `Mode = drwx.../lrwx...` records — not
+    `Attributes` — and HFS+ symlinks carry `Mode = l...` with NO
+    `Symbolic Link` field (their target must be read separately via
+    `7zz x -so`). Hard links fail closed. Trailing CR (CRLF output) is
+    stripped once; embedded CR in a name is ambiguous and rejected."""
+    text = run(["7zz", "l", "-ba", "-slt", "--", archive])
+    records, path, rec = [], None, {}
+    for line in text.split("\n") + ["Path = "]:
+        line = line.rstrip("\r")
+        if line.startswith("Path = "):
+            if path is not None:
+                records.append((path, rec))
+            path, rec = line[7:], {}
+        elif line.startswith("Folder = "):
+            rec["folder"] = line[9:].strip()
+        elif line.startswith("Mode = "):
+            rec["mode"] = line[7:].strip()
+        elif line.startswith("Attributes = "):
+            rec["attrs"] = line[13:].strip()
+        elif line.startswith("Symbolic Link = "):
+            rec["sym"] = line[16:]
+        elif line.startswith("Hard Link = "):
+            rec["hard"] = line[12:]
+    out = []
+    for p, r in records:
+        if not p or "\r" in p or "\n" in p:
+            die(f"unparseable 7zz listing entry: {p!r}")
+        if "hard" in r:
+            die(f"unsupported hard link member: {p}")
+        mode = r.get("mode", "")
+        is_link = mode.startswith("l") or "sym" in r
+        is_dir = (not is_link
+                  and (r.get("folder") == "+" or mode.startswith("d")
+                       or ("D" in r.get("attrs", "").split("_")[0])))
+        out.append({"name": p, "is_symlink": is_link, "is_dir": is_dir,
+                    "link_target": r.get("sym")})
+    return out
+
+
+def _7z_link_target(archive, name):
+    """Read a symlink's target bytes with `7zz x -so` (stdout only, no
+    filesystem extraction). 7zz name arguments are wildcard patterns, so
+    members containing glob metacharacters fail closed. Target bytes are
+    exact; control characters mean a corrupt link and fail closed."""
+    if GLOB_META & set(name):
+        die(f"cannot safely read link target with glob metacharacters: {name}")
+    target = run(["7zz", "x", "-so", "--", archive, name])
+    if any(c in target for c in "\r\n\x00"):
+        die(f"corrupt link target bytes for: {name}")
+    return target
+
+
+def _is_7z_family(path):
+    return _mime(path) == "application/x-7z-compressed" or is_udif(path)
+
+
+def is_udif(path):
+    """Content-based DMG detection: the UDIF trailer is a 512-byte block
+    starting with `koly` at end of file. `file` can misreport DMGs as
+    `application/zlib`, so the trailer is authoritative."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(-512, os.SEEK_END)
+            return f.read(4) == b"koly"
+    except OSError:
+        return False
+
+
+def _mime(path):
+    return run(["file", "--mime-type", "-b", "--", path]).strip()
+
+
+# ------------------------------------------------------------- extractors
+
+def _check_target_path(dest, name):
+    """Parent AND final path must stay inside dest (no writing through a
+    previously created symlink, no ancestor escape). Boundary checks run
+    BEFORE any directory creation."""
+    target = os.path.join(dest, name)
+    if os.path.lexists(target) and not os.path.isdir(target):
+        die(f"duplicate/conflicting extraction path: {name}")
+    parent = os.path.dirname(target)
+    if not inside(dest, parent) or not inside(dest, target):
+        die(f"extraction path escapes staging: {name}")
+    os.makedirs(parent, exist_ok=True)
+
+
+def extract_zip(src, dest):
+    with zipfile.ZipFile(src) as zf:
+        omit = validate_members(zip_members(zf))
+        for zi in zf.infolist():
+            name = safe_rel_path(zi.filename, "zip member", allow_dir=True)
+            if zi.filename.rstrip("/") in omit:
+                continue
+            _check_target_path(dest, name)
+            target = os.path.join(dest, name)
+            mode = zi.external_attr >> 16
+            if stat.S_ISLNK(mode):
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                lt = zf.read(zi).decode("utf-8", "replace")
+                if not link_target_ok(os.path.dirname(name), lt):
+                    die(f"reject escaping vendor link: {name} -> {lt}")
+                os.symlink(lt, target)
+            elif zi.is_dir():
+                os.makedirs(target, exist_ok=True)
+            else:
+                with zf.open(zi) as f, open(target, "wb") as g:
+                    shutil.copyfileobj(f, g)
+                os.chmod(target, 0o755 if mode & 0o111 else 0o644)
+
+
+def extract_tar(src, dest):
+    with tarfile.open(src) as tf:
+        omit = validate_members(tar_members(tf))
+        members = [m for m in tf.getmembers() if m.name.rstrip("/") not in omit]
+        tf.extractall(dest, members=members, filter="data")
+
+
+def extract_bsdtar(src, dest):
+    """xar/cpio: libarchive secure extraction refuses absolute and
+    '..' members by default; inert shortcuts are excluded by pattern."""
+    _members, omit = bsdtar_members(src)
+    excludes = []
+    for name in omit:
+        if GLOB_META & set(name):
+            die(f"cannot safely exclude member with glob metacharacters: {name}")
+        excludes += ["--exclude", name]
+    run(["bsdtar", "-x", "-f", src, "-C", dest] + excludes)
+
+
+def extract_7zz(src, dest):
+    """7z/DMG: extract REGULAR FILES AND DIRECTORIES ONLY. EVERY link
+    member (including the omitted /Applications shortcut) is excluded
+    from 7zz (its link handling is not a safety boundary); targets are
+    read safely via `7zz x -so`, validated BEFORE extraction, and links
+    are re-created manually afterwards."""
+    members = sevenz_members(src)
+    for m in members:
+        if m["is_symlink"] and m["link_target"] is None:
+            m["link_target"] = _7z_link_target(src, m["name"])
+    omit = validate_members(members)
+    excludes, links = [], {}
+    for m in members:
+        name = m["name"].rstrip("/")
+        if name in omit or m["is_symlink"]:
+            # only names handed to 7zz as exclusion/selection patterns need
+            # the glob guard; plain extracted members keep their exact names
+            # (real DMGs carry bracketed HFS+ metadata folders)
+            if GLOB_META & set(m["name"]):
+                die(f"cannot safely exclude member with glob metacharacters: {m['name']}")
+            if m["is_symlink"] and name not in omit:
+                links[name] = m["link_target"]
+            excludes += ["-x!" + m["name"]]
+    # switches must come BEFORE `--`: 7zz stops switch parsing at `--`,
+    # so `-x!` after the archive would act as an extract-only name filter
+    # and silently drop every other member (verified on a real DMG)
+    run(["7zz", "x", f"-o{dest}"] + excludes + ["--", src])
+    for n in os.listdir(dest):  # AppleDouble metadata must not survive
+        if ":com.apple." in n:
+            p = os.path.join(dest, n)
+            shutil.rmtree(p, ignore_errors=True)
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    for name, target in sorted(links.items()):
+        _check_target_path(dest, name)
+        if not link_target_ok(os.path.dirname(name), target):
+            die(f"reject escaping vendor link: {name} -> {target}")
+        os.symlink(target, os.path.join(dest, name))
+
+
+def stage_payload(src, staging, declared, url_name, default, strip_suffix=""):
+    """Copy a whole-file payload under its VALIDATED DECLARED relative
+    path (artifact source), creating parents; the URL basename is only a
+    fallback when no artifact source was declared."""
+    name = (declared or url_name or default).split("?")[0]
+    if strip_suffix and name.endswith(strip_suffix):
+        name = name[: -len(strip_suffix)]
+    safe_rel_path(name, "staged payload name")
+    dest = os.path.join(staging, name)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copy(src, dest)
+
+
+def cmd_unpack(src, staging, url_name, raw_name="", fallback_name=""):
+    os.makedirs(staging, exist_ok=True)
+    if raw_name:
+        stage_payload(src, staging, raw_name, "", "payload.bin")
+        return
+    if is_udif(src):
+        # content-based UDIF dispatch: `file` reports some DMGs as
+        # application/zlib, so the koly trailer decides, not the MIME type
+        extract_7zz(src, staging)
+        return
+    mime = _mime(src)
+    if zipfile.is_zipfile(src):
+        extract_zip(src, staging)
+    elif mime == "application/x-xar":
+        # A bare xar IS a pkg; keep the file, the pkg step unpacks it.
+        base = (fallback_name or url_name or "payload.pkg").split("?")[0]
+        shutil.copy(src, os.path.join(staging, os.path.basename(base)))
+    elif _is_7z_family(src):
+        extract_7zz(src, staging)
+    elif mime in ("application/x-tar", "application/gzip", "application/x-bzip2",
+                  "application/x-xz", "application/zstd", "application/x-lzma"):
+        try:
+            extract_tar(src, staging)
+        except tarfile.TarError:
+            if mime == "application/gzip":
+                # single gzipped binary: the declared artifact source names
+                # the file; URL basenames can carry query params or no hint
+                stage_payload(src, staging, fallback_name, url_name,
+                              "payload.bin", strip_suffix=".gz")
+            else:
+                die(f"unresolved archive format (mime: {mime})")
+    elif mime in ("application/x-executable", "application/x-pie-executable",
+                  "application/x-mach-binary", "application/x-sharedlib",
+                  "text/x-shellscript", "application/octet-stream"):
+        stage_payload(src, staging, fallback_name, url_name, "payload.bin")
+    else:
+        die(f"unresolved archive format (mime: {mime}, url: {url_name})")
+
+
+# ---------------------------------------------------------------- install
+
+COMP_DIRS = {
+    "bash-completion": "share/bash-completion/completions",
+    "zsh-completion": "share/zsh/site-functions",
+    "fish-completion": "share/fish/vendor_completions.d",
+}
+KNOWN_KINDS = {"app", "binary", "pkg", "appimage", "manpage",
+               "bash-completion", "zsh-completion", "fish-completion"}
+MAN_RE = None  # compiled lazily
+
+
+def locate(staging, name):
+    safe_rel_path(name, "artifact source")
+    if GLOB_META & set(name):
+        die(f"artifact source with glob metacharacters unsupported: {name!r}")
+    direct = os.path.join(staging, name)
+    if os.path.lexists(direct):
+        return direct
+    # exact relative suffix under volume nesting (find -name never
+    # matches '/' and treats the name as a glob); ambiguous hits die
+    hits = subprocess.run(
+        ["find", staging, "-mindepth", "2",
+         "-maxdepth", str(MAX_NESTING_DEPTH + name.count("/") + 2),
+         "-path", os.path.join(staging, "*", name), "-print"],
+        capture_output=True, text=True).stdout.splitlines()
+    hits = [h for h in hits if h]
+    if len(hits) > 1:
+        die(f"ambiguous artifact source, multiple matches for: {name}")
+    if not hits:
+        die(f"declared artifact not found in vendor archive: {name}")
+    return hits[0]
+
+
+def plist_load(path):
+    with open(path, "rb") as f:
+        try:
+            return plistlib.load(f)  # XML and binary plists, read-only
+        except Exception as e:
+            die(f"unreadable plist {path}: {e}")
+
+
+def plist_min_ok(bundle, baseline):
+    p = os.path.join(bundle, "Contents", "Info.plist")
+    if not os.path.isfile(p):
+        return
+    req = plist_load(p).get("LSMinimumSystemVersion")
+    if not req:
+        return
+    try:
+        nums = tuple(int(x) for x in (str(req).split(".") + [0, 0, 0])[:3])
+    except ValueError:
+        die(f"malformed LSMinimumSystemVersion {req!r} in {bundle}")
+    if nums > baseline:
+        die(f"{os.path.basename(bundle)} requires macOS {req}, "
+            f"baseline is {'.'.join(map(str, baseline))}")
+
+
+def one_component(name, what):
+    if "/" in name or name in ("", ".", "..") or "\x00" in name:
+        die(f"{what} must be a single path component: {name!r}")
+    return name
+
+
+def elf_ok_for_linux(path, arch):
+    with open(path, "rb") as f:
+        head = f.read(20)
+    if head[:4] == b"\x7fELF":
+        machine = int.from_bytes(head[18:20], "little")
+        want = {"x86_64-linux": 62, "aarch64-linux": 183}.get(arch)
+        if want is None or machine != want:
+            die(f"binary {os.path.basename(path)} is ELF for another "
+                f"architecture (machine {machine}, expected {want} for {arch})")
+        return
+    if head[:4] in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",
+                    b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+        die(f"binary {os.path.basename(path)} is a Mach-O payload; "
+            "not a Linux binary")
+    if head[:2] == b"MZ":
+        die(f"binary {os.path.basename(path)} is a Windows PE payload; "
+            "not a Linux binary")
+    if head[:2] == b"#!":
+        return  # bounded script format
+    die(f"binary {os.path.basename(path)} is not ELF, script, or known payload")
+
+
+def audit_output(out):
+    for dirpath, dirnames, filenames in os.walk(out):
+        for n in dirnames + filenames:
+            p = os.path.join(dirpath, n)
+            if not os.path.islink(p):
+                continue
+            t = os.readlink(p)
+            resolved = os.path.realpath(p)  # follows the whole chain
+            if not os.path.lexists(resolved):
+                die(f"dangling link in output: {p} -> {t}")
+            if not inside(out, p):
+                die(f"vendor link escapes output: {p} -> {t}")
+
+
+def install_pkg(ctx, plan, staging, out, baseline):
+    pkg_arts = [a for a in plan["artifacts"] if a["kind"] == "pkg"]
+    if len(pkg_arts) != 1:
+        die(f"pkg plans need exactly one pkg artifact, got {len(pkg_arts)}")
+    pkg_art = pkg_arts[0]
+    if pkg_art.get("target") is not None:
+        die("pkg artifact must have null target")
+    pkg_path = os.path.join(staging, pkg_art["source"])
+    if not os.path.isfile(pkg_path):
+        # a bare XAR download is kept under the sniff display name; map the
+        # single staged xar file to the declared pkg artifact source
+        cands = [os.path.join(staging, n) for n in os.listdir(staging)
+                 if os.path.isfile(os.path.join(staging, n))
+                 and _mime(os.path.join(staging, n)) == "application/x-xar"]
+        if len(cands) == 1:
+            pkg_path = cands[0]
+        else:
+            pkg_path = locate(staging, pkg_art["source"])
+    xdir = os.path.join(staging, ".xar")
+    os.makedirs(xdir, exist_ok=True)
+    members, _ = bsdtar_members(pkg_path)
+    for m in members:
+        n = m["name"].rstrip("/")
+        if n == "Scripts" or n.startswith("Scripts/") or n.endswith("/Scripts") \
+                or "/Scripts/" in n:
+            die(f"pkg carries installer scripts: {n}")
+        if n == "Distribution" or "/Distribution" in n or n.endswith("/Distribution"):
+            die("pkg carries Distribution installer logic; "
+                "choice-requiring pkgs are unsupported")
+        if "Plugins" in n.split("/"):
+            die(f"pkg carries installer plugins: {n}")
+        if n.endswith(".pkg"):
+            die(f"pkg nests component pkgs: {n}")
+    extract_bsdtar(pkg_path, xdir)
+    payloads = []
+    for dirpath, _dirs, files in os.walk(xdir):
+        for n in files:
+            if n == "Payload":
+                payloads.append(os.path.join(dirpath, n))
+    if not payloads:
+        die("pkg has no relocatable payload")
+    paydir = os.path.join(staging, ".payload")
+    os.makedirs(paydir, exist_ok=True)
+    for payload in payloads:
+        dec = payload + ".dec"
+        with open(payload, "rb") as f:
+            head = f.read(2)
+        if head == b"\x1f\x8b":
+            with gzip.open(payload, "rb") as f, open(dec, "wb") as g:
+                shutil.copyfileobj(f, g)
+        else:
+            with open(dec, "wb") as g:  # pbzx -n writes xz stream to stdout
+                subprocess.run(["pbzx", "-n", payload], stdout=g, check=True)
+        extract_bsdtar(dec, paydir)  # cpio via libarchive, pre-validated
+    # structural relocatable-layout rule over the merged payload;
+    # system locations are rejected first, naming the component
+    apps_dir = os.path.join(out, "Applications")
+    for entry in sorted(os.listdir(paydir)):
+        p = os.path.join(paydir, entry)
+        rel = safe_rel_path(entry, "pkg payload component", allow_dir=True)
+        if rel == "Library" or rel.startswith("Library/") or rel == "System" \
+                or rel.startswith("System/") or rel.endswith(".kext") \
+                or "LaunchDaemons" in rel or "LaunchAgents" in rel \
+                or "PrivilegedHelperTools" in rel:
+            die(f"pkg payload carries system component: {rel}")
+        if os.path.isdir(p) and not os.path.islink(p):
+            if rel == "Applications":
+                for child in sorted(os.listdir(p)):
+                    if not child.endswith(".app"):
+                        die(f"pkg Applications payload must contain only .app "
+                            f"bundles, found: {child}")
+                    dest = os.path.join(apps_dir, child)
+                    if os.path.lexists(dest):
+                        die(f"duplicate bundle in pkg payload: {child}")
+                    os.makedirs(apps_dir, exist_ok=True)
+                    shutil.copytree(os.path.join(p, child), dest, symlinks=True)
+            elif rel.endswith(".app"):
+                os.makedirs(apps_dir, exist_ok=True)
+                shutil.copytree(p, os.path.join(apps_dir, rel), symlinks=True)
+            elif rel == "Contents":
+                name = one_component(
+                    str(plist_load(os.path.join(p, "Info.plist"))
+                        .get("CFBundleName") or ctx["token"]),
+                    "CFBundleName")
+                os.makedirs(apps_dir, exist_ok=True)
+                shutil.copytree(p, os.path.join(apps_dir, f"{name}.app", "Contents"),
+                                symlinks=True)
+            else:
+                die(f"pkg payload component outside supported layouts: {rel}")
+        else:
+            die(f"pkg payload component outside supported layouts "
+                f"(plain files unsupported): {rel}")
+    if os.path.isdir(apps_dir):
+        for b in os.listdir(apps_dir):
+            plist_min_ok(os.path.join(apps_dir, b), baseline)
+
+
+def cmd_install(plan_file, staging, out):
+    with open(plan_file) as f:
+        ctx = json.load(f)
+    plan = ctx["plan"]
+    baseline = tuple(int(x) for x in (ctx["baseline"].split(".") + [0, 0, 0])[:3])
+    arch = ctx["system"]
+    if plan.get("archive", {}).get("kind") == "appimage":
+        die("appimage plans use the appimageTools builder")
+    kinds = [a["kind"] for a in plan["artifacts"]]
+    unknown = [k for k in kinds if k not in KNOWN_KINDS]
+    if unknown:
+        die(f"unknown artifact kinds: {unknown}")
+    if "appimage" in kinds:
+        die("appimage artifact outside an appimage plan")
+
+    # apps first: rename map source -> installed target, plist check
+    apps_dir = os.path.join(out, "Applications")
+    app_targets = {}
+    for a in [x for x in plan["artifacts"] if x["kind"] == "app"]:
+        src = locate(staging, a["source"])
+        tgt = one_component(a["target"], "app target")
+        if not tgt.endswith(".app"):
+            die(f"app target must be a bundle rename ending .app: {tgt!r}")
+        os.makedirs(apps_dir, exist_ok=True)
+        dest = os.path.join(apps_dir, tgt)
+        if os.path.lexists(dest):
+            die(f"duplicate app target: {tgt}")
+        shutil.copytree(src, dest, symlinks=True)  # intact bundle
+        plist_min_ok(dest, baseline)
+        app_targets[os.path.basename(a["source"].rstrip("/"))] = tgt
+
+    if "pkg" in kinds:
+        install_pkg(ctx, plan, staging, out, baseline)
+
+    for a in plan["artifacts"]:
+        kind = a["kind"]
+        if kind in ("app", "pkg"):
+            continue
+        if a.get("target") is None:
+            die(f"{kind} artifact needs a target")
+        tgt = one_component(a["target"], f"{kind} target")
+        if kind == "binary":
+            src = a["source"]
+            bindir = os.path.join(out, "bin")
+            os.makedirs(bindir, exist_ok=True)
+            dest = os.path.join(bindir, tgt)
+            if os.path.lexists(dest):
+                die(f"duplicate binary target: {tgt}")
+            if src.startswith("$APPDIR/"):
+                rest = safe_rel_path(src[len("$APPDIR/"):], "$APPDIR binary source")
+                declared_app, _, inner = rest.partition("/")
+                installed = app_targets.get(declared_app, declared_app)
+                if installed not in app_targets.values():
+                    die(f"$APPDIR binary {src} does not name a declared app "
+                        "(bundle source or renamed target required)")
+                resolved = os.path.join(apps_dir, installed, inner)
+                if not os.path.lexists(resolved):
+                    die(f"$APPDIR binary points at a missing file: {src}")
+                os.symlink(os.path.relpath(resolved, bindir), dest)
+            else:
+                path = locate(staging, src)
+                if arch.endswith("-linux"):
+                    elf_ok_for_linux(path, arch)
+                shutil.copy2(path, dest)
+                os.chmod(dest, 0o555)
+        elif kind == "manpage":
+            import re
+            m = re.search(r"\.([1-8])$", tgt)
+            if not m:
+                die(f"manpage target must end in .N (N=1..8): {tgt!r}")
+            d = os.path.join(out, "share", "man", f"man{m.group(1)}")
+            os.makedirs(d, exist_ok=True)
+            shutil.copy2(locate(staging, a["source"]), os.path.join(d, tgt))
+        else:
+            d = os.path.join(out, COMP_DIRS[kind])
+            os.makedirs(d, exist_ok=True)
+            shutil.copy2(locate(staging, a["source"]), os.path.join(d, tgt))
+    audit_output(out)
+
+
+def main():
+    if len(sys.argv) < 2:
+        die("usage: cask-plan.py unpack|install ...")
+    if sys.argv[1] == "unpack":
+        cmd_unpack(sys.argv[2], sys.argv[3], sys.argv[4],
+                   sys.argv[5] if len(sys.argv) > 5 else "",
+                   sys.argv[6] if len(sys.argv) > 6 else "")
+    elif sys.argv[1] == "install":
+        cmd_install(sys.argv[2], sys.argv[3], sys.argv[4])
+    else:
+        die(f"unknown subcommand {sys.argv[1]}")
+
+
+if __name__ == "__main__":
+    main()

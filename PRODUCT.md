@@ -53,11 +53,13 @@ upgrade, history, rollback, prune, doctor, shellenv, and macOS app sync.
   repairs, or removes Nix, and it never uses sudo.
 - Packages resolve against exactly pinned sources. No floating channels
   or overlays.
-- macOS app exposure supports a small set of packages with simple app
-  archives or standalone executables. Current Cask conversion candidates
-  are iterm2, chromedriver, and cursor. Raycast 2.0.5 requires macOS 26
-  and is excluded. Packages that need a native installer or helper are
-  out of scope.
+- Casks come from a broad generated catalog with no package allowlists and
+  no per-token flags. Targets are Apple silicon macOS (declared baseline
+  15.7.7) and x86-64 Linux. Eligible means the generator found a plan a
+  generic builder can express; it is not a compatibility promise. Records
+  with formula or cask dependencies are excluded; fonts, services, and
+  native installers are unsupported. Linux AppImage and binary journeys
+  were verified headless only.
 - Target platforms: `x86_64-linux` and `aarch64-darwin` only.
 
 ## Brand Commitments

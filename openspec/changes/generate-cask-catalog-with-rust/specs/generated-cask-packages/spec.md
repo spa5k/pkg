@@ -68,8 +68,11 @@ live in the bundle's hidden plist, invisible to cask metadata.
 ### Requirement: Structural pkg payload rule
 
 The pkg builder SHALL accept an archive only when build-time inspection
-shows a relocatable payload: extracted app bundles and plain files,
-with no installer scripts, plugins, or choice-requiring distribution
+shows a relocatable app-bundle layout: a payload `Applications`
+directory of `.app` bundles, a top-level `.app` bundle, or a bare
+`Contents` directory rebuilt as a bundle. Plain files and any other
+component shape fail the build; there are no installer scripts,
+plugins, nested component pkgs, or choice-requiring distribution
 logic, and no system locations such as Library files, services,
 drivers, or privileged helpers. Essential payload components SHALL NOT
 be silently dropped: a component that cannot be placed under the
@@ -129,21 +132,19 @@ verification.
 - **THEN** the exposed launcher runs the image through the Nixpkgs
   helper, not a bare unrunnable copy
 
-### Requirement: Dependencies are present at runtime
+### Requirement: Single-package lifecycle
 
-A package whose plan declares cask dependencies SHALL have the full
-resolved closure installed into the same profile in one operation, and
-wrapped binaries SHALL find declared sibling outputs through explicit
-wrapper paths. Presence and path access are the guaranteed integration;
-deeper vendor integration SHALL have excluded the token at generation
-time.
+Plans SHALL carry no dependency output. A record with any cask or
+formula dependency is excluded at generation time, so every build is a
+single package with no closure expansion, no wrapper sibling logic,
+and no second dependency manager.
 
-#### Scenario: Dependent cask installs
+#### Scenario: Dependent cask is refused
 
-- **WHEN** a user installs a token whose plan declares a cask
+- **WHEN** a user asks to install a token whose record declared a cask
   dependency
-- **THEN** the dependency builds and installs in the same native
-  operation and its binaries are on the profile path
+- **THEN** it is refused with the recorded exclusion reason before any
+  build and the native lifecycle stays single-package
 
 ### Requirement: Path and link safety before and after writes
 
