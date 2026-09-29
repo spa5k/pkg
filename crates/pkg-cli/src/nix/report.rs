@@ -75,6 +75,10 @@ fn classify(line: &str) -> Kind {
     if GIT_TRANSFER.iter().any(|prefix| line.starts_with(prefix)) {
         return Kind::Hide;
     }
+    if line.starts_with("unpacking '") && line.ends_with(" into the Git cache...") {
+        // A flake input being unpacked into the local git cache.
+        return Kind::Hide;
+    }
     if line.starts_with("warning: redirecting to ") {
         // The fetch helper's HTTP redirect notice; the retry follows.
         return Kind::Hide;
@@ -98,6 +102,34 @@ fn classify(line: &str) -> Kind {
         return Kind::Status(format!("building {}", short_name(path)));
     }
     Kind::Show
+}
+
+/// The bounded, signal-only tail of one failed run's captured stderr.
+///
+/// Filtered runs keep the raw stream for diagnostics, but echoing all of
+/// it would replay exactly the chatter the filter removed. The tail keeps
+/// only lines the classifier would show live -- warnings, errors, prompts
+/// -- bounded to the last few of them; the complete text stays in the
+/// store log the native nix-log pointer names.
+pub fn diagnostic_tail(stderr: &str, keep: usize) -> String {
+    let signal: Vec<&str> = stderr
+        .lines()
+        .filter(|line| matches!(classify(line), Kind::Show))
+        .collect();
+    if signal.is_empty() {
+        return String::new();
+    }
+    if signal.len() <= keep {
+        let mut tail = signal.join("\n");
+        tail.push('\n');
+        return tail;
+    }
+    let mut tail = String::from(
+        "... earlier native output trimmed; run the reported nix log command for everything ...\n",
+    );
+    tail.push_str(&signal[signal.len() - keep..].join("\n"));
+    tail.push('\n');
+    tail
 }
 
 /// Whether an incomplete line is a Nix trust prompt, which must be shown
@@ -218,6 +250,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn failure_diagnostics_keep_signal_lines_only() {
+        let noisy: String = (0..60)
+            .map(|i| format!("fetching Git repository 'https://example.com/r{}'\n", i))
+            .collect();
+        let stderr = format!(
+            "{noisy}error: Cannot build '/nix/store/aaa-tool.drv'.\nFor full logs, run:\n  nix log /nix/store/aaa-tool.drv\n"
+        );
+        let tail = diagnostic_tail(&stderr, 40);
+        assert!(tail.contains("error: Cannot build"), "{tail}");
+        assert!(tail.contains("nix log /nix/store/aaa-tool.drv"), "{tail}");
+        assert!(!tail.contains("fetching Git repository"), "{tail}");
+        assert_eq!(diagnostic_tail("one\nline\n", 40), "one\nline\n");
+        assert_eq!(diagnostic_tail("fetching Git repository 'x'\n", 40), "");
+    }
+
+    #[test]
     fn fetch_progress_is_shortened_and_transfer_chatter_is_hidden() {
         assert_eq!(
             classify("fetching Git repository 'https://gitlab.com/gabmus/tree-sitter-blueprint'"),
@@ -234,6 +282,7 @@ mod tests {
             "these 3 derivations will be built:",
             "these 14 paths will be fetched (73.0 MiB download, 465.5 MiB unpacked):",
             "  /nix/store/nsh0cwzk8kxsq5s8znsp9qpq1dx2jl6y-cask-rectangle.drv",
+            "unpacking 'github:numtide/flake-utils/11707dc2' into the Git cache...",
             "error (ignored): opening file \"/etc/nix/sentry-endpoint\": Permission denied",
         ] {
             assert_eq!(classify(line), Kind::Hide, "{line}");

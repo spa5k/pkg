@@ -305,7 +305,15 @@ impl Nix {
             return self.run_streamed(args);
         }
         let mut reporter = report::mutation_reporter();
-        let reaped = self.execute_with(args, IoMode::Filtered, Some(&mut reporter))?;
+        let mut reaped = self.execute_with(args, IoMode::Filtered, Some(&mut reporter))?;
+        if !reaped.output.status.success() {
+            // The live stream already showed every important line; echo only
+            // the same signal lines, bounded, so a failure does not replay
+            // the chatter the filter removed.
+            let bounded =
+                report::diagnostic_tail(&String::from_utf8_lossy(&reaped.output.stderr), 40);
+            reaped.output.stderr = bounded.into_bytes();
+        }
         self.finish(args, &reaped)
     }
 
