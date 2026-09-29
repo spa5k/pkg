@@ -107,6 +107,9 @@ OpenSpec workflow. The active design is
 the [plan index](plans/README.md) separates historical material.
 The current change is
 [improve runtime discovery and shell setup](openspec/changes/improve-runtime-discovery-and-shell-setup/proposal.md).
+Search cost is amortized by
+[revision snapshots](openspec/changes/amortize-search-with-revision-snapshots/proposal.md):
+one cached catalog per source answers every later query locally.
 The Cask extension is
 [import of public taps](openspec/changes/import-public-cask-taps/design.md).
 

@@ -107,16 +107,30 @@ usable cache exists, `search` exits nonzero instead of reporting an empty
 success. Rows reused from cache after a live failure carry
 `"stale": true`.
 
+The first query at a new locked revision of the Nixpkgs source performs
+one full native evaluation (`nix search <locked> ^ --json`, tens of
+seconds cold); the complete metadata snapshot it produces then answers
+every later query — same or different — locally, and is atomically
+replaced when the revision moves.
+
 Search pattern grammar, per lane:
 
-- The `nixpkgs` lane passes the pattern to native `nix search` unchanged;
-  native regex semantics apply.
+- The `nixpkgs` lane evaluates the complete catalog once per locked
+  revision (`nix search <locked> ^ --json`) and filters locally: the
+  pattern is a Rust regex (the `regex` crate), compiled
+  case-insensitively and matched against the same three strings native
+  `nix search` matches — the full attribute path (for example
+  `legacyPackages.<system>.python312Packages.requests`), the package
+  name (already version-stripped), and the description (an empty
+  description is matched; `^$` finds packages without one). An invalid
+  pattern is reported as a source failure with the regex error.
+  Breaking note: native `nix search` uses POSIX ERE; pkg uses the Rust
+  regex engine, so advanced patterns can differ. The tested fzf and ripgrep queries
+  returned identical results.
 - The `cask` lane evaluates the generated catalog index once and filters
-  locally: the pattern is a Rust regex (the `regex` crate), compiled
-  case-insensitively and matched against each entry's token, name, and
-  description. An invalid pattern is reported as a source failure with the
-  regex error. Only eligible entries are listed; excluded tokens stay
-  discoverable through `pkg info`.
+  locally: the same Rust regex grammar, matched against each entry's
+  token, name, and description. Only eligible entries are listed;
+  excluded tokens stay discoverable through `pkg info`.
 
 Source report fields:
 

@@ -179,7 +179,7 @@ pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
     }
     let removed = catalog::invalidate_cache(&session.paths.cache_dir)?;
     println!(
-        "Discovery cache refreshed ({removed} cached result set{} dropped).",
+        "Discovery cache refreshed ({removed} cached catalog{} dropped).",
         if removed == 1 { "" } else { "s" }
     );
     println!("Installed packages and their original references are unchanged.");

@@ -133,10 +133,12 @@ Known scope limits, by design:
 
 ## How the client uses the index
 
-- Search reads `catalogIndex` once per query and filters locally with a Rust
-  regex, matched case-insensitively against the token, the name, and the
-  description. The Nixpkgs lane keeps passing patterns to `nix search`
-  unchanged. See [commands](commands.md) for both grammars.
+- Search reads `catalogIndex` once per locked revision (a disposable
+  latest snapshot per source) and filters locally with a Rust regex,
+  matched case-insensitively against the token, the name, and the
+  description. The Nixpkgs lane uses the same Rust regex grammar over the
+  full attribute path, name, and description. See [commands](commands.md)
+  for both grammars.
 - Search lists eligible entries only. Excluded tokens stay discoverable
   through `pkg info`, which shows the recorded reason and detail.
 - A bare name resolves to a cask only when it equals one bare token
