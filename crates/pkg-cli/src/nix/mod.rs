@@ -18,6 +18,7 @@ mod error;
 mod manifest;
 mod process;
 mod reference;
+mod report;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -293,6 +294,21 @@ impl Nix {
         Ok(String::from_utf8_lossy(&reaped.output.stdout).into_owned())
     }
 
+    /// Run a native command with stderr reduced to progress and signal.
+    ///
+    /// Fetch, clone, and evaluation chatter is filtered; warnings,
+    /// errors, and interactive prompts stay visible, and the raw stderr
+    /// stays captured for failure diagnostics. The verbose flag keeps
+    /// the unfiltered stream.
+    fn run_filtered(&self, args: &[&str]) -> Result<(), NixError> {
+        if self.verbose {
+            return self.run_streamed(args);
+        }
+        let mut reporter = report::mutation_reporter();
+        let reaped = self.execute_with(args, IoMode::Filtered, Some(&mut reporter))?;
+        self.finish(args, &reaped)
+    }
+
     /// Run a native command with streamed stdio, reaping the child.
     ///
     /// Termination signals sent to pkg are forwarded to the child, so the
@@ -307,7 +323,18 @@ impl Nix {
 
     /// Build and run one native child through the shared forward/reap
     /// boundary.
+    /// Run one native child through the shared boundary without a sink.
     fn execute(&self, args: &[&str], mode: IoMode) -> Result<Reaped, NixError> {
+        self.execute_with(args, mode, None)
+    }
+
+    /// Run one native child with an optional live stderr sink.
+    fn execute_with(
+        &self,
+        args: &[&str],
+        mode: IoMode,
+        sink: Option<&mut dyn process::StderrSink>,
+    ) -> Result<Reaped, NixError> {
         // `--verbose` describes every native call here, captures included,
         // with the exact argument vector that will run.
         let argv = self.argv(args);
@@ -321,7 +348,7 @@ impl Nix {
             // disabling so colors are never suppressed by accident.
             command.env("NO_COLOR", "1");
         }
-        run_child(command, mode).map_err(NixError::Spawn)
+        run_child(command, mode, sink).map_err(NixError::Spawn)
     }
 
     fn json<T: serde::de::DeserializeOwned>(
@@ -372,7 +399,7 @@ impl Nix {
         // `--` keeps installables from being read as flags.
         args.push("--");
         args.extend(installables.iter().map(String::as_str));
-        self.run_streamed(&args)
+        self.run_filtered(&args)
     }
 
     /// Remove exact entries in one native operation.
@@ -408,7 +435,7 @@ impl Nix {
             }
             _ => args.push("--all"),
         }
-        self.run_streamed(&args)
+        self.run_filtered(&args)
     }
 
     /// Roll back to the previous or a selected native generation.
