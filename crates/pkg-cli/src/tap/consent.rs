@@ -57,7 +57,7 @@ pub fn ask(source: &str, origin: &str, trusted: bool) -> Decision {
 }
 
 /// Whether standard input is a terminal.
-fn stdin_is_terminal() -> bool {
+pub(crate) fn stdin_is_terminal() -> bool {
     use std::io::IsTerminal as _;
     std::io::stdin().is_terminal()
 }

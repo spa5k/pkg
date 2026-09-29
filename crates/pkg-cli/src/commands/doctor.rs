@@ -77,6 +77,9 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
                 )),
                 Err(error) => rows.push(observed("nix daemon", "unreachable", error.to_string())),
             }
+            let (sandbox_status, sandbox_detail) = crate::tap::setup::doctor_status(&runtime);
+            rows.push(observed("tap sandbox", &sandbox_status, sandbox_detail));
+
             if paths.profile.exists() {
                 match runtime.profile_list(&paths.profile) {
                     Ok(entries) => rows.push(observed(

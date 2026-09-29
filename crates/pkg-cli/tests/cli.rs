@@ -196,6 +196,7 @@ fn doctor_fake_body(marker: &str) -> String {
           *--version*) echo 'nix (Nix) {marker}';;
           *'store info'*) echo 'store reachable';;
           *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;
+          *'config show'*) echo 'false';;
           *) echo 'unexpected nix call: '$* >&2; exit 9;;
         esac"
     )
@@ -942,5 +943,75 @@ fn failed_install_reports_signal_lines_only() {
     assert!(
         !stderr.contains("into the Git cache"),
         "unpacking chatter must stay hidden: {stderr}"
+    );
+}
+
+/// A sandbox refusal stays concise and offers the one-time setup instead
+/// of replaying the importer's full setup paragraph. Without a terminal
+/// nothing privileged runs: the command exits with the short manual path.
+#[test]
+fn tap_add_sandbox_refusal_is_concise_and_offers_setup() {
+    let bin = tempfile::tempdir().expect("tempdir");
+    let home = tempfile::tempdir().expect("tempdir");
+    let nix = bin.path().join("nix");
+    let script = r##"#!/bin/sh
+case "$*" in
+  *--version*) echo 'nix (Nix) 2.35.2';;
+  *'config show system'*) printf '%s' "$FAKE_SYSTEM";;
+  *'config show'*--json*) printf '%s' '{"sandbox":{"value":false},"sandbox-fallback":{"value":true}}';;
+  *'config show'*) echo 'false';;
+  *) echo 'unexpected nix call: '$* >&2; exit 9;;
+esac
+"##;
+    std::fs::write(&nix, script).expect("write fake nix");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut permissions = std::fs::metadata(&nix).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&nix, permissions).expect("chmod");
+    }
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+    command
+        .args(["tap", "add", "somebody/apps", "--trust"])
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
+        .env(
+            "FAKE_SYSTEM",
+            format!(
+                "{}-{}",
+                std::env::consts::ARCH,
+                if std::env::consts::OS == "macos" {
+                    "darwin"
+                } else {
+                    std::env::consts::OS
+                }
+            ),
+        )
+        .env("HOME", home.path())
+        .env("XDG_STATE_HOME", home.path().join("state"))
+        .env("XDG_CACHE_HOME", home.path().join("cache"))
+        .stdin(std::process::Stdio::null());
+    let output = command.output().expect("spawn pkg");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let all = format!("{stdout}{stderr}");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("not proven sandboxed"),
+        "the concise cause must lead: {stderr}"
+    );
+    assert!(
+        all.contains("one-time sandbox setup"),
+        "the setup offer must be named: {all}"
+    );
+    assert!(
+        !all.contains("Concrete setup:"),
+        "the importer wall of text must not replay: {all}"
     );
 }

@@ -507,6 +507,10 @@ impl Nix {
             .trim()
             .to_string())
     }
+    /// Read one effective client-side setting, such as the sandbox flag.
+    pub fn setting(&self, name: &str) -> Result<String, NixError> {
+        Ok(self.capture(&["config", "show", name])?.trim().to_string())
+    }
 
     /// Resolve source identity for a flake reference.
     pub fn source_identity(&self, reference: &str) -> Result<SourceIdentity, NixError> {
