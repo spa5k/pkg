@@ -117,6 +117,7 @@ def main():
     plan.run = real
     assert recs["Raycast/Applications"]["is_symlink"] is True
     assert recs["Raycast/Applications"]["link_target"] is None
+    assert recs["Raycast/Applications"]["size"] == 13
     assert recs["Raycast"]["is_dir"] is True
     ok("7zz Mode/Folder/CRLF records parse")
     # hard link rejection needs the listing; run in child for die()
@@ -163,16 +164,50 @@ def main():
         ok("7zz APFS empty Symbolic Link fields handled by Mode")
     else:
         FAILED.append("7zz APFS empty Symbolic Link misparsed")
-    # an ACTUAL link whose `-so` read returns empty bytes fails closed
+    # an ACTUAL link whose '-so' read returns empty bytes fails closed
     code = (
         f"import sys;sys.path.insert(0,{libdir!r});import plan;"
-        "plan.run=lambda c,**k:'';"
+        "plan.run_bytes=lambda c,**k:b'';"
         "plan._7z_link_target('x','lnk')"
     )
     if subprocess.run([PY, "-c", code], check=False).returncode == 1:
         ok("7zz empty actual link target rejected")
     else:
         FAILED.append("empty actual link target not rejected")
+
+    # 4c. HFS+ '-so' streams: target bytes plus a fixed 11-byte binary
+    #     trailer (01 02 00 plus 8 volume bytes); exact bytes captured
+    #     from the Rectangle 0.99 DMG. Size from the listing is the true
+    #     target length, exactly as plain 7zz extraction uses it.
+    trailer = bytes.fromhex("010200c515a9569627793d")
+    real_run_bytes = plan.run_bytes
+    try:
+        plan.run_bytes = lambda cmd, **kw: b"/Applications" + trailer
+        app_target = plan._7z_link_target("x", "Applications", 13)
+        plan.run_bytes = lambda cmd, **kw: b"B" + trailer
+        cur_target = plan._7z_link_target("x", "Versions/Current", 1)
+    finally:
+        plan.run_bytes = real_run_bytes
+    if app_target == "/Applications" and cur_target == "B":
+        ok("HFS+ link trailer stripped; exact Size target returned")
+    else:
+        FAILED.append("HFS+ link trailer mishandled")
+    bad_streams = [
+        ("wrong remainder", b"/Applicationsjunk", 13),
+        ("short stream", b"/App", 13),
+        ("invalid utf-8 target", b"\xff" + trailer, 1),
+        ("oversize declared target", b"X", plan.MAX_LINK_TARGET + 1),
+    ]
+    for label, stream, size in bad_streams:
+        code = (
+            f"import sys;sys.path.insert(0,{libdir!r});import plan;"
+            f"plan.run_bytes=lambda c,**k:{stream!r};"
+            f"plan._7z_link_target('x','lnk',{size})"
+        )
+        if subprocess.run([PY, "-c", code], check=False).returncode == 1:
+            ok(f"HFS+ link {label} rejected")
+        else:
+            FAILED.append(f"HFS+ link {label} not rejected")
 
     # 5. nested raw-binary source creates parent dirs
     with tempfile.TemporaryDirectory() as d:

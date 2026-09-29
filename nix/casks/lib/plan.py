@@ -35,6 +35,12 @@ import zipfile
 MAX_NESTING_DEPTH = 4
 MAX_LINK_HOPS = 64
 MAX_LINK_TARGET = 4096  # PATH_MAX bound; macOS symlink targets are < 1024
+# HFS+ DMG symlinks read via '7zz x -so' carry the target (exactly the
+# listed Size bytes) plus a fixed-shape binary trailer: 01 02 00 plus 8
+# volume-specific bytes. Only that exact shape is stripped; any other
+# bytes after the target fail closed.
+HFS_LINK_TRAILER_LEN = 11
+HFS_LINK_TRAILER_HEAD = b"\x01\x02\x00"
 
 
 def resolve_graph(links, path):
@@ -78,11 +84,31 @@ def die(msg):
 
 def run(cmd, **kw):
     # returncode is checked manually right below (check=False is explicit)
-    p = subprocess.run(cmd, capture_output=True, text=True, check=False, **kw)
+    p = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="surrogateescape",
+        check=False,
+        **kw,
+    )
     if p.returncode != 0:
         die(
             f"command failed ({cmd[0]} {cmd[1] if len(cmd) > 1 else ''}): "
             f"{p.stderr.strip()[:300]}"
+        )
+    return p.stdout
+
+
+def run_bytes(cmd, **kw):
+    # byte mode for streams that are not UTF-8 text (HFS+ -so link data)
+    p = subprocess.run(cmd, capture_output=True, check=False, **kw)
+    if p.returncode != 0:
+        err = p.stderr.decode("utf-8", "replace").strip()[:300]
+        die(
+            f"command failed ({cmd[0]} {cmd[1] if len(cmd) > 1 else ''}): "
+            f"{err}"
         )
     return p.stdout
 
@@ -329,6 +355,9 @@ def sevenz_members(archive):
             path, rec = line[7:], {}
         elif line.startswith("Folder = "):
             rec["folder"] = line[9:].strip()
+        elif line.startswith("Size = "):
+            value = line[7:].strip()
+            rec["size"] = int(value) if value.isdigit() else None
         elif line.startswith("Mode = "):
             rec["mode"] = line[7:].strip()
         elif line.startswith("Attributes = "):
@@ -371,19 +400,46 @@ def sevenz_members(archive):
                 "is_symlink": is_link,
                 "is_dir": is_dir,
                 "link_target": sym or None,
+                "size": r.get("size"),
             }
         )
     return out
 
 
-def _7z_link_target(archive, name):
-    """Read a symlink's target bytes with `7zz x -so` (stdout only, no
+def _7z_link_target(archive, name, size=None):
+    """Read a symlink's target bytes via '7zz x -so' (stdout only, no
     filesystem extraction). 7zz name arguments are wildcard patterns, so
-    members containing glob metacharacters fail closed. Target bytes are
-    exact; control characters mean a corrupt link and fail closed."""
+    members containing glob metacharacters fail closed.
+
+    HFS+ DMG streams carry the target plus a fixed 11-byte binary trailer
+    (01 02 00 plus 8 volume-specific bytes). The listing's Size is the
+    true target length -- the same value plain 7zz filesystem extraction
+    uses when it creates correct links -- so exactly Size bytes are kept
+    and the trailer is stripped only when its length and head match. Any
+    other remainder, non-UTF-8 bytes, or control characters in the
+    target fail closed."""
     if GLOB_META & set(name):
         die(f"cannot safely read link target with glob metacharacters: {name}")
-    target = run(["7zz", "x", "-so", "--", archive, name])
+    data = run_bytes(["7zz", "x", "-so", "--", archive, name])
+    if size is None:
+        if len(data) > MAX_LINK_TARGET:
+            die(f"symlink member target too large: {name}")
+    else:
+        if size > MAX_LINK_TARGET:
+            die(f"symlink member target too large: {name}")
+        if len(data) < size:
+            die(f"short link target stream for: {name}")
+        extra = data[size:]
+        if extra and not (
+            len(extra) == HFS_LINK_TRAILER_LEN
+            and extra.startswith(HFS_LINK_TRAILER_HEAD)
+        ):
+            die(f"unexpected bytes after link target for: {name}")
+        data = data[:size]
+    try:
+        target = data.decode("utf-8")
+    except UnicodeDecodeError:
+        die(f"non-UTF-8 link target bytes for: {name}")
     if not target:
         die(f"empty link target for: {name}")
     if any(c in target for c in "\r\n\x00"):
@@ -482,7 +538,7 @@ def extract_7zz(src, dest):
     members = sevenz_members(src)
     for m in members:
         if m["is_symlink"] and m["link_target"] is None:
-            m["link_target"] = _7z_link_target(src, m["name"])
+            m["link_target"] = _7z_link_target(src, m["name"], m.get("size"))
     omit = validate_members(members)
     excludes, links = [], {}
     for m in members:
