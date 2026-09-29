@@ -100,6 +100,17 @@ jobs:
       - name: Build release client
         run: cargo build --locked --release -p pkg-cli
 
+      # Installer checks run after the build so a broken install.sh is
+      # caught in CI, not on a user machine. sh -n is a pure syntax check
+      # (POSIX sh, no shellcheck dependency); the unittest suite runs the
+      # real script against fake downloads in temporary homes. Tests that
+      # need Linux-only isolation (unshare) skip themselves on macOS.
+      - name: Installer script syntax check
+        run: sh -n install.sh
+
+      - name: Installer unit tests
+        run: python3 -m unittest discover -s docs/tests -v
+
       - name: Run the client without services or helpers
         run: |
           set -eu

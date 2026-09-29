@@ -17,25 +17,35 @@ repair, or remove Nix. Install Determinate Nix from
 > adopted, or erased. See
 > [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
 > and its [verification record](docs/verification/native-nix-2026-09-28.md).
+> The current release improves runtime discovery and installer shell
+> setup ([change proposal](openspec/changes/improve-runtime-discovery-and-shell-setup/proposal.md)).
 
 ## Install
 
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.3 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.3):
+   [v0.2.0-alpha.4 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.4):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.3/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.4/install.sh
    sh pkg-install.sh
    ```
 
 The downloader installs `~/.local/bin/pkg` and completions under
 `~/.local/share/pkg/completions`. It is client-only: it downloads and
 verifies the release archive, never installs Nix, and never uses `sudo`.
-You can also build the archive from a checkout of this repository:
-`tools/release/package_client.sh x86_64-linux` (or `aarch64-darwin`).
+It sets up the `pkg` client `PATH` and the `pkg` profile `PATH` for Bash
+and Zsh automatically; set `PKG_INSTALL_SHELL_SETUP=0` to opt out.
+
+`pkg` finds the Nix runtime through `PATH`, then at the standard Nix
+profile locations (`/nix/var/nix/profiles/default/bin`, the per-user
+state profile, `~/.nix-profile`), so a shell without Nix on `PATH` still
+works. An explicitly configured `runtime.nix` always wins and never
+falls back. You can also build the archive from a checkout of this
+repository: `tools/release/package_client.sh x86_64-linux`
+(or `aarch64-darwin`).
 
 Details are in the [install guide](docs/install.md).
 
@@ -95,6 +105,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain, checks, and the
 OpenSpec workflow. The active design is
 [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md);
 the [plan index](plans/README.md) separates historical material.
+The current change is
+[improve runtime discovery and shell setup](openspec/changes/improve-runtime-discovery-and-shell-setup/proposal.md).
 The Cask extension is
 [import of public taps](openspec/changes/import-public-cask-taps/design.md).
 

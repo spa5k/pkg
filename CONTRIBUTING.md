@@ -8,6 +8,8 @@ redesign is
 [Generate the Cask catalog with a Rust tool](openspec/changes/generate-cask-catalog-with-rust/proposal.md).
 The proposed next phase is
 [Import raw Ruby casks from public taps](openspec/changes/import-public-cask-taps/proposal.md).
+The alpha.4 runtime discovery and installer shell setup change is
+[Improve runtime discovery and shell setup](openspec/changes/improve-runtime-discovery-and-shell-setup/proposal.md).
 
 ## 1. Before you open a PR
 
@@ -40,6 +42,9 @@ cargo test --locked
 cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+sh -n install.sh
+shellcheck install.sh
+python3 docs/tests/test_install_script.py
 python3 .github/scripts/check_docs_links.py
 ```
 
