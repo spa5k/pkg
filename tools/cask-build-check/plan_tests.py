@@ -788,6 +788,160 @@ def main():
                     "native APFS DMG: dirs kept, internal link preserved, shortcut omitted, CLI prints fixture-ok"
                 )
 
+    # 19. manpage target sections 1..8 with an optional ONE recognized
+    #     compression suffix (.gz/.bz2/.xz/.zst/.Z). The whole filename
+    #     and the source compressed bytes are preserved (no unpacking);
+    #     the section comes from the target. Real gzip/bz2/xz content is
+    #     built with the stdlib. Invalid sections, a missing section, an
+    #     unknown suffix, double compression, trailing junk, unsafe
+    #     paths, and duplicate compressed targets all die.
+    import bz2
+    import gzip as gzlib
+    import lzma
+
+    def man_install(items, check=None):
+        """items: (source relpath, bytes, target). Returns (died, ok)."""
+        with tempfile.TemporaryDirectory() as d:
+            staging = os.path.join(d, "st")
+            os.makedirs(staging)
+            arts = []
+            for rel, data, tgt in items:
+                p = os.path.join(staging, rel)
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "wb") as f:
+                    f.write(data)
+                arts.append({"kind": "manpage", "source": rel, "target": tgt})
+            pj = os.path.join(d, "plan.json")
+            put(
+                pj,
+                json.dumps(
+                    {
+                        "plan": {"artifacts": arts},
+                        "baseline": "10.14",
+                        "system": "aarch64-darwin",
+                        "token": "t",
+                    }
+                ),
+            )
+            out = os.path.join(d, "out")
+            os.makedirs(out)
+            died = None
+            try:
+                plan.cmd_install(pj, staging, out)
+            except SystemExit as e:
+                # only a nonzero exit counts as rejection (die() exits 1)
+                died = bool(getattr(e, "code", 1))
+            # the output check ALWAYS runs, even after a rejection
+            okflag = check(out) if check else True
+            return died is True, okflag
+
+    def read_bytes(path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    # plain sections 1..8 all install under share/man/man<N>
+    items = [(f"d/m{s}", f"P{s}".encode(), f"tool.{s}") for s in range(1, 9)]
+
+    def plain_check(out):
+        return all(
+            os.path.isfile(os.path.join(out, "share", f"man/man{s}", f"tool.{s}"))
+            for s in range(1, 9)
+        )
+
+    if man_install(items, plain_check) == (False, True):
+        ok("plain manpage sections 1..8 install under share/man/man<N>")
+    else:
+        FAILED.append("plain manpage sections 1..8 misrouted")
+
+    # real gzip manpage named goreleaser.1.gz: byte-identical, man1
+    raw = b"GORELEASER(1) manual page\n"
+    gz_bytes = gzlib.compress(raw)
+    died, okflag = man_install(
+        [("d/g", gz_bytes, "goreleaser.1.gz")],
+        lambda o: (
+            read_bytes(os.path.join(o, "share/man/man1/goreleaser.1.gz")) == gz_bytes
+            and gzlib.decompress(
+                read_bytes(os.path.join(o, "share/man/man1/goreleaser.1.gz"))
+            )
+            == raw
+        ),
+    )
+    if not died and okflag:
+        ok("real gzip manpage goreleaser.1.gz installed byte-identical in man1")
+    else:
+        FAILED.append("goreleaser.1.gz manpage mishandled")
+
+    # bz2/xz/zst/Z suffixes: compressed bytes copied untouched
+    comp_cases = (
+        ("d/b", bz2.compress(raw), "tool.1.bz2", "man1"),
+        ("d/x", lzma.compress(raw), "tool.2.xz", "man2"),
+        ("d/z", b"zst-payload", "tool.3.zst", "man3"),
+        ("d/Z", b"Z-payload", "tool.4.Z", "man4"),
+    )
+    all_ok = True
+    for rel, data, tgt, sub in comp_cases:
+        died, okflag = man_install(
+            [(rel, data, tgt)],
+            lambda o, d=data, t=tgt, s=sub: (
+                read_bytes(os.path.join(o, "share/man", s, t)) == d
+            ),
+        )
+        all_ok = all_ok and not died and okflag
+    if all_ok:
+        ok("bz2/xz/zst/Z manpage suffixes copied byte-identical per section")
+    else:
+        FAILED.append("compressed manpage suffix routing wrong")
+
+    # renamed compressed target: section comes from the TARGET (.7.gz)
+    died, okflag = man_install(
+        [("d/g", gz_bytes, "tool.7.gz")],
+        lambda o: read_bytes(os.path.join(o, "share/man/man7/tool.7.gz")) == gz_bytes,
+    )
+    if not died and okflag:
+        ok("renamed compressed manpage target tool.7.gz routed to man7")
+    else:
+        FAILED.append("renamed compressed manpage target misrouted")
+
+    # duplicate compressed target: second dies, first stays (this plan
+    # has ONLY manpage artifacts, so the duplicate branch is reached)
+    first_gz = gzlib.compress(b"FIRST")
+    second_gz = gzlib.compress(b"SECOND")
+    died, okflag = man_install(
+        [
+            ("d/m1", first_gz, "tool.1.gz"),
+            ("d/m2", second_gz, "tool.1.gz"),
+        ],
+        lambda o: read_bytes(os.path.join(o, "share/man/man1/tool.1.gz")) == first_gz,
+    )
+    if died and okflag:
+        ok("duplicate compressed manpage target dies; first artifact stays")
+    else:
+        FAILED.append("duplicate compressed manpage target not refused")
+
+    # invalid targets die with nothing written
+    for tgt in (
+        "tool.0",
+        "tool.9",
+        "tool.gz",
+        "tool.1.lzma",
+        "tool.1.gz.gz",
+        "tool.1.gz.bak",
+        "tool.1.gz\n",
+        "tool.1.gz\r",
+        "share/man/tool.1",
+    ):
+        died, okflag = man_install(
+            [("d/m", b"X", tgt)],
+            lambda o: (
+                not os.path.exists(os.path.join(o, "share"))
+                or os.listdir(os.path.join(o, "share")) == []
+            ),
+        )
+        if died and okflag:
+            ok(f"invalid manpage target refused: {tgt!r}")
+        else:
+            FAILED.append(f"invalid manpage target accepted: {tgt!r}")
+
     if FAILED:
         for f in FAILED:
             print(f"FAIL: {f}")

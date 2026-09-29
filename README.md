@@ -95,6 +95,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain, checks, and the
 OpenSpec workflow. The active design is
 [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md);
 the [plan index](plans/README.md) separates historical material.
+The Cask extension is
+[import of public taps](openspec/changes/import-public-cask-taps/design.md).
 
 ## License
 

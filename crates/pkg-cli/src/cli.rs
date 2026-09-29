@@ -93,6 +93,9 @@ pub enum Command {
     /// Derived macOS app launcher operations.
     #[command(subcommand)]
     Apps(AppsCommand),
+    /// Manage local public Homebrew Cask taps.
+    #[command(subcommand)]
+    Tap(TapCommand),
 }
 
 /// Launcher subcommands. Execution is supplied by the apps module.
@@ -100,6 +103,39 @@ pub enum Command {
 pub enum AppsCommand {
     /// Rebuild pkg-owned launchers from the active profile.
     Sync,
+}
+
+/// Local public tap subcommands.
+#[derive(Debug, Subcommand)]
+pub enum TapCommand {
+    /// Approve and import a public Homebrew Cask tap. Asks for consent
+    /// before any tap code runs; `--trust` approves without a prompt.
+    Add {
+        /// Tap source: `owner/tap` or `https://github.com/owner/homebrew-tap`.
+        source: String,
+        /// Exact 40-hex commit id to import instead of the default branch.
+        #[arg(long, value_name = "SHA")]
+        revision: Option<String>,
+        /// Approve the tap origin without an interactive prompt.
+        #[arg(long)]
+        trust: bool,
+    },
+    /// List registered taps and their published revisions.
+    List,
+    /// Re-import one tap or every registered tap at a newer revision.
+    /// Runs tap code again; recorded consent covers it.
+    Update {
+        /// Tap source to update. Updates every tap when omitted.
+        source: Option<String>,
+        /// Exact 40-hex commit id to import instead of the default branch.
+        #[arg(long, value_name = "SHA")]
+        revision: Option<String>,
+    },
+    /// Unregister a tap. Keeps installed packages and old generations.
+    Remove {
+        /// Tap source to remove.
+        source: String,
+    },
 }
 
 /// Supported completion targets.

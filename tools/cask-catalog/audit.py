@@ -27,10 +27,13 @@ import json
 import os
 import re
 import sys
+import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 
 TARGETS = ["aarch64-darwin", "x86_64-linux"]
+SCHEMA = "pkg-cask-catalog/3"
+OFFICIAL_SOURCE = "homebrew/cask"
 VARIATION_KEY = {"aarch64-darwin": "arm64_sequoia", "x86_64-linux": "x86_64_linux"}
 PLATFORM_TAG = {"aarch64-darwin": "arm64_sequoia", "x86_64-linux": "x86_64_linux"}
 PLAN_KINDS = {
@@ -50,8 +53,85 @@ TOKEN_RE = re.compile(r"^[a-z0-9][a-z0-9+._@-]*$")
 # ---------------------------------------------------------------- self-checks
 
 
+def official_input_problem(pin: object) -> str | None:
+    """Return the reason the official json-snapshot input shape is invalid, else None."""
+    if not (
+        isinstance(pin, dict)
+        and isinstance(pin.get("url"), str)
+        and isinstance(pin.get("license"), str)
+    ):
+        return f"catalog input provenance for {OFFICIAL_SOURCE} is missing"
+    if pin.get("kind") != "json-snapshot":
+        return f"official input kind must be json-snapshot, not {pin.get('kind')!r}"
+    if "raw" not in pin:
+        return "official input must carry an explicit raw key with value null"
+    if pin["raw"] is not None:
+        return "official input raw must be null (final schema3 shape)"
+    return None
+
+
+def catalog_inputs_problem(inputs: object) -> str | None:
+    """Return the reason the catalog inputs map is invalid, else None.
+
+    The official audit inputs map contains exactly homebrew/cask; extra
+    provenance entries are invalid input.
+    """
+    if not isinstance(inputs, dict) or not inputs:
+        return "catalog has no inputs map"
+    if set(inputs) != {OFFICIAL_SOURCE}:
+        return (
+            f"catalog inputs must be exactly {OFFICIAL_SOURCE!r}, "
+            f"not {sorted(map(str, inputs))}"
+        )
+    return official_input_problem(inputs[OFFICIAL_SOURCE])
+
+
+def entry_source_counts(entries: dict) -> dict[str, int]:
+    """Count catalog rows per source with explicit malformed buckets.
+
+    Nonobject rows and rows without a string source field are counted
+    under explicit buckets, so malformed catalogs cannot crash report
+    generation and mixed None/string values are never sorted.
+    """
+    counts: dict[str, int] = {}
+    for entry in entries.values():
+        if not isinstance(entry, dict):
+            key = "<malformed-row>"
+        else:
+            src = entry.get("source")
+            key = src if isinstance(src, str) else "<nonstring-or-missing-source>"
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def _selfcheck() -> None:
     """Tiny inline examples that pin ranking aggregation and input validation."""
+    # Final schema3 official input shape: kind json-snapshot and raw null.
+    ok_pin = {
+        "kind": "json-snapshot",
+        "url": "https://example.com/cask.json",
+        "license": "MIT",
+        "sha256": "a" * 64,
+        "revision": "b" * 40,
+        "raw": None,
+    }
+    assert official_input_problem(ok_pin) is None, ok_pin
+    for bad in (
+        {**ok_pin, "kind": "tarball"},
+        {**ok_pin, "raw": {"path": "cask.json", "sha256": "a" * 64}},
+        {**ok_pin, "raw": "cask.json"},
+        {k: v for k, v in ok_pin.items() if k != "raw"},
+        {"url": "https://example.com"},
+    ):
+        assert official_input_problem(bad) is not None, bad
+    # The inputs map contains exactly homebrew/cask; extra provenance is
+    # invalid input.
+    assert catalog_inputs_problem({OFFICIAL_SOURCE: ok_pin}) is None
+    assert catalog_inputs_problem({}) is not None
+    assert (
+        catalog_inputs_problem({OFFICIAL_SOURCE: ok_pin, "other/tap": ok_pin})
+        is not None
+    )
     ranked = rank_analytics(
         {
             "b": [{"cask": "b", "count": "10"}],
@@ -149,6 +229,92 @@ def _selfcheck() -> None:
         "eligible": 10,
         "excluded": 5,
     }
+    # Schema-3 identity: the qualified key must equal source + "/" + token.
+    # Unexpected sources and duplicate bare tokens are reported, never
+    # silently dropped and never overwritten (first entry wins).
+    by_tok, probs = normalize_entries(
+        {
+            "homebrew/cask/a": {"source": "homebrew/cask", "token": "a"},
+            "other/tap/b": {"source": "other/tap", "token": "b"},
+        }
+    )
+    assert set(by_tok) == {"a", "b"} and len(probs) == 1, (by_tok, probs)
+    assert probs[0].startswith("unexpected-source:"), probs
+    by_tok, probs = normalize_entries(
+        {
+            "homebrew/cask/a": {"source": "homebrew/cask", "token": "a", "k": 1},
+            "other/tap/a": {"source": "other/tap", "token": "a", "k": 2},
+        }
+    )
+    assert by_tok["a"]["k"] == 1, by_tok  # duplicate never overwrites
+    assert {p.split(":", 1)[0] for p in probs} == {
+        "unexpected-source",
+        "duplicate-token-across-sources",
+    }, probs
+    by_tok, probs = normalize_entries(
+        {"homebrew/cask/a": {"source": "homebrew/cask", "token": "z"}}
+    )
+    assert probs == [
+        (
+            "qualified-key-mismatch: key 'homebrew/cask/a' != "
+            "source/token 'homebrew/cask'/'z'"
+        )
+    ], probs
+    by_tok, probs = normalize_entries({"homebrew/cask/a": "not-an-object"})
+    assert by_tok == {} and probs[0].startswith("entry-not-object:"), probs
+    # End-to-end: malformed catalog rows (nonobject entry, missing source)
+    # must yield a violation report (audit exit 1 in main), never a crash.
+    with tempfile.TemporaryDirectory(prefix="audit-self-") as tmp:
+        raw_path = os.path.join(tmp, "cask.json")
+        with open(raw_path, "w", encoding="utf-8") as fh:
+            json.dump([{"token": "a"}], fh)
+        catalog = {
+            "schema": SCHEMA,
+            "entries": {
+                "homebrew/cask/a": {
+                    "source": OFFICIAL_SOURCE,
+                    "token": "a",
+                    "targets": {
+                        s: {
+                            "status": "excluded",
+                            "reason": "disabled",
+                            "plan": None,
+                            "kind": None,
+                        }
+                        for s in TARGETS
+                    },
+                },
+                "homebrew/cask/b": "not-an-object",
+                "homebrew/cask/c": {"token": "c"},
+            },
+            "targets": TARGETS,
+            "macosBaseline": "15.7.7",
+            "generator": {"name": "gen", "version": "1"},
+            "inputs": {
+                OFFICIAL_SOURCE: {
+                    "kind": "json-snapshot",
+                    "url": "https://example.com/cask.json",
+                    "license": "MIT",
+                    "sha256": sha256_file(raw_path),
+                    "revision": "b" * 40,
+                    "raw": None,
+                }
+            },
+        }
+        cat_path = os.path.join(tmp, "catalog.json")
+        with open(cat_path, "w", encoding="utf-8") as fh:
+            json.dump(catalog, fh)
+        ana_path = os.path.join(tmp, "analytics.json")
+        with open(ana_path, "w", encoding="utf-8") as fh:
+            json.dump({"formulae": {}}, fh)
+        rep = audit(raw_path, cat_path, ana_path, tmp, None, None)
+        assert rep["invariants"]["violationCount"] >= 1, rep["invariants"]
+        vids = {msg.split(":", 1)[0] for msg in rep["invariants"]["violations"]}
+        assert {"entry-not-object", "entry-identity-missing"} <= vids, vids
+        srcs = rep["inputs"]["catalog"]["entrySources"]
+        assert srcs.get("<malformed-row>") == 1, srcs
+        assert srcs.get("<nonstring-or-missing-source>") == 1, srcs
+        assert srcs.get(OFFICIAL_SOURCE) == 1, srcs
 
 
 # ------------------------------------------------------------- raw re-derivation
@@ -213,7 +379,9 @@ def rank_analytics(formulae: dict) -> list[tuple[str, int]]:
         total = 0
         for row in rows:
             if not isinstance(row, dict):
-                raise ValueError(f"analytics entry {token!r} holds a non-object row")
+                raise ValueError(  # noqa: TRY004 - routes to invalid input, exit 2
+                    f"analytics entry {token!r} holds a non-object row"
+                )
             total += parse_count(row.get("count"))
         out.append((str(token), total))
     out.sort(key=lambda tc: (-tc[1], tc[0]))
@@ -246,7 +414,7 @@ def safe_source(name: object) -> bool:
         return False
     if name.startswith(("/", "$")) and not name.startswith("$APPDIR/"):
         return False
-    path = name[len("$APPDIR/") :] if name.startswith("$APPDIR/") else name
+    path = name.removeprefix("$APPDIR/")
     if path.startswith("/"):
         return False
     return all(part not in ("", ".", "..") for part in path.split("/"))
@@ -261,6 +429,49 @@ def safe_target(name: object) -> bool:
         and "/" not in name
         and not has_ascii_controls(name)
     )
+
+
+def normalize_entries(entries: dict) -> tuple[dict, list[str]]:
+    """Validate schema-3 qualified identity; normalize entries to bare tokens.
+
+    Each catalog key is the qualified ``source/token`` identity. The key
+    must agree with the row's ``source`` and ``token`` fields. Rows from an
+    unexpected source are reported, never silently dropped. A bare token
+    seen more than once is reported and the first entry is kept; a duplicate
+    never overwrites an earlier row.
+    """
+    problems: list[str] = []
+
+    def p(vid: str, msg: str) -> None:
+        if len(problems) < 200:
+            problems.append(f"{vid}: {msg}")
+
+    by_token: dict[str, dict] = {}
+    for key, entry in entries.items():
+        if not isinstance(entry, dict):
+            p("entry-not-object", key)
+            continue
+        source, token = entry.get("source"), entry.get("token")
+        if not isinstance(source, str) or not isinstance(token, str):
+            p("entry-identity-missing", f"{key}: source/token fields missing")
+            continue
+        if key != f"{source}/{token}":
+            p(
+                "qualified-key-mismatch",
+                f"key {key!r} != source/token {source!r}/{token!r}",
+            )
+        if not is_valid_token(token):
+            p("catalog-invalid-token-key", key)
+        if source != OFFICIAL_SOURCE:
+            p("unexpected-source", f"{key}: source {source!r} is not official")
+        if token in by_token:
+            p(
+                "duplicate-token-across-sources",
+                f"{token}: {key} duplicates a token already normalized",
+            )
+            continue  # first entry wins; never overwrite
+        by_token[token] = entry
+    return by_token, problems
 
 
 def sha256_file(path: str) -> str:
@@ -358,13 +569,15 @@ def audit(
         isinstance(r, dict) and isinstance(r.get("token"), str) for r in raw
     ):
         fail_invalid("raw input must be a list of records with string tokens")
-    # ---- schema: catalog envelope
+    # ---- schema: catalog envelope (schema3 only; no schema2 fallback)
+    if catalog.get("schema") != SCHEMA:
+        fail_invalid(f"catalog schema must be {SCHEMA}, not {catalog.get('schema')!r}")
     entries = catalog.get("entries")
     if not isinstance(entries, dict):
         fail_invalid("catalog has no entries object")
     if catalog.get("targets") != TARGETS:
         fail_invalid(f"catalog targets must be {TARGETS}")
-    for field in ("schema", "macosBaseline"):
+    for field in ("macosBaseline",):
         if not isinstance(catalog.get(field), str):
             fail_invalid(f"catalog {field} is missing or not a string")
     gen = catalog.get("generator")
@@ -374,13 +587,10 @@ def audit(
         and isinstance(gen.get("version"), str)
     ):
         fail_invalid("catalog generator identity is missing")
-    pin = catalog.get("input")
-    if not (
-        isinstance(pin, dict)
-        and isinstance(pin.get("url"), str)
-        and isinstance(pin.get("license"), str)
-    ):
-        fail_invalid("catalog input provenance is missing")
+    inputs = catalog.get("inputs")
+    if problem := catalog_inputs_problem(inputs):
+        fail_invalid(problem)
+    pin = inputs[OFFICIAL_SOURCE]
     # ---- schema: analytics
     formulae = analytics.get("formulae")
     if not isinstance(formulae, dict):
@@ -415,7 +625,10 @@ def audit(
     if not re.fullmatch(r"\d+(\.\d+)*", str(catalog.get("macosBaseline", ""))):
         v("macos-baseline-shape", str(catalog.get("macosBaseline")))
 
-    # ---- structural invariants over every catalog row (all tokens, not top1000)
+    # ---- structural invariants over every catalog row (all tokens, not top1000).
+    # Schema-3 rows carry a qualified source/token identity; normalize to bare
+    # tokens after validating that identity. Identity problems are violations,
+    # never silent drops or overwrites.
     raw_by_token: dict[str, dict] = {}
     for rec in raw:
         token = rec["token"]
@@ -425,16 +638,14 @@ def audit(
             v("raw-duplicate-token", token)
         raw_by_token[token] = rec
 
+    by_token, norm_problems = normalize_entries(entries)
+    for msg in norm_problems:
+        vid, _, detail = msg.partition(":")
+        v(vid, detail.strip())
+
     dest_owners: dict[str, dict[str, list[str]]] = {t: {} for t in TARGETS}
     collisions: list[str] = []
-    for token, entry in entries.items():
-        if not is_valid_token(token):
-            v("catalog-invalid-token-key", token)
-        if not isinstance(entry, dict):
-            v("entry-not-object", token)
-            continue
-        if entry.get("token") != token:
-            v("token-key-mismatch", f"key {token!r} vs field {entry.get('token')!r}")
+    for token, entry in by_token.items():
         rec = raw_by_token.get(token)
         if rec is None:
             v("token-not-in-raw", token)
@@ -545,7 +756,7 @@ def audit(
                         f"{token}/{system}: gate says {expected!r}, catalog says {status}/{reason!r}",
                     )
     for token in raw_by_token:
-        if token not in entries:
+        if token not in by_token:
             v("raw-token-missing-from-catalog", token)
     for system in TARGETS:
         for dest, owners in dest_owners[system].items():
@@ -555,8 +766,8 @@ def audit(
     # ---- aggregates; popularity weights always come from actual analytics counts
     counts = dict(ranked)
     top = top_tokens(ranked, 1000)
-    matched = [t for t, _ in top if t in entries]
-    missing = [t for t, _ in top if t not in entries]
+    matched = [t for t, _ in top if t in by_token]
+    missing = [t for t, _ in top if t not in by_token]
 
     report = {
         "generatedAtUtc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -571,15 +782,19 @@ def audit(
             "catalog": {
                 "path": catalog_path,
                 "entries": len(entries),
+                "entrySources": entry_source_counts(entries),
                 "targets": TARGETS,
                 "schema": catalog.get("schema"),
                 "macosBaseline": catalog.get("macosBaseline"),
                 "generator": catalog.get("generator"),
                 "inputProvenance": {
+                    "source": OFFICIAL_SOURCE,
+                    "kind": pin.get("kind"),
                     "url": pin.get("url"),
                     "revision": pin.get("revision"),
                     "sha256": pin.get("sha256"),
                     "license": pin.get("license"),
+                    "raw": pin.get("raw"),
                 },
             },
             "analytics": {
@@ -612,14 +827,15 @@ def audit(
             "missing": len(missing),
             "missingTokens": missing,
             "note": "missing analytics tokens are reported, never replaced with lower-ranked tokens",
-            **agg(entries, counts, [t for t, _ in top]),
+            **agg(by_token, counts, [t for t, _ in top]),
         },
-        "wholeCatalog": agg(entries, counts, None),
+        "wholeCatalog": agg(by_token, counts, None),
         "invariants": {
             "checked": [
-                "catalog token keys match token fields and raw records both ways; keys and raw tokens are valid catalog keys (charset, no '..')",
+                "catalog keys are qualified source/token identities that agree with each row's source and bare token fields and with the raw records both ways (keys and raw tokens are valid catalog tokens, charset, no '..'); unexpected sources and duplicate bare tokens are violations, never silent drops or overwrites",
+                "the catalog inputs map contains exactly homebrew/cask; the official input has kind json-snapshot and an explicit raw null key",
                 "targets present exactly aarch64-darwin+x86_64-linux",
-                "catalog input provenance names the audited bytes: revision is 40 hex, url is http(s), and catalog input.sha256 equals the raw file hash",
+                "catalog input provenance names the audited bytes: revision is 40 hex, url is http(s), and the official input sha256 equals the raw file hash",
                 "eligible rows have plan+kind and null reason; excluded rows have reason and null plan/kind",
                 "plan source urls absolute http(s), sha256 64-hex, archive kind known; artifact sources relative without traversal, targets single components without ASCII controls (pkg targets null by design)",
                 "platform scope re-derived for the first decision stages (disabled/deprecated/supported_platforms/depends_on.linux) on the effective variation-merged record; a bounded check, not full classifier equivalence",
@@ -642,7 +858,7 @@ def audit(
     with open(
         os.path.join(out_dir, "top1000.csv"), "w", newline="", encoding="utf-8"
     ) as fh:
-        w = csv.writer(fh)
+        w = csv.writer(fh, lineterminator="\n")
         w.writerow(
             [
                 "rank",
@@ -658,9 +874,9 @@ def audit(
             ]
         )
         for i, (token, count) in enumerate(top, 1):
-            row = [i, token, count, "yes" if token in entries else "no"]
+            row = [i, token, count, "yes" if token in by_token else "no"]
             for system in TARGETS:
-                st = entries.get(token, {}).get("targets", {}).get(system, {})
+                st = by_token.get(token, {}).get("targets", {}).get(system, {})
                 row += [st.get("status"), st.get("kind"), st.get("reason")]
             w.writerow(row)
     return report

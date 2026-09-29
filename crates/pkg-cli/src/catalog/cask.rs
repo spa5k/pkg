@@ -1,6 +1,6 @@
 //! Cask catalog index access (design D6).
 //!
-//! Status decisions come from the generated `pkg-cask-catalog/2` index the
+//! Status decisions come from the generated `pkg-cask-catalog/3` index the
 //! casks flake exposes as `catalogIndex`, evaluated from the same locked
 //! source reference that search rows use, so status and rows always describe
 //! one source revision. The client classifies nothing itself: eligibility,
@@ -22,24 +22,33 @@ use super::CatalogError;
 /// The flake attribute that carries the catalog index envelope.
 pub const INDEX_ATTRIBUTE: &str = "catalogIndex";
 
-/// The ordinary package attribute one token installs through.
+/// The install attribute for one full cask entry id on one system.
 ///
-/// `info` and `install` resolve cask tokens to this attribute of the casks
-/// source; the client never installs through a token-only attribute. A
-/// token is one attribute segment: characters outside plain Nix identifier
-/// characters (`@`, `+`, `.`) are quoted so the token never becomes a
-/// nested attribute path.
+/// `info` and `install` resolve cask identities to this attribute of the
+/// casks source. The full entry id (`owner/tap/token`) is encoded by the
+/// shared backend helper (`_` becomes `_u_` and `.` becomes `_d_`, one
+/// pass) and quoted as one attribute segment, so the id never becomes a
+/// nested attribute path. The client never duplicates the encoding
+/// algorithm: `cask_catalog::package_attribute` is the one source of it.
 #[must_use]
-pub fn package_attribute(system: &str, token: &str) -> String {
-    let plain = token
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-    let segment = if plain {
-        token.to_string()
-    } else {
-        format!("\"{token}\"")
-    };
-    format!("packages.{system}.{segment}")
+pub fn package_attribute(system: &str, full_id: &str) -> String {
+    format!(
+        "packages.{system}.\"{}\"",
+        cask_catalog::package_attribute(full_id)
+    )
+}
+
+/// The same attribute as native profile manifests spell it: unquoted.
+///
+/// `nix profile` records the attribute path without the quotes, for
+/// example `packages.x86_64-linux.example/tap/tool@1_d_2`. Installed
+/// matching compares against this normalized native form.
+#[must_use]
+pub fn native_package_attribute(system: &str, full_id: &str) -> String {
+    format!(
+        "packages.{system}.{}",
+        cask_catalog::package_attribute(full_id)
+    )
 }
 
 /// Status for one cask token on one system (design D6).
@@ -94,6 +103,35 @@ pub struct CatalogView {
 }
 
 impl CatalogView {
+    /// Assemble a view from a resolved identity and a decoded index.
+    ///
+    /// Saved tap catalogs load from validated local captures; their
+    /// identity is synthetic (the stable reference and the recorded
+    /// revision), because no flake metadata was evaluated for them.
+    #[must_use]
+    pub fn from_parts(identity: SourceIdentity, index: CatalogIndex) -> Self {
+        Self { identity, index }
+    }
+
+    /// Assemble a view over one saved tap catalog.
+    ///
+    /// The identity is synthetic: the stable per-source reference, the
+    /// recorded revision, and the source identity as the display name.
+    /// Status and records come from the validated capture; no Nix call
+    /// and no tap Ruby ever runs for this view.
+    #[must_use]
+    pub fn from_saved(saved: &crate::tap::SavedCatalog) -> Self {
+        Self {
+            identity: SourceIdentity {
+                reference: saved.reference.clone(),
+                locked_url: Some(saved.reference.clone()),
+                revision: Some(saved.provenance.revision.clone()),
+                display: saved.source.clone(),
+            },
+            index: saved.index.clone(),
+        }
+    }
+
     /// Load the index from `moving_source` through its locked reference.
     pub fn load(nix: &Nix, moving_source: &str) -> Result<Self, CatalogError> {
         let identity = nix
@@ -137,27 +175,79 @@ impl CatalogView {
             .map(|section| &section.entries)
     }
 
-    /// The decoded record for one token on one system, when present.
-    #[must_use]
-    pub fn record(&self, system: &str, token: &str) -> Option<&CatalogEntry> {
-        self.entries(system).and_then(|entries| entries.get(token))
-    }
-
-    /// Resolve the status of one token on one system.
-    #[must_use]
-    pub fn entry(&self, system: &str, token: &str) -> CaskStatus {
-        CaskStatus::for_entry(self.record(system, token))
-    }
-
-    /// Resolve one bare name as an exact token match on one system.
+    /// The decoded record for one source and token on one system.
     ///
-    /// Bare cask resolution is fully anchored: the name must equal the token
-    /// exactly. A display `name` match is deliberately not a resolution, so
-    /// an unusable or ambiguous name can never be selected implicitly.
+    /// Keys are full entry identities; the record is found by matching
+    /// both its `source` and its bare `token`.
     #[must_use]
-    pub fn exact_token(&self, system: &str, name: &str) -> Option<&CatalogEntry> {
-        self.entries(system)?.get(name)
+    pub fn record(&self, system: &str, source: &str, token: &str) -> Option<&CatalogEntry> {
+        self.entries(system)?
+            .values()
+            .find(|entry| entry.source == source && entry.token == token)
     }
+
+    /// Resolve the status of one source and token on one system.
+    #[must_use]
+    pub fn entry(&self, system: &str, source: &str, token: &str) -> CaskStatus {
+        CaskStatus::for_entry(self.record(system, source, token))
+    }
+
+    /// Every source in this catalog that carries one bare token.
+    ///
+    /// A match counts whatever its status is: an excluded entry still
+    /// makes a bare token ambiguous across sources.
+    #[must_use]
+    pub fn sources_with_token(&self, system: &str, token: &str) -> Vec<String> {
+        sources_with_token(&self.index, system, token)
+    }
+}
+
+/// The decoded record for one source and token in one index.
+///
+/// Keys are full entry identities; the record is found by matching both
+/// its `source` and its bare `token`.
+#[must_use]
+pub fn record<'a>(
+    index: &'a CatalogIndex,
+    system: &str,
+    source: &str,
+    token: &str,
+) -> Option<&'a CatalogEntry> {
+    index
+        .systems
+        .get(system)?
+        .entries
+        .values()
+        .find(|entry| entry.source == source && entry.token == token)
+}
+
+/// The status of one source and token in one index.
+#[must_use]
+pub fn status(index: &CatalogIndex, system: &str, source: &str, token: &str) -> CaskStatus {
+    CaskStatus::for_entry(record(index, system, source, token))
+}
+
+/// Every source in one index that carries one bare token on one system.
+///
+/// A match counts whatever its status is: an excluded entry still makes a
+/// bare token ambiguous across sources. The result is sorted and unique.
+#[must_use]
+pub fn sources_with_token(index: &CatalogIndex, system: &str, token: &str) -> Vec<String> {
+    let mut sources: Vec<String> = index
+        .systems
+        .get(system)
+        .map(|section| {
+            section
+                .entries
+                .values()
+                .filter(|entry| entry.token == token)
+                .map(|entry| entry.source.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    sources.sort();
+    sources.dedup();
+    sources
 }
 
 /// A catalog index loaded at most once per command run.
@@ -200,6 +290,7 @@ impl<'a> CatalogOnce<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nix::OFFICIAL_CASK_SOURCE;
 
     /// Decode the fixture once for the tests below: an actual
     /// generated-catalog slice projected to the `catalogIndex` shape.
@@ -236,9 +327,12 @@ mod tests {
     #[test]
     fn entries_resolve_eligible_excluded_and_unknown_tokens() {
         let view = fixture_view();
-        assert_eq!(view.entry("aarch64-darwin", "iterm2"), CaskStatus::Eligible);
         assert_eq!(
-            view.entry("aarch64-darwin", "zoom"),
+            view.entry("aarch64-darwin", OFFICIAL_CASK_SOURCE, "iterm2"),
+            CaskStatus::Eligible
+        );
+        assert_eq!(
+            view.entry("aarch64-darwin", OFFICIAL_CASK_SOURCE, "zoom"),
             CaskStatus::Excluded {
                 reason: String::from("installer-script"),
                 detail: Some(String::from("stanza: postflight_steps")),
@@ -247,61 +341,105 @@ mod tests {
         // The same token can be excluded on one target and eligible on
         // another; per-system data decides, not the token.
         assert_eq!(
-            view.entry("x86_64-linux", "iterm2"),
+            view.entry("x86_64-linux", OFFICIAL_CASK_SOURCE, "iterm2"),
             CaskStatus::Excluded {
                 reason: String::from("unsupported-platform"),
                 detail: None,
             }
         );
-        assert_eq!(view.entry("x86_64-linux", "koreader"), CaskStatus::Eligible);
         assert_eq!(
-            view.entry("aarch64-darwin", "missing-token"),
+            view.entry("x86_64-linux", OFFICIAL_CASK_SOURCE, "koreader"),
+            CaskStatus::Eligible
+        );
+        assert_eq!(
+            view.entry("aarch64-darwin", OFFICIAL_CASK_SOURCE, "missing-token"),
             CaskStatus::Unknown
         );
         // Records keep their metadata for info, including the
         // target-effective version merge the projection applies.
-        let raycast_mac = view.record("aarch64-darwin", "raycast").expect("record");
+        let raycast_mac = view
+            .record("aarch64-darwin", OFFICIAL_CASK_SOURCE, "raycast")
+            .expect("record");
         assert_eq!(raycast_mac.version.as_deref(), Some("1.104.25"));
-        let raycast_linux = view.record("x86_64-linux", "raycast").expect("record");
+        let raycast_linux = view
+            .record("x86_64-linux", OFFICIAL_CASK_SOURCE, "raycast")
+            .expect("record");
         assert_eq!(raycast_linux.version.as_deref(), None);
     }
 
     #[test]
     fn bare_resolution_matches_the_token_only() {
         let view = fixture_view();
-        // Exact token match resolves.
+        // The official source carries the token; the id stays unique.
         assert_eq!(
-            view.exact_token("aarch64-darwin", "cursor")
-                .map(|e| e.kind.clone()),
-            Some(Some(String::from("app+cli")))
+            view.sources_with_token("aarch64-darwin", "cursor"),
+            [String::from("homebrew/cask")]
         );
-        // A display name is never a bare resolution, in either case form.
-        assert!(view.exact_token("aarch64-darwin", "Cursor").is_none());
-        assert!(view.exact_token("aarch64-darwin", "iTerm2").is_none());
-        assert!(view.exact_token("aarch64-darwin", "iterm2.app").is_none());
+        // A display name is never a bare token match, in either case form.
+        assert!(
+            view.sources_with_token("aarch64-darwin", "Cursor")
+                .is_empty()
+        );
+        assert!(
+            view.sources_with_token("aarch64-darwin", "iTerm2")
+                .is_empty()
+        );
+        assert!(
+            view.sources_with_token("aarch64-darwin", "iterm2.app")
+                .is_empty()
+        );
         // Untargeted systems have no entries at all.
-        assert!(view.exact_token("x86_64-darwin", "iterm2").is_none());
+        assert!(
+            view.sources_with_token("x86_64-darwin", "iterm2")
+                .is_empty()
+        );
     }
 
     #[test]
-    fn tokens_install_through_one_quoted_attribute_segment() {
+    fn full_ids_install_through_one_encoded_quoted_segment() {
         assert_eq!(
-            package_attribute("aarch64-darwin", "iterm2"),
-            "packages.aarch64-darwin.iterm2"
+            package_attribute("aarch64-darwin", "homebrew/cask/iterm2"),
+            "packages.aarch64-darwin.\"homebrew/cask/iterm2\""
         );
-        // `@`, `+`, and `.` stay one segment; they never become a nested
-        // attribute path.
+        // Dots in the tap or the token encode to `_d_`, underscores to
+        // `_u_`, and `@` passes through: the full id stays exactly one
+        // quoted segment.
         assert_eq!(
-            package_attribute("x86_64-linux", "1password-cli@beta"),
-            "packages.x86_64-linux.\"1password-cli@beta\""
-        );
-        assert_eq!(
-            package_attribute("x86_64-linux", "xournal++"),
-            "packages.x86_64-linux.\"xournal++\""
+            package_attribute("x86_64-linux", "example/tap/tool@1.2"),
+            "packages.x86_64-linux.\"example/tap/tool@1_d_2\""
         );
         assert_eq!(
-            package_attribute("aarch64-darwin", "firefox@beta"),
-            "packages.aarch64-darwin.\"firefox@beta\""
+            package_attribute("aarch64-darwin", "a_b.c/d.e/f_g.h"),
+            "packages.aarch64-darwin.\"a_u_b_d_c/d_d_e/f_u_g_d_h\""
         );
+        // Native manifests spell the same attribute without quotes.
+        assert_eq!(
+            native_package_attribute("x86_64-linux", "example/tap/tool@1.2"),
+            "packages.x86_64-linux.example/tap/tool@1_d_2"
+        );
+    }
+
+    #[test]
+    fn encoded_segments_round_trip_collision_free() {
+        // Dots, underscores, `@`, and a literal `_d_` in the id all round
+        // trip through the shared encoder and its strict inverse; no two
+        // distinct ids share one encoding.
+        for id in [
+            "homebrew/cask/iterm2",
+            "example/tap/tool@1.2",
+            "a_b.c/d.e/f_g.h",
+            "some/tap/_d_",
+            "some/tap/x_u_y",
+        ] {
+            let encoded = cask_catalog::package_attribute(id);
+            assert_eq!(
+                cask_catalog::decode_package_attribute(&encoded).ok(),
+                Some(id.to_string())
+            );
+        }
+        // The literal id `_d_` encodes to `_u_d_u_`, never to the encoding
+        // of `.`, and an unknown escape never silently decodes.
+        assert_eq!(cask_catalog::package_attribute("a/b/_d_"), "a/b/_u_d_u_");
+        assert!(cask_catalog::decode_package_attribute("a/b/_x_").is_err());
     }
 }

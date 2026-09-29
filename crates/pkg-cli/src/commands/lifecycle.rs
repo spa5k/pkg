@@ -11,6 +11,7 @@ use std::process::ExitCode;
 use crate::catalog::{self, ParsedId};
 use crate::cli::Cli;
 use crate::nix::{self, ProfileEntry};
+use crate::tap::{registry, store};
 
 use super::{
     CommandError, apps_refresh_after_mutation, configured_sources, installed_entries,
@@ -29,6 +30,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     }
     let session = session(cli)?;
     let system = session.nix.system()?;
+    let tap_state = super::TapState::load(&session)?;
     // One index evaluation is shared by every bare resolution and every
     // cask gate in this command run.
     let mut catalog_handle = catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks);
@@ -38,16 +40,29 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
             ParsedId::Qualified(qualified) => qualified,
             ParsedId::Bare(name) => catalog::resolve_bare(
                 &session.nix,
-                &session.config.sources,
+                &tap_state.routing,
+                &tap_state.saved,
                 &name,
                 &system,
                 &mut catalog_handle,
             )?,
+            ParsedId::BareCask(token) => catalog::resolve_bare_cask(
+                &session.nix,
+                &tap_state.saved,
+                &token,
+                &system,
+                &mut catalog_handle,
+            )?,
         };
-        if let catalog::CatalogId::Cask(token) = &resolved {
-            gate_cask(&mut catalog_handle, &system, token).map_err(CommandError::Message)?;
+        if let catalog::CatalogId::Cask { source, token } = &resolved {
+            gate_cask(&mut catalog_handle, &tap_state, &system, source, token)
+                .map_err(CommandError::Message)?;
         }
-        installables.push(resolved.installable(&session.config.sources, &system));
+        installables.push(
+            resolved
+                .installable(&tap_state.routing, &system)
+                .map_err(CommandError::Message)?,
+        );
     }
     session
         .nix
@@ -58,38 +73,52 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     apps_refresh_after_mutation(&session)
 }
 
-/// Refuse cask installs the generated catalog excludes or does not list.
+/// Refuse cask installs the generated or saved catalog excludes or does not
+/// list.
 ///
-/// The gate reads the generated index: the platform rule is the envelope's
-/// target list, eligibility and exclusion reasons are generated data, and
-/// an index failure is a failure — never a platform skip. An unknown token
-/// never becomes eligible.
+/// The official source reads the generated index: the platform rule is the
+/// envelope's target list, eligibility and exclusion reasons are generated
+/// data, and an index failure is a failure — never a platform skip. An
+/// unknown token never becomes eligible. An imported tap reads its saved
+/// capture the same way; no tap Ruby ever runs.
 ///
 /// Returns `Err(message)` when the token must not be installed on `system`.
 fn gate_cask(
     catalog: &mut catalog::CatalogOnce<'_>,
+    state: &super::TapState,
     system: &str,
+    source: &str,
     token: &str,
 ) -> Result<(), String> {
-    let view = catalog.load().map_err(|error| error.to_string())?;
+    let saved_view;
+    let view = if source == nix::OFFICIAL_CASK_SOURCE {
+        catalog.load().map_err(|error| error.to_string())?
+    } else {
+        let saved = state
+            .saved
+            .get(source)
+            .ok_or_else(|| format!("tap source `{source}` has no saved catalog"))?;
+        saved_view = catalog::CatalogView::from_saved(saved);
+        &saved_view
+    };
     if !view.targeted(system) {
         return Err(format!(
-            "cask:{token} needs a catalog target system ({}); this system is {system}",
+            "cask:{source}/{token} needs a catalog target system ({}); this system is {system}",
             view.targets().join(", ")
         ));
     }
     let version = view
-        .record(system, token)
+        .record(system, source, token)
         .and_then(|entry| entry.version.clone())
         .unwrap_or_else(|| String::from("unknown version"));
-    match view.entry(system, token) {
+    match view.entry(system, source, token) {
         catalog::CaskStatus::Eligible => Ok(()),
         catalog::CaskStatus::Excluded { reason, detail } => Err(format!(
-            "cask:{token} {version} is excluded on {system}: {reason}: {}",
+            "cask:{source}/{token} {version} is excluded on {system}: {reason}: {}",
             detail.as_deref().unwrap_or("no detail")
         )),
         catalog::CaskStatus::Unknown => Err(format!(
-            "cask:{token} is not in the generated catalog for {system}"
+            "cask:{source}/{token} is not in the generated catalog for {system}"
         )),
     }
 }
@@ -179,6 +208,54 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
         println!("No installed entries; nothing to upgrade.");
         return Ok(());
     }
+    // Entries installed from a tap that has since been removed keep their
+    // locked outputs; an upgrade must never follow a reference the registry
+    // no longer holds. The local public source of an entry is identified
+    // solely from its original URL through the tap store - the attribute
+    // path is never parsed - so this works even when saved catalogs or the
+    // profile metadata are broken, and it works for a removed entry too.
+    // Only the registry is loaded here, never `TapState` or saved
+    // catalogs, so unrelated broken metadata cannot block the decision.
+    let registry = registry::Registry::load(&registry::registry_path(&session.paths.state_home))?;
+    let removed_source = |entry: &str| -> Option<String> {
+        let source =
+            store::source_of_reference(&session.paths.state_home, &installed[entry].original_url)?;
+        (source != nix::OFFICIAL_CASK_SOURCE && registry.origin(&source).is_none())
+            .then_some(source)
+    };
+    let targets = if !all {
+        // An explicitly named entry from a removed tap is a hard refusal
+        // before any Nix upgrade runs.
+        for entry in &targets {
+            if let Some(source) = removed_source(entry) {
+                return Err(format!(
+                    "`{entry}` was installed from tap source {source}, which is no \
+                     longer registered; upgrade refuses to follow it. Re-add the tap \
+                     (`pkg tap add {source}`) or remove the entry to change it."
+                )
+                .into());
+            }
+        }
+        targets
+    } else {
+        let mut remaining = targets;
+        remaining.retain(|entry| match removed_source(entry) {
+            None => true,
+            Some(source) => {
+                println!(
+                    "pkg: {entry} was installed from tap source {source}, which is no longer \
+                     registered; upgrade keeps its locked outputs. Re-add the tap or remove \
+                     the entry to change it."
+                );
+                false
+            }
+        });
+        if remaining.is_empty() {
+            println!("Nothing eligible to upgrade.");
+            return Ok(());
+        }
+        remaining
+    };
     // Only explicit full-commit references count as fixed; tags, branches,
     // and hex-looking branch names stay movable (design D4). Fixed entries
     // are reported explicitly in both modes.
@@ -196,9 +273,15 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
     if !all && movable.is_empty() {
         return Err(String::from("nothing to upgrade").into());
     }
-    // With --all, eligibility stays with Nix: fixed references re-lock to the
-    // same commit and path sources re-evaluate natively.
-    let target = if all { None } else { Some(movable.as_slice()) };
+    // With `--all`, eligibility stays with Nix for the entries that remain:
+    // fixed references re-lock to the same commit and path sources
+    // re-evaluate natively. The remaining IDs are passed explicitly so a
+    // removed tap's locked outputs are never followed.
+    let target = if all {
+        Some(targets.as_slice())
+    } else {
+        Some(movable.as_slice())
+    };
     session
         .nix
         .profile_upgrade(&session.paths.profile, target)

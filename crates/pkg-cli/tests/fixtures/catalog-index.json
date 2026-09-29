@@ -3,112 +3,123 @@
     "name": "cask-catalog",
     "version": "0.1.0"
   },
-  "input": {
-    "license": "BSD-2-Clause (Homebrew Cask data)",
-    "revision": "245947c0b920cbe83f4003bb7c6be737352c8314",
-    "sha256": "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251",
-    "url": "https://raw.githubusercontent.com/BatteredBunny/brew-api/245947c0b920cbe83f4003bb7c6be737352c8314/cask.json"
+  "inputs": {
+    "homebrew/cask": {
+      "license": "BSD-2-Clause (Homebrew Cask data)",
+      "revision": "245947c0b920cbe83f4003bb7c6be737352c8314",
+      "sha256": "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251",
+      "url": "https://raw.githubusercontent.com/BatteredBunny/brew-api/245947c0b920cbe83f4003bb7c6be737352c8314/cask.json"
+    }
   },
   "macosBaseline": "15.7.7",
-  "schema": "pkg-cask-catalog/2",
+  "schema": "pkg-cask-catalog/3",
   "systems": {
     "aarch64-darwin": {
       "entries": {
-        "1password-cli": {
+        "homebrew/cask/1password-cli": {
           "description": "Command-line interface for 1Password",
           "detail": null,
           "homepage": "https://developer.1password.com/docs/cli",
           "kind": "binary",
           "name": "1Password CLI",
           "reason": null,
+          "source": "homebrew/cask",
           "status": "eligible",
           "token": "1password-cli",
           "version": "2.39.0"
         },
-        "1password@7": {
+        "homebrew/cask/1password@7": {
           "description": "Password manager that keeps all passwords secure behind one password",
           "detail": null,
           "homepage": "https://1password.com/",
           "kind": "app",
           "name": "1Password",
           "reason": null,
+          "source": "homebrew/cask",
           "status": "eligible",
           "token": "1password@7",
           "version": "7.9.11"
         },
-        "4k-video-downloader+": {
+        "homebrew/cask/4k-video-downloader+": {
           "description": "Free video downloader",
           "detail": null,
           "homepage": "https://www.4kdownload.com/products/videodownloader",
           "kind": "app",
           "name": "4K Video Downloader Plus",
           "reason": null,
+          "source": "homebrew/cask",
           "status": "eligible",
           "token": "4k-video-downloader+",
           "version": "26.3.1"
         },
-        "cursor": {
+        "homebrew/cask/cursor": {
           "description": "Write, edit, and chat about your code with AI",
           "detail": null,
           "homepage": "https://www.cursor.com/",
           "kind": "app+cli",
           "name": "Cursor",
           "reason": null,
+          "source": "homebrew/cask",
           "status": "eligible",
           "token": "cursor",
           "version": "3.17.19,ae3a2b7231dd56194447fe4570dfdc61640b1e9a"
         },
-        "firefox": {
+        "homebrew/cask/firefox": {
           "description": "Web browser",
           "detail": "artifact kinds: command_wrapper",
           "homepage": "https://www.mozilla.org/firefox/",
           "kind": null,
           "name": "Mozilla Firefox",
           "reason": "unsupported-artifact",
+          "source": "homebrew/cask",
           "status": "excluded",
           "token": "firefox",
           "version": "154.0"
         },
-        "iterm2": {
+        "homebrew/cask/iterm2": {
           "description": "Terminal emulator as alternative to Apple's Terminal app",
           "detail": null,
           "homepage": "https://iterm2.com/",
           "kind": "app",
           "name": "iTerm2",
           "reason": null,
+          "source": "homebrew/cask",
           "status": "eligible",
           "token": "iterm2",
           "version": "3.6.11"
         },
-        "koreader": {
+        "homebrew/cask/koreader": {
           "description": "Document viewer for e-ink devices",
           "detail": null,
           "homepage": "https://koreader.rocks/",
           "kind": null,
           "name": "KOReader",
           "reason": "unsupported-platform",
+          "source": "homebrew/cask",
           "status": "excluded",
           "token": "koreader",
           "version": "2026.07.1"
         },
-        "raycast": {
+        "homebrew/cask/raycast": {
           "description": "Control your tools with a few keystrokes",
           "detail": null,
           "homepage": "https://raycast.com/",
           "kind": "app",
           "name": "Raycast",
           "reason": null,
+          "source": "homebrew/cask",
           "status": "eligible",
           "token": "raycast",
           "version": "1.104.25"
         },
-        "zoom": {
+        "homebrew/cask/zoom": {
           "description": "Video communication and virtual meeting platform",
           "detail": "stanza: postflight_steps",
           "homepage": "https://www.zoom.us/",
           "kind": null,
           "name": "Zoom",
           "reason": "installer-script",
+          "source": "homebrew/cask",
           "status": "excluded",
           "token": "zoom",
           "version": "7.1.5.84650"
@@ -117,101 +128,110 @@
     },
     "x86_64-linux": {
       "entries": {
-        "1password-cli": {
+        "homebrew/cask/1password-cli": {
           "description": "Command-line interface for 1Password",
           "detail": null,
           "homepage": "https://developer.1password.com/docs/cli",
           "kind": "binary",
           "name": "1Password CLI",
           "reason": null,
+          "source": "homebrew/cask",
           "status": "eligible",
           "token": "1password-cli",
           "version": "2.39.0"
         },
-        "1password@7": {
+        "homebrew/cask/1password@7": {
           "description": "Password manager that keeps all passwords secure behind one password",
           "detail": null,
           "homepage": "https://1password.com/",
           "kind": null,
           "name": "1Password",
           "reason": "unsupported-platform",
+          "source": "homebrew/cask",
           "status": "excluded",
           "token": "1password@7",
           "version": "7.9.11"
         },
-        "4k-video-downloader+": {
+        "homebrew/cask/4k-video-downloader+": {
           "description": "Free video downloader",
           "detail": null,
           "homepage": "https://www.4kdownload.com/products/videodownloader",
           "kind": null,
           "name": "4K Video Downloader Plus",
           "reason": "unsupported-platform",
+          "source": "homebrew/cask",
           "status": "excluded",
           "token": "4k-video-downloader+",
           "version": "26.3.1"
         },
-        "cursor": {
+        "homebrew/cask/cursor": {
           "description": "Write, edit, and chat about your code with AI",
           "detail": null,
           "homepage": "https://www.cursor.com/",
           "kind": "appimage",
           "name": "Cursor",
           "reason": null,
+          "source": "homebrew/cask",
           "status": "eligible",
           "token": "cursor",
           "version": "3.17.19,ae3a2b7231dd56194447fe4570dfdc61640b1e9a"
         },
-        "firefox": {
+        "homebrew/cask/firefox": {
           "description": "Web browser",
           "detail": null,
           "homepage": "https://www.mozilla.org/firefox/",
           "kind": null,
           "name": "Mozilla Firefox",
           "reason": "unsupported-platform",
+          "source": "homebrew/cask",
           "status": "excluded",
           "token": "firefox",
           "version": "154.0"
         },
-        "iterm2": {
+        "homebrew/cask/iterm2": {
           "description": "Terminal emulator as alternative to Apple's Terminal app",
           "detail": null,
           "homepage": "https://iterm2.com/",
           "kind": null,
           "name": "iTerm2",
           "reason": "unsupported-platform",
+          "source": "homebrew/cask",
           "status": "excluded",
           "token": "iterm2",
           "version": "3.6.11"
         },
-        "koreader": {
+        "homebrew/cask/koreader": {
           "description": "Document viewer for e-ink devices",
           "detail": null,
           "homepage": "https://koreader.rocks/",
           "kind": "appimage",
           "name": "KOReader",
           "reason": null,
+          "source": "homebrew/cask",
           "status": "eligible",
           "token": "koreader",
           "version": "2026.07.1"
         },
-        "raycast": {
+        "homebrew/cask/raycast": {
           "description": "Control your tools with a few keystrokes",
           "detail": null,
           "homepage": "https://raycast.com/",
           "kind": null,
           "name": "Raycast",
           "reason": "unsupported-platform",
+          "source": "homebrew/cask",
           "status": "excluded",
           "token": "raycast",
           "version": null
         },
-        "zoom": {
+        "homebrew/cask/zoom": {
           "description": "Video communication and virtual meeting platform",
           "detail": null,
           "homepage": "https://www.zoom.us/",
           "kind": null,
           "name": "Zoom",
           "reason": "unsupported-platform",
+          "source": "homebrew/cask",
           "status": "excluded",
           "token": "zoom",
           "version": "7.1.5.84650"

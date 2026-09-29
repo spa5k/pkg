@@ -1,0 +1,79 @@
+{
+ "casks": [
+  {
+   "artifacts": [
+    {
+     "binary": [
+      "pubtap-tool"
+     ],
+     "target": "$HOMEBREW_PREFIX/bin/pubtap-tool"
+    }
+   ],
+   "auto_updates": null,
+   "autobump": true,
+   "bundle_short_version": null,
+   "bundle_version": null,
+   "caveats": null,
+   "caveats_rosetta": null,
+   "conflicts_with": null,
+   "container": null,
+   "depends_on": {},
+   "deprecate_args": null,
+   "deprecated": false,
+   "deprecation_date": null,
+   "deprecation_reason": null,
+   "deprecation_replacement_cask": null,
+   "deprecation_replacement_formula": null,
+   "desc": "Literal local destination (synthetic fixture)",
+   "disable_args": null,
+   "disable_date": null,
+   "disable_reason": null,
+   "disable_replacement_cask": null,
+   "disable_replacement_formula": null,
+   "disabled": false,
+   "full_token": "pubtap-fixtures/url-localhost/pubtap-url-localhost",
+   "homepage": "https://example.com/pubtap/pubtap-url-localhost",
+   "installed": null,
+   "installed_time": null,
+   "languages": [],
+   "name": [
+    "PubTap URL Localhost"
+   ],
+   "no_autobump_message": null,
+   "old_tokens": [],
+   "outdated": false,
+   "pinned": false,
+   "pinned_version": null,
+   "pkg_origin": {
+    "path": "Casks/u/pubtap-url-localhost.rb",
+    "sha256": "0ee8cee555fa9b6fa4a5739ead960ae67bf3ab4192b05d9d671c78f63cc60a13"
+   },
+   "rename": [],
+   "ruby_source_checksum": {
+    "sha256": "0ee8cee555fa9b6fa4a5739ead960ae67bf3ab4192b05d9d671c78f63cc60a13"
+   },
+   "ruby_source_path": "Casks/u/pubtap-url-localhost.rb",
+   "sha256": "3f303bffae5699ec7299aa1002ae49a3bac705d6c481b1ea0a081ec38be2f838",
+   "skip_livecheck": false,
+   "tap": "pubtap-fixtures/url-localhost",
+   "tap_git_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "token": "pubtap-url-localhost",
+   "upstreamPlatformSupported": true,
+   "url": "http://localhost:9/pubtap/url-localhost.zip",
+   "url_specs": {},
+   "version": "1.0.0"
+  }
+ ],
+ "files": {
+  "failed": 0,
+  "ok": 1,
+  "total": 1
+ },
+ "homebrew": "cc9ff034b1d98cdd4061f68cf715bb967c483a8f",
+ "probe": "denied: host-read, host-write, loopback",
+ "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+ "ruby": "4.0.5",
+ "schema": "pkg-tap-raw-export/1",
+ "source": "pubtap-fixtures/url-localhost",
+ "system": "aarch64-darwin"
+}

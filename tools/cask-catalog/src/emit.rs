@@ -1,21 +1,102 @@
-//! Whole-catalog generation: integrity checks, one deterministic catalog,
-//! and a printable coverage summary.
+//! Whole-catalog generation (schema `pkg-cask-catalog/3`).
+//!
+//! Integrity checks, one deterministic catalog with per-source `inputs`
+//! provenance and source-qualified entry identities, and a printable
+//! coverage summary.
+//!
+//! Entry map keys are the single identity `source/token` (for the
+//! official snapshot source `homebrew/cask/token`; for raw taps
+//! `owner/tap/token`). Each entry repeats its bare `token` and `source`
+//! fields. The official driver reads the pinned JSON snapshot; the raw
+//! tap driver lives in `tap.rs` and feeds the same entry shape.
 
 use crate::classify::TargetStatus;
 use crate::effective::{self, RawRecord};
-use crate::{CATALOG_SCHEMA, GENERATOR_NAME, GENERATOR_VERSION, MACOS_BASELINE, Pin, TARGETS};
+use crate::{
+    CATALOG_SCHEMA, GENERATOR_NAME, GENERATOR_VERSION, MACOS_BASELINE, OFFICIAL_SOURCE, Pin,
+    TARGETS,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
+
+/// Provenance for one source under the catalog's `inputs` map.
+#[derive(Serialize, Clone)]
+pub struct InputProvenance {
+    /// Canonical approved origin URL. The meaning depends on `kind`:
+    /// for `json-snapshot` inputs this IS the exact pinned snapshot
+    /// download URL (`raw` is null); for `raw-ruby-tap` inputs it is the
+    /// public canonical repository URL and the exact pinned download
+    /// URL lives at `raw.archiveUrl` instead.
+    pub url: String,
+    /// Exact revision the url names.
+    pub revision: String,
+    /// SHA-256 of the pinned source bytes (`url` for JSON snapshots;
+    /// for raw taps the exact-revision codeload archive —
+    /// `raw.archiveSha256` repeats it and `raw.captureSha256` is the
+    /// separate export.json metadata capture hash).
+    pub sha256: String,
+    /// Upstream data license attribution.
+    pub license: String,
+    /// Input class: `json-snapshot` (official pinned snapshot) or
+    /// `raw-ruby-tap` (public tap captured through the sandboxed
+    /// upstream Ruby loader).
+    pub kind: &'static str,
+    /// `null` for `json-snapshot` inputs (the url/sha256 fields above
+    /// already name the exact pinned bytes; the client requires null
+    /// or absent). For `raw-ruby-tap` inputs: `archiveUrl` (exact
+    /// source blob download URL), `archiveSha256` (downloaded archive
+    /// bytes), `captureSha256` (export.json metadata bytes),
+    /// `envelopeSchema`.
+    pub raw: Value,
+}
+
+/// Source-relative file provenance for a raw cask file.
+#[derive(Serialize, Clone)]
+pub struct Origin {
+    /// Source-tree-relative path of the cask file.
+    pub path: String,
+    /// SHA-256 of the cask file bytes.
+    pub sha256: String,
+}
+
+/// One catalog entry: source identity plus per-target decisions.
+#[derive(Serialize)]
+pub struct Entry {
+    /// Source ID this entry came from.
+    pub source: String,
+    /// Bare cask token inside its source.
+    pub token: String,
+    /// Display name.
+    pub name: Option<String>,
+    /// Short description.
+    pub description: Option<String>,
+    /// Effective version (may be null on excluded entries).
+    pub version: Option<String>,
+    /// Homepage.
+    pub homepage: Option<String>,
+    /// Source file provenance when known, else null.
+    pub origin: Option<Origin>,
+    /// Per-target decisions keyed by target system.
+    pub targets: BTreeMap<String, TargetStatus>,
+}
+
+/// The single committed document plus its printable coverage summary.
+pub struct Generated {
+    /// The full catalog envelope with plans.
+    pub catalog: String,
+    /// Human-readable coverage counts (printed, never committed).
+    pub coverage: String,
+}
 
 /// Provenance at the top of the catalog envelope.
 #[derive(Serialize)]
 struct Provenance<'a> {
     schema: &'a str,
     generator: Generator<'a>,
-    input: PinRef<'a>,
-    targets: [&'a str; 2],
+    inputs: &'a BTreeMap<String, InputProvenance>,
+    targets: &'a [&'a str],
     #[serde(rename = "macosBaseline")]
     macos_baseline: &'a str,
 }
@@ -27,33 +108,90 @@ struct Generator<'a> {
 }
 
 #[derive(Serialize)]
-struct PinRef<'a> {
-    url: &'a str,
-    revision: &'a str,
-    sha256: &'a str,
-    license: &'a str,
+struct Catalog<'a> {
+    #[serde(flatten)]
+    provenance: Provenance<'a>,
+    entries: &'a BTreeMap<String, Entry>,
 }
 
-/// One catalog entry: base display fields plus per-target decisions.
-#[derive(Serialize)]
-struct Entry {
-    token: String,
-    name: Option<String>,
-    description: Option<String>,
-    version: Option<String>,
-    homepage: Option<String>,
-    targets: BTreeMap<&'static str, TargetStatus>,
+/// Assemble the final catalog document from classified entries.
+///
+/// Shared by the official snapshot driver and the raw tap driver so both
+/// emit byte-identical envelope shapes. The document always ends with
+/// exactly one newline.
+pub fn assemble_catalog(
+    inputs: &BTreeMap<String, InputProvenance>,
+    entries: &BTreeMap<String, Entry>,
+    targets: &[&str],
+) -> Result<String, String> {
+    let catalog = Catalog {
+        provenance: Provenance {
+            schema: CATALOG_SCHEMA,
+            generator: Generator {
+                name: GENERATOR_NAME,
+                version: GENERATOR_VERSION,
+            },
+            inputs,
+            targets,
+            macos_baseline: MACOS_BASELINE,
+        },
+        entries,
+    };
+    let catalog = serde_json::to_string(&catalog).map_err(|e| e.to_string())?;
+    Ok(format!("{catalog}\n"))
 }
 
-/// The single committed document plus its printable coverage summary.
-pub struct Generated {
-    /// The full catalog envelope with plans.
-    pub catalog: String,
-    /// Human-readable coverage counts (printed, never committed).
-    pub coverage: String,
+/// The official snapshot's `inputs` entry.
+#[must_use]
+pub fn official_input(pin: &Pin) -> (String, InputProvenance) {
+    (
+        OFFICIAL_SOURCE.to_string(),
+        InputProvenance {
+            url: pin.url.clone(),
+            revision: pin.revision.clone(),
+            sha256: pin.sha256.clone(),
+            license: pin.license.clone(),
+            kind: "json-snapshot",
+            // Client contract: the client requires null/absent raw for
+            // json-snapshot inputs — `url` and `sha256` above already
+            // name the exact pinned snapshot bytes, so a `raw` object
+            // would only repeat provenance with no new meaning.
+            raw: Value::Null,
+        },
+    )
 }
 
-/// Run whole-catalog generation over the decoded snapshot.
+/// File origin from a snapshot record's `ruby_source_*` fields, when the
+/// mirror preserved them and the checksum is a real SHA-256.
+fn snapshot_origin(record: &Value) -> Option<Origin> {
+    let path = record.get("ruby_source_path")?.as_str()?;
+    let sha = record
+        .get("ruby_source_checksum")?
+        .get("sha256")?
+        .as_str()?;
+    if !crate::valid_sha256(sha) || !safe_relative_path(path) {
+        return None;
+    }
+    Some(Origin {
+        path: path.to_string(),
+        sha256: sha.to_ascii_lowercase(),
+    })
+}
+
+/// Whether a source-relative path is plain and inside the tree: no
+/// absolute form, no empty/`.`/`..` component, no control characters,
+/// and no backslash that could smuggle a separator past a later split.
+fn safe_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.chars().any(|c| c.is_ascii_control())
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+/// Run whole-catalog generation over the decoded official snapshot.
 ///
 /// Integrity failures abort before any output exists: a snapshot where no
 /// record carries `supported_platforms` (the field family is gone),
@@ -96,15 +234,15 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
     }
 
     let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
-    let mut counts: BTreeMap<&'static str, BTreeMap<String, usize>> = TARGETS
+    let mut counts: BTreeMap<&str, BTreeMap<String, usize>> = TARGETS
         .iter()
         .map(|system| (*system, BTreeMap::new()))
         .collect();
-    let mut eligible_counts: BTreeMap<&'static str, usize> =
+    let mut eligible_counts: BTreeMap<&str, usize> =
         TARGETS.iter().map(|system| (*system, 0)).collect();
 
     for (token, record) in &by_token {
-        let mut targets: BTreeMap<&'static str, TargetStatus> = BTreeMap::new();
+        let mut targets: BTreeMap<String, TargetStatus> = BTreeMap::new();
         for system in TARGETS {
             let status = crate::classify::classify_target(record, system, MACOS_BASELINE);
             if status.status == "eligible" {
@@ -118,50 +256,27 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
                     .unwrap_or_else(|| "unknown".to_string());
                 *reasons.entry(reason).or_insert(0) += 1;
             }
-            targets.insert(system, status);
+            targets.insert((*system).to_string(), status);
         }
         entries.insert(
-            token.clone(),
+            qualified_id(OFFICIAL_SOURCE, token),
             Entry {
+                source: OFFICIAL_SOURCE.to_string(),
                 token: token.clone(),
                 name: effective::name_field(&record.raw),
                 description: effective::str_field(&record.raw, "desc"),
                 version: effective::str_field(&record.raw, "version"),
                 homepage: effective::str_field(&record.raw, "homepage"),
+                origin: snapshot_origin(&record.raw),
                 targets,
             },
         );
     }
 
-    #[derive(Serialize)]
-    struct Catalog<'a> {
-        #[serde(flatten)]
-        provenance: Provenance<'a>,
-        entries: BTreeMap<String, Entry>,
-    }
-    fn make_provenance<'a>(schema: &'a str, pin: &'a Pin) -> Provenance<'a> {
-        Provenance {
-            schema,
-            generator: Generator {
-                name: GENERATOR_NAME,
-                version: GENERATOR_VERSION,
-            },
-            input: PinRef {
-                url: &pin.url,
-                revision: &pin.revision,
-                sha256: &pin.sha256,
-                license: &pin.license,
-            },
-            targets: TARGETS,
-            macos_baseline: MACOS_BASELINE,
-        }
-    }
-
-    let catalog = Catalog {
-        provenance: make_provenance(CATALOG_SCHEMA, pin),
-        entries,
-    };
-    let catalog = serde_json::to_string(&catalog).map_err(|e| e.to_string())?;
+    let mut inputs = BTreeMap::new();
+    let (id, input) = official_input(pin);
+    inputs.insert(id, input);
+    let catalog = assemble_catalog(&inputs, &entries, &TARGETS)?;
 
     let mut coverage = String::new();
     use std::fmt::Write as _;
@@ -179,10 +294,15 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
         }
     }
 
-    Ok(Generated {
-        catalog: format!("{catalog}\n"),
-        coverage,
-    })
+    Ok(Generated { catalog, coverage })
+}
+
+/// The single catalog identity: `source/token` with every segment
+/// validated by the callers (source IDs contain no `/` beyond their own
+/// `owner/tap` shape; tokens are validated by `token::is_valid_token`).
+#[must_use]
+pub fn qualified_id(source: &str, token: &str) -> String {
+    format!("{source}/{token}")
 }
 
 /// Publish the catalog atomically: one unique same-directory temporary
@@ -225,7 +345,7 @@ mod tests {
 
     fn record(token: &str, platforms: &Value, extra: &Value) -> Value {
         let mut raw = json!({
-            "token": token, "version": "1", "url": "https://v/x.zip",
+            "token": token, "version": "1", "url": "https://example.com/x.zip",
             "sha256": "a".repeat(64),
             "artifacts": [{"binary": ["t"]}],
             "supported_platforms": platforms,
@@ -245,42 +365,61 @@ mod tests {
                 "app-ok",
                 &json!(["arm64_sequoia"]),
                 &json!(
-                {"artifacts": [{"app": ["A.app"]}]})
+                    {"artifacts": [{"app": ["A.app"]}], "ruby_source_path": "Casks/a/app-ok.rb",
+                     "ruby_source_checksum": {"sha256": "b".repeat(64)}}
+                ),
             ),
             record(
                 "zoom",
                 &json!(["arm64_sequoia"]),
                 &json!(
-                {"artifacts": [{"installer": [{"script": {}}]}]})
+                    {"artifacts": [{"installer": [{"script": {}}]}]}
+                ),
             ),
         ]);
         let one = generate(&snapshot, &pin()).expect("generates");
         let two = generate(&snapshot, &pin()).expect("generates");
         assert_eq!(one.catalog, two.catalog);
+        assert!(one.catalog.ends_with('\n') && !one.catalog.ends_with("\n\n"));
 
         let catalog: Value = serde_json::from_str(&one.catalog).unwrap();
-        assert_eq!(catalog["schema"], "pkg-cask-catalog/2");
+        assert_eq!(catalog["schema"], "pkg-cask-catalog/3");
         assert_eq!(catalog["macosBaseline"], "15.7.7");
         assert_eq!(
             catalog["targets"],
             json!(["aarch64-darwin", "x86_64-linux"])
         );
         assert_eq!(catalog["generator"]["version"], "0.1.0");
-        assert_eq!(catalog["input"]["revision"], "rev");
+        // inputs map keyed by source id with kind; raw is NULL for
+        // json-snapshot inputs (client contract: url/sha256 already
+        // name the exact pinned bytes).
+        let input = &catalog["inputs"]["homebrew/cask"];
+        assert_eq!(input["revision"], "rev");
+        assert_eq!(input["kind"], "json-snapshot");
+        assert!(input["raw"].is_null(), "raw must be null for snapshots");
+        assert_eq!(input["license"], "BSD-2-Clause (Homebrew Cask data)");
+        // entries keyed by the single qualified identity.
+        let entry = &catalog["entries"]["homebrew/cask/app-ok"];
+        assert_eq!(entry["source"], "homebrew/cask");
+        assert_eq!(entry["token"], "app-ok");
         assert_eq!(
-            catalog["entries"]["app-ok"]["targets"]["aarch64-darwin"]["status"],
-            "eligible"
+            entry["origin"],
+            json!({"path": "Casks/a/app-ok.rb", "sha256": "b".repeat(64)})
         );
-        assert!(
-            catalog["entries"]["app-ok"]["targets"]["aarch64-darwin"]["plan"]["artifacts"][0]["target"]
-                == "A.app"
-        );
+        assert_eq!(entry["targets"]["aarch64-darwin"]["status"], "eligible");
+        assert!(entry["targets"]["aarch64-darwin"]["plan"]["artifacts"][0]["target"] == "A.app");
+        let zoom = &catalog["entries"]["homebrew/cask/zoom"];
         assert_eq!(
-            catalog["entries"]["zoom"]["targets"]["aarch64-darwin"]["reason"],
+            zoom["targets"]["aarch64-darwin"]["reason"],
             "installer-script"
         );
+        // Snapshot origin fields that are absent leave origin null.
+        assert!(zoom["origin"].is_null());
         for token in ["app-ok", "zoom"] {
-            assert!(catalog["entries"][token]["targets"]["x86_64-linux"].is_object());
+            assert!(
+                catalog["entries"][format!("homebrew/cask/{token}")]["targets"]["x86_64-linux"]
+                    .is_object()
+            );
         }
         assert!(
             one.coverage
@@ -299,7 +438,7 @@ mod tests {
         let out = generate(&snapshot, &pin()).expect("generates");
         let catalog: Value = serde_json::from_str(&out.catalog).unwrap();
         assert_eq!(
-            catalog["entries"]["broken"]["targets"]["aarch64-darwin"]["reason"],
+            catalog["entries"]["homebrew/cask/broken"]["targets"]["aarch64-darwin"]["reason"],
             "malformed-record"
         );
     }
@@ -338,9 +477,34 @@ mod tests {
         let out = generate(&snapshot, &pin()).expect("generates");
         let catalog: Value = serde_json::from_str(&out.catalog).unwrap();
         assert!(
-            catalog["entries"]["1password@nightly"]["targets"]["aarch64-darwin"]["plan"]
+            catalog["entries"]["homebrew/cask/1password@nightly"]["targets"]["aarch64-darwin"]
+                ["plan"]
                 .is_object()
         );
+    }
+
+    #[test]
+    fn bad_snapshot_origin_is_dropped_not_guessed() {
+        for bad in [
+            "../escape.rb",
+            "a/../../escape.rb",
+            "/abs.rb",
+            "Casks//x.rb",
+            "Casks/./x.rb",
+        ] {
+            let snapshot = json!([record(
+                "x",
+                &json!(["arm64_sequoia"]),
+                &json!({"ruby_source_path": bad,
+                         "ruby_source_checksum": {"sha256": "b".repeat(64)}})
+            )]);
+            let out = generate(&snapshot, &pin()).expect("generates");
+            let catalog: Value = serde_json::from_str(&out.catalog).unwrap();
+            assert!(
+                catalog["entries"]["homebrew/cask/x"]["origin"].is_null(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

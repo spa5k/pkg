@@ -8,13 +8,14 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::config::Sources;
 use crate::nix::{CatalogEntry, Nix, SearchMeta};
+use crate::tap::SavedCatalog;
 
 use super::CatalogError;
 use super::cache::{self, CachedSearch};
 use super::cask::{self, CatalogOnce};
 use super::id::{CatalogId, escape_regex};
+use super::routing::Routing;
 
 /// One resolved row set: results, the reference they were read from, its
 /// revision, and whether the rows are stale cache reuse.
@@ -214,42 +215,93 @@ fn strip_output_set<'a>(attr: &'a str, system: Option<&str>) -> &'a str {
 /// Resolve a bare name to exactly one supported output.
 ///
 /// The Nixpkgs lane runs the anchored native search as before. The cask
-/// lane resolves through the generated index: the name must equal one
+/// lane resolves through the generated index of the official source and
+/// the saved catalogs of every registered tap: the name must equal one
 /// token exactly (fully anchored, token only — a display name is never a
-/// resolution). `catalog` is the shared once-per-command index handle, so
-/// a bare name and a later gate or info lookup evaluate the index once.
+/// resolution), whatever the entry's status is, because the bare form
+/// cannot say which source the user meant. Bare resolution fails closed:
+/// an unreadable official index or a failed saved source is an error, never
+/// a silent answer from the remaining sources. `catalog` is the shared
+/// once-per-command index handle for the official source.
 ///
-/// On a system the catalog does not target, the cask lane contributes no
+/// On a system the catalogs do not target, a source contributes no
 /// choices at all, so it can never be a fatal requirement there.
 pub fn resolve_bare(
     nix: &Nix,
-    sources: &Sources,
+    routing: &Routing,
+    saved: &crate::tap::SavedCatalogs,
     name: &str,
     system: &str,
     catalog: &mut CatalogOnce<'_>,
 ) -> Result<CatalogId, CatalogError> {
-    let pattern = format!("^{}$", escape_regex(name));
+    resolve_inner(nix, Some(&routing.nixpkgs), saved, name, system, catalog)
+}
+
+/// Resolve one bare cask token (`cask:token`) across every cask source.
+///
+/// The official source and every registered tap count, including excluded
+/// entries. Exactly one source may carry the token; more than one is an
+/// ambiguity that names the full `cask:owner/tap/token` form, and none is
+/// a miss. Failed sources fail the resolution instead of being skipped.
+pub fn resolve_bare_cask(
+    nix: &Nix,
+    saved: &crate::tap::SavedCatalogs,
+    token: &str,
+    system: &str,
+    catalog: &mut CatalogOnce<'_>,
+) -> Result<CatalogId, CatalogError> {
+    resolve_inner(nix, None, saved, token, system, catalog)
+}
+
+/// The shared resolver behind both bare forms.
+///
+/// `nixpkgs` names the configured Nixpkgs source to also search, or
+/// `None` for the cask-only form.
+fn resolve_inner(
+    nix: &Nix,
+    nixpkgs: Option<&str>,
+    saved: &crate::tap::SavedCatalogs,
+    name: &str,
+    system: &str,
+    catalog: &mut CatalogOnce<'_>,
+) -> Result<CatalogId, CatalogError> {
     let mut choices = Vec::new();
-    let nixpkgs = nix
-        .search(&sources.nixpkgs, &pattern)
-        .map_err(CatalogError::from)?;
-    for attr in exact_attribute_matches(&nixpkgs, name)
-        .into_iter()
-        .map(|(attr, _)| attr)
-    {
-        // Choices are exposed as the normalized suffix (matching search
-        // rows); the full native attribute is resolved again at info time.
-        choices.push(CatalogId::Nixpkgs(
-            exposed_attribute(&attr, system).to_string(),
-        ));
+    if let Some(nixpkgs) = nixpkgs {
+        let pattern = format!("^{}$", escape_regex(name));
+        let nixpkgs = nix.search(nixpkgs, &pattern).map_err(CatalogError::from)?;
+        for attr in exact_attribute_matches(&nixpkgs, name)
+            .into_iter()
+            .map(|(attr, _)| attr)
+        {
+            // Choices are exposed as the normalized suffix (matching search
+            // rows); the full native attribute is resolved again at info time.
+            choices.push(CatalogId::Nixpkgs(
+                exposed_attribute(&attr, system).to_string(),
+            ));
+        }
     }
-    let view = catalog.load();
-    if let Ok(view) = view
-        && view.targeted(system)
-        && view.exact_token(system, name).is_some()
-    {
-        // Bare cask resolution is the exact token; nothing else matches.
-        choices.push(CatalogId::Cask(name.to_string()));
+    // The cask lane: the official index is evaluated (fail closed) and
+    // every saved tap catalog counts, including excluded entries.
+    let view = catalog.load()?;
+    let mut sources = view.sources_with_token(system, name);
+    sources.extend(saved.sources_with_token(system, name));
+    sources.sort();
+    sources.dedup();
+    match sources.len() {
+        0 => {}
+        1 => choices.push(CatalogId::Cask {
+            source: sources.swap_remove(0),
+            token: name.to_string(),
+        }),
+        _ => {
+            return Err(CatalogError::Ambiguous {
+                name: name.to_string(),
+                choices: sources
+                    .iter()
+                    .map(|source| format!("cask:{source}/{name}"))
+                    .collect(),
+            });
+        }
     }
     match choices.len() {
         1 => Ok(choices.swap_remove(0)),
@@ -534,10 +586,11 @@ fn filter_catalog(
             detail: format!("invalid regex `{query}`: {error}"),
         })?;
     let mut results = BTreeMap::new();
-    for (token, entry) in entries {
+    for (full_id, entry) in entries {
         if entry.status != crate::nix::EntryStatus::Eligible {
             continue;
         }
+        let token = entry.token.as_str();
         let matches = pattern.is_match(token)
             || entry
                 .name
@@ -548,7 +601,7 @@ fn filter_catalog(
                 .as_deref()
                 .is_some_and(|description| pattern.is_match(description));
         if matches {
-            results.insert(token.clone(), catalog_meta(token, entry));
+            results.insert(full_id.clone(), catalog_meta(token, entry));
         }
     }
     Ok(results)
@@ -596,9 +649,10 @@ pub(super) fn rows_from(
 
 /// Build cask search rows from locally filtered index results.
 ///
-/// Keys are catalog tokens; every row points at the ordinary
-/// `packages.<system>.<token>` attribute the token installs through, and
-/// every row is eligible by construction of the filter.
+/// Keys are full entry identities; every row points at the one quoted
+/// `packages.<system>."<encoded owner/tap/token>"` attribute the identity
+/// installs through, and every row is eligible by construction of the
+/// filter.
 pub(super) fn catalog_rows_from(
     results: &BTreeMap<String, SearchMeta>,
     reference: &str,
@@ -608,9 +662,9 @@ pub(super) fn catalog_rows_from(
 ) -> Vec<SearchResult> {
     results
         .iter()
-        .map(|(token, meta)| SearchResult {
-            id: format!("cask:{token}"),
-            attribute: cask::package_attribute(system, token),
+        .map(|(full_id, meta)| SearchResult {
+            id: format!("cask:{full_id}"),
+            attribute: cask::package_attribute(system, full_id),
             name: meta.pname.clone(),
             version: meta.version.clone(),
             description: meta.description.clone(),
@@ -622,6 +676,53 @@ pub(super) fn catalog_rows_from(
             support: Some(SupportBadge::Eligible),
         })
         .collect()
+}
+
+/// Search one saved tap catalog locally.
+///
+/// The lane never evaluates Nix and never executes Ruby: it filters the
+/// strictly validated saved capture. The platform rule is the envelope's
+/// own target list, so an untargeted system is an honest skip with the
+/// targets shown; a malformed capture was already refused at load.
+#[must_use]
+pub fn search_saved_catalog(
+    saved: &SavedCatalog,
+    query: &str,
+    system: &str,
+) -> (Vec<SearchResult>, SourceReport) {
+    if !saved.index.targets.iter().any(|target| target == system) {
+        return (
+            Vec::new(),
+            SourceReport::skipped_platform(&saved.source, &saved.index.targets),
+        );
+    }
+    let revision = Some(saved.provenance.revision.clone());
+    match filter_catalog(&saved.index, system, query) {
+        Ok(results) => (
+            catalog_rows_from(&results, &saved.reference, &revision, system, false),
+            SourceReport {
+                source: saved.source.clone(),
+                display: Some(saved.source.clone()),
+                locked_reference: Some(saved.reference.clone()),
+                revision,
+                status: SourceStatus::Fresh,
+                detail: None,
+                support_detail: None,
+            },
+        ),
+        Err(error) => (
+            Vec::new(),
+            SourceReport {
+                source: saved.source.clone(),
+                display: Some(saved.source.clone()),
+                locked_reference: None,
+                revision: None,
+                status: SourceStatus::Failed,
+                detail: Some(error.to_string()),
+                support_detail: None,
+            },
+        ),
+    }
 }
 
 /// One exact native match for `info` identity.
@@ -768,24 +869,24 @@ mod tests {
 
         // Token, name, and description each match, case-insensitively.
         let token_hit = filter_catalog(&index, "x86_64-linux", "koreader").expect("filters");
-        assert!(token_hit.contains_key("koreader"));
+        assert!(token_hit.contains_key("homebrew/cask/koreader"));
         let name_hit = filter_catalog(&index, "x86_64-linux", "1password").expect("filters");
-        assert!(name_hit.contains_key("1password-cli"));
+        assert!(name_hit.contains_key("homebrew/cask/1password-cli"));
         let desc_hit = filter_catalog(&index, "aarch64-darwin", "command-line").expect("filters");
-        assert!(desc_hit.contains_key("1password-cli"));
+        assert!(desc_hit.contains_key("homebrew/cask/1password-cli"));
 
         // Search shows eligible entries only: the excluded `iterm2` on
         // Linux and the installer-script `zoom` never appear.
         let any = filter_catalog(&index, "x86_64-linux", ".").expect("filters");
-        assert!(any.contains_key("koreader"));
-        assert!(!any.contains_key("iterm2"));
-        assert!(!any.contains_key("zoom"));
+        assert!(any.contains_key("homebrew/cask/koreader"));
+        assert!(!any.contains_key("homebrew/cask/iterm2"));
+        assert!(!any.contains_key("homebrew/cask/zoom"));
         // An excluded token stays discoverable through info instead; the
         // `@` and `+` tokens stay searchable when eligible.
         let macos_any = filter_catalog(&index, "aarch64-darwin", ".").expect("filters");
-        assert!(!macos_any.contains_key("zoom"));
-        assert!(macos_any.contains_key("1password@7"));
-        assert!(macos_any.contains_key("4k-video-downloader+"));
+        assert!(!macos_any.contains_key("homebrew/cask/zoom"));
+        assert!(macos_any.contains_key("homebrew/cask/1password@7"));
+        assert!(macos_any.contains_key("homebrew/cask/4k-video-downloader+"));
 
         // A broken pattern is an honest error, not a silent empty result.
         let error = filter_catalog(&index, "x86_64-linux", "(").expect_err("invalid regex");
@@ -800,8 +901,11 @@ mod tests {
             false,
         );
         let row = &rows[0];
-        assert_eq!(row.id, "cask:koreader");
-        assert_eq!(row.attribute, "packages.x86_64-linux.koreader");
+        assert_eq!(row.id, "cask:homebrew/cask/koreader");
+        assert_eq!(
+            row.attribute,
+            "packages.x86_64-linux.\"homebrew/cask/koreader\""
+        );
         assert_eq!(row.support, Some(SupportBadge::Eligible));
         assert_eq!(row.source, "cask");
         // Row shape carries non-nullable strings; `info` keeps the nullable

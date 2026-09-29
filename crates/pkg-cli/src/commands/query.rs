@@ -15,6 +15,7 @@ use super::{CommandError, installed_entries, print_json, session};
 pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
     let session = session(cli)?;
     let system = session.nix.system()?;
+    let tap_state = super::TapState::load(&session)?;
     let mut reports = Vec::new();
     let mut rows = Vec::new();
     for (kind, moving) in super::configured_sources(&session.config) {
@@ -40,6 +41,14 @@ pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
                 &system,
             ),
         };
+        reports.push(report);
+        rows.extend(source_rows);
+    }
+    // Every registered tap answers from its saved catalog capture: no tap
+    // Ruby runs, no source is contacted, and a malformed capture fails the
+    // search instead of being skipped.
+    for saved in tap_state.saved.iter() {
+        let (source_rows, report) = catalog::search_saved_catalog(saved, query, &system);
         reports.push(report);
         rows.extend(source_rows);
     }
@@ -102,23 +111,44 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
     let session = session(cli)?;
     let system = session.nix.system()?;
     let mut catalog_handle = catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks);
+    let tap_state = super::TapState::load(&session)?;
     let resolved = match parsed {
         ParsedId::Qualified(qualified) => qualified,
         ParsedId::Bare(name) => catalog::resolve_bare(
             &session.nix,
-            &session.config.sources,
+            &tap_state.routing,
+            &tap_state.saved,
             &name,
             &system,
             &mut catalog_handle,
         )?,
+        ParsedId::BareCask(token) => catalog::resolve_bare_cask(
+            &session.nix,
+            &tap_state.saved,
+            &token,
+            &system,
+            &mut catalog_handle,
+        )?,
     };
-    let (reference, attribute) = resolved.source_and_attribute(&session.config.sources, &system);
-    let installable = resolved.installable(&session.config.sources, &system);
+    let (reference, attribute) = resolved
+        .source_and_attribute(&tap_state.routing, &system)
+        .map_err(CommandError::Message)?;
+    let installable = resolved
+        .installable(&tap_state.routing, &system)
+        .map_err(CommandError::Message)?;
     // Cask status and metadata come from the generated index before any
     // derivation lookup: excluded and unknown tokens report their recorded
     // state without forcing a package evaluation.
-    let data = if let catalog::CatalogId::Cask(token) = &resolved {
-        cask_info(&mut catalog_handle, &system, &reference, token).map_err(CommandError::Message)?
+    let data = if let catalog::CatalogId::Cask { source, token } = &resolved {
+        cask_info(
+            &mut catalog_handle,
+            &tap_state.saved,
+            &system,
+            &reference,
+            source,
+            token,
+        )
+        .map_err(CommandError::Message)?
     } else {
         match catalog::exact_lookup(&session.nix, &reference, &attribute) {
             Ok((exact, report)) => InfoData {
@@ -138,13 +168,19 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
             Err(error) => return Err(error.into()),
         }
     };
-    // Installed matching compares the actual full matched attribute and the
-    // canonical source with its flake subdirectory, never a short request
-    // alone.
-    let identity_attribute = data
-        .matched_attribute
-        .clone()
-        .unwrap_or_else(|| data.attribute.clone());
+    // Installed matching compares the actual full matched attribute and
+    // the canonical source with its flake subdirectory, never a short
+    // request alone. A cask identity is compared against the normalized
+    // native form: `nix profile` records the attribute without quotes.
+    let identity_attribute = match &resolved {
+        catalog::CatalogId::Cask { source, token } => {
+            catalog::native_package_attribute(&system, &nix::full_entry_id(source, token))
+        }
+        _ => data
+            .matched_attribute
+            .clone()
+            .unwrap_or_else(|| data.attribute.clone()),
+    };
     let installed = installed_entries(&session).ok().and_then(|entries| {
         entries.into_iter().find(|(_, entry)| {
             entry.attr_path == identity_attribute
@@ -313,20 +349,33 @@ fn info_text(
     out
 }
 
-/// Build info data for one cask token from the generated catalog index.
+/// Build info data for one cask identity from the official generated index
+/// or the source's saved catalog capture.
 ///
-/// The index is evaluated once per command run and answers entirely from
-/// recorded data: no package derivation is evaluated for cask metadata.
-/// Eligible, excluded, and unknown tokens all report their recorded state,
-/// and a system outside the catalog targets reports the target list.
+/// The official source's index is evaluated once per command run; an
+/// imported tap answers entirely from its saved capture. No package
+/// derivation is evaluated for cask metadata. Eligible, excluded, and
+/// unknown tokens all report their recorded state, and a system outside the
+/// catalog targets reports the target list.
 fn cask_info(
     catalog: &mut catalog::CatalogOnce<'_>,
+    saved: &crate::tap::SavedCatalogs,
     system: &str,
     reference: &str,
+    source: &str,
     token: &str,
 ) -> Result<InfoData, String> {
-    let view = catalog.load().map_err(|error| error.to_string())?;
-    let attribute = catalog::package_attribute(system, token);
+    let saved_view;
+    let view = if source == nix::OFFICIAL_CASK_SOURCE {
+        catalog.load().map_err(|error| error.to_string())?
+    } else {
+        let saved = saved
+            .get(source)
+            .ok_or_else(|| format!("tap source `{source}` has no saved catalog"))?;
+        saved_view = catalog::CatalogView::from_saved(saved);
+        &saved_view
+    };
+    let attribute = catalog::package_attribute(system, &nix::full_entry_id(source, token));
     if !view.targeted(system) {
         return Ok(InfoData {
             attribute,
@@ -339,7 +388,7 @@ fn cask_info(
             }),
         });
     }
-    let record = view.record(system, token);
+    let record = view.record(system, source, token);
     let meta = record.map(|entry| catalog::catalog_meta(token, entry));
     Ok(InfoData {
         attribute,
@@ -347,7 +396,7 @@ fn cask_info(
         meta,
         report: catalog::report_for(reference, &view.identity),
         cask: Some(CaskDisplay::Status {
-            status: view.entry(system, token),
+            status: view.entry(system, source, token),
             kind: record.and_then(|entry| entry.kind.clone()),
             homepage: record.and_then(|entry| entry.homepage.clone()),
         }),
@@ -441,7 +490,7 @@ fn list_rows(entries: &std::collections::BTreeMap<String, ProfileEntry>) -> Vec<
         .filter(|(_, entry)| entry.active)
         .map(|(entry_id, entry)| ListRow {
             entry_id: entry_id.clone(),
-            name: entry.name().to_string(),
+            name: entry.name(),
             source: entry.original_url.clone(),
             locked_source: entry.locked_url.clone(),
             revision: entry.locked_revision().map(ToString::to_string),

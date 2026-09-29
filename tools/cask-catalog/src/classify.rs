@@ -10,6 +10,7 @@ use crate::effective::{self, RawRecord};
 use crate::plan::{self, Plan};
 use serde::Serialize;
 use serde_json::Value;
+use std::net::IpAddr;
 
 /// One target's published decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -224,6 +225,120 @@ fn summary_kind(plan: &Plan) -> String {
     "binary".into()
 }
 
+/// How the classifier learns whether the target platform is supported.
+///
+/// `Tags` is the official-snapshot path: `supported_platforms` string
+/// tags decide. `Bool` is the raw-tap path: the pinned Homebrew exporter
+/// answered `platform_supported?(tag)` for the exact target inside the
+/// simulated context; the classifier never invents platform tags for
+/// records that do not carry them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformGate {
+    /// Decide from `supported_platforms` tags (official JSON snapshots).
+    Tags,
+    /// Decide from the upstream boolean captured for this exact target.
+    Bool(bool),
+}
+
+/// Local suffixes: single-label names never go to a vendor, and these
+/// suffixes are local (mirrors safe-fetch `_LOCAL_SUFFIXES`).
+const LOCAL_SUFFIXES: [&str; 7] = [
+    "localhost",
+    "local",
+    "internal",
+    "lan",
+    "home",
+    "corp",
+    "localdomain",
+];
+
+/// Bound the URL text inside a diagnostic so an oversized record URL
+/// cannot flood the catalog detail field.
+fn bounded(url: &str) -> &str {
+    match url.char_indices().nth(80) {
+        Some((i, _)) => &url[..i],
+        None => url,
+    }
+}
+
+/// Whether a vendor URL is a fetchable destination under the safe-fetch policy.
+///
+/// Policy: https to port 443 only, no credentials, no
+/// control characters, whitespace, or backslash, no localhost or local
+/// suffix, no single-label domain, no invalid host, and public IP
+/// literals only (checked through the typed host so IPv6 brackets and
+/// IPv4-mapped addresses cannot hide a local destination). No DNS
+/// happens here: names are checked by shape only.
+pub fn destination_allowed(url: &str) -> Result<(), String> {
+    if url.is_empty() {
+        return Err("URL is empty".to_string());
+    }
+    if url.chars().any(|c| c.is_ascii_control()) {
+        return Err(format!(
+            "URL contains control characters: {:?}",
+            bounded(url)
+        ));
+    }
+    if url.chars().any(char::is_whitespace) || url.contains('\\') {
+        return Err(format!(
+            "URL contains whitespace or backslash: {:?}",
+            bounded(url)
+        ));
+    }
+    let parsed = url::Url::parse(url)
+        .map_err(|e| format!("URL is not parseable ({e}): {:?}", bounded(url)))?;
+    if parsed.scheme() != "https" {
+        return Err(format!("scheme is not https: {:?}", bounded(url)));
+    }
+    if parsed.port().is_some_and(|port| port != 443) {
+        return Err(format!("only port 443 is allowed: {:?}", bounded(url)));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(format!(
+            "URL carries embedded credentials: {:?}",
+            bounded(url)
+        ));
+    }
+    let Some(host) = parsed.host_str() else {
+        return Err(format!("URL has an empty host: {:?}", bounded(url)));
+    };
+    let host = host.trim_end_matches('.');
+    if host.is_empty() {
+        return Err(format!("URL has an empty host: {:?}", bounded(url)));
+    }
+    match parsed.host() {
+        Some(url::Host::Ipv4(ip)) if !crate::net::ip_public(IpAddr::V4(ip)) => {
+            return Err(format!(
+                "host is a local or non-public IP literal: {:?}",
+                bounded(url)
+            ));
+        }
+        Some(url::Host::Ipv6(ip)) if !crate::net::ip_public(IpAddr::V6(ip)) => {
+            return Err(format!(
+                "host is a local or non-public IP literal: {:?}",
+                bounded(url)
+            ));
+        }
+        Some(url::Host::Domain(_)) => {
+            let labels: Vec<&str> = host.split('.').collect();
+            if labels.len() < 2 {
+                return Err(format!(
+                    "single-label host is not allowed: {:?}",
+                    bounded(url)
+                ));
+            }
+            if LOCAL_SUFFIXES.contains(&labels[labels.len() - 1].to_ascii_lowercase().as_str()) {
+                return Err(format!(
+                    "local host name is not allowed: {:?}",
+                    bounded(url)
+                ));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// Classify one record for one target system.
 ///
 /// The effective record (base merged with the target variation) is
@@ -233,16 +348,50 @@ fn summary_kind(plan: &Plan) -> String {
 /// excluded tokens keep their known version and homepage.
 #[must_use]
 pub fn classify_target(record: &RawRecord, system: &str, baseline: &str) -> TargetStatus {
+    classify_gated(record, system, baseline, PlatformGate::Tags)
+}
+
+/// Classify one raw-exported record for one target system.
+///
+/// Same pipeline as [`classify_target`], but platform evidence comes from
+/// the upstream predicate boolean captured for this exact target by the
+/// pinned Homebrew exporter, never from an invented tag list.
+#[must_use]
+pub fn classify_tap_target(
+    record: &RawRecord,
+    system: &str,
+    baseline: &str,
+    upstream_supported: bool,
+) -> TargetStatus {
+    classify_gated(
+        record,
+        system,
+        baseline,
+        PlatformGate::Bool(upstream_supported),
+    )
+}
+
+fn classify_gated(
+    record: &RawRecord,
+    system: &str,
+    baseline: &str,
+    gate: PlatformGate,
+) -> TargetStatus {
     let Ok(eff) = effective::effective_for(record, system) else {
         return excluded_malformed("variation is not an object");
     };
-    let mut status = classify_effective(&eff, system, baseline);
+    let mut status = classify_effective(&eff, system, baseline, gate);
     status.version = effective::str_field(&eff, "version");
     status.homepage = effective::str_field(&eff, "homepage");
     status
 }
 
-fn classify_effective(eff: &Value, system: &str, baseline: &str) -> TargetStatus {
+fn classify_effective(
+    eff: &Value,
+    system: &str,
+    baseline: &str,
+    gate: PlatformGate,
+) -> TargetStatus {
     // Effective flags: a variation can set or clear them. Any non-null
     // value that is not exactly `false` (a string reason, a number) still
     // means the flag is set; such records are never silently eligible.
@@ -256,14 +405,23 @@ fn classify_effective(eff: &Value, system: &str, baseline: &str) -> TargetStatus
     if flagged("deprecated") {
         return excluded("deprecated");
     }
-    let Some(tags) = eff.get("supported_platforms").and_then(Value::as_array) else {
-        return excluded_malformed("no supported_platforms");
-    };
-    if tags.iter().any(|tag| !tag.is_string()) {
-        return excluded_malformed("supported_platforms has a non-string entry");
-    }
-    if !platform_supported(tags, system) {
-        return excluded("unsupported-platform");
+    match gate {
+        PlatformGate::Tags => {
+            let Some(tags) = eff.get("supported_platforms").and_then(Value::as_array) else {
+                return excluded_malformed("no supported_platforms");
+            };
+            if tags.iter().any(|tag| !tag.is_string()) {
+                return excluded_malformed("supported_platforms has a non-string entry");
+            }
+            if !platform_supported(tags, system) {
+                return excluded("unsupported-platform");
+            }
+        }
+        PlatformGate::Bool(upstream_supported) => {
+            if !upstream_supported {
+                return excluded("unsupported-platform");
+            }
+        }
     }
     // A declared linux requirement scopes the cask away from macOS;
     // an explicit null clears it, as null clears fields everywhere.
@@ -332,17 +490,11 @@ fn classify_effective(eff: &Value, system: &str, baseline: &str) -> TargetStatus
     if url.is_empty() {
         return excluded("missing-url");
     }
-    if !url.starts_with("https://") && !url.starts_with("http://") {
-        return excluded_with_detail(
-            "unsupported-url",
-            &format!("scheme is not http/https: {url}"),
-        );
-    }
-    if url.chars().any(|c| c.is_ascii_control()) {
-        return excluded_with_detail(
-            "unsupported-url",
-            &format!("URL contains control characters: {url:?}"),
-        );
+    // Destination policy mirrors safe-fetch exactly (https/443 to a
+    // public destination, no credentials or ambiguous characters), so
+    // no plan can advertise a URL the fetcher would refuse.
+    if let Err(detail) = destination_allowed(url) {
+        return excluded_with_detail("unsupported-url", &detail);
     }
     let sha = eff.get("sha256").and_then(Value::as_str).unwrap_or("");
     if sha.is_empty()
@@ -399,7 +551,7 @@ mod tests {
         let mut raw = json!({
             "token": "t",
             "version": "1",
-            "url": "https://v/x.zip",
+            "url": "https://example.com/x.zip",
             "sha256": "a".repeat(64),
             "artifacts": [{"binary": ["t"]}],
             "supported_platforms": platforms,
@@ -672,12 +824,12 @@ mod tests {
         let mut raw = json!({
             "token": "op",
             "version": "2",
-            "url": "https://v/mac.zip",
+            "url": "https://example.com/mac.zip",
             "sha256": "a".repeat(64),
             "artifacts": [{"binary": ["op"]}],
             "supported_platforms": ["arm64_sequoia", "x86_64_linux"],
             "variations": {"x86_64_linux": {
-                "url": "https://v/linux.zip",
+                "url": "https://example.com/linux.zip",
                 "sha256": "b".repeat(64),
                 "artifacts": [{"binary": ["op-linux"]}]
             }}
@@ -685,14 +837,17 @@ mod tests {
         let status = classify_target(&RawRecord::new(raw.clone()), "x86_64-linux", BASE);
         assert_eq!(status.status, "eligible");
         let plan = status.plan.expect("plan");
-        assert_eq!(plan.source.url, "https://v/linux.zip");
+        assert_eq!(plan.source.url, "https://example.com/linux.zip");
         assert_eq!(plan.artifacts[0].source, "op-linux");
         // Darwin keeps the base record.
         raw.as_object_mut()
             .unwrap()
             .insert("artifacts".into(), json!([{"binary": ["op"]}]));
         let darwin = classify_target(&RawRecord::new(raw), "aarch64-darwin", BASE);
-        assert_eq!(darwin.plan.expect("plan").source.url, "https://v/mac.zip");
+        assert_eq!(
+            darwin.plan.expect("plan").source.url,
+            "https://example.com/mac.zip"
+        );
     }
 
     /// Parent probe regressions: all three records share the baseline
@@ -758,11 +913,57 @@ mod tests {
     }
 
     #[test]
+    fn destination_policy_is_public_https_only() {
+        for ok in [
+            "https://example.com/a.dmg",
+            "https://140.82.112.3/x",
+            "https://[2607:f8b0::9]/x",
+            "https://gh.example.download/v",
+            "https://example.com:443/a.dmg",
+        ] {
+            assert!(
+                super::destination_allowed(ok).is_ok(),
+                "{ok} must be allowed"
+            );
+        }
+        for bad in [
+            "http://example.com/a.dmg",
+            "ftp://example.com/a",
+            "file:///etc/passwd",
+            "https://localhost/x",
+            "https://sub.localhost/x",
+            "https://host.local/x",
+            "https://printer.lan/x",
+            "https://box.internal/x",
+            "https://127.0.0.1/x",
+            "https://10.0.0.5/x",
+            "https://192.168.1.10/x",
+            "https://169.254.169.254/latest",
+            "https://[::1]/x",
+            "https://[fe80::1]/x",
+            "https://[::ffff:127.0.0.1]/x",
+            "https://user:pw@example.com/x",
+            "https://224.0.0.1/x",
+            "https://example.com:8443/x",
+            "https://example.com/x y.zip",
+            "https://example.com/x\\y.zip",
+            "https:///x",
+            "https://singlelabel/x",
+            "not a url\u{7}",
+        ] {
+            assert!(
+                super::destination_allowed(bad).is_err(),
+                "{bad} must be refused"
+            );
+        }
+    }
+
+    #[test]
     fn urls_with_control_characters_are_not_fetchable() {
         for bad in [
-            "https://v/a\u{1}b",
-            "https://v/a\tb",
-            "https://v/a\u{d}\u{a}b",
+            "https://example.com/a\u{1}b",
+            "https://example.com/a\tb",
+            "https://example.com/a\u{d}\u{a}b",
         ] {
             let rec = record(&["arm64_sequoia"], &json!({"url": bad}));
             let status = classify_target(&rec, "aarch64-darwin", BASE);

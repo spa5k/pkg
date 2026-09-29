@@ -1,5 +1,4 @@
-//! Minimal maintainer CLI: `fetch` (network, curl subprocess) and
-//! `generate` (offline, deterministic). No self-test command.
+//! Catalog CLI: fetch pinned snapshots, generate catalogs, and import public taps as Nix flakes.
 
 use cask_catalog::{
     CACHE_DIR, Pin, emit, load_pin, read_verified_input, valid_repo, valid_revision, valid_sha256,
@@ -63,6 +62,32 @@ enum Command {
         #[arg(long, default_value = "nix/casks/catalog")]
         out_dir: PathBuf,
     },
+    /// Import one raw Homebrew tap through the ACTUAL public flow
+    /// (GitHub identity check, codeload fetch, sandboxed Nix raw
+    /// export) into a self-contained native-only flake tree (schema
+    /// pkg-cask-catalog/3). Emits one JSON result on stdout.
+    ImportTap {
+        /// Tap identity `owner/tap` or
+        /// `https://github.com/owner/homebrew-tap`.
+        #[arg(long)]
+        source: String,
+        /// Exact 40-hex commit revision of the tap; omit to use the
+        /// default branch head.
+        #[arg(long)]
+        revision: Option<String>,
+        /// Single native target: aarch64-darwin or x86_64-linux. Must
+        /// equal this build host.
+        #[arg(long)]
+        system: String,
+        /// Path to the Nix EXECUTABLE (e.g. /nix/store/.../bin/nix)
+        /// that builds the embedded raw-export runtime.
+        #[arg(long, default_value = "nix")]
+        nix: PathBuf,
+        /// Output directory for the self-contained flake tree. Must be
+        /// caller-owned and empty (precreated is fine).
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 fn main() {
@@ -87,6 +112,13 @@ fn run() -> Result<(), String> {
             cache_dir,
             out_dir,
         } => generate(&pin, input, &cache_dir, &out_dir),
+        Command::ImportTap {
+            source,
+            revision,
+            system,
+            nix,
+            out,
+        } => import_tap(&source, revision.as_deref(), &system, &nix, &out),
     }
 }
 
@@ -175,6 +207,30 @@ fn generate(
         "catalog written to {}",
         out_dir.join("catalog.json").display()
     );
+    Ok(())
+}
+
+fn import_tap(
+    source: &str,
+    revision: Option<&str>,
+    system: &str,
+    nix: &Path,
+    out: &Path,
+) -> Result<(), String> {
+    let request = cask_catalog::tap::ImportRequest {
+        source: source.to_string(),
+        revision: revision.map(ToString::to_string),
+        system: system.to_string(),
+        nix: nix.to_path_buf(),
+        output_dir: out.to_path_buf(),
+    };
+    let result = cask_catalog::tap::import(&request)?;
+    // Machine-readable single-line result on stdout; the client parses
+    // this after validating the catalog index. Serialized directly from
+    // the `Serialize` derive: snake_case field names
+    // (`metadata_sha256`, `flake_path`) are the stable client contract.
+    let json = serde_json::to_string(&result).map_err(|e| e.to_string())?;
+    println!("{json}");
     Ok(())
 }
 

@@ -235,20 +235,20 @@ fn cask_flows_read_the_generated_index() {
     let bin = tempfile::tempdir().expect("tempdir");
     let home = tempfile::tempdir().expect("tempdir");
     let nix = bin.path().join("nix");
-    let catalog = r#"{"schema":"pkg-cask-catalog/2",
+    let catalog = r#"{"schema":"pkg-cask-catalog/3",
       "generator":{"name":"cask-catalog","version":"0.1.0"},
-      "input":{"url":"github:BatteredBunny/brew-api/245947c0","revision":"245947c0",
+      "inputs":{"homebrew/cask":{"url":"github:BatteredBunny/brew-api/245947c0","revision":"245947c0",
         "sha256":"9f3b1c47ae5d2801c6a1b74f0e39c4d2a8f60c15d7e3b28a4c05f6e9d1a7b3c2",
-        "license":"Homebrew license"},
+        "license":"Homebrew license"}},
       "targets":["aarch64-darwin","x86_64-linux"],
       "macosBaseline":"15.7.7",
       "systems":{"aarch64-darwin":{"entries":{}},
         "x86_64-linux":{"entries":{
-        "1password-cli":{"token":"1password-cli","name":"1Password CLI",
+        "homebrew/cask/1password-cli":{"source":"homebrew/cask","token":"1password-cli","name":"1Password CLI",
           "description":"The 1Password command-line tool","version":"2.39.0",
           "homepage":"https://developer.1password.com/docs/cli/",
           "status":"eligible","kind":"binary","reason":null,"detail":null},
-        "iterm2":{"token":"iterm2","name":"iTerm2","description":null,
+        "homebrew/cask/iterm2":{"source":"homebrew/cask","token":"iterm2","name":"iTerm2","description":null,
           "version":"3.6.11","homepage":"https://iterm2.com/","status":"excluded",
           "kind":null,"reason":"unsupported-platform","detail":null}}}}}"#;
     std::fs::write(
@@ -291,20 +291,134 @@ fn cask_flows_read_the_generated_index() {
 
     // Install refuses the excluded token and an unknown token before any
     // profile mutation; the unexpected-call guard proves no install ran.
+    // A bare token that matches no source is refused at resolution; the
+    // qualified form reaches the gate and names the generated catalog.
     let (code, _, stderr) = run(&["install", "cask:iterm2"]);
     assert_eq!(code, 1);
     assert!(stderr.contains("unsupported-platform"), "{stderr}");
     let (code, _, stderr) = run(&["install", "cask:missing-token"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("missing-token"), "{stderr}");
+    let (code, _, stderr) = run(&["install", "cask:homebrew/cask/missing-token"]);
     assert_eq!(code, 1);
     assert!(stderr.contains("not in the generated catalog"), "{stderr}");
 
     // Search lists only eligible cask rows and never calls nix search.
     let (code, stdout, _) = run(&["search", "iterm|1password"]);
     assert_eq!(code, 0, "{stdout}");
-    assert!(stdout.contains("cask:1password-cli"), "{stdout}");
     assert!(
-        !stdout.contains("cask:iterm2"),
+        stdout.contains("cask:homebrew/cask/1password-cli"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("cask:homebrew/cask/iterm2"),
         "excluded rows stay hidden: {stdout}"
     );
     assert!(stdout.contains("eligible"), "{stdout}");
+}
+
+/// Percent-encode one path the way a `path:` flake reference is encoded.
+fn encode_ref(path: &str) -> String {
+    let mut out = String::new();
+    for &byte in path.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// The upgrade refusal rules for removed taps, through a fake Nix runtime:
+/// an explicitly named entry from an unregistered tap is refused before
+/// any `profile upgrade` runs, and `--all` skips such entries with a note
+/// and passes only the explicit remaining IDs — never `--all`.
+#[test]
+fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
+    let bin = tempfile::tempdir().expect("tempdir");
+    let home = tempfile::tempdir().expect("tempdir");
+    let state = home.path().join("state");
+    let args_file = home.path().join("upgrade-args");
+    let tap_ref = format!(
+        "path:{}/pkg/taps/src/somebody/apps/current",
+        encode_ref(state.to_str().expect("utf-8 state path"))
+    );
+    let manifest = format!(
+        r#"{{"version":3,"elements":{{
+          "github-entry":{{"active":true,"attrPath":"packages.x86_64-linux.tool",
+            "originalUrl":"github:owner/repo","url":"github:owner/repo/2403040105060708090a0b0c0d0e0f1011121314",
+            "storePaths":["/nix/store/x"]}},
+          "tap-entry":{{"active":true,"attrPath":"packages.x86_64-linux.somebody-apps-tool",
+            "originalUrl":"{tap_ref}","url":"{tap_ref}",
+            "storePaths":["/nix/store/y"]}}}}}}"#
+    );
+    let nix = bin.path().join("nix");
+    std::fs::write(
+        &nix,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'profile list'*) cat <<'JSON'\n{manifest}\nJSON\n;;\n  *'profile upgrade'*) printf '%s\\n' \"$@\" > '{}'; exit 0;;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n",
+            args_file.display()
+        ),
+    )
+    .expect("write fake nix");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut permissions = std::fs::metadata(&nix).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&nix, permissions).expect("chmod");
+    }
+    // A registry that holds one unrelated tap but not `somebody/apps`.
+    // The dedicated profile must exist, or the entry list reads as empty.
+    std::fs::create_dir_all(state.join("nix").join("profiles").join("pkg")).expect("profile");
+    let registry = state.join("pkg").join("taps");
+    std::fs::create_dir_all(&registry).expect("mkdir");
+    std::fs::write(
+        registry.join("registry.json"),
+        r#"{"schema":"pkg-tap-registry/1","sources":{
+          "other/cli":{"origin":"https://github.com/other/homebrew-cli","added_unix":1}}}"#,
+    )
+    .expect("write registry");
+
+    let run = |args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+        command
+            .args(args)
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("XDG_CACHE_HOME")
+            .env_remove("XDG_CONFIG_HOME")
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
+            .env("HOME", home.path())
+            .env("XDG_STATE_HOME", &state)
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_CONFIG_HOME", home.path().join("config"));
+        let output = command.output().expect("spawn pkg");
+        (
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // An explicitly named entry from the removed tap is refused before the
+    // native upgrade: no `profile upgrade` call happens at all.
+    let (code, _, stderr) = run(&["upgrade", "tap-entry"]);
+    assert_eq!(code, 1, "explicit removed-tap entry must fail");
+    assert!(stderr.contains("no longer registered"), "stderr: {stderr}");
+    assert!(
+        !args_file.exists(),
+        "no native upgrade may run for a removed tap entry"
+    );
+
+    // `--all` skips the removed tap entry with a clear note and passes the
+    // remaining entry IDs explicitly — never `--all`.
+    let (code, stdout, stderr) = run(&["upgrade", "--all"]);
+    assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("tap-entry"), "skip note: {stdout}");
+    assert!(stdout.contains("keeps its locked outputs"), "{stdout}");
+    let recorded = std::fs::read_to_string(&args_file).expect("upgrade args recorded");
+    assert!(recorded.contains("github-entry"), "{recorded}");
+    assert!(!recorded.contains("tap-entry"), "{recorded}");
+    assert!(!recorded.contains("--all"), "{recorded}");
 }

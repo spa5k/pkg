@@ -19,6 +19,7 @@ mod doctor;
 mod lifecycle;
 mod query;
 mod support;
+mod tap;
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -107,7 +108,11 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
     if cli.json
         && !matches!(
             cli.command,
-            Command::Search { .. } | Command::Info { .. } | Command::List | Command::Doctor
+            Command::Search { .. }
+                | Command::Info { .. }
+                | Command::List
+                | Command::Doctor
+                | Command::Tap(crate::cli::TapCommand::List)
         )
     {
         eprintln!(
@@ -131,6 +136,7 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
         Command::Shellenv => support::shellenv(),
         Command::Completion { shell } => support::completion(*shell),
         Command::Apps(crate::cli::AppsCommand::Sync) => support::apps_sync(cli),
+        Command::Tap(command) => tap::dispatch(cli, command),
     }
 }
 
@@ -159,6 +165,43 @@ fn session(cli: &Cli) -> Result<Session, CommandError> {
     let config = Config::load(&paths.config_file)?;
     let nix = discover_runtime(cli, &config)?;
     Ok(Session { paths, config, nix })
+}
+
+/// One command run that needs no Nix runtime: paths and configuration only.
+struct PathsOnly {
+    paths: Paths,
+}
+
+/// Resolve paths and configuration without discovering a Nix runtime.
+fn paths_only() -> Result<PathsOnly, CommandError> {
+    Ok(PathsOnly {
+        paths: config::paths()?,
+    })
+}
+
+/// The tap state one query or mutation run uses: the strictly loaded
+/// registry, the routing it implies, and every saved catalog.
+struct TapState {
+    /// Source routing for every catalog source.
+    routing: catalog::Routing,
+    /// The saved catalog of every registered tap, loaded strictly.
+    saved: crate::tap::SavedCatalogs,
+}
+
+impl TapState {
+    /// Load the tap state for one command run; malformed state fails the
+    /// command before any query runs.
+    fn load(session: &Session) -> Result<Self, CommandError> {
+        let (registry, saved) =
+            crate::tap::load_all(&session.paths.state_home).map_err(CommandError::Message)?;
+        let routing = catalog::Routing::from_registry(
+            &session.config.sources,
+            &registry,
+            &session.paths.state_home,
+        )
+        .map_err(CommandError::Message)?;
+        Ok(Self { routing, saved })
+    }
 }
 
 /// The configured sources in query order: Nixpkgs first, then casks.

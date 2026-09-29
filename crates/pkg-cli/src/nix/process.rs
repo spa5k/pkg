@@ -275,16 +275,37 @@ pub(super) fn run_child(mut command: Command, mode: IoMode) -> Result<Reaped, St
 }
 
 /// Run one direct external command through the shared signal forward/reap
-/// boundary used for native Nix children.
+/// boundary used for native Nix children, capturing stdout and the
+/// classified outcome.
 ///
 /// Termination signals sent only to pkg are forwarded to the child, the
 /// child is reaped, and pkg stays alive, so an interrupted command is
 /// reported as [`Outcome::Interrupted`] instead of killing pkg mid-run.
-/// Stdout is discarded; stderr is captured for diagnostics.
-pub fn run_direct(executable: &std::path::Path, args: &[String]) -> Result<Outcome, String> {
+/// Stderr is captured into the outcome; stdout is returned alongside it.
+pub fn run_direct_captured(
+    executable: &std::path::Path,
+    args: &[String],
+) -> Result<(Outcome, String), String> {
     let mut command = Command::new(executable);
     command.args(args);
-    run_child(command, IoMode::Capture).map(|reaped| reaped.classify())
+    run_child(command, IoMode::Capture).map(|reaped| {
+        (
+            reaped.classify(),
+            String::from_utf8_lossy(&reaped.output.stdout).into_owned(),
+        )
+    })
+}
+
+/// Run one direct external command through the shared signal forward/reap
+/// boundary, discarding captured stdout.
+///
+/// Termination signals sent only to pkg are forwarded to the child, the
+/// child is reaped, and pkg stays alive, so an interrupted command is
+/// reported as [`Outcome::Interrupted`] instead of killing pkg mid-run.
+/// Stderr is captured for diagnostics; use [`run_direct_captured`] when
+/// stdout matters.
+pub fn run_direct(executable: &std::path::Path, args: &[String]) -> Result<Outcome, String> {
+    run_direct_captured(executable, args).map(|(outcome, _)| outcome)
 }
 
 /// The cancellation signal for a finished child, when the run was

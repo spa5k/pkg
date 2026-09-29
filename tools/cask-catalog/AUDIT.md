@@ -28,16 +28,33 @@ before running.
 
 ## Semantics
 
+- Envelope (schema `pkg-cask-catalog/3` only; no schema2 fallback):
+  the catalog must declare exactly this schema, an `inputs` map, and an
+  official input at `inputs["homebrew/cask"]` with kind `json-snapshot`
+  and `raw` set to null (the final schema3 shape; `raw.path`/`raw.sha256`
+  sub-provenance is no longer present). The input's primary `sha256` must
+  equal the raw input file's
+  exact bytes. Anything else is invalid input (exit 2).
+- Identity: catalog entries are keyed by their original qualified
+  `source/token` identity. Each row carries `source` plus the bare
+  `token`; the key must agree with both. Rows whose source is not
+  `homebrew/cask` and bare tokens appearing under more than one key are
+  invariant violations — they are never silently dropped and a duplicate
+  never overwrites the first row. After this check the audit normalizes
+  entries to bare tokens for all analytics joins and checks; the raw
+  snapshot agrees with the catalog both ways on bare tokens.
 - Ranking: per-token integer install counts (comma-stripped, array rows
   summed), sorted count-descending with token-ascending stable tie-break.
   Top-1000 truncates the ranking exactly; missing tokens are reported, never
   replaced by lower-ranked ones. Negative or non-numeric counts are rejected
   as invalid input (exit 2), never silently used.
-- Structural invariants run over **all** catalog rows (7709), not just the
-  top1000: token key/field/raw agreement both ways with full token-key
-  validity (charset, no `..`), exact target set, provenance agreement (the
-  catalog's `input.sha256` must equal the raw file's actual bytes; revision
-  40-hex, http(s) URL), eligible⇔plan+kind, excluded⇔reason with null
+- Structural invariants run over **all** catalog rows, not just the
+  top1000: qualified key/source/token agreement with full bare-token
+  validity (charset, no `..`) and both-ways raw agreement, exact target
+  set (the official catalog has both targets; single-target raw tap
+  catalogs are out of scope here), provenance agreement (revision 40-hex,
+  http(s) URL, official input sha256 equals the raw file's actual
+  bytes), eligible⇔plan+kind, excluded⇔reason with null
   plan/kind, absolute http(s) source urls with 64-hex checksums, relative
   non-traversing artifact sources and single-component ASCII-control-free
   targets (pkg `target` is null by design), a bounded platform-scope
@@ -66,7 +83,9 @@ recorded, never run. The audit validates structural invariants and popularity
 coverage of the pinned data, not successful installs and not full classifier
 equivalence. Inline `_selfcheck` assertions (ranking aggregation, tie-breaks,
 truncation, count rejection, variation merge, platform gate, token and
-artifact-name validation) run on every invocation — no test framework.
+artifact-name validation, and the schema-3 identity boundaries:
+qualified-key mismatch, unexpected source, and duplicate bare tokens)
+run on every invocation — no test framework.
 
 ## Fixtures
 

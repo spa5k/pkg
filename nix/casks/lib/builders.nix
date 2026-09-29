@@ -1,6 +1,6 @@
 # Generic cask-plan builders (see ./README.md for provenance).
 #
-# Data-driven only: every input comes from a generated `pkg-cask-catalog/2`
+# Data-driven only: every input comes from a generated `pkg-cask-catalog/3`
 # plan. Vendor strings never reach the shell: the plan travels as JSON into
 # the stdlib Python helper (./plan.py) which does sniffing, pre-write member
 # and link validation, extraction, artifact placement, plist checks, and the
@@ -20,6 +20,10 @@ let
   inherit (lib.strings) escapeShellArg;
 
   planPy = pkgs.writeText "cask-plan.py" (builtins.readFile ./plan.py);
+
+  # Both vendor-source network fetches go through the shared safe-fetch
+  # fixed-output derivation (SSRF-guarded HTTPS, flat hash contract).
+  publicFetch = import ./public-fetch.nix { inherit pkgs; };
 
   # Bounded generic runtime-library closure for Linux dynamic ELF patching.
   # autoPatchelf fails naming any soname outside this list; no host provision.
@@ -76,13 +80,15 @@ let
       description ? null,
       homepage ? null,
       baseline,
+      pnameSuffix ? "",
     }:
     let
-      # Contract source is {url,sha256} through fetchurl. `file` is a
-      # verification-harness-only override (tools/cask-build-check): a plain
-      # derivation reference used as src; generated catalogs never emit it.
+      # Contract source is {url,sha256} through the safe public fetch
+      # FOD. `file` is a verification-harness-only override
+      # (tools/cask-build-check): a plain derivation reference used as
+      # src; generated catalogs never emit it.
       src =
-        plan.source.file or (pkgs.fetchurl {
+        plan.source.file or (publicFetch {
           url = plan.source.url;
           sha256 = plan.source.sha256;
         });
@@ -98,7 +104,7 @@ let
       );
     in
     stdenv.mkDerivation {
-      pname = "cask-${token}";
+      pname = "cask-${token}${pnameSuffix}";
       version = safeVersion version;
 
       inherit src;
@@ -186,6 +192,7 @@ let
       version,
       description ? null,
       homepage ? null,
+      pnameSuffix ? "",
     }:
     let
       images = builtins.filter (a: a.kind == "appimage") plan.artifacts;
@@ -217,7 +224,7 @@ let
           throw "cask-${token}: appimage target is not a safe launcher name: ${t}"
         else
           t;
-      pkg = "cask-${token}";
+      pkg = "cask-${token}${pnameSuffix}";
     in
     if others != [ ] then
       throw "cask-${token}: appimage plans support only the appimage artifact (got ${
@@ -227,7 +234,7 @@ let
       pkgs.appimageTools.wrapType2 {
         pname = pkg;
         version = safeVersion version;
-        src = pkgs.fetchurl {
+        src = publicFetch {
           url = plan.source.url;
           sha256 = plan.source.sha256;
         };
@@ -264,6 +271,9 @@ in
       description ? null,
       homepage ? null,
       baseline,
+      # Source-qualified suffix appended to the store name so entries
+      # from different taps never collide (raw tap imports).
+      pnameSuffix ? "",
     }:
     let
       kind = plan.archive.kind;
@@ -277,6 +287,7 @@ in
           version
           description
           homepage
+          pnameSuffix
           ;
       }
     else if kind == "auto" || kind == "raw-binary" then
@@ -289,6 +300,7 @@ in
           description
           homepage
           baseline
+          pnameSuffix
           ;
       }
     else

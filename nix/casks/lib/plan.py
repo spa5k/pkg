@@ -602,7 +602,6 @@ KNOWN_KINDS = {
     "zsh-completion",
     "fish-completion",
 }
-MAN_RE = None  # compiled lazily
 
 
 def locate(staging, name):
@@ -902,9 +901,16 @@ def cmd_install(plan_file, staging, out):
         elif kind == "manpage":
             import re
 
-            m = re.search(r"\.([1-8])$", tgt)
+            # section 1..8, optionally ONE compression suffix; the whole
+            # filename and the compressed bytes are kept as-is (no
+            # unpack/decompress/recompress), e.g. tool.1.gz -> man1/tool.1.gz
+            m = re.search(r"\.([1-8])(?:\.(?:gz|bz2|xz|zst|Z))?\Z", tgt)
             if not m:
-                die(f"manpage target must end in .N (N=1..8): {tgt!r}")
+                die(
+                    "manpage target must end in .N (N=1..8), optionally "
+                    "with one compression suffix "
+                    f"(.gz/.bz2/.xz/.zst/.Z): {tgt!r}"
+                )
             d = os.path.join(out, "share", "man", f"man{m.group(1)}")
             os.makedirs(d, exist_ok=True)
             dest = os.path.join(d, tgt)

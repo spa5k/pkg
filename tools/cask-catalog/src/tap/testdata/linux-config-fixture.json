@@ -1,0 +1,19 @@
+{
+  "allowed-impure-host-deps": {
+    "value": []
+  },
+  "sandbox": {
+    "value": true
+  },
+  "sandbox-fallback": {
+    "value": true
+  },
+  "sandbox-paths": {
+    "value": {
+      "/bin/sh": {
+        "optional": false,
+        "source": "/nix/store/csshf3ycx2wsxjaqrva1vr8rwgp382jw-busybox-1.37.0/bin/busybox"
+      }
+    }
+  }
+}

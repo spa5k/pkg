@@ -1,0 +1,79 @@
+{
+ "casks": [
+  {
+   "artifacts": [
+    {
+     "app": [
+      "InvalidationTool.app"
+     ],
+     "target": "/$HOME/.config/apps/InvalidationTool.app"
+    }
+   ],
+   "auto_updates": null,
+   "autobump": true,
+   "bundle_short_version": null,
+   "bundle_version": null,
+   "caveats": null,
+   "caveats_rosetta": null,
+   "conflicts_with": null,
+   "container": null,
+   "depends_on": {},
+   "deprecate_args": null,
+   "deprecated": false,
+   "deprecation_date": null,
+   "deprecation_reason": null,
+   "deprecation_replacement_cask": null,
+   "deprecation_replacement_formula": null,
+   "desc": "Helper-only invalidation fixture (synthetic)",
+   "disable_args": null,
+   "disable_date": null,
+   "disable_reason": null,
+   "disable_replacement_cask": null,
+   "disable_replacement_formula": null,
+   "disabled": false,
+   "full_token": "pubtap-fixtures/invalidation-v2/pubtap-invalidation",
+   "homepage": "https://example.com/pubtap/pubtap-invalidation",
+   "installed": null,
+   "installed_time": null,
+   "languages": [],
+   "name": [
+    "PubTap Invalidation"
+   ],
+   "no_autobump_message": null,
+   "old_tokens": [],
+   "outdated": false,
+   "pinned": false,
+   "pinned_version": null,
+   "pkg_origin": {
+    "path": "Casks/t/pubtap-invalidation.rb",
+    "sha256": "f0c6d05363593e1fb772323e13f442f297900af308bacc3a02a4cd401cb49708"
+   },
+   "rename": [],
+   "ruby_source_checksum": {
+    "sha256": "f0c6d05363593e1fb772323e13f442f297900af308bacc3a02a4cd401cb49708"
+   },
+   "ruby_source_path": "Casks/t/pubtap-invalidation.rb",
+   "sha256": "5c0285bbc0ccae8dd62562d97dc47ec8b61f4c11e4b2f3639f8296e56efcb677",
+   "skip_livecheck": false,
+   "tap": "pubtap-fixtures/invalidation-v2",
+   "tap_git_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "token": "pubtap-invalidation",
+   "upstreamPlatformSupported": true,
+   "url": "https://example.com/pubtap/pubtap-invalidation/pubtap-invalidation-1.4.1.zip",
+   "url_specs": {},
+   "version": "1.4.1"
+  }
+ ],
+ "files": {
+  "failed": 0,
+  "ok": 1,
+  "total": 1
+ },
+ "homebrew": "cc9ff034b1d98cdd4061f68cf715bb967c483a8f",
+ "probe": "denied: host-read, host-write, loopback",
+ "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+ "ruby": "4.0.5",
+ "schema": "pkg-tap-raw-export/1",
+ "source": "pubtap-fixtures/invalidation-v2",
+ "system": "x86_64-linux"
+}

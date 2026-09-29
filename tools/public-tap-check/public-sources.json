@@ -1,0 +1,130 @@
+{
+  "matrix_version": 1,
+  "description": "Metadata-only expectations for seven real pinned public Cask taps. The parent verified the pins on 2026-09-29 via GitHub APIs and source reads: no Ruby executed, no payloads downloaded. Expected statuses derive from reading the pinned source files; they are hypotheses recorded before the final runs, kept unchanged. check_sources.py enforces status, inventory, and provenance; it does not assert the descriptive reason/codes strings. Vendor payload download budget for this matrix: 0. Final actual records (2026-09-29, normal mode, both hosts): every source's real Rust import, strict offline checker, and Nix derivation evaluation returned 0 with zero payloads — Linux 30 records, 13 eligible / 17 excluded (public-import-linux-final-evidence.tar.gz); macOS 30 records, 7 eligible / 23 excluded (public-import-macos-final-evidence.tar.gz and public-import-macos-final-summary.json; first three sources ran before the GitHub rate-limit reset, the last four after it). Summary: docs/verification/public-taps.md; raw archives at the pinned baseline commit 913dedb3131a3f1db4c3ab385e3dc4ca495c21f3. Per-entry outcomes are in the archive summary rows; the per-source 'actual' objects below are concise counts plus evidence links.",
+  "policy": {
+    "revision_format": "40 lowercase hex",
+    "import": "No imports execute here. Validation commands are documented in tools/public-tap-check/README.md.",
+    "license_rule": "Record 'unspecified' when no LICENSE is detectable at the pin. Do not assume a license.",
+    "targets": ["aarch64-darwin", "x86_64-linux"],
+    "status_values": ["eligible", "excluded", "record-actual"],
+    "codes_note": "The 'reason' and 'codes' strings in entries are descriptive source notes recorded for review. check_sources.py enforces status, inventory, and provenance, and records reasons in its JSON evidence; it does not assert these code strings.",
+    "total_expected_casks": 30
+  },
+  "sources": [
+    {
+      "source": "goreleaser/tap",
+      "repository": "goreleaser/homebrew-tap",
+      "revision": "77e442b6000587bf57e543081e95fd908b918bd7",
+      "expected_cask_count": 6,
+      "license": "unspecified (no LICENSE detected at pin)",
+      "expected_tokens": ["goreleaser-pro", "goreleaser-pro@2", "goreleaser", "mcp", "mcp@0", "sponsors"],
+      "entries": [
+        {"token": "mcp", "path": "Casks/mcp.rb", "expect": {"aarch64-darwin": "eligible", "x86_64-linux": "eligible"}, "reason": "pure GitHub tar.gz plus binary, both systems"},
+        {"token": "goreleaser", "path": "Casks/goreleaser.rb", "expect": {"aarch64-darwin": "eligible", "x86_64-linux": "eligible"}, "reason": "binary, manpage, bash/fish/zsh completions, both systems"},
+        {"token": "sponsors", "path": "Casks/sponsors.rb", "expect": {"aarch64-darwin": "eligible", "x86_64-linux": "eligible"}, "reason": "binary with rename, both systems"}
+      ],
+      "record_actual": "recorded: remaining 3 of 6 entries in the archive summaries",
+      "actual": {
+        "aarch64-darwin": {"eligible": 6, "excluded": 0, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 6, "excluded": 0, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+      }
+    },
+    {
+      "source": "gitfool/vpinball",
+      "repository": "gitfool/homebrew-vpinball",
+      "revision": "86df9b0ab6630141fbd77bbeaaf01b23e1aff311",
+      "expected_cask_count": 8,
+      "license": "BSD-2-Clause",
+      "expected_tokens": ["pinone-config-tool", "pinready", "vpinball-nightly", "vpinball", "vpinfe-slim", "vpinfe", "vpx-editor", "vpxtool"],
+      "entries": [
+        {"token": "vpxtool", "path": "Casks/vpxtool.rb", "expect": {"aarch64-darwin": "excluded", "x86_64-linux": "eligible"}, "reason": "pure tar.gz binary on Linux; on Mac the actual capture was excluded as installer-script (postflight quarantine removal), distinct from the synthetic legacy-callback unsupported-artifact class", "codes": {"aarch64-darwin": ["installer-script"]}}
+      ],
+      "record_actual": "recorded: remaining 7 of 8 entries in the archive summaries",
+      "actual": {
+        "aarch64-darwin": {"eligible": 0, "excluded": 8, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 7, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+      }
+    },
+    {
+      "source": "nikitabobko/tap",
+      "repository": "nikitabobko/homebrew-tap",
+      "revision": "9ac0bfc08904719c52a63101fa7e1e133a23bda2",
+      "expected_cask_count": 11,
+      "license": "unspecified (no LICENSE detected at pin)",
+      "expected_tokens": ["aerospace", "aerospace@0.11.2", "aerospace@0.12.0", "aerospace@0.13.4", "aerospace@0.14.2", "aerospace@0.15.2", "aerospace@0.16.2", "aerospace@0.17.1", "aerospace@0.18.5", "aerospace@0.19.2", "aerospace@0.20.3"],
+      "entries": [
+        {"token": "aerospace", "path": "Casks/aerospace.rb", "expect": {"aarch64-darwin": "excluded", "x86_64-linux": "excluded"}, "reason": "reader evidence 2026-09-29: staged_path called during cask source evaluation, load fails on both targets; downstream ruby-load-error with staged-path-during-source-eval detail is an allowed explicit exclusion; source also uses active steps", "codes": {"aarch64-darwin": ["ruby-load-error"], "x86_64-linux": ["ruby-load-error"]}}
+      ],
+      "record_actual": "recorded: remaining 10 of 11 entries in the archive summaries",
+      "actual": {
+        "aarch64-darwin": {"eligible": 0, "excluded": 11, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 11, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+      }
+    },
+    {
+      "source": "hashicorp/tap",
+      "repository": "hashicorp/homebrew-tap",
+      "revision": "95b4b4c61bdf90b784b958483d13df167d4ee4fa",
+      "expected_cask_count": 2,
+      "license": "MPL-2.0 (SPDX-License-Identifier in both pinned Cask file headers; repository license not independently read)",
+      "expected_tokens": ["hashicorp-boundary-desktop", "hashicorp-vagrant"],
+      "entries": [
+        {"token": "hashicorp-boundary-desktop", "path": "Casks/hashicorp-boundary-desktop.rb", "expect": {"aarch64-darwin": "eligible", "x86_64-linux": "record-actual"}, "reason": "app candidate on Mac; record actual on Linux"},
+        {"token": "hashicorp-vagrant", "path": "Casks/hashicorp-vagrant.rb", "expect": {"aarch64-darwin": "excluded", "x86_64-linux": "record-actual"}, "reason": "reader evidence 2026-09-29: pkg stanza fails Mac load via staged_path during source evaluation; Mac ruby-load-error with staged-path-during-source-eval detail is an allowed explicit exclusion; Linux result still record-actual"}
+      ],
+      "record_actual": "recorded: hashicorp-vagrant and hashicorp-boundary-desktop Linux results are in the archive summaries",
+      "actual": {
+        "aarch64-darwin": {"eligible": 1, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 2, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+      }
+    },
+    {
+      "source": "gcenx/wine",
+      "repository": "gcenx/homebrew-wine",
+      "revision": "f5bd24f0d90edb887c3f4ca8d078dee285bf8838",
+      "expected_cask_count": 1,
+      "license": "unspecified (no LICENSE detected at pin)",
+      "expected_tokens": ["game-porting-toolkit"],
+      "entries": [
+        {"token": "game-porting-toolkit", "path": "Casks/game-porting-toolkit.rb", "expect": {"aarch64-darwin": "excluded", "x86_64-linux": "record-actual"}, "reason": "active install steps; exclude on Mac as installer-script; record actual on Linux", "codes": {"aarch64-darwin": ["installer-script"]}}
+      ],
+      "record_actual": "recorded: the single entry's Linux result is in the archive summaries",
+      "actual": {
+        "aarch64-darwin": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+      }
+    },
+    {
+      "source": "dotsecenv/tap",
+      "repository": "dotsecenv/homebrew-tap",
+      "revision": "c307152f3876fbd15afe1287fc54a5a8763df6b7",
+      "expected_cask_count": 1,
+      "license": "Apache-2.0",
+      "expected_tokens": ["dotsecenv"],
+      "entries": [
+        {"token": "dotsecenv", "path": "Casks/dotsecenv.rb", "expect": {"aarch64-darwin": "excluded", "x86_64-linux": "excluded"}, "reason": "binary, manpages, completions, but formula gnupg dependency is unsupported; must exclude", "codes": {"aarch64-darwin": ["formula-dependency"], "x86_64-linux": ["formula-dependency"]}}
+      ],
+      "record_actual": "recorded: the single entry's outcome is in both archive summaries",
+      "actual": {
+        "aarch64-darwin": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+      }
+    },
+    {
+      "source": "sourcemeta/apps",
+      "repository": "sourcemeta/homebrew-apps",
+      "revision": "1efd1395173323349b83b52c9ddafd4e83c3bb20",
+      "expected_cask_count": 1,
+      "license": "unspecified (no LICENSE detected at pin)",
+      "expected_tokens": ["jsonschema"],
+      "entries": [
+        {"token": "jsonschema", "path": "Casks/jsonschema.rb", "expect": {"aarch64-darwin": "excluded", "x86_64-linux": "record-actual"}, "reason": "Mac zip binary/completions; on Mac the actual capture was excluded as installer-script (postflight xattr/run), distinct from the synthetic legacy-callback unsupported-artifact class; record actual on Linux", "codes": {"aarch64-darwin": ["installer-script"]}}
+      ],
+      "record_actual": "recorded: the single entry's Linux result is in the archive summaries",
+      "actual": {
+        "aarch64-darwin": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+      }
+    }
+  ]
+}

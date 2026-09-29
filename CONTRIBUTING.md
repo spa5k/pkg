@@ -6,6 +6,8 @@ with its [design](openspec/changes/simplify-to-native-nix/design.md) and
 [tasks](openspec/changes/simplify-to-native-nix/tasks.md). The cask source
 redesign is
 [Generate the Cask catalog with a Rust tool](openspec/changes/generate-cask-catalog-with-rust/proposal.md).
+The proposed next phase is
+[Import raw Ruby casks from public taps](openspec/changes/import-public-cask-taps/proposal.md).
 
 ## 1. Before you open a PR
 
