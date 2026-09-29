@@ -1,8 +1,7 @@
 # Public-tap import verification — 2026-09-29
 
-Status: **all recorded product stages proven; all implementation and
-verification tasks complete; only the implementation PR (6.3) stays
-open**. Proven: the static preparation checks (see
+Status: **implementation and local verification complete**. Delivered in
+[PR #82](https://github.com/spa5k/pkg/pull/82). Proven: the static preparation checks (see
 [`static-checks.log`](static-checks.log) and
 [`python-lint.log`](python-lint.log)); the actual native raw reader and
 its isolation gate over all seven pinned taps on both hosts
@@ -40,8 +39,7 @@ and the final client app exposure check
 the final CI archives, the post-format static lint, and the post-format
 official derivation re-evaluation (table F, DRV). The parent has
 completed the read-only code and integration review, and all requested
-fixes are done; no further production changes are pending. The only
-open item is the implementation PR (6.3). Full GUI launches and app
+fixes are done; no further production changes are pending. The implementation is in [PR #82](https://github.com/spa5k/pkg/pull/82). Full GUI launches and app
 runtime behavior are out of scope.
 One parent-measured section exists as background: the Nix-only sandbox
 evidence in section C0. The `cask_catalog::tap` interface is agreed (see

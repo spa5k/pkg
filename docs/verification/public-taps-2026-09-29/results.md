@@ -1,8 +1,8 @@
 # Public-tap verification results — 2026-09-29
 
-Status: **ALL IMPLEMENTATION AND VERIFICATION TASKS COMPLETE; ONLY THE
-IMPLEMENTATION PR (6.3) REMAINS OPEN**. Proven stages (details and links
-below):
+Status: **IMPLEMENTATION AND LOCAL VERIFICATION COMPLETE**. Delivered in
+[PR #82](https://github.com/spa5k/pkg/pull/82). GitHub CI status is available on the PR.
+Proven stages (details and links below):
 
 - Static preparation checks A1–A3, A6–A9 and F4
   ([`static-checks.log`](static-checks.log),
@@ -60,11 +60,9 @@ below):
   post-format official derivation evaluation reproduces the identical
   result sha256.
 
-Remaining open item:
-
-1. 6.3: open the single reviewable implementation PR. The parent has
-   completed the read-only code and integration review, and all requested
-   fixes are done; no further production changes are pending.
+Delivery: [PR #82](https://github.com/spa5k/pkg/pull/82) is open for review. The parent completed the code
+and integration review. No further production changes are pending.
+The change has not been merged or released.
 
 C6/C7 macOS and the independent parent review are now closed with the
 records above.

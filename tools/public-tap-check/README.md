@@ -25,9 +25,8 @@ unsafe local configs before any Ruby and failed closed on the
 deliberately public daemon `TMPDIR=/tmp` with no flake, daemon restored,
 vendor downloads 0), the actual native client
 lifecycle, and the official catalog regression all passed. The
-independent parent review is complete; only the implementation PR
-stays open — see the evidence pages before
-claiming it. Reader-stage success is never source acceptance
+independent parent review is complete. The implementation is in [PR #82](https://github.com/spa5k/pkg/pull/82).
+See the evidence pages for the recorded scope. Reader-stage success is never source acceptance
 (for example, the duplicate-token fixture exports two rows at the
 reader stage; the converter later rejects the duplicate identity).
 

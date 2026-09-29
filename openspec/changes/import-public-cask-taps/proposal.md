@@ -80,7 +80,7 @@ No merge or release happens without a later instruction. The
 [design](design.md) is authoritative, the [tasks](tasks.md) are nearly
 complete (all implementation and verification tasks are done with proof,
 including the final native macOS C6/C7 negative-gate record and the
-completed parent review; only the implementation PR stays open), and the
+completed parent review; delivered in [PR #82](https://github.com/spa5k/pkg/pull/82)), and the
 [readable plan](../../../docs/plans/public-cask-taps.md) with its
 [HTML mirror](../../../artifacts/public-cask-taps-plan.html) explain the
 rollout.

@@ -1,17 +1,15 @@
 # Implementation tasks
 
-Status: mostly complete (2026-09-29). Tasks with final actual evidence
-are checked below with their evidence link; the remaining open boxes are
-listed at the bottom. This change also contains planning documents and
+Status: implementation and local verification complete (2026-09-29).
+Delivered in [PR #82](https://github.com/spa5k/pkg/pull/82). GitHub CI status is available on the PR. This change also contains planning documents and
 data-only fixture assets. The [implementation contract](implementation-contract.md)
 is authoritative. Baseline plan code:
 `f6f99a748653861302876dfe127dfc6bf498d323`. Delivery is one reviewable
 implementation PR; do not merge or release without a later instruction.
 
-Still open: 6.3 (PR) only. 1.4 (native fixture whole-import rows stay
-explicit limits; the pinned reader itself ran in every final reader run),
-4.6 (final native macOS C7 record), and 6.2 (parent review) are now
-closed with recorded proof.
+All delivery tasks are complete. Native fixture whole-import limits remain
+explicit in the evidence. The PR is open for review; it has not been merged
+or released.
 
 ## 1. PT-01 — backend importer library (backend worker)
 
@@ -55,10 +53,10 @@ closed with recorded proof.
 - [x] 5.2 Re-run the existing `tools/cask-build-check` plan and catalog replay checks against schema-3 output; reuse, do not duplicate, its archive and plan tests. Evidence: against the final schema-3 official catalog, full synthetic replay 2821/2821 applicable and top-1000 replay 575/575 applicable, count checks OK ([evidence](../../../docs/verification/public-taps-2026-09-29/results.md#or-official-catalog-final-regression-metadata-and-synthetic-only)).
 - [x] 5.3 Exercise the seven real pinned public taps recorded in `tools/public-tap-check/public-sources.json` (30 casks total, metadata-only): helper files, GitHub release binaries, platform branches, token collisions, malformed archives, and unsupported scripts, with metadata-only comparisons and synthetic payloads. Record every actual entry result; do not force eligibility. Evidence: final normal-mode complete on BOTH hosts — Linux all seven pins, 30 records, 13 eligible / 17 excluded; macOS all seven pins, 30 records, 7 eligible / 23 excluded (first three sources before the GitHub rate-limit reset, last four after it); on both hosts every row's import, strict offline `check_sources.py`, and Nix derivation evaluation returned 0, with zero vendor payloads ([E1](../../../docs/verification/public-taps-2026-09-29/results.md#e-real-public-taps-official-catalog-and-native-sample), archives `public-import-linux-final-evidence.tar.gz` and `public-import-macos-final-evidence.tar.gz`).
 - [x] 5.4 Run the bounded native sample (small vendor-download cap) through install, use, update, and rollback on both platforms; separate GUI limits from command and lifecycle checks. Evidence: actual native clients on both hosts, two unique vendor archives per OS (four total), install, qualified info/search, `--help`, failed-update preservation, update, explicit native upgrade 0.5.1 → 0.6.0, history/rollback, tap removal with the installed binary retained, native uninstall; no GUI launch ([evidence](../../../docs/verification/public-taps-2026-09-29/results.md#pkg-actual-native-client-lifecycle-both-hosts-real-pkg-client)).
-- [x] 5.5 Fill `docs/verification/public-taps-2026-09-29/results.md` with actual evidence, commands, hashes, and limits; replace every UNRUN marker. Evidence: every results row carries an actual outcome or an explicit limit; no row promises an untested type. The only open item is the PR — it is listed at the top of the results page and tracked in 6.3, not as an unfilled results row.
+- [x] 5.5 Fill `docs/verification/public-taps-2026-09-29/results.md` with actual evidence, commands, hashes, and limits; replace every UNRUN marker. Evidence: every results row carries an actual outcome or an explicit limit; no row promises an untested type. The implementation PR is linked in 6.3.
 
 ## 6. PT-06 — review, lint, and delivery
 
 - [x] 6.1 Run Rust, Ruby, Python, Nix, and workflow lint for changed files; run strict OpenSpec validation, docs and static HTML checks, and normal CI. Evidence: client Rust fmt/clippy/rustdoc/diff on both OS; final CI archives ([`pkg-final-ci-linux-evidence.tar.gz`](../../../docs/verification/public-taps-2026-09-29/pkg-final-ci-linux-evidence.tar.gz) all checks exit 0; [`ci-macos-evidence.tar.gz`](../../../docs/verification/public-taps-2026-09-29/ci-macos-evidence.tar.gz) retains its first strict-docs failure, closed by two documentation-link repairs — `docs-final.log` and `fmt-final.log` pass; other macOS logs passed per the parent); workflow actionlint; the 57 fetch tests with ruff; the parent's post-format static lint (7 Nix files nixfmt/statix/deadnix, 7 Python files ruff check/format, ShellCheck on the two shell files — all pass, [`post-format-static-lint.json`](../../../docs/verification/public-taps-2026-09-29/post-format-static-lint.json)); strict OpenSpec validation; strict docs rustdoc. Ruby is covered with limits: all 9 bounded-reader checks pass under pinned Ruby 4.0.5 with `LC_ALL=C` ([reader checks](../../../docs/verification/public-taps-2026-09-29/ruby-reader-checks.json)); the syntax-only `/usr/bin/ruby -c` check (A8) plus the recorded actual reader runs and the seven capture-converter cases; no full Ruby style-lint run is claimed ([table F](../../../docs/verification/public-taps-2026-09-29/results.md#f-lint-openspec-ci)).
 - [x] 6.2 Reconcile Cargo.lock and integration; parent review and independent verification of code and integration. Done: the parent completed the read-only code and integration review, and all requested fixes are in; no further production changes are pending.
-- [ ] 6.3 Open the single reviewable implementation PR; do not merge or release without a later instruction. Pending.
+- [x] 6.3 Open the single reviewable implementation PR; do not merge or release without a later instruction. Delivered in [PR #82](https://github.com/spa5k/pkg/pull/82).
