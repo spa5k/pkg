@@ -12,7 +12,7 @@ repair, or remove Nix. Install Determinate Nix from
 
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.
-> [v0.2.0-alpha.2](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.2)
+> [v0.2.0-alpha.3](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.3)
 > starts from a fresh state: old alpha installations are not migrated,
 > adopted, or erased. See
 > [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
@@ -23,11 +23,11 @@ repair, or remove Nix. Install Determinate Nix from
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.2 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.2):
+   [v0.2.0-alpha.3 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.3):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.2/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.3/install.sh
    sh pkg-install.sh
    ```
 
