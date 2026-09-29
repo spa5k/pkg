@@ -172,10 +172,7 @@ fn stage_import(
     // sandboxed Nix build. Name the approved source, origin, and scope
     // before it starts — for `--trust` and updates too, which otherwise
     // print only after success.
-    println!(
-        "pkg: importing {source} from {origin}; approval covers imports and \
-         updates of this source only"
-    );
+    println!("pkg: importing {source}");
     let request = cask_catalog::tap::ImportRequest {
         source: String::from(source),
         revision: revision.map(ToString::to_string),
@@ -590,21 +587,17 @@ pub(super) fn update(
 /// Report one published generation with its exact revision.
 fn report_publication(
     source: &str,
-    origin: &str,
+    _origin: &str,
     staged: &StagedImport,
     published: &store::Published,
 ) {
     match published {
-        store::Published::First => println!("Added tap {source} ({origin})."),
-        store::Published::Replaced { .. } => println!("Updated tap {source} ({origin})."),
+        store::Published::First => println!("Added tap {source}: "),
+        store::Published::Replaced { .. } => println!("Updated tap {source}: "),
     }
     println!(
-        "  revision {} — {} eligible, {} excluded",
+        "  revision {}; {} eligible, {} excluded",
         staged.result.revision, staged.result.eligible, staged.result.excluded
-    );
-    println!(
-        "  installs use cask:{}/<token>; `pkg update` does not refresh taps",
-        source
     );
 }
 
@@ -706,9 +699,7 @@ pub(super) fn remove(_cli: &Cli, source: &str) -> Result<(), CommandError> {
              generation failed: {error}"
         )
     })?;
-    println!("Removed tap {source}.");
-    println!("  Installed packages and old generations are kept.");
-    println!("  Upgrades that would follow this tap are refused until it is added again.");
+    println!("Removed tap {source}; installed packages are kept.");
     Ok(())
 }
 

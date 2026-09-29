@@ -60,12 +60,7 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
             rows.push(observed(
                 "nix runtime",
                 "ok",
-                format!(
-                    "{} (version {}; tested baseline {})",
-                    runtime.executable().display(),
-                    runtime.version(),
-                    nix::TESTED_BASELINE
-                ),
+                format!("{} ({})", runtime.executable().display(), runtime.version()),
             ));
             // Daemon reachability through the supported store command;
             // `nix store ping` is a deprecated alias and is not used.
