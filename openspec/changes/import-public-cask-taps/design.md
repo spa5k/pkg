@@ -434,8 +434,8 @@ fallback before any Ruby; the deliberately public daemon `TMPDIR=/tmp`
 caused the behavioral reader probe to report FAIL — host read ALLOWED —
 with refusal before export, no flake, daemon restored, vendor downloads
 0; harness setup failures are not product results). The independent
-parent review is complete (all requested fixes done). The only pending
-item is the implementation PR. Reader-stage success is not source acceptance.
+parent review is complete (all requested fixes done). The implementation is in
+[PR #82](https://github.com/spa5k/pkg/pull/82). Reader-stage success is not source acceptance.
 
 The data-only adversarial fixtures, the adversarial case matrix, the
 seven-source public-tap metadata matrix (`public-sources.json`), and the
