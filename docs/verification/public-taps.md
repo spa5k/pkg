@@ -1,6 +1,6 @@
 # Public-tap import verification — 2026-09-29
 
-Status: **implementation and local verification complete**. Delivered in [PR #82](https://github.com/spa5k/pkg/pull/82). Not merged, not released. Raw logs, archives, and per-row tables are immutable history at the pinned baseline commit `913dedb3131a3f1db4c3ab385e3dc4ca495c21f3`:
+Status: **implementation and local verification complete**. Delivered in [PR #82](https://github.com/spa5k/pkg/pull/82). This verification record was completed before merge and release. Raw logs, archives, and per-row tables are immutable history at the pinned baseline commit `913dedb3131a3f1db4c3ab385e3dc4ca495c21f3`:
 
 - [Reader, gate, converter, lifecycle, and CI results](https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/results.md)
 - [Real Linux installs from three public taps](https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-real-installs-2026-09-29/README.md)
