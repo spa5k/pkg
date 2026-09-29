@@ -1,0 +1,127 @@
+   Compiling cask-catalog v0.1.0 (/Users/pacific/.codex/worktrees/simplification-research/pkg/tools/cask-catalog)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.92s
+     Running unittests src/lib.rs (target/debug/deps/cask_catalog-11420be79361b1f5)
+
+running 100 tests
+test classify::tests::dependency_shapes_and_unknown_requirements_fail_closed ... ok
+test classify::tests::all_dependencies_exclude_in_this_version ... ok
+test classify::tests::linux_variation_merge_selects_linux_payload ... ok
+test classify::tests::destination_policy_is_public_https_only ... ok
+test classify::tests::macos_constraint_shapes_fail_closed ... ok
+test classify::tests::platform_scope_comes_only_from_supported_platforms ... ok
+test classify::tests::summary_kinds_follow_artifacts ... ok
+test classify::tests::urls_with_control_characters_are_not_fetchable ... ok
+test classify::tests::probe_regressions_on_linux ... ok
+test classify::tests::macos_requirements_never_constrain_linux ... ok
+test classify::tests::missing_checksum_or_url_excludes ... ok
+test classify::tests::macos_versions_compare_numerically_with_zero_fill ... ok
+test classify::tests::nonbool_flags_and_platform_tags_are_never_eligible ... ok
+test classify::tests::null_linux_requirement_clears_the_darwin_exclusion ... ok
+test effective::tests::artifacts_replacement_is_wholesale_and_null_sha_is_explicit ... ok
+test effective::tests::flags_are_strict_booleans_on_the_effective_record ... ok
+test effective::tests::generic_extends_every_key_including_containers_and_specs ... ok
+test effective::tests::darwin_merges_the_arm64_sequoia_variation ... ok
+test effective::tests::malformed_variation_is_an_error_not_a_silent_base ... ok
+test effective::tests::sha_only_variation_replaces_only_hash ... ok
+test emit::tests::at_tokens_are_valid_keys ... ok
+test emit::tests::one_malformed_record_is_isolated_not_fatal ... ok
+test emit::tests::integrity_failures_abort_without_output ... ok
+test emit::tests::generation_is_deterministic_and_shaped_per_contract ... ok
+test github::tests::default_branch_and_license_extraction_is_strict ... ok
+test github::tests::full_name_check_accepts_only_the_approved_repository ... ok
+test github::tests::short_bounds_error_text ... ok
+test net::tests::global_address_check_refuses_private_and_local ... ok
+test net::tests::ipv6_literal_reserved_ranges_are_refused ... ok
+test net::tests::policy_accepts_only_allowed_https_hosts ... ok
+test emit::tests::bad_snapshot_origin_is_dropped_not_guessed ... ok
+test net::tests::source_redirects_are_always_refused ... ok
+test net::tests::policy_refuses_url_fragments ... ok
+test plan::tests::active_item_options_never_disappear_silently ... ok
+test plan::tests::app_plus_binary_preserves_rename_from_metadata ... ok
+test plan::tests::appimage_target_derives_from_basename_for_nested_sources ... ok
+test plan::tests::appimage_target_strips_suffix ... ok
+test plan::tests::container_naked_is_raw_binary_and_nested_is_unsupported ... ok
+test plan::tests::extensionless_binary_only_url_is_auto_unless_naked ... ok
+test plan::tests::execution_stanzas_and_foreign_kinds_reject_whole_record ... ok
+test plan::tests::malformed_and_nested_targets_reject_the_record ... ok
+test plan::tests::control_characters_in_link_names_and_sources_are_rejected ... ok
+test plan::tests::naked_needs_exactly_one_binary_and_targets_must_not_collide ... ok
+test plan::tests::traversal_and_unknown_anchors_are_malformed ... ok
+test emit::tests::failed_publish_leaves_the_previous_catalog_untouched ... ok
+test plan::tests::multiple_pkg_or_appimage_artifacts_are_unsupported ... ok
+test tap::archive::tests::extract_rejects_pax_path_overrides_and_non_comment_globals ... ok
+test plan::tests::plain_binary_target_comes_from_source_basename ... ok
+test tap::capture::tests::envelope_validation_fails_closed_on_identity_and_inventory ... ok
+test tap::capture::tests::generated_flake_nix_evaluates_drv_path_offline_with_pinned_inputs ... ok
+test tap::archive::tests::extract_refuses_non_ascii_path_components ... ok
+test tap::capture_cases::duplicate_token_refuses_the_whole_capture ... ok
+test tap::capture::tests::pkg_error_records_require_validated_origin_provenance ... ok
+test tap::archive::tests::extract_enforces_strict_tree_rules ... ok
+test tap::config::tests::busybox_store_hash_uses_the_nix_base32_alphabet ... ok
+test tap::capture::tests::capture_writes_a_self_contained_native_only_flake_directory ... ok
+test tap::config::tests::config_gate_accepts_strong_shapes_on_both_oses ... ok
+test tap::config::tests::config_gate_accepts_the_actual_linux_config_fixture_when_fail_closed ... ok
+test tap::config::tests::config_gate_accepts_the_actual_macos_config_fixture ... ok
+test tap::capture_cases::native_macos_capture_converts_on_linux_host ... ok
+test tap::capture_cases::normal_mode_legacy_preflight_postflight_capture_excludes_the_callback_cask ... ok
+test net::tests::mixed_dns_resolution_to_local_addresses_is_refused ... ok
+test tap::config::tests::config_gate_rejects_added_host_paths_on_both_oses ... ok
+test tap::config::tests::config_gate_rejects_extra_impure_host_deps ... ok
+test tap::config::tests::config_gate_rejects_the_linux_fixture_with_fallback_true ... ok
+test tap::config::tests::config_gate_rejects_the_linux_fixture_with_an_added_host_path ... ok
+test tap::config::tests::config_gate_rejects_wrong_entry_shapes ... ok
+test tap::config::tests::config_gate_rejects_weak_defaults_and_missing_values ... ok
+test tap::capture_cases::staged_path_error_row_retains_validated_origin ... ok
+test tap::config::tests::nix_base32_alphabet_is_exact ... ok
+test tap::archive::tests::extract_bounds_all_decoded_bytes_with_small_private_limits ... ok
+test tap::runtime::tests::bounded_child_spawn_failure_restores_signal_handlers ... ok
+test tap::capture_cases::archive_and_raw_binary_captures_are_eligible ... ok
+test tap::capture_cases::helper_only_change_bumps_the_catalog_version ... ok
+test tap::capture_cases::local_destination_urls_are_excluded ... ok
+test tap::runtime::tests::canary_parent_is_public_tmp_not_inherited_tmpdir ... ok
+test tap::tests::archive_url_pins_the_exact_revision ... ok
+test tap::tests::canonicalize_accepts_owner_tap_and_github_url_forms ... ok
+test tap::tests::canonicalize_is_idempotent_and_roundtrips_the_exact_origin ... ok
+test tap::tests::canonicalize_rejects_nonprefixed_explicit_github_urls ... ok
+test tap::tests::canonicalize_rejects_repeated_homebrew_prefixes ... ok
+test tap::tests::canonicalize_rejects_unsafe_sources ... ok
+test tap::tests::import_rejects_non_empty_output_dir ... ok
+test tap::tests::import_rejects_non_native_system_and_missing_revision ... ok
+test tap::tests::source_origin_is_the_approved_canonical_url ... ok
+test tests::decode_rejects_unknown_underscore_escapes ... ok
+test tests::literal_d_underscore_do_not_collide_with_dot ... ok
+test tests::package_attribute_encoding_is_single_pass ... ok
+test tests::package_attribute_roundtrips ... ok
+test token::tests::accepts_real_token_shapes_and_rejects_unsafe_ones ... ok
+test token::tests::splits_valid_from_invalid ... ok
+test tap::config::tests::config_gate_aborts_on_a_config_log_flood ... ok
+test tap::config::tests::config_gate_fails_closed_on_a_weak_fake_config ... ok
+test tap::config::tests::config_gate_passes_with_a_fake_strong_config_command ... ok
+test tap::runtime::tests::kill_process_group_is_isolated_from_the_manager ... ok
+test tap::runtime::tests::bounded_child_interrupt_tears_down_group_and_restores_handlers ... ok
+test tap::config::tests::config_gate_times_out_and_kills_a_hung_query_promptly ... ok
+test tap::runtime::tests::nix_log_flood_with_hung_descendant_aborts_within_seconds ... ok
+test tap::runtime::tests::nix_log_flood_aborts_instead_of_truncating_into_success ... ok
+test tap::runtime::tests::nix_timeout_kills_the_process_group_and_returns_promptly ... ok
+
+test result: ok. 100 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.27s
+
+     Running unittests src/main.rs (target/debug/deps/cask_catalog-104597c80c660cae)
+
+running 1 test
+test tests::input_validation_is_strict ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/upstream.rs (target/debug/deps/upstream-1e4dcb28262b8671)
+
+running 1 test
+test fixture_records_match_manual_expectations_on_both_targets ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cask_catalog
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

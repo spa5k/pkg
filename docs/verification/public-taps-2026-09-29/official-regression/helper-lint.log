@@ -1,0 +1,7 @@
+All checks passed!
+5 files already formatted
+121f20e7b54428afd9f9d27af97b029124d9293187109afdeeeeee213183c237  tools/cask-catalog/audit.py
+80fe633cc6f75d11bd88aa861778ed7844a79f97eee8e3a4e63e6f33c63386d8  tools/cask-build-check/catalog_plans.py
+437792e0e3e6dc85251f6055d2aeae36c6e4e014f9ec7eb1361210eaaef83f72  tools/cask-build-check/appimage_names.py
+4f89a9c35e4a40d08df0a10829e91ac8ac5e3b0317ded643500d3e0bc733284b  tools/public-tap-check/make_fixtures.py
+e73b000fe5b1784b088c42ecd5127aad9d85761c18acd352b1adc09b22230282  tools/public-tap-check/check_sources.py

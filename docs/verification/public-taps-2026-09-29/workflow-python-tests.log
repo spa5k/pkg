@@ -1,0 +1,64 @@
+test_absolute_malformed_location_rejected (test_safe_fetch.FetchTestCase.test_absolute_malformed_location_rejected) ... ok
+test_actual_bytes_over_limit_rejected (test_safe_fetch.FetchTestCase.test_actual_bytes_over_limit_rejected) ... ok
+test_bad_hash_format_rejected (test_safe_fetch.FetchTestCase.test_bad_hash_format_rejected) ... ok
+test_connect_failure_on_all_addresses_rejected (test_safe_fetch.FetchTestCase.test_connect_failure_on_all_addresses_rejected) ... ok
+test_connect_failure_tries_all_addresses (test_safe_fetch.FetchTestCase.test_connect_failure_tries_all_addresses) ... ok
+test_content_length_over_limit_rejected_before_read (test_safe_fetch.FetchTestCase.test_content_length_over_limit_rejected_before_read) ... ok
+test_empty_or_whitespace_location_rejected (test_safe_fetch.FetchTestCase.test_empty_or_whitespace_location_rejected) ... ok
+test_hash_mismatch_cleans_up (test_safe_fetch.FetchTestCase.test_hash_mismatch_cleans_up) ... ok
+test_multipart_rejected (test_safe_fetch.FetchTestCase.test_multipart_rejected) ... ok
+test_network_path_relative_redirect_to_private_ip_rejected (test_safe_fetch.FetchTestCase.test_network_path_relative_redirect_to_private_ip_rejected) ... ok
+test_no_auth_or_referer_headers_sent (test_safe_fetch.FetchTestCase.test_no_auth_or_referer_headers_sent) ... ok
+test_non_2xx_rejected (test_safe_fetch.FetchTestCase.test_non_2xx_rejected) ... ok
+test_non_identity_encoding_rejected (test_safe_fetch.FetchTestCase.test_non_identity_encoding_rejected) ... ok
+test_overall_deadline_exceeded_cleans_up (test_safe_fetch.FetchTestCase.test_overall_deadline_exceeded_cleans_up) ... ok
+test_read_timeout_cleans_up (test_safe_fetch.FetchTestCase.test_read_timeout_cleans_up) ... ok
+test_redirect_downgrade_to_http_rejected (test_safe_fetch.FetchTestCase.test_redirect_downgrade_to_http_rejected) ... ok
+test_redirect_to_private_literal_rejected (test_safe_fetch.FetchTestCase.test_redirect_to_private_literal_rejected) ... ok
+test_redirect_with_credentials_rejected (test_safe_fetch.FetchTestCase.test_redirect_with_credentials_rejected) ... ok
+test_redirect_without_location_rejected (test_safe_fetch.FetchTestCase.test_redirect_without_location_rejected) ... ok
+test_redirects_revalidated_each_hop (test_safe_fetch.FetchTestCase.test_redirects_revalidated_each_hop) ... ok
+test_relative_redirect_resolved_against_current_url (test_safe_fetch.FetchTestCase.test_relative_redirect_resolved_against_current_url) ... ok
+test_relative_redirect_same_directory (test_safe_fetch.FetchTestCase.test_relative_redirect_same_directory) ... ok
+test_success_writes_file_and_no_temp_left (test_safe_fetch.FetchTestCase.test_success_writes_file_and_no_temp_left) ... ok
+test_too_many_redirects_rejected (test_safe_fetch.FetchTestCase.test_too_many_redirects_rejected) ... ok
+test_hung_getaddrinfo_times_out_at_deadline (test_safe_fetch.HungResolverTestCase.test_hung_getaddrinfo_times_out_at_deadline) ... ok
+test_hung_resolver_does_not_block_process_exit (test_safe_fetch.HungResolverTestCase.test_hung_resolver_does_not_block_process_exit)
+Real subprocess: with a never-returning resolver, the process ... ok
+test_garbage_rejected (test_safe_fetch.IpTestCase.test_garbage_rejected) ... ok
+test_ipv4_strict_cases (test_safe_fetch.IpTestCase.test_ipv4_strict_cases) ... ok
+test_ipv6_strict_cases (test_safe_fetch.IpTestCase.test_ipv6_strict_cases) ... ok
+test_public_addresses_accepted (test_safe_fetch.IpTestCase.test_public_addresses_accepted) ... ok
+test_ambiguous_url_strings_rejected (test_safe_fetch.ParseUrlTestCase.test_ambiguous_url_strings_rejected) ... ok
+test_idna_normalized (test_safe_fetch.ParseUrlTestCase.test_idna_normalized) ... ok
+test_invalid_idna_rejected (test_safe_fetch.ParseUrlTestCase.test_invalid_idna_rejected) ... ok
+test_ipv6_literal_host_header_bracketed (test_safe_fetch.ParseUrlTestCase.test_ipv6_literal_host_header_bracketed) ... ok
+test_non_443_port_rejected (test_safe_fetch.ParseUrlTestCase.test_non_443_port_rejected) ... ok
+test_public_ip_literal_allowed (test_safe_fetch.ParseUrlTestCase.test_public_ip_literal_allowed) ... ok
+test_rejected (test_safe_fetch.ParseUrlTestCase.test_rejected) ... ok
+test_valid_https (test_safe_fetch.ParseUrlTestCase.test_valid_https) ... ok
+test_connect_pins_ip_and_keeps_sni_hostname (test_safe_fetch.PinnedConnectionTestCase.test_connect_pins_ip_and_keeps_sni_hostname) ... ok
+test_host_header_uses_original_hostname (test_safe_fetch.PinnedConnectionTestCase.test_host_header_uses_original_hostname) ... ok
+test_tls_wrap_failure_closes_raw_socket (test_safe_fetch.PinnedConnectionTestCase.test_tls_wrap_failure_closes_raw_socket) ... ok
+test_no_allow_local_escape_hatch (test_safe_fetch.PolicyTestCase.test_no_allow_local_escape_hatch) ... ok
+test_no_context_manager_protocol_on_production_class (test_safe_fetch.RealInterfaceTestCase.test_no_context_manager_protocol_on_production_class) ... ok
+test_real_connection_hash_failure_closes (test_safe_fetch.RealInterfaceTestCase.test_real_connection_hash_failure_closes) ... ok
+test_real_connection_read_timeout_closes (test_safe_fetch.RealInterfaceTestCase.test_real_connection_read_timeout_closes) ... ok
+test_real_connection_redirects_close_every_hop (test_safe_fetch.RealInterfaceTestCase.test_real_connection_redirects_close_every_hop) ... ok
+test_real_connection_rejected_response_closes (test_safe_fetch.RealInterfaceTestCase.test_real_connection_rejected_response_closes) ... ok
+test_real_connection_success_closes (test_safe_fetch.RealInterfaceTestCase.test_real_connection_success_closes) ... ok
+test_all_public_answers (test_safe_fetch.ResolvePublicTestCase.test_all_public_answers) ... ok
+test_empty_answer_refused (test_safe_fetch.ResolvePublicTestCase.test_empty_answer_refused) ... ok
+test_expired_deadline (test_safe_fetch.ResolvePublicTestCase.test_expired_deadline) ... ok
+test_mixed_answer_refused (test_safe_fetch.ResolvePublicTestCase.test_mixed_answer_refused) ... ok
+test_private_answer_refused (test_safe_fetch.ResolvePublicTestCase.test_private_answer_refused) ... ok
+test_content_length_mismatch_at_eof_rejected (test_safe_fetch.WriteStreamTestCase.test_content_length_mismatch_at_eof_rejected) ... ok
+test_eof_after_deadline_rejected (test_safe_fetch.WriteStreamTestCase.test_eof_after_deadline_rejected) ... ok
+test_slow_drip_peer_fails_at_overall_deadline (test_safe_fetch.WriteStreamTestCase.test_slow_drip_peer_fails_at_overall_deadline)
+A peer dripping one byte per socket read must not stretch the ... ok
+test_socket_timeout_reset_each_read (test_safe_fetch.WriteStreamTestCase.test_socket_timeout_reset_each_read) ... ok
+
+----------------------------------------------------------------------
+Ran 57 tests in 1.587s
+
+OK

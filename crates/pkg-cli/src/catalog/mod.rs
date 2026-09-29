@@ -16,6 +16,7 @@
 mod cache;
 mod cask;
 mod id;
+mod routing;
 mod search;
 
 use std::fmt;
@@ -23,12 +24,16 @@ use std::fmt;
 use crate::nix::NixError;
 
 pub use cache::{CACHE_SCHEMA, CachedSearch, invalidate_cache, read_cache, write_cache};
-pub use cask::{CaskStatus, CatalogOnce, CatalogView, INDEX_ATTRIBUTE, package_attribute};
+pub use cask::{
+    CaskStatus, CatalogOnce, CatalogView, INDEX_ATTRIBUTE, native_package_attribute,
+    package_attribute, record, sources_with_token, status,
+};
 pub use id::{CatalogId, ParsedId, canonical_source, escape_regex, parse_id};
+pub use routing::Routing;
 pub use search::{
     ExactMatch, SearchResult, SourceKind, SourceReport, SourceStatus, SupportBadge, catalog_meta,
-    exact_lookup, exact_lookup_in, exposed_attribute, report_for, resolve_bare, search_catalog,
-    search_source,
+    exact_lookup, exact_lookup_in, exposed_attribute, report_for, resolve_bare, resolve_bare_cask,
+    search_catalog, search_saved_catalog, search_source,
 };
 
 /// A catalog routing error.

@@ -12,12 +12,14 @@ on:
     paths:
       - "tools/cask-catalog/**"
       - "nix/casks/catalog/**"
+      - "nix/casks/lib/**"
       - ".github/workflows/cask-catalog.yml"
   push:
     branches: [main]
     paths:
       - "tools/cask-catalog/**"
       - "nix/casks/catalog/**"
+      - "nix/casks/lib/**"
       - ".github/workflows/cask-catalog.yml"
   workflow_dispatch:
 
@@ -45,6 +47,9 @@ jobs:
 
       - name: Install pinned Rust toolchain
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Fetch helpers safety tests (offline, fail fast)
+        run: python3 -m unittest discover -s tools/cask-catalog/tests -p test_safe_fetch.py -v
 
       - name: Fetch the pinned snapshot
         run: |

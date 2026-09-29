@@ -8,9 +8,12 @@ output contract (Applications/<target>, bin/<target>, share/man, completions).
 This is helper replay with synthetic payloads, NOT a vendor-install claim.
 
 Selection: without --tokens the whole catalog is replayed (all-catalog
-mode). With --tokens, only the supplied tokens are replayed; tokens absent
-from the catalog are reported as missing. No popularity subset is ever
-invented from catalog order.
+mode, keeping the original qualified source/token identities). With
+--tokens, the supplied list contains bare OFFICIAL tokens (resolved to
+homebrew/cask/<token>) or full source/token identities (matched by exact
+lookup; a bare name is never resolved to some arbitrary public source);
+identities absent from the catalog are reported as missing. No popularity
+subset is ever invented from catalog order.
 
 Exit status: nonzero if any plan failed, any harness-error or harness-skip
 occurred, zero applicable plans were executed, or the processed count does
@@ -45,6 +48,8 @@ COMP_DIRS = {
     "fish-completion": "share/fish/vendor_completions.d",
 }
 SCOPE = "synthetic helper replay, not vendor installs"
+SCHEMA = "pkg-cask-catalog/3"
+OFFICIAL_SOURCE = "homebrew/cask"
 
 
 class FixtureError(Exception):
@@ -138,7 +143,7 @@ def make_zip(srcdir, payload):
 
 def run_helper(args):
     return subprocess.run(
-        [PY, PLAN_PY, *args], capture_output=True, text=True, timeout=60
+        [PY, PLAN_PY, *args], capture_output=True, text=True, timeout=60, check=False
     )
 
 
@@ -166,7 +171,7 @@ def assert_output(out, plan):
                 return f"bin/{tgt} not executable"
             # execute both regular and symlink outputs; require exit 0
             # and the exact marker
-            run = subprocess.run([p], capture_output=True, timeout=10)
+            run = subprocess.run([p], capture_output=True, timeout=10, check=False)
             if run.returncode != 0:
                 return f"bin/{tgt} exit {run.returncode}: {run.stderr[:60]!r}"
             if run.stdout.strip() != MARKER:
@@ -181,8 +186,25 @@ def assert_output(out, plan):
     return ""
 
 
-def replay(token, system, plan, baseline, rec):
-    with tempfile.TemporaryDirectory(prefix=f"replay-{token}-") as td:
+def resolve_identity(name, entries):
+    """Map a supplied name to a catalog identity.
+
+    A full source/token identity must match a catalog key exactly. A bare
+    name is resolved to the OFFICIAL source only; a random public source is
+    never picked. Returns None when no catalog entry matches.
+    """
+    if name in entries:
+        return name
+    if "/" in name:
+        return None  # a supplied full identity must match exactly
+    ident = f"{OFFICIAL_SOURCE}/{name}"
+    return ident if ident in entries else None
+
+
+def replay(identity, system, plan, baseline, rec):
+    # Fixed safe prefix: qualified identities contain '/' and must never
+    # leak into filesystem paths; the identity stays in report fields.
+    with tempfile.TemporaryDirectory(prefix="replay-") as td:
         srcdir = os.path.join(td, "src")
         os.makedirs(srcdir)
         ok, note = build_payload(plan, srcdir)
@@ -215,7 +237,12 @@ def replay(token, system, plan, baseline, rec):
         ctx = os.path.join(td, "plan.json")
         with open(ctx, "w") as f:
             json.dump(
-                {"token": token, "system": system, "plan": plan, "baseline": baseline},
+                {
+                    "token": identity,
+                    "system": system,
+                    "plan": plan,
+                    "baseline": baseline,
+                },
                 f,
             )
         r = run_helper(["install", ctx, staging, out])
@@ -230,12 +257,12 @@ def replay(token, system, plan, baseline, rec):
 
 
 def task(job):
-    """Worker: replay one (token, system) plan; returns the record."""
-    token, system, plan, baseline = job
-    rec = {"token": token, "system": system, "archive": plan["archive"]["kind"]}
+    """Worker: replay one (identity, system) plan; returns the record."""
+    identity, system, plan, baseline = job
+    rec = {"token": identity, "system": system, "archive": plan["archive"]["kind"]}
     try:
-        replay(token, system, plan, baseline, rec)
-    except Exception as e:  # fixture construction is on us, not prod
+        replay(identity, system, plan, baseline, rec)
+    except Exception as e:  # noqa: BLE001 - any harness crash must fail, never pass
         rec.update(
             status="harness-error",
             stage="fixture",
@@ -245,31 +272,31 @@ def task(job):
 
 
 def collect_jobs(entries, order, baseline):
-    """Select (token, system) jobs; count exclusions per system."""
+    """Select (identity, system) jobs; count exclusions per system."""
     jobs, skipped, excluded = [], [], {}
     missing = []
 
-    def exclude(token, system, reason, note=None):
+    def exclude(identity, system, reason, note=None):
         d = excluded.setdefault(system, {})
         d[reason] = d.get(reason, 0) + 1
         if note is not None:
-            skipped.append({"token": token, "system": system, "reason": note})
+            skipped.append({"token": identity, "system": system, "reason": note})
 
-    for token in order:
-        entry = entries.get(token)
+    for identity in order:
+        entry = entries.get(identity)
         if entry is None:
-            missing.append(token)
+            missing.append(identity)
             continue
         for system, t in entry.get("targets", {}).items():
             plan = t.get("plan")
             if t.get("status") != "eligible" or not plan:
-                exclude(token, system, "not-eligible")
+                exclude(identity, system, "not-eligible")
                 continue
             kinds = {a["kind"] for a in plan["artifacts"]}
             ak = plan["archive"]["kind"]
             if ak == "appimage":
                 exclude(
-                    token,
+                    identity,
                     system,
                     "skip-appimage",
                     "appimage: separate appimageTools fixtures",
@@ -277,16 +304,16 @@ def collect_jobs(entries, order, baseline):
                 continue
             if "pkg" in kinds:
                 exclude(
-                    token,
+                    identity,
                     system,
                     "skip-pkg",
                     "pkg: separate xar-relocatable fixtures",
                 )
                 continue
             if ak not in ("auto", "raw-binary"):
-                exclude(token, system, f"skip-archive-{ak}")
+                exclude(identity, system, f"skip-archive-{ak}")
                 continue
-            jobs.append((token, system, plan, baseline))
+            jobs.append((identity, system, plan, baseline))
     return jobs, skipped, excluded, missing
 
 
@@ -300,7 +327,26 @@ def main():
 
     with open(args.catalog) as f:
         cat = json.load(f)
+    if cat.get("schema") != SCHEMA:
+        print(
+            f"catalog schema is {cat.get('schema')!r}, expected {SCHEMA!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     entries = cat.get("entries", {})
+    for key, entry in entries.items():
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("source"), str)
+            or not isinstance(entry.get("token"), str)
+            or key != f"{entry['source']}/{entry['token']}"
+        ):
+            print(
+                f"catalog entry {key!r} does not agree with its "
+                "source/token identity fields",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     baseline = cat.get("macosBaseline") or "11.0.0"
 
     selected, tokens_sha, supplied = None, None, None
@@ -313,6 +359,8 @@ def main():
             if tok not in seen:
                 seen.add(tok)
                 selected.append(tok)
+        # bare official tokens resolve explicitly; full identities match exactly
+        selected = [resolve_identity(t, entries) or t for t in selected]
 
     jobs, skipped, excluded, missing = collect_jobs(
         entries, selected if selected is not None else list(entries), baseline
@@ -322,8 +370,8 @@ def main():
     try:
         with cf.ProcessPoolExecutor(max_workers=max(1, args.jobs)) as ex:
             for rec in ex.map(task, jobs, chunksize=8):
-                results.append(rec)
-    except Exception as e:  # worker crash, lost records are never green
+                results.append(rec)  # noqa: PERF402 - keep partial results if the executor dies
+    except Exception as e:  # noqa: BLE001 - any worker crash must fail, never pass
         fatal = f"executor: {type(e).__name__}: {e}"
 
     counts, by_system, failures = {}, {}, []
@@ -346,6 +394,7 @@ def main():
     report = {
         "scope": SCOPE,
         "mode": "selected-tokens" if selected is not None else "all-catalog",
+        "identity": "qualified source/token identities (bare official tokens resolved to homebrew/cask/<token>)",
         "catalog_sha256": sha256_file(args.catalog),
         "tokens_sha256": tokens_sha,
         "summary": counts,

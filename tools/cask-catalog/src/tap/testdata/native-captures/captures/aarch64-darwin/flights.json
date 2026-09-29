@@ -1,0 +1,148 @@
+{
+  "casks": [
+    {
+      "artifacts": [
+        {
+          "binary": [
+            "bin/pubtap-flights-control"
+          ],
+          "target": "$HOMEBREW_PREFIX/bin/pubtap-flights-control"
+        }
+      ],
+      "auto_updates": null,
+      "autobump": true,
+      "bundle_short_version": null,
+      "bundle_version": null,
+      "caveats": null,
+      "caveats_rosetta": null,
+      "conflicts_with": null,
+      "container": null,
+      "depends_on": {},
+      "deprecate_args": null,
+      "deprecated": false,
+      "deprecation_date": null,
+      "deprecation_reason": null,
+      "deprecation_replacement_cask": null,
+      "deprecation_replacement_formula": null,
+      "desc": "Valid positive control for its isolated tree (synthetic fixture)",
+      "disable_args": null,
+      "disable_date": null,
+      "disable_reason": null,
+      "disable_replacement_cask": null,
+      "disable_replacement_formula": null,
+      "disabled": false,
+      "full_token": "pubtap-fixtures/flights/pubtap-flights-control",
+      "homepage": "https://example.com/pubtap/pubtap-flights-control",
+      "installed": null,
+      "installed_time": null,
+      "languages": [],
+      "name": [
+        "PubTap Flights Control"
+      ],
+      "no_autobump_message": null,
+      "old_tokens": [],
+      "outdated": false,
+      "pinned": false,
+      "pinned_version": null,
+      "pkg_origin": {
+        "path": "Casks/c/pubtap-flights-control.rb",
+        "sha256": "ff8600c98c968965d8fbaa694d0189aba76f927cb955501f20c790a3903527bf"
+      },
+      "rename": [],
+      "ruby_source_checksum": {
+        "sha256": "ff8600c98c968965d8fbaa694d0189aba76f927cb955501f20c790a3903527bf"
+      },
+      "ruby_source_path": "Casks/c/pubtap-flights-control.rb",
+      "sha256": "f63b5a4a664fda7c21d5c2ec98607755583a08417f79376cffdbad5d54f1ad2a",
+      "skip_livecheck": false,
+      "tap": "pubtap-fixtures/flights",
+      "tap_git_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token": "pubtap-flights-control",
+      "upstreamPlatformSupported": true,
+      "url": "https://example.com/pubtap/pubtap-flights-control/pubtap-flights-control-1.0.0.zip",
+      "url_specs": {},
+      "version": "1.0.0"
+    },
+    {
+      "artifacts": [
+        {
+          "preflight": null
+        },
+        {
+          "app": [
+            "FlightsTool.app"
+          ],
+          "target": "/Applications/FlightsTool.app"
+        },
+        {
+          "postflight": null
+        }
+      ],
+      "auto_updates": null,
+      "autobump": true,
+      "bundle_short_version": null,
+      "bundle_version": null,
+      "caveats": null,
+      "caveats_rosetta": null,
+      "conflicts_with": null,
+      "container": null,
+      "depends_on": {},
+      "deprecate_args": null,
+      "deprecated": false,
+      "deprecation_date": null,
+      "deprecation_reason": null,
+      "deprecation_replacement_cask": null,
+      "deprecation_replacement_formula": null,
+      "desc": "Legacy preflight and postflight callbacks (synthetic fixture)",
+      "disable_args": null,
+      "disable_date": null,
+      "disable_reason": null,
+      "disable_replacement_cask": null,
+      "disable_replacement_formula": null,
+      "disabled": false,
+      "full_token": "pubtap-fixtures/flights/pubtap-flights",
+      "homepage": "https://example.com/pubtap/pubtap-flights",
+      "installed": null,
+      "installed_time": null,
+      "languages": [],
+      "name": [
+        "PubTap Flights"
+      ],
+      "no_autobump_message": null,
+      "old_tokens": [],
+      "outdated": false,
+      "pinned": false,
+      "pinned_version": null,
+      "pkg_origin": {
+        "path": "Casks/p/pubtap-flights.rb",
+        "sha256": "86d36ef278614ba506b1ad492416e12ff9d608bca705a17281895197038431b7"
+      },
+      "rename": [],
+      "ruby_source_checksum": {
+        "sha256": "86d36ef278614ba506b1ad492416e12ff9d608bca705a17281895197038431b7"
+      },
+      "ruby_source_path": "Casks/p/pubtap-flights.rb",
+      "sha256": "5984504c57dbc90f94f27de2a00e772860ceefdfd030dc9aa3ada143c44ff787",
+      "skip_livecheck": false,
+      "tap": "pubtap-fixtures/flights",
+      "tap_git_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token": "pubtap-flights",
+      "upstreamPlatformSupported": true,
+      "url": "https://example.com/pubtap/pubtap-flights/pubtap-flights-2.0.0.zip",
+      "url_specs": {},
+      "version": "2.0.0"
+    }
+  ],
+  "files": {
+    "failed": 0,
+    "ok": 2,
+    "total": 2
+  },
+  "homebrew": "cc9ff034b1d98cdd4061f68cf715bb967c483a8f",
+  "probe": "denied: host-read, host-write, loopback",
+  "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ruby": "4.0.5",
+  "schema": "pkg-tap-raw-export/1",
+  "source": "pubtap-fixtures/flights",
+  "system": "aarch64-darwin"
+}

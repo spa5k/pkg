@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>pkg — Raw Ruby and public taps</title>
+<title>pkg — Public cask taps: local approved import</title>
 <style>
 :root { --ink:#172b36; --muted:#526570; --paper:#f5f3ed; --line:#d4dcd9; --accent:#08645c; }
 * { box-sizing:border-box; }
@@ -47,40 +47,35 @@ footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line); fo
 <body>
 <a class="skip" href="#plan">Skip to the plan</a>
 <header class="hero">
-<div class="kicker">pkg / next phase / 29 September 2026</div>
-<h1>Raw Ruby casks.<br>Public taps. Native Nix.</h1>
-<p>Reuse Homebrew's reader during catalog updates. Keep Rust validation and native Nix installation. Add sources through configuration.</p>
-<div class="badges"><span>PR #81 merged</span><span>Plan only</span><span>Three implementation PRs</span><span>macOS ARM64 + Linux x86-64</span></div>
+<div class="kicker">pkg / accepted scope / 29 September 2026</div>
+<h1>Public taps.<br>Local approved import. Native Nix.</h1>
+<p>Add a public Homebrew Cask tap after consent. Nix supplies the pinned Ruby and upstream reader. Ruby runs only inside an ordinary sandboxed Nix derivation. The official JSON catalog stays.</p>
+<div class="badges"><span>Contract accepted 29 Sep 2026</span><span>One implementation PR</span><span>macOS ARM64 + Linux x86-64</span><span>No Brew install · No API service · No WASM</span></div>
 </header>
 <div class="layout">
 <nav aria-label="Plan sections"><p>Contents</p><ol><li><a href="#section-1">1. Decision</a></li>
 <li><a href="#section-2">2. Scope and user flows</a></li>
 <li><a href="#section-3">3. One data flow</a></li>
-<li><a href="#section-4">4. Source registry and locks</a></li>
-<li><a href="#section-5">5. Ruby exporter and its limits</a></li>
-<li><a href="#section-6">6. Isolation and failure handling</a></li>
-<li><a href="#section-7">7. Captured exports and reproducibility</a></li>
-<li><a href="#section-8">8. Identity and catalog schema 3</a></li>
-<li><a href="#section-9">9. Repository changes and deletion budget</a></li>
-<li><a href="#section-10">10. Maintainer update workflow</a></li>
-<li><a href="#section-11">11. Delivery order and acceptance</a></li>
-<li><a href="#section-12">12. Focused failure cases</a></li>
-<li><a href="#section-13">13. What this plan does not promise</a></li></ol></nav>
+<li><a href="#section-4">4. Library seam and ownership</a></li>
+<li><a href="#section-5">5. Tap registry and consent</a></li>
+<li><a href="#section-6">6. Fetch policy</a></li>
+<li><a href="#section-7">7. Sandboxed Ruby evaluation</a></li>
+<li><a href="#section-8">8. Supported subset and conversion rules</a></li>
+<li><a href="#section-9">9. Identity and catalog schema 3</a></li>
+<li><a href="#section-10">10. Native lifecycle</a></li>
+<li><a href="#section-11">11. Repository changes</a></li>
+<li><a href="#section-12">12. Verification and delivery</a></li>
+<li><a href="#section-13">13. Focused failure cases</a></li>
+<li><a href="#section-14">14. What this plan does not promise</a></li></ol></nav>
 <main id="plan">
-<section class="summary" aria-label="Recommended approach">
-<p><strong>The main choice:</strong> run pinned Homebrew Ruby only in isolated maintainer environments. No Brew installation or Ruby evaluation is added to the client.</p>
-<p><strong>The delivery:</strong> prove the exporter, add source-qualified identities, then run a public-tap pilot. Unsupported behavior stays visible.</p>
+<section class="summary" aria-label="Accepted approach">
+<p><strong>The main choice:</strong> import public taps locally, after explicit consent, through Nix-provided native Ruby inside an ordinary sandboxed Nix derivation. No Brew lifecycle, hosted service, or WASM runtime is introduced.</p>
+<p><strong>The delivery:</strong> one reviewable implementation PR. The official JSON source is retained in schema 3. Unsupported behavior stays visible and excluded.</p>
 </section>
-<p class="documents"><a href="../openspec/changes/import-public-cask-taps/proposal.md">Proposal</a> · <a href="../openspec/changes/import-public-cask-taps/design.md">Authoritative design</a> · <a href="../openspec/changes/import-public-cask-taps/tasks.md">Open tasks</a> · <a href="../docs/research/2026-09-29-raw-ruby-public-taps.md">Source research</a></p>
-<p>Status: proposed. Nothing in this document is implemented by the plan commit.
-Baseline: merged PR #81, <code>f6f99a748653861302876dfe127dfc6bf498d323</code>.</p>
+<p class="documents"><a href="../openspec/changes/import-public-cask-taps/implementation-contract.md">Implementation contract (authoritative)</a> · <a href="../openspec/changes/import-public-cask-taps/proposal.md">Proposal</a> · <a href="../openspec/changes/import-public-cask-taps/design.md">Authoritative design</a> · <a href="../openspec/changes/import-public-cask-taps/tasks.md">Open tasks</a> · <a href="../docs/research/2026-09-29-raw-ruby-public-taps.md">Source research</a> · <a href="../docs/research/2026-09-29-public-tap-security.md">Security research</a></p>
+<p>Status: implementation and verification complete; implementation PR pending. This plan supersedes the earlier maintainer-only proposal, its forced raw-official source replacement, and its three-PR delivery order. Baseline plan code: merged PR #81, <code>f6f99a748653861302876dfe127dfc6bf498d323</code>.</p>
 <h2 id="section-1">1. Decision</h2>
-<p>Use <strong>a small pinned Homebrew exporter at catalog-update time</strong>. Keep the
-orchestrator and catalog compiler in Rust. Keep Nix as the build and install
-engine. Keep the client free of Ruby and Homebrew.</p>
-<p>This makes one explicit change to the earlier design: Ruby is allowed in the
-maintainer export environment. It is still absent from the client archive,
-client commands, Nix evaluation, and generated package builds.</p>
+<p>Import public taps <strong>locally, after explicit consent, through Nix-provided native Ruby inside an ordinary sandboxed Nix derivation</strong>. Rust keeps validation and catalog generation. Nix keeps builds, installed state, and the package lifecycle. The client keeps consent, the tap registry, source routing, and publishing.</p>
 <div class="table-scroll"><table>
 <thead>
 <tr>
@@ -91,405 +86,200 @@ client commands, Nix evaluation, and generated package builds.</p>
 </thead>
 <tbody><tr>
 <td>Rust parses and evaluates Cask Ruby</td>
-<td>DSL rules, Ruby expressions, helpers, platform branches, and upstream changes</td>
-<td>Reject for the first version. This becomes a partial Ruby interpreter.</td>
+<td>DSL rules, Ruby expressions, helpers, platform branches, upstream changes</td>
+<td>Reject. This becomes a partial Ruby interpreter.</td>
 </tr>
 <tr>
-<td>Pinned upstream Ruby reader in an isolated update runner</td>
-<td>Small export adapter, source pins, isolation, and output validation</td>
-<td>Recommended. Reuse upstream semantics.</td>
+<td>Hosted API service that pre-converts taps</td>
+<td>A service, its trust, availability, and every tap&#39;s privacy</td>
+<td>Reject. No service ships.</td>
 </tr>
 <tr>
-<td>JSON snapshots only</td>
-<td>Existing reader and pins</td>
-<td>Retain as an input option. It cannot ingest a tap that publishes only Ruby.</td>
+<td>WASM conversion runtime in the client</td>
+<td>A second runtime, sandbox engineering, Ruby gem ports</td>
+<td>Reject. Not part of this change.</td>
 </tr>
 <tr>
-<td>Install Brew inside each user&#39;s workflow</td>
-<td>Brew state and another package lifecycle</td>
-<td>Outside the chosen product architecture.</td>
+<td>Install Homebrew/Brew on the user&#39;s machine</td>
+<td>Brew state and a second package lifecycle</td>
+<td>Reject. Nix retains installed state.</td>
+</tr>
+<tr>
+<td>Local import: pinned public fetch plus sandboxed Nix-provided Ruby</td>
+<td>Consent, fetch policy, one sandbox contract, one importer library</td>
+<td>Accepted contract.</td>
 </tr>
 </tbody></table></div>
-<p><a href="https://github.com/ruby/prism">Prism</a> provides Ruby parsing and Rust
-bindings. It does not provide Homebrew&#39;s runtime semantics. Using it would
-still leave us to evaluate helper calls and platform logic. This is an
-engineering inference from its documented parser interface.</p>
-<p>The Homebrew export interfaces are internal. Pin the exact upstream source
-and its Ruby dependencies. Upgrade them together, with focused comparison
-checks. Do not copy a large selection of Homebrew files into our codebase or
-maintain a permanent fork. Keep the upstream checkout in the tool cache and
-keep its license notices. Our small exporter is the only integration code.</p>
+<p>The Ruby is pinned by Nix, together with the upstream Homebrew reader dependencies. Tap Ruby never runs in a Nix shell, in the client process, in a derivation that fetches, or with relaxed sandbox settings. It runs in a plain sandboxed derivation whose inputs are fixed before evaluation starts.</p>
 <h2 id="section-2">2. Scope and user flows</h2>
-<p>The supported targets stay <code>aarch64-darwin</code> and <code>x86_64-linux</code>. Casks must
-actually support the selected target. Formula-only Linux taps do not become
-Casks. Fonts, services, drivers, installer scripts, and dependency expansion
-remain excluded. A source repository being public does not imply support.</p>
-<p><strong>Consumer:</strong> search the generated catalog, see the tap name and exclusion
-reason, then install a qualified cask through the existing native lifecycle.
-No raw repository is evaluated during <code>pkg install</code>.</p>
-<p><strong>Catalog maintainer:</strong> add one source entry, lock its revision, export its
-metadata, generate a catalog, review the diff, and publish the Git change.
-All casks under the configured Cask directory are discovered. No app names
-are added to Rust or Nix code.</p>
-<p><strong>Independent publisher:</strong> run the same tool against a registry they own.
-Commit the generated catalog into a flake that uses the generic builders.
-Consumers point the existing <code>sources.casks</code> setting at that flake. This
-allows public taps without adding them to our default catalog.</p>
-<p>There is no instant <code>pkg tap add</code> that evaluates arbitrary Ruby on a user&#39;s
-machine. A raw tap must first become generated data. A future client helper
-may select an already-generated flake; that does not require a Ruby runtime.</p>
+<p>Supported targets stay <code>aarch64-darwin</code> and <code>x86_64-linux</code>. Casks must actually support the selected target.</p>
+<p>The supported artifact subset is generic: GitHub release archives, raw release binaries, app bundles, and the existing safe artifact plans. Installer scripts, payload-dependent metadata, unsupported dependencies, and active installer actions are rejected explicitly with recorded reasons. A source repository being public does not imply support, and this plan does not promise that every public tap imports successfully.</p>
+<p><strong>Consumer:</strong> approve a tap once, then search saved catalogs and install qualified entries through the existing native lifecycle. Search never runs Ruby and never prompts. No raw repository is evaluated during <code>pkg install</code>.</p>
+<p><strong>Any user:</strong> any public HTTPS Cask tap can be added by URL with <code>pkg tap add</code>, subject to consent, fetch policy, and the sandbox contract. Taps are added through configuration and consent, not by adding app names to Rust or Nix code.</p>
+<p><strong>Independent publisher:</strong> the retained official JSON source and the same generated-flake mechanism still allow a publisher to commit a catalog flake that clients consume through their existing Cask source configuration. No central hosted API is required.</p>
 <h2 id="section-3">3. One data flow</h2>
-<pre><code class="language-text">sources.toml + pinned exporter environment
-                  |
-           Rust fetch / lock             network allowed
-                  |
-       immutable source trees
-                  |
-     isolated Homebrew Ruby export       network denied
-       /                       \
- macOS ARM64                Linux x86-64
-       \                       /
-       hashed export snapshots
-                  |
-       Rust validation / generation      offline
-                  |
-        one generated catalog v3
-                  |
-       Nix flake + cheap search index
-                  |
-        ordinary pkg / Nix lifecycle
+<pre><code class="language-text">pkg tap add SOURCE [--revision SHA] [--trust]
+        |
+  consent gate                no Ruby before it
+        |
+  credential-free public fetch        network, policy-checked
+        |
+  pinned source tree + pinned Nix Ruby + pinned Homebrew reader
+        |
+  ordinary sandboxed Nix derivation   network denied in the derivation
+  runs the upstream reader over the pinned tree
+        |
+  captured metadata (untrusted bytes) + bounded diagnostics
+        |
+  offline Rust validation / classification     no Ruby
+        |
+  schema-3 catalog + generated flake in a caller-owned staging dir
+        |
+  client validates, then publishes atomically
+        |
+  ordinary pkg / Nix lifecycle
 </code></pre>
-<p>Only the trusted fetch phase uses the network. It obtains source trees and
-the pinned exporter environment. Export does not fetch vendor applications,
-request installers, run livecheck update scans, install gems, install tap
-formulae, or invoke tap commands. Loading a livecheck or caveats declaration
-can still execute Ruby; the isolated runner contains that load-time code.
-Generation consumes captured bytes; it does not run Ruby.</p>
-<h2 id="section-4">4. Source registry and locks</h2>
-<p>Proposed files:</p>
+<p>Fetching is separate from Ruby evaluation. The fetch phase obtains the public source tree with policy checks and no inherited credentials. The evaluation phase runs pinned Ruby in a sandboxed derivation with no network. Validation and generation consume captured bytes only. A failure anywhere before publication leaves the previous catalog intact.</p>
+<h2 id="section-4">4. Library seam and ownership</h2>
+<p>The backend exposes the importer as library code usable by the client; no separately installed generator executable is required. The seam is <code>cask_catalog::tap</code>:</p>
 <ul>
-<li><code>nix/casks/catalog/sources.toml</code>: desired source identities, URLs, refs,
-Cask directories, and declared licenses.</li>
-<li><code>nix/casks/catalog/sources.lock.json</code>: exact revisions, tree/input hashes,
-exporter environment identity, target contexts, and export content hashes.</li>
-<li><code>nix/casks/catalog/catalog.json</code>: one runtime artifact, including all
-authoritative input provenance. No runtime reader needs the registry.</li>
+<li>The request includes the canonical source, an optional exact revision (otherwise the current default branch is resolved), the native target, the Nix executable, and a caller-owned staging output directory.</li>
+<li>The successful result contains the source identity, the exact revision, captured metadata provenance, the generated flake path, and eligible/excluded counts.</li>
+<li>The importer never publishes the client&#39;s live registry. The client publishes only after validation succeeds.</li>
 </ul>
-<p>Example registry shape. Values are illustrative, not selected source pins:</p>
-<pre><code class="language-toml">[[sources]]
-id = &quot;homebrew/cask&quot;
-kind = &quot;ruby-tap&quot;
-url = &quot;https://github.com/Homebrew/homebrew-cask.git&quot;
-ref = &quot;HEAD&quot;
-cask_dir = &quot;Casks&quot;
-license = &quot;BSD-2-Clause&quot;
-
-[[sources]]
-id = &quot;vendor/tools&quot;
-kind = &quot;ruby-tap&quot;
-url = &quot;https://github.com/vendor/homebrew-tools.git&quot;
-ref = &quot;HEAD&quot;
-cask_dir = &quot;Casks&quot;
-license = &quot;MIT&quot;
+<p>Exact Rust signatures are agreed between the backend and client workers before integration. This document deliberately does not guess them, and no test may claim integration before that interface exists.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>tools/cask-catalog</code>, <code>nix/casks</code>, raw-reader Nix/Ruby assets, backend fixtures</td>
+<td>Backend worker</td>
+</tr>
+<tr>
+<td><code>crates/pkg-cli</code>: consent, tap registry, source routing, native lifecycle integration, client docs, focused client tests</td>
+<td>Client worker</td>
+</tr>
+<tr>
+<td>Integration, Cargo.lock reconciliation, source review, native verification, evidence, PR</td>
+<td>Parent</td>
+</tr>
+<tr>
+<td>This OpenSpec change, readable plan and HTML mirror, <code>tools/public-tap-check</code>, verification pages</td>
+<td>Documentation worker</td>
+</tr>
+</tbody></table></div>
+<h2 id="section-5">5. Tap registry and consent</h2>
+<pre><code class="language-text">pkg tap add SOURCE [--revision SHA] [--trust]
+pkg tap list
+pkg tap update [SOURCE] [--revision SHA]
+pkg tap remove SOURCE
 </code></pre>
-<p>Source IDs are stable, lowercase two-part names. They are configured
-explicitly; they are not guessed from a redirect. Duplicate source IDs are
-errors. The first version accepts public HTTPS Git sources and local cached
-trees that match their lock. SSH credentials and private tap support are out
-of scope. Git transport redirects must not silently change the locked source
-identity. Source URL changes require a visible registry and lock diff.</p>
-<p>Fetch resolves a moving ref to a commit, verifies the resulting checkout,
-and records a canonical tree content hash. It disables local Git hooks and
-external checkout filters. It does not initialize submodules. Export rejects
-submodule dependencies and paths that escape the source root. Retain the
-whole pinned tap tree in cache so local Ruby helpers can resolve. Discover
-regular <code>.rb</code> files below <code>cask_dir</code> in sorted order; do not follow symlinks
-outside it. Reject duplicate tokens within one source.</p>
-<p>Record the tap&#39;s own license and origin. Do not label every public tap as
-Homebrew BSD data. Unknown licensing remains explicit and blocks default
-redistribution until the source metadata is resolved.</p>
-<p>The JSON adapter receives the same source ID and exact input hash. It joins
-the same compiler path after input decoding. It does not bypass validation.</p>
-<h2 id="section-5">5. Ruby exporter and its limits</h2>
-<p>Start from the upstream <code>generate-cask-api</code> loading pattern. The researched
-revision uses <code>API.with_no_api_env</code>, <code>Cask.generating_hash!</code>,
-<code>Cask::CaskLoader.load(path)</code>, and <code>to_hash_with_variations</code>. The simple
-serializer is <code>to_h</code>; do not assume <code>Cask#to_hash</code> exists. See the
-<a href="../docs/research/2026-09-29-raw-ruby-public-taps.md">pinned-source research</a>
-for exact paths and semantics.</p>
-<p>For our native-per-target export, use a narrower sequence than the official
-all-variation job. In a fresh target process, enter no-API mode and generation
-mode, select the target and language, then load the explicit pinned file.
-Call <code>cask.platform_supported?(tag, installable: true)</code> and serialize
-<code>cask.to_h</code> while that context remains active. The predicate is the one
-upstream uses for support evidence and does not refresh the Cask.</p>
-<p>Do not run <code>to_hash_with_variations</code>, language-variation expansion, or
-<code>refresh</code> in this native path. They re-evaluate DSL blocks without necessarily
-reloading top-level statements. Capture a boolean
-<code>upstreamPlatformSupported</code> with the exact target/tag. Do not invent a full
-Homebrew <code>supported_platforms</code> array from one target run. The JSON adapter
-keeps its existing complete-field/variation rules; both adapters produce
-one effective target input for the same Rust classifier.</p>
-<p>Materialize the pinned tap in Homebrew&#39;s expected tap layout inside the
-disposable workspace. Keep it read-only. Configure any upstream tap-trust
-decision only for that selected source in that workspace; never change host
-trust settings. Use explicit file paths for loading. The adapter must verify
-that Homebrew&#39;s reported tap/file identity agrees with the outer source lock.
-The spike must prove this layout and trust setup against the pinned loader.</p>
-<p>First prove this integration with a small exporter spike. Do not design a
-new DSL reader around guessed method names. The spike must show that all
-fields used by our classifier survive export, including platform evidence,
-renames, URL options, dependency declarations, and active install operations.</p>
-<p>Load each cask/target in a fresh Ruby process or clean child fork from a
-trusted preloaded parent. No tap code runs before that parent is cloned.
-This limits accidental constant and monkey-patch leakage. It is not the
-security isolation between untrusted sources.</p>
-<p>Use a native macOS ARM64 runner for the macOS export and a native Linux x86-64
-runner for Linux. Homebrew target simulation affects Homebrew APIs; it does
-not emulate arbitrary Ruby system calls, host files, or <code>RUBY_PLATFORM</code>.
-Mac simulation selects a release family, not an exact patch version. Keep
-the declared macOS baseline and the actual runner version in provenance.
-Do not claim that a Linux-only export proves native macOS behavior.</p>
-<p>The first version uses the pinned Homebrew default language policy. It does
-not generate every locale variant. Locale, timezone, prefix, home directory,
-and target settings are fixed in the runner recipe and recorded. Unknown
-locale or host-dependent behavior is reported, not silently generalized.</p>
-<h3>Metadata that needs a payload</h3>
-<p>Some public casks use <code>staged_path</code> to enumerate files inside a downloaded
-application. With no payload, a directory glob can return an empty list.
-That would hide a required manpage or binary.</p>
-<p>The exporter must catch the upstream staging access in this case and emit
-<code>staged-path-during-metadata</code>.
-The spike will test a narrow guard on Homebrew&#39;s staging access during DSL
-evaluation. Keep a sticky refusal flag even if a cask rescues the exception.
-The guard may conservatively refuse harmless staging-path interpolation.
-It must not interfere with ordinary upstream serialization.
-Do not download an application to make this metadata-only phase succeed.
-Do not add per-token exceptions. If a reliable guard cannot be demonstrated,
-do not ship a claim of complete raw-tap conversion; narrow the supported
-export contract and record this as an unresolved implementation blocker.</p>
-<p>Arbitrary Ruby can inspect other host state without calling that accessor,
-including through a manual path, <code>caskroom_path</code>, or a helper.
-No finite guard proves complete semantic independence. Therefore support is
-limited to metadata that resolves from the pinned source and declared runner
-context. Exported snapshots are the reproducibility boundary. Raw revisions
-alone are not a promise of deterministic Ruby execution.</p>
-<h3>Active operations and unsupported data</h3>
-<p>Preserve legacy flight blocks and structured <code>preflight_steps</code> /
-<code>postflight_steps</code> as explicit capability flags or metadata. Required install
-actions that our builders do not reproduce yield an exclusion. A successful
-<code>to_h</code> call is not sufficient for eligibility. Uninstall and zap behavior
-remain outside our lifecycle and are never executed.</p>
-<p>Custom download strategies, credentials, live network lookups, helpers
-outside the pinned tree, or missing required metadata yield a precise
-exclusion or source failure. Unknown active stanzas fail closed. A tap may
-contain formulae, commands, and other files; none is invoked as a plugin.</p>
-<h2 id="section-6">6. Isolation and failure handling</h2>
-<p>Use the existing disposable E2B runner for Linux and a disposable native
-macOS VM for Darwin. Build the pinned tool image before adding any tap.
-Do not snapshot a VM after it has evaluated untrusted source code.</p>
-<p>Prefer an ordinary sandboxed Nix derivation for the export command inside
-each disposable runner. Nix can supply the pinned Ruby environment and
-read-only dependencies. Enable sandboxing explicitly on both hosts; refuse
-Linux sandbox fallback. Keep network fetches separate. Do not make the Ruby
-export a fixed-output derivation or use a relaxed sandbox exception.
-The <a href="https://nix.dev/manual/nix/2.35/command-ref/conf-file.html#conf-sandbox">Nix sandbox reference</a>
-documents the Linux network exception for fixed-output builds and the
-different platform defaults. Verify the actual macOS network policy rather
-than inferring it from Linux behavior.</p>
-<p>This is an explicit maintainer build. The published flake reads only the
-resulting JSON, so it still uses no import-from-derivation. VM and process
-limits supplement Nix where it does not supply a resource quota.</p>
-<p>The implementation spike must prove these runner properties:</p>
 <ul>
-<li>Public source export has no network access, model API key, GitHub token,
-signing key, developer home mount, SSH agent, or publishing credential.</li>
-<li>The pinned source tree and exporter toolchain are read-only. Writable
-space is temporary. Resource limits cover wall time, memory, process count,
-writable disk, and result size.</li>
-<li>Different sources have separate isolation. A subprocess alone is not a
-sandbox. Nix build isolation and the macOS VM network
-policy must be tested. Do not assume the E2B SDK&#39;s model-key handling alone
-enforces these properties.</li>
-<li>A trusted process outside that isolation validates result files. It checks
-expected source, target, token inventory, schema, bounded size, and hashes.
-The exporting VM cannot publish or replace another source&#39;s artifacts.</li>
+<li><code>add</code> resolves and shows the canonical repository and the approval scope, obtains first consent, then imports. Interactive consent is remembered per origin. A noninteractive run must pass <code>--trust</code> explicitly; it never silently proceeds.</li>
+<li><code>list</code> shows saved sources with their pinned revisions.</li>
+<li><code>update</code> refreshes one source or all saved sources, optionally pinned to an exact revision.</li>
+<li><code>remove SOURCE</code> prevents future use of that source but does not remove installed packages.</li>
 </ul>
-<p>This is one runner contract, not a new sandbox platform. Use existing tools.
-If a runner cannot enforce the contract, it does not run public tap Ruby.</p>
-<p>Per-record syntax or unsupported metadata errors produce excluded entries
-with stable error codes. A process timeout is recorded as an export failure,
-not a successful empty cask. Missing expected records, an unavailable runner,
-corrupt result files, changed runtime identity, or a source-wide crash abort
-the update. They must not publish an apparently smaller successful catalog.</p>
-<p>Generate in a temporary directory. Replace the runtime catalog only after
-all requested sources and targets have valid results. Its embedded pins are
-the runtime authority. Commit registry, lock, snapshots, and catalog together.
-Check their agreement in CI. A failed update leaves the previous runtime
-catalog byte-for-byte intact. Do not mix old source output with fresh output
-without an explicit lock that identifies both.</p>
-<h2 id="section-7">7. Captured exports and reproducibility</h2>
-<p>Use a small versioned interchange document, <code>pkg-cask-source/1</code>. It contains
-source identity, per-file path and hash, target context, exporter identity,
-and either complete metadata or an exclusion for each discovered token and
-target. It has no executable callback channel.</p>
-<p>Record the upstream Brew commit, Ruby/runtime recipe digest, adapter version,
-source commit/tree hash, and export content hash. Raw output and diagnostics
-are bounded. Normalize report-only paths and stack traces outside catalog
-data. Preserve license notices with captured artifacts.</p>
-<p>Ruby can read time and other ambient state. A repeated export comparison
-helps find instability but cannot prove arbitrary Ruby deterministic. The
-strong contract is narrower: <strong>the same captured exports and Rust compiler
-version produce identical catalog bytes</strong>. Published catalog regeneration
-uses captured exports, not a fresh raw Ruby evaluation.</p>
-<p>Reuse an export only when the entire source tree, exporter runtime, target
-context, and export policy match its lock. Do not cache only by cask file:
-another helper in the same repository can change its result. For the first
-version, unchanged source/target pairs are the cache unit. No new distributed
-cache service is needed. Keep captured JSON compressed in the catalog repo;
-measure size before adopting a different artifact store.</p>
-<h2 id="section-8">8. Identity and catalog schema 3</h2>
+<p>Consent precedes import. Refusing consent runs no Ruby and changes nothing. A qualified install that names an unknown source may offer or instruct the explicit first-source <code>add</code> flow; it never reinterprets an unknown qualified source as Nix code, and it does not need to autoimport it.</p>
+<p>No prompt and no Ruby execution occur during ordinary search of saved catalogs. Bare cask tokens resolve only when unique across all saved catalogs and official entries, and uniqueness counts excluded matches too. An excluded entry must not cause silent selection of another source, and no source ordering creates precedence. Multiple matches return qualified choices. A qualified ID resolves only within its named source and never falls back to another source.</p>
+<h2 id="section-6">6. Fetch policy</h2>
+<p>The fetch phase obtains public HTTPS source trees. It does not inherit credentials: no hooks, external filters, submodules, or ambient authentication ride along, and no credentials reach public repository or source input fetches.</p>
+<ul>
+<li>Resolve and record the canonical repository. Verify redirect and destination policy with a real URL parser; do not let DNS or redirect checks be bypassed by string tricks.</li>
+<li>Refuse local and private-network destinations for untrusted URLs.</li>
+<li>Disable local Git hooks and external checkout filters. Do not initialize submodules.</li>
+<li>Pin whole source content, runtime, policy, and target together. The cache unit is the whole source tree: a helper-only commit changes identity and invalidates cached output. Do not cache per cask file.</li>
+<li>Record source-relative file provenance when reading Ruby. Reject paths that escape the source root and duplicate tokens within one source.</li>
+</ul>
+<p>The retained official JSON source flows through the same source identity rules as schema-3 source <code>homebrew/cask</code>. It keeps its existing fetch contract; it is not forced to a raw-official replacement.</p>
+<h2 id="section-7">7. Sandboxed Ruby evaluation</h2>
+<p>Nix supplies pinned Ruby and the upstream Homebrew reader dependencies. The reader runs inside an ordinary sandboxed Nix derivation:</p>
+<ul>
+<li>The derivation is not a fixed-output derivation. Sandbox is enabled. Refuse sandbox fallback, relaxed mode, and added host paths.</li>
+<li>Verify effective daemon isolation with behavior probes on each supported platform before claiming safety. Do not infer macOS policy from Linux.</li>
+<li>Verified requirements (parent Nix evidence, 2026-09-29): on Linux an ordinary strict build denied a world-readable host-canary read, a world-writable outside-directory write, and a positively controlled live host-loopback connect. On macOS the shipped daemon ran with <code>sandbox&nbsp;=&nbsp;false</code>, ignored an ordinary user&rsquo;s <code>--option sandbox true</code>, and allowed all three; the final disposable-VM proof denied all three only after the daemon ran with <code>sandbox = true</code>, <code>sandbox-fallback = false</code>, a minimal <code>sandbox-paths</code> set, the derivation set <code>__darwinAllowLocalNetworking = false</code>, and the LaunchDaemon gave builds a private <code>TMPDIR</code> (<code>/nix/var/nix/builds</code>). The default Darwin global tmp is granted and can expose <code>/tmp</code> reads and writes; nested <code>sandbox-exec</code> failed and is not a solution.</li>
+<li>Those daemon settings are documented prerequisites applied by the host owner. The product fails closed and explains the prerequisites, re-probes with a fresh nonce and fresh paths before every raw import so cached success can never mask a changed daemon, never adds root-equivalent <code>trusted-users</code>, and never edits host daemon configuration automatically.</li>
+<li>Do not pass user home, secrets, daemon sockets, or model credentials into builds.</li>
+<li>Apply bounded execution and output limits: wall time, memory, processes, writable disk, captured diagnostics, and result size.</li>
+<li>A failure must not create a successful empty catalog. A timeout or crash is recorded as a failure with bounded diagnostics, never as an eligible empty record.</li>
+<li>Captured JSON remains untrusted input. Only the fixed Nix builders consume validated data. Never evaluate Nix files or configuration supplied by a tap.</li>
+</ul>
+<p>Strict sandbox proof runs on real native hosts before any safety claim. Worker commands carrying model credentials never execute raw tap Ruby; separate clean verification sandboxes without Pi/model keys do. Parent Nix sandbox evidence (Linux pass; macOS pass on a disposable VM with the required daemon setup; raw logs <code>sandbox-linux.log</code>, <code>sandbox-macos-negative.log</code>, <code>sandbox-macos-positive.log</code> under <code>docs/verification/public-taps-2026-09-29</code>) stays Nix-only background. Final actual evidence (2026-09-29): denied network, denied host-home read, denied credential sentinel, output-exhaustion containment, and helper-only cache invalidation all passed on both hosts with positive controls; the normal-mode reader ran over all seven pinned taps and the 20-case fixture matrix; the final normal-mode whole import of all seven pinned sources passed on BOTH hosts (Linux: 30 records, 13 eligible / 17 excluded; macOS: 30 records, 7 eligible / 23 excluded, first three sources before the GitHub rate-limit reset and the last four after it; every row's offline checker and derivation evaluation returned 0); the converter capture regressions (7/7), the backend suite, the client unit suites, the interactive consent input gate, the actual Linux product negative gate (C6/C7 Linux: <code>sandbox = false</code>, relaxed, and fallback refused before any Ruby; the strict config under an unsandboxed daemon hit the behavioral probe, refused, and published no flake), the official schema-3 retention and replay, and the evaluation of every eligible official derivation (3303, zero payloads, identical result sha256 after the formatting follow-up) passed; the actual native client lifecycle and the final CI, post-format lint, and native-enabled Gatekeeper records passed on both hosts. The final native macOS C6/C7 negative gate also passed: the public daemon TMPDIR caused host-read denial to fail, so the importer stopped before export and published no flake. The daemon configuration was restored. Independent review is complete. Only the implementation PR remains pending. Reader-stage success is not source acceptance.</p>
+<h2 id="section-8">8. Supported subset and conversion rules</h2>
+<p>Eligible entries use one of the generic shapes: GitHub release archives, raw release binaries, app bundles, or the existing safe artifact plans. Payload checksums are required. Archive traversal and symlink protection and script rejection are retained. There is no sudo, no silent quarantine removal, and no replacement of vendor signatures. On macOS, assessment happens at the actual app exposure/launch path; metadata approval never certifies the app or provides application runtime sandboxing.</p>
+<p>Excluded with recorded reasons, never silently eligible:</p>
+<ul>
+<li>Installer scripts and active installer actions.</li>
+<li>Payload-dependent metadata. The upstream staging accessor used during DSL evaluation makes the reader load fail; the importer maps that to an excluded <code>ruby-load-error</code> whose bounded detail contains <code>staged_path</code> / <code>staged-path-during-source-eval</code>, sticky even when the cask rescues the error. Do not download an application to make this phase succeed. The guard is conservative; it may refuse harmless staging-path use, and it does not prove general Ruby purity.</li>
+<li>Unsupported dependencies, custom download strategies, credentials, live network lookups, helpers outside the pinned tree, and missing required metadata.</li>
+</ul>
+<p>Legacy flight blocks and structured <code>preflight_steps</code>/<code>postflight_steps</code> are preserved in metadata as explicit capability flags when the record loads. The reader runs in normal mode (<code>HOMEBREW_DEVELOPER</code> explicitly unset; the upstream developer-command warning may still print and is not a failure; internal path loading is explicitly permitted for our staged trusted reader). The final actual converter excludes legacy preflight/postflight callbacks as <code>unsupported-artifact</code> with a detail naming the callback keys (not <code>installer-script</code>, not <code>ruby-load-error</code>); structured steps and installer scripts are excluded as <code>installer-script</code>. Only metadata that loads can carry callback or structured-step markers. Required install actions that no generic builder reproduces yield an exclusion and never become eligible. A successful load is not sufficient for eligibility. Uninstall and zap behavior stay outside our lifecycle and are never executed. Per-record load errors become excluded entries with stable error codes; source-wide failures abort the refresh.</p>
+<p>Platform and language context is explicit. OS, arch, and language branches evaluate under the declared native target and recorded language policy. Missing or incomplete target evidence is excluded or fails the source; it is never guessed.</p>
+<h2 id="section-9">9. Identity and catalog schema 3</h2>
 <p>Every entry has separate fields:</p>
-<pre><code class="language-text">id:       vendor/tools/editor
-sourceId: vendor/tools
-token:    editor
-origin:   Casks/e/editor.rb + file hash
-targets:  the existing per-system status and plan shape
+<pre><code class="language-text">identity:  owner/tap/token     (map key)
+source:    owner/tap
+token:     bare token
+origin:    source-relative file path + file hash
+targets:   the existing per-system status and plan shape
 </code></pre>
-<p><code>entries</code> is keyed by <code>id</code>. <code>inputs</code> is keyed by source ID and carries its
-lock provenance. <code>pkg-cask-catalog/3</code> is the only newly supported envelope.
-The generator, Nix projection, and Rust client decoder change together.
-Remove the schema-2 decoder and its obsolete fixtures after cutover.</p>
-<p>Qualified command shape:</p>
-<pre><code class="language-sh">pkg install cask:vendor/tools/editor
-</code></pre>
-<p><code>cask:editor</code> is shorthand only when exactly one catalog entry has that token.
-Count eligible and excluded matches; an excluded entry must not cause us to
-silently select a different tap. Multiple matches return qualified choices.
-Bare <code>editor</code> keeps existing Nixpkgs-versus-Cask ambiguity handling and adds
-the qualified cask choices. Do not give the first source or official tap
-implicit precedence. A qualified ID never falls back to another source.</p>
-<p>Two different taps may both contain <code>editor</code>. Two records with the same full
-ID are a whole-input integrity error. A source rename changes identity; there
-is no automatic migration to a similarly named repository.</p>
-<p>The Nix package key is one quoted attribute:</p>
-<pre><code class="language-text">packages.aarch64-darwin.&quot;vendor/tools/editor&quot;
-</code></pre>
-<p>Do not turn <code>/</code> into a filesystem path or nested attribute lookup. Validate
-each identity segment, and use one quoting routine for CLI installables.
-Keep store package names separate: a safe token plus a stable source-ID hash
-suffix. Check hash-suffix collisions during generation. Package identity
-must not change when the source revision changes.</p>
-<p><code>info</code> and search JSON expose the source ID, raw source revision, path, and
-exclusion reason. Existing profile storage remains authoritative. The moving
-generated flake reference stays the install origin, so upgrades see later
-catalog commits and rollback returns to the prior native generation.</p>
-<p>Removing a source does not uninstall its packages. A later upgrade may report
-that the old attribute is unavailable. Never move that package to another tap
-with the same token. No compatibility migration database is introduced.</p>
-<h2 id="section-9">9. Repository changes and deletion budget</h2>
+<ul>
+<li><code>entries</code> is keyed by the identity. <code>inputs</code> is keyed by source and carries lock provenance. <code>pkg-cask-catalog/3</code> is the only supported envelope. No schema-2 compatibility layer is required.</li>
+<li>The identity is exposed in Nix as one quoted attribute segment holding the deterministic escaped full identity, for example <code>packages.aarch64-darwin.&quot;example/tap/tool@1_d_2&quot;</code>. Escape in one pass over the original characters: <code>_</code> becomes <code>_u_</code>, <code>.</code> becomes <code>_d_</code>, and every other character stays unchanged; inserted underscores are never re-replaced. Example: <code>example/tap/tool@1.2</code> maps to <code>example/tap/tool@1_d_2</code>. A normal token such as <code>owner/tap/token</code> needs no escaping. The mapping is reversible, and catalog and public search map keys keep the original identity. Profile human labels are decoded for display. Do not turn <code>/</code> into a filesystem path or nested lookup. Validate each identity segment and use one quoting routine for CLI installables.</li>
+<li>Store package names stay separate: a safe token plus a stable source suffix. Package identity does not change when the source revision changes.</li>
+<li>Two sources may both publish the same bare token; both identities exist. The same full identity twice is a whole-input integrity error. A source rename changes identity; there is no automatic migration.</li>
+<li><code>info</code> and search expose the source, revision, path, and exclusion reason.</li>
+</ul>
+<h2 id="section-10">10. Native lifecycle</h2>
+<p>Installation, upgrade, rollback, and removal use the native profile and the existing lifecycle. Updates use stable generated flake references, so upgrades see later catalog commits while rollback returns to the prior native generation. Old generation outputs are preserved. A native manifest strips quotes from attributes, so a raw dotted full identity installs but breaks native upgrade as a nested lookup; the escaped physical attribute avoids that, and parent Nix-only probes (2026-09-29) passed native install, upgrade, and rollback with the escaped attribute on Linux and macOS. Product encoding tests remain unimplemented (task 3.4 stays open). Removing a tap prevents future source use but does not remove installed packages; a later upgrade may report that the old attribute is unavailable, and no package is ever moved to another tap with the same token. No compatibility migration database is introduced.</p>
+<h2 id="section-11">11. Repository changes</h2>
 <div class="table-scroll"><table>
 <thead>
 <tr>
 <th>Location</th>
 <th>Change</th>
+<th>Owner</th>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>tools/cask-catalog/src/main.rs</code></td>
-<td>Extend the existing maintainer commands; keep CLI wiring small.</td>
+<td><code>tools/cask-catalog</code> (<code>cask_catalog::tap</code>)</td>
+<td>Importer seam, fetch policy, sandboxed reader invocation, capture, classification, schema-3 emission.</td>
+<td>Backend</td>
 </tr>
 <tr>
-<td><code>tools/cask-catalog/src/source.rs</code></td>
-<td>Own registry, lock, identities, and captured-source decoding.</td>
+<td><code>nix/casks</code></td>
+<td>Pinned Ruby/reader environment, ordinary sandboxed reader derivation, unchanged fixed generic builders, schema-3 index projection, retained official JSON source.</td>
+<td>Backend</td>
 </tr>
 <tr>
-<td><code>tools/cask-catalog/export/</code></td>
-<td>Small pinned-upstream Ruby adapter and runner recipe. No vendored Homebrew fork.</td>
+<td><code>crates/pkg-cli</code></td>
+<td><code>pkg tap add/list/update/remove</code>, consent store, tap registry, source routing, strict schema-3 decode, qualified resolution, atomic publish, native lifecycle integration.</td>
+<td>Client</td>
 </tr>
 <tr>
-<td><code>effective.rs</code>, <code>classify.rs</code>, <code>plan.rs</code>, <code>emit.rs</code></td>
-<td>Reuse one classifier and one plan builder; adapt inputs before classification.</td>
+<td><code>tools/public-tap-check</code></td>
+<td>Data-only adversarial fixtures and metadata matrix; reuses <code>tools/cask-build-check</code>.</td>
+<td>Documentation</td>
 </tr>
 <tr>
-<td><code>nix/casks/catalog/</code></td>
-<td>Replace the one-input pin with registry/lock/export artifacts and catalog v3.</td>
-</tr>
-<tr>
-<td><code>nix/casks/flake.nix</code></td>
-<td>Source-qualified package keys and v3 index projection. No Ruby, fetch-on-eval, or IFD.</td>
-</tr>
-<tr>
-<td><code>crates/pkg-cli/src/catalog/{id,cask,search}.rs</code></td>
-<td>Qualified identities, exact-token ambiguity, and source display.</td>
-</tr>
-<tr>
-<td><code>crates/pkg-cli/src/nix/manifest.rs</code></td>
-<td>Strict v3 decoding and required source provenance.</td>
-</tr>
-<tr>
-<td>Existing verification tools</td>
-<td>Accept qualified IDs; replay unchanged artifact plans. Reuse these scripts.</td>
+<td>OpenSpec change, plans, verification pages, HTML mirror</td>
+<td>This scope, evidence pages, verification instructions.</td>
+<td>Documentation</td>
 </tr>
 </tbody></table></div>
-<p>Delete the hardcoded Brew API repository/hash defaults when registry-driven
-fetch replaces them. Delete the old <code>input.json</code> consumer path, schema-2
-decode, and mirror-specific CI URL assertion at cutover. Keep JSON input
-support only through the common source interface. Do not add a generic plugin
-system, dependency closure engine, per-tap subclasses, or second classifier.</p>
-<h2 id="section-10">10. Maintainer update workflow</h2>
-<p>Proposed commands, not commands available in the merged client:</p>
-<pre><code class="language-sh">cargo run -p cask-catalog -- fetch --sources sources.toml --lock sources.lock.json
-cargo run -p cask-catalog -- export --lock sources.lock.json --out-dir captured
-cargo run -p cask-catalog -- generate --lock sources.lock.json \
-  --exports captured --out-dir nix/casks/catalog
-</code></pre>
-<p><code>fetch</code> is the only phase that resolves moving refs. <code>export</code> dispatches to
-the declared isolated native runners and records export hashes. <code>generate</code>
-is offline Rust. Exact flag names may follow the existing Clap conventions;
-the phase separation and failure rules are binding.</p>
-<p>Review added/removed identities, source moves, newly excluded records, active
-operations, and eligibility changes. Never write a token allowlist to make
-coverage numbers larger. Updating source pins is a normal Git change.
-No daemon or scheduled task is required by this plan.</p>
-<h2 id="section-11">11. Delivery order and acceptance</h2>
-<p>Use three implementation PRs after the plan. Each has a usable result.</p>
-<h3>PR A — exporter and source interface</h3>
-<p>First prove the raw export shape, isolation, native target behavior, staging
-guard, active-step preservation, and reproducibility limits on small inputs.
-Then add registry/lock handling and captured exports to the Rust tool. Keep
-the default published catalog unchanged while the new path is exercised.</p>
-<p>Gate: a source can be fetched, exported for both targets, and classified
-offline without an application download. One broken record is visible; a
-source-wide failure cannot publish partial output. If this gate fails, stop
-expanding the importer and record the unsupported contract precisely.</p>
-<h3>PR B — namespaced catalog and client cutover</h3>
-<p>Change generation, Nix keys, source provenance, decoding, and exact-name
-resolution together. Publish schema 3. Remove the schema-2 path and the
-mirror-only fetch assumptions. Package names and original moving references
-must survive update and rollback without crossing source identities.</p>
-<p>Gate: two sources with the same token coexist; shorthand is ambiguous;
-qualified installs select the requested source; offline catalog regeneration
-is byte-identical; ordinary search never forces a derivation.</p>
-<h3>PR C — public-tap pilot and official source cutover</h3>
-<p>Run the official tap plus at least three representative public taps through
-the tool. Choose sources by supported examples and documented edge cases,
-not by popularity alone. Source inspection candidates include Aerospace and
-Wine taps; their active actions may correctly remain excluded.</p>
-<p>Compare source inventory and normalized metadata with the pinned upstream
-exporter. Use the previous top-1,000 ranking for an explicit coverage diff.
-Evaluate every eligible derivation with IFD disabled. Replay plans with tiny
-payloads. Run native install/use/remove and update/rollback for a small
-representative set: one macOS app with CLI, one relocatable pkg if present,
-one Linux binary, and one AppImage. Cap new vendor downloads at four; record
-unavailable shapes instead of filling the set with unrelated apps.</p>
-<p>Gate: no unexplained record disappearance, no silent loss of required steps,
-all source/collision fixtures pass, and every coverage claim separates load,
-eligibility, derivation evaluation, synthetic replay, and real installs.
-Only then make raw Homebrew source the default and retire the default mirror.</p>
-<h2 id="section-12">12. Focused failure cases</h2>
-<p>Retain checks at the public import/compile interface. Do not add another
-large assurance framework or duplicate the classifier in test code.</p>
+<p>Delete at cutover: the schema-2 decoder and its obsolete fixtures, the single-input runtime assumptions that conflict with <code>inputs</code>, and any mirror-only assertions that block the retained official source. Do not delete the official JSON reader; it remains a source through the common interface. Do not add a generic plugin system, dependency closure engine, per-tap subclasses, a second classifier, or schema-2 migration.</p>
+<h2 id="section-12">12. Verification and delivery</h2>
+<p>Delivery is one reviewable implementation PR. Do not merge or release without a later instruction.</p>
+<p>Verification uses E2B GLM 5.3 for implementation, the prepared Rust/Nix snapshot, and — for raw Ruby execution — separate clean verification sandboxes without Pi/model keys. The parent verifies code and integration independently.</p>
+<p>Exercise: real pinned public taps, helper-only changes, GitHub release binaries, platform branches, token collisions, cache invalidation, consent refusal, atomic refresh failure, malicious Ruby, URL redirects, filesystem and network denial, malformed archives, unsupported scripts, and the native lifecycle. Use metadata-only catalog comparisons and synthetic payloads for broad coverage. Limit real vendor downloads to a small native sample.</p>
+<p>The strict sandbox proof items (denied network, denied host-home read, denied supplied-credential sentinel, output exhaustion containment, helper-only cache invalidation) passed on both supported platforms with positive controls; see the evidence pages.</p>
+<p>The data-only adversarial fixtures, the metadata matrix, and the evidence instructions live in <code>tools/public-tap-check</code> and <code>docs/verification/public-taps-2026-09-29</code>. Execution status and the few remaining pending checks are recorded in the evidence pages.</p>
+<p>Run Rust, Ruby, Python, Nix, and workflow lint for changed files, strict OpenSpec validation, docs and static HTML checks, normal CI, and independent review. Record actual evidence and limits.</p>
+<h2 id="section-13">13. Focused failure cases</h2>
 <div class="table-scroll"><table>
 <thead>
 <tr>
@@ -498,59 +288,58 @@ large assurance framework or duplicate the classifier in test code.</p>
 </tr>
 </thead>
 <tbody><tr>
-<td>Interpolation, <code>arch</code>, OS blocks, version helpers, local <code>require_relative</code></td>
-<td>Metadata agrees with the pinned upstream reader under the selected context.</td>
+<td>Interpolation, <code>arch</code>, OS blocks, language blocks, local <code>require_relative</code></td>
+<td>Metadata agrees with the pinned upstream reader under the declared context; whole-tree identity tracks the helper.</td>
 </tr>
 <tr>
-<td>Two taps publish the same token</td>
-<td>Both qualified IDs exist; shorthand is ambiguous.</td>
+<td>Two taps publish the same bare token</td>
+<td>Both qualified identities exist; bare shorthand is ambiguous.</td>
+</tr>
+<tr>
+<td>Eligible and excluded entries share one bare token</td>
+<td>Bare shorthand stays ambiguous; no silent selection.</td>
 </tr>
 <tr>
 <td>Same source emits a duplicate token or falsifies source identity</td>
-<td>Update fails; prior catalog is unchanged.</td>
+<td>Refresh fails; previous catalog is unchanged.</td>
 </tr>
 <tr>
-<td>Ruby attempts network access, reads outside the allowed tree, forks without bound, or hangs</td>
-<td>Isolation/limits contain it and a failure is recorded.</td>
+<td>Ruby attempts network access, reads the host home, reads a supplied credential sentinel, exhausts output, forks, or hangs</td>
+<td>The sandbox and limits contain it; a bounded failure is recorded; no sentinel appears in captured output; never an empty success.</td>
 </tr>
 <tr>
 <td>A cask uses staging data to construct artifacts</td>
-<td>Excluded as payload-dependent; no guessed empty artifact list.</td>
+<td>Excluded <code>ruby-load-error</code> with detail containing <code>staged_path</code> / <code>staged-path-during-source-eval</code>, sticky across rescue; no guessed empty artifact list.</td>
 </tr>
 <tr>
-<td>Structured or legacy required install actions</td>
-<td>Preserved and excluded unless a generic builder implements the exact action.</td>
+<td>Structured or legacy required install actions, installer scripts</td>
+<td>Preserved as metadata and excluded; installer scripts rejected.</td>
 </tr>
 <tr>
-<td>Missing <code>supported_platforms</code> or incomplete target evidence</td>
-<td>Excluded or source schema failure; no guessed platform support.</td>
+<td>Missing platform evidence</td>
+<td>Excluded or source failure; no guessed support.</td>
 </tr>
 <tr>
-<td>Helper-only commit, exporter bump, target context change</td>
-<td>Source export cache invalidates.</td>
+<td>Helper-only commit, exporter bump, target or policy change</td>
+<td>Cached export invalidates.</td>
 </tr>
 <tr>
 <td>Failed source, truncated output, missing target</td>
 <td>No partial successful catalog replaces the published one.</td>
 </tr>
 <tr>
-<td>Source disappears or moves</td>
-<td>Existing installs remain; no automatic switch to another source.</td>
+<td>Consent refused or noninteractive without <code>--trust</code></td>
+<td>No Ruby runs; nothing changes.</td>
+</tr>
+<tr>
+<td>Tap removed</td>
+<td>Source blocked from future use; installed packages remain. Afterwards <code>pkg upgrade --all</code> filters removed-source references and forwards the remaining entries by explicit native entry IDs (not native <code>--all</code>); an explicit upgrade of a removed-source entry refuses.</td>
 </tr>
 </tbody></table></div>
-<p>Use E2B GLM 5.3 for bounded implementation work as before. The parent owns
-integration, source review, native macOS verification, and final evidence.
-Keep model credentials out of the raw-source export runners. A prebuilt clean
-tool image reduces setup cost; it is never a snapshot of an evaluated tap.</p>
-<h2 id="section-13">13. What this plan does not promise</h2>
-<p>There is no guarantee that every public tap can load offline, that every
-loaded cask can become a Nix package, or that an eligible package has passed
-GUI testing. Arbitrary Ruby, dynamic payload inspection, privileged steps,
-unsupported dependencies, and host-specific behavior can all prevent import.
-The design makes those limits visible and gives compatible taps one generic
-path to native Nix packages.</p>
+<h2 id="section-14">14. What this plan does not promise</h2>
+<p>There is no guarantee that every public tap can be imported, that every loaded cask becomes a Nix package, or that an eligible package has passed GUI testing. Arbitrary Ruby, dynamic payload inspection, privileged steps, installer scripts, unsupported dependencies, and host-specific behavior can all prevent import. The sandbox contract is verified on real native hosts before safety claims; until then no sandbox pass is claimed. The design makes the limits visible and gives compatible taps one generic path to native Nix packages.</p>
 
-<footer>This offline page mirrors the OpenSpec design. No external scripts, fonts, or images are loaded. Implementation has not started.</footer>
+<footer>This offline page mirrors the OpenSpec design and the accepted implementation contract. No external scripts, fonts, or images are loaded. Verification status: the recorded final stages passed; see <code>docs/verification/public-taps-2026-09-29</code> for the evidence and the short pending list.</footer>
 </main>
 </div>
 </body>

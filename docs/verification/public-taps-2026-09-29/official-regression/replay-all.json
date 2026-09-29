@@ -1,0 +1,2439 @@
+{
+ "scope": "synthetic helper replay, not vendor installs",
+ "mode": "all-catalog",
+ "identity": "qualified source/token identities (bare official tokens resolved to homebrew/cask/<token>)",
+ "catalog_sha256": "1017381d657fd026c6ddd25032974b91bc0b7a6bde4e0ef2aa3cc0a80c92692e",
+ "tokens_sha256": null,
+ "summary": {
+  "pass": 2821
+ },
+ "by_system": {
+  "aarch64-darwin": {
+   "pass": 2777,
+   "not-eligible": 4566,
+   "skip-pkg": 366
+  },
+  "x86_64-linux": {
+   "pass": 44,
+   "not-eligible": 7549,
+   "skip-appimage": 116
+  }
+ },
+ "missing_tokens": [],
+ "expected_applicable": 2821,
+ "processed": 2821,
+ "count_check_ok": true,
+ "failures": [],
+ "skipped": [
+  {
+   "token": "homebrew/cask/actual",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/adguard",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/adguard-vpn",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/adguard-vpn@nightly",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/adguard@nightly",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/adobe-acrobat-reader",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/adobe-digital-editions",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/adobe-dng-converter",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/advantagescope",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/affine",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/agentsview",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/aigcpanel",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/airmedia",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/alcom",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/alfaview",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/alisma",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/altair-graphql-client",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/altersend",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/amazon-workspaces",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/amneziavpn",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/anarlog",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/anka-build-cloud-controller",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/anka-build-cloud-registry",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/anka-virtualization",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/another-redis-desktop-manager",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/appflowy",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/appgate-sdp-client",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/aquaskk",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/aquaskk@prerelease",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/archivewebpage",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/arduino-ide",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/arq",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/artisan",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/arturia-software-center",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/astah-professional",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/astah-uml",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/astro-editor",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/atok",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/auto-claude",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/auto-subs",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/aws-vpn-client",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/aya",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/azookey",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/bananas",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bankid",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/baoliandeng",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/basictex",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/bazecor",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bb",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bdash",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/beaver-notes",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/beekeeper-studio",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bias-fx",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/billy-frontier",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bindiff",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/bing-wallpaper",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/biscuit",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bitbox",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bitfocus-buttons",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/bitwarden",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/blackhole-16ch",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/blackhole-2ch",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/blackhole-64ch",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/blink1control",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/block-buzz",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/blockbench",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/blockstream",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bluestacks",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/box-drive",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/breaktimer",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bricklink-studio",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/brickstore",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/browseros",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bruno",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/buckets",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/buckets@beta",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bugdom",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/bugdom2",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/busycal",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cables",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/candy-crisis",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/canon-eos-utility",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/canon-mg2500-driver",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/canon-ufrii-driver",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cardinal",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cate",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/cc-switch",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/ccleaner",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cernbox",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/chatall",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/chef-workstation",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cherry-studio",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/chiri",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/choosy",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/chordpotion",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/chrysalis",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/cisco-jabber",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cityofzion-neon",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/clamxav",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/clash-mi",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/clash-party",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/claude-devtools",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/cloudash",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/cloudflare-warp",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cloudflare-warp@beta",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cloudpouch",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/clover-chord-systems",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cmpxat",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cmtrace-open",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/codexia",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/codexmonitor",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/colorchecker-camera-calibration",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/colour-contrast-analyser",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/concept2-utility",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/corretto",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/corretto@11",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/corretto@17",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/corretto@21",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/corretto@25",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/corretto@8",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/crashplan",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cro-mag-rally",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/crosspaste",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/crypto-native-app-ng",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/cursor",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/cursr",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/daedalus-mainnet",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/dante-controller",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/db-browser-for-sqlcipher@nightly",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/db-browser-for-sqlite",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/db-browser-for-sqlite@nightly",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/dbgate",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/dbx",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/deadbolt",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/decrediton",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/deskreen",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/desktoppr",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/devpod",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/dexed",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/dfu-blaster-pro",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/digicheck-ng",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/dingtalk",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/diskspace",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/displaylink",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/djuced",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/donut",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/drata-agent",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/drawio",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/droplr",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/duo-connect",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/duo-desktop",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/dusklight",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/dyad",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/dyalog",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/dymo-connect",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/eagle",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/earnapp",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/elecom-mouse-util",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/elektron-overbridge",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/elgato-camera-hub",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/elgato-stream-deck",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/emclient",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/emclient@beta",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/enfusegui",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/engine-dj",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/enpass",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/entry",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/epson-print-layout",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/eset-cyber-security",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/esphome-device-builder",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/excire-foto",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/excire-search",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-micro",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-one",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-pro-c",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-pro-ds",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-pro-g",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-pro-l",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-pro-mb",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-pro-q",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-pro-r",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-saturn",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-simplon",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-timeless",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-twin",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fabfilter-volcano",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fbreader",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fbreader",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/feather",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/fedistar",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/feedflow",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/ferdium",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/ferdium@nightly",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/filen",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/finch",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/flox",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fme",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/focusrite-control",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/folding-at-home",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/folding-at-home@beta",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/foxit-pdf-editor",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/foxitreader",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/freefilesync",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fujifilm-tether-app",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fuse",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/fuse-t",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/garmin-basecamp",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/gimp",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/git-credential-manager",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/gitcomet",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/github-copilot-app",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/gog-galaxy",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/gretl",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/gureumkim",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/gyazo",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/hackolade",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/headlamp",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/hhkb",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/hhkb-studio",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/hiarcs-chess-explorer",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/i1profiler",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/ibm-aspera-connect",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/ibm-cloud-cli",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/idrive",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/iem-plugin-suite",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/iloader",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/imaging-edge",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/imaging-edge-webcam",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/inkscape",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/insta360-link-controller",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/insta360-studio",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/iriunwebcam",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/jedit-omega",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/jgrasp",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/jitouch",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/jump-desktop-connect",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/jyutping",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/kdrive",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/koodo-reader",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/koreader",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/krisp",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/krita",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/lemonade-server",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/letter-opener",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/libifd-cyberjack",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/librewolf",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/lightkey",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/livebook",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/lm-studio",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/localsend",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/logitech-camera-settings",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/lookingglassstudio",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/loupedeck",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/low-profile",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/lrtimelapse",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mac-monitor",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/macskk",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mailbutler",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/malwarebytes",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/manictime",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mds",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mega",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/microsoft-auto-update",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/microsoft-onenote",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/microsoft-openjdk",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/microsoft-openjdk@11",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/microsoft-openjdk@17",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/microsoft-openjdk@21",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/microsoft-openjdk@25",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/middledrag",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mist",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mono-mdk",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/monotype",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/morisawa-desktop-manager",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mosaic",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/motu-m-series",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mozilla-vpn",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mpluginmanager",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mullvad-vpn",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/mullvad-vpn@beta",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/munki",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/my-image-garden",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/naps2",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/netbeans",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/ninja-download-manager-ndm",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/nomachine",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/nomachine-enterprise-client",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/nordlayer",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/nordvpn",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/nperf",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/nx-studio",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/ob-xf",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/objectivesharpie",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/odrive",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/okta-advanced-server-access",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/okta-verify",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/omnissa-horizon-client",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/onedrive",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/onlyoffice",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/open-eid",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/opencloud",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/opencore-patcher",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/opencpn",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/openhuman",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/opensc-app",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/opensong",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/openvpn-connect",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/openwhispr",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/openwork",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/oracle-jdk",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/oracle-jdk@21",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/oracle-jdk@25",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/orka",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/orka-vm-tools",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/orka3",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/osquery",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/outset",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/owncloud",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/packages",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/papercut-mobility-print-client",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/parallels-client",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/parallels-virtualization-sdk",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/paranoia-file-text-encryption",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/paulxstretch",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/perimeter81",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/philips-hue-sync",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/photoninja",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/picoscope",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/picoscope@beta",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/pique",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/pixel-shift-combiner",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/plasticscm-cloud-edition",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/playmemories-home",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/plugdata",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/podolski",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/power-monitor",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/powerpanel",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/powershell@preview",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/presentation",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/presonus-universal-control",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/prezi-video",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/prisma-access-browser",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/pritunl",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/privileges",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/prolific-pl2303",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/proxybridge",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/ptpwebcam",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/qbittorrent",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/qbittorrent@lt20",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/qfinder-pro",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/qingg",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/quarto",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/qudedup-extract-tool",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/r-app",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/r-rig-app",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/radio-silence",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/readest",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/realvnc-connect",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/redcine-x-pro",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/rekordbox",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/resolume-arena",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/restapia",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/ripx",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/rocketman-choices-packager",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/rwts-pdfwriter",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/sage",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/salt",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/santa",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/seadrive",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/securesafe",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/segger-embedded-studio",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/semeru-jdk-open",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/semeru-jdk-open@11",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/semeru-jdk-open@17",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/semeru-jdk-open@21",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/semeru-jdk-open@25",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/semeru-jdk-open@8",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/senadevicemanager",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/serviio",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/sfm",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/shade",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/sharefile",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/silkypix-developer-studio-se",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/silnite",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/simplysign",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/sitala",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/sleep-aid",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/smallstepagent",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/snowflake-snowsql",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/sokim",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/sonobus",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/soothe2",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/soundtoys",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/splashtop-business",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/splashtop-personal",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/splashtop-streamer",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/spyder",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/squirrel-app",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/starnet2",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/steelseries-gg",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/steinberg-activation-manager",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/steinberg-library-manager",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/steinberg-mediabay",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/stirling-pdf",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/sunlogincontrol",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/supportcompanion",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/surge-xt",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/swiftdialog",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/syncovery",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/syncroom",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/synology-drive",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/synology-image-assistant",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/synology-surveillance-station-client",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/sys-pc-tool",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/t3-code",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/t3-code@nightly",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/tabby",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/tagspaces",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/tailscale-app",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/tdr-kotelnikov",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/tdr-molotok",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/tdr-nova",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/tdr-prism",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/tdr-vos-slickeq",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/teleport-suite",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/temurin",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/temurin@11",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/temurin@17",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/temurin@21",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/temurin@25",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/temurin@8",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/tenable-nessus-agent",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/terax",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/tev",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/thonny",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/ti-smartview-ce-for-the-ti-84-plus-family",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/tolaria",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/topaz-gigapixel",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/topaz-photo",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/torguard",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/toshiba-color-mfp",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/tourbox-console",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/tqsl",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/trezor-bridge-app",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/triplecheese",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/turbovnc-viewer",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/twingate",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/twonkyserver",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/unblocked",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/unifi-identity-endpoint",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/unifi-identity-enterprise",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/unity-hub",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/unity-hub@beta",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/vagrant-vmware-utility",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/valhalla-freq-echo",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/valhalla-space-modulator",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/valhalla-supermassive",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/vcv-rack",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/virtualdj",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/virtualgl",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/voicemod",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/wacom-tablet",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/weasis",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/whatsize",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/wifi-explorer-pro",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/wifiman",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/winclone",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/wireless-workbench",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/wireshark-chmodbpf",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/worksheetcrafter",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/xppen-pentablet",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/xquartz",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/xsplit-vcam",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/yaak",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/yaak@beta",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/youlean-loudness-meter",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/yubihsm2-sdk",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/zen",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/zerotier-one",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/zettlr",
+   "system": "x86_64-linux",
+   "reason": "appimage: separate appimageTools fixtures"
+  },
+  {
+   "token": "homebrew/cask/zoho-cliq",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  },
+  {
+   "token": "homebrew/cask/zoom-for-it-admins",
+   "system": "aarch64-darwin",
+   "reason": "pkg: separate xar-relocatable fixtures"
+  }
+ ]
+}

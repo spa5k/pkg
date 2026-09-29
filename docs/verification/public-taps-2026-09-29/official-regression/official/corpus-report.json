@@ -1,0 +1,339 @@
+{
+ "generatedAtUtc": "2026-09-28T23:30:01Z",
+ "scope": "metadata audit only; no installs were attempted or validated",
+ "inputs": {
+  "raw": {
+   "path": "/tmp/pkg-tap-audit/cask.json",
+   "sha256": "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251",
+   "records": 7709,
+   "catalogPinnedSha256Matches": true
+  },
+  "catalog": {
+   "path": "nix/casks/catalog/catalog.json",
+   "entries": 7709,
+   "entrySources": {
+    "homebrew/cask": 7709
+   },
+   "targets": [
+    "aarch64-darwin",
+    "x86_64-linux"
+   ],
+   "schema": "pkg-cask-catalog/3",
+   "macosBaseline": "15.7.7",
+   "generator": {
+    "name": "cask-catalog",
+    "version": "0.1.0"
+   },
+   "inputProvenance": {
+    "source": "homebrew/cask",
+    "kind": "json-snapshot",
+    "url": "https://raw.githubusercontent.com/BatteredBunny/brew-api/245947c0b920cbe83f4003bb7c6be737352c8314/cask.json",
+    "revision": "245947c0b920cbe83f4003bb7c6be737352c8314",
+    "sha256": "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251",
+    "license": "BSD-2-Clause (Homebrew Cask data)",
+    "raw": null
+   }
+  },
+  "analytics": {
+   "path": "/tmp/pkg-tap-audit/analytics-90d.json",
+   "sha256": "d657b63fd99f7c2260a905bf955d33fd0351f8d63e9f45ac22603b75273afab7",
+   "sourceUrl": "https://formulae.brew.sh/api/analytics/cask-install/homebrew-cask/90d.json",
+   "retrievedAtUtc": "2026-09-28T18:27:51Z",
+   "dateRange": {
+    "start": "2026-06-30",
+    "end": "2026-09-28"
+   },
+   "category": "cask_install",
+   "totalItems": 7824,
+   "totalCount": 5251679,
+   "retrievalNote": "url and retrieval time are caller-supplied provenance; script never fetches"
+  }
+ },
+ "ranking": {
+  "rule": "integer install count descending, token ascending as stable tie-break",
+  "analyticsTokens": 7824,
+  "topN": 1000,
+  "boundaryCount": 375,
+  "boundaryTieTruncation": 2
+ },
+ "top1000": {
+  "matched": 997,
+  "missing": 3,
+  "missingTokens": [
+   "homebrew-app",
+   "crisp",
+   "unsloth"
+  ],
+  "note": "missing analytics tokens are reported, never replaced with lower-ranked tokens",
+  "perTarget": {
+   "aarch64-darwin": {
+    "statuses": {
+     "eligible": 625,
+     "excluded": 372
+    },
+    "reasons": {
+     "eligible/None": 625,
+     "excluded/unsupported-artifact": 129,
+     "excluded/missing-checksum": 70,
+     "excluded/deprecated": 54,
+     "excluded/installer-script": 40,
+     "excluded/unsupported-download-spec": 27,
+     "excluded/malformed-record": 25,
+     "excluded/disabled": 8,
+     "excluded/cask-dependency-integration": 7,
+     "excluded/unsupported-platform": 6,
+     "excluded/formula-dependency": 5,
+     "excluded/unsupported-container": 1
+    },
+    "kinds": {
+     "binary": 28,
+     "app+cli": 67,
+     "pkg": 73,
+     "app": 457
+    },
+    "planArtifactKinds": {
+     "binary": 135,
+     "app": 527,
+     "pkg": 74
+    }
+   },
+   "x86_64-linux": {
+    "statuses": {
+     "eligible": 67,
+     "excluded": 930
+    },
+    "reasons": {
+     "excluded/unsupported-platform": 744,
+     "excluded/unsupported-artifact": 98,
+     "eligible/None": 67,
+     "excluded/deprecated": 53,
+     "excluded/unsupported-download-spec": 12,
+     "excluded/missing-checksum": 9,
+     "excluded/disabled": 8,
+     "excluded/malformed-record": 3,
+     "excluded/formula-dependency": 2,
+     "excluded/installer-script": 1
+    },
+    "kinds": {
+     "binary": 24,
+     "appimage": 43
+    },
+    "planArtifactKinds": {
+     "binary": 26,
+     "appimage": 43,
+     "manpage": 69
+    }
+   }
+  },
+  "popularityWeighted": {
+   "aarch64-darwin": {
+    "eligible": 2991052,
+    "excluded": 1950205
+   },
+   "x86_64-linux": {
+    "eligible": 906380,
+    "excluded": 4034877
+   }
+  },
+  "tokensWithAnalytics": 997,
+  "weightingNote": "counts come from the pinned analytics only; tokens absent from analytics contribute 0"
+ },
+ "wholeCatalog": {
+  "perTarget": {
+   "aarch64-darwin": {
+    "statuses": {
+     "eligible": 3143,
+     "excluded": 4566
+    },
+    "reasons": {
+     "eligible/None": 3143,
+     "excluded/missing-checksum": 2124,
+     "excluded/deprecated": 689,
+     "excluded/unsupported-download-spec": 600,
+     "excluded/unsupported-artifact": 553,
+     "excluded/disabled": 332,
+     "excluded/installer-script": 141,
+     "excluded/malformed-record": 38,
+     "excluded/unsupported-platform": 36,
+     "excluded/cask-dependency-integration": 29,
+     "excluded/unsupported-container": 12,
+     "excluded/formula-dependency": 11,
+     "excluded/unsupported-url": 1
+    },
+    "kinds": {
+     "app": 2568,
+     "binary": 62,
+     "pkg": 365,
+     "app+cli": 148
+    },
+    "planArtifactKinds": {
+     "app": 2729,
+     "binary": 278,
+     "pkg": 366,
+     "bash-completion": 1,
+     "fish-completion": 1,
+     "zsh-completion": 1
+    }
+   },
+   "x86_64-linux": {
+    "statuses": {
+     "excluded": 7549,
+     "eligible": 160
+    },
+    "reasons": {
+     "excluded/unsupported-platform": 3941,
+     "excluded/missing-checksum": 1606,
+     "excluded/deprecated": 690,
+     "excluded/unsupported-download-spec": 524,
+     "excluded/unsupported-artifact": 446,
+     "excluded/disabled": 332,
+     "eligible/None": 160,
+     "excluded/installer-script": 4,
+     "excluded/malformed-record": 3,
+     "excluded/formula-dependency": 3
+    },
+    "kinds": {
+     "binary": 44,
+     "appimage": 116
+    },
+    "planArtifactKinds": {
+     "binary": 47,
+     "appimage": 116,
+     "manpage": 69
+    }
+   }
+  },
+  "popularityWeighted": {
+   "aarch64-darwin": {
+    "eligible": 3162121,
+    "excluded": 2076319
+   },
+   "x86_64-linux": {
+    "eligible": 914320,
+    "excluded": 4324120
+   }
+  },
+  "tokensWithAnalytics": 7481,
+  "weightingNote": "counts come from the pinned analytics only; tokens absent from analytics contribute 0"
+ },
+ "invariants": {
+  "checked": [
+   "catalog keys are qualified source/token identities that agree with each row's source and bare token fields and with the raw records both ways (keys and raw tokens are valid catalog tokens, charset, no '..'); unexpected sources and duplicate bare tokens are violations, never silent drops or overwrites",
+   "the catalog inputs map contains exactly homebrew/cask; the official input has kind json-snapshot and an explicit raw null key",
+   "targets present exactly aarch64-darwin+x86_64-linux",
+   "catalog input provenance names the audited bytes: revision is 40 hex, url is http(s), and the official input sha256 equals the raw file hash",
+   "eligible rows have plan+kind and null reason; excluded rows have reason and null plan/kind",
+   "plan source urls absolute http(s), sha256 64-hex, archive kind known; artifact sources relative without traversal, targets single components without ASCII controls (pkg targets null by design)",
+   "platform scope re-derived for the first decision stages (disabled/deprecated/supported_platforms/depends_on.linux) on the effective variation-merged record; a bounded check, not full classifier equivalence",
+   "no duplicate plan-internal destinations"
+  ],
+  "violations": [],
+  "violationCount": 0,
+  "crossTokenDestinationSharing": {
+   "count": 99,
+   "examples": [
+    "aarch64-darwin: '1Password.app' owned by ['1password', '1password@beta']",
+    "aarch64-darwin: 'op' owned by ['1password-cli', '1password-cli@beta']",
+    "aarch64-darwin: 'Accordance.app' owned by ['accordance', 'accordance@13']",
+    "aarch64-darwin: 'ActivityWatch.app' owned by ['activitywatch', 'activitywatch@beta']",
+    "aarch64-darwin: 'Aerial.app' owned by ['aerial', 'aerial@beta']",
+    "aarch64-darwin: 'Alfred 5.app' owned by ['alfred', 'alfred@prerelease']",
+    "aarch64-darwin: 'Amethyst.app' owned by ['amethyst', 'amethyst-nostr']",
+    "aarch64-darwin: 'Anytype.app' owned by ['anytype', 'anytype@alpha', 'anytype@beta']",
+    "aarch64-darwin: 'BetterCmdTab.app' owned by ['bettercmdtab', 'bettercmdtab@beta']",
+    "aarch64-darwin: 'BetterTouchTool.app' owned by ['bettertouchtool', 'bettertouchtool@alpha']",
+    "aarch64-darwin: 'Beyond Compare.app' owned by ['beyond-compare', 'beyond-compare@4']",
+    "aarch64-darwin: 'bcomp' owned by ['beyond-compare', 'beyond-compare@4']",
+    "aarch64-darwin: 'Buzz.app' owned by ['block-buzz', 'buzz']",
+    "aarch64-darwin: 'BookMacster.app' owned by ['bookmacster', 'bookmacster@beta']",
+    "aarch64-darwin: 'Burp Suite.app' owned by ['burp-suite', 'burp-suite@early-adopter']",
+    "aarch64-darwin: 'Caffeine.app' owned by ['caffeine', 'domzilla-caffeine']",
+    "aarch64-darwin: 'Carbon Copy Cloner.app' owned by ['carbon-copy-cloner', 'carbon-copy-cloner@6']",
+    "aarch64-darwin: 'Chime.app' owned by ['chime', 'chime@alpha']",
+    "aarch64-darwin: 'claude' owned by ['claude-code', 'claude-code@latest']",
+    "aarch64-darwin: 'copilot' owned by ['copilot-cli', 'copilot-cli@prerelease']",
+    "aarch64-darwin: 'Couchbase Server.app' owned by ['couchbase-server-community', 'couchbase-server-enterprise']",
+    "aarch64-darwin: 'Dash.app' owned by ['dash', 'dash@6']",
+    "aarch64-darwin: 'Dolphin.app' owned by ['dolphin', 'dolphin@dev']",
+    "aarch64-darwin: 'Dropbox.app' owned by ['dropbox', 'dropbox@beta']",
+    "aarch64-darwin: 'Elemental.app' owned by ['elemental', 'elemental@6']",
+    "aarch64-darwin: 'Ferdium.app' owned by ['ferdium', 'ferdium@nightly']",
+    "aarch64-darwin: 'Firefox.app' owned by ['firefox@beta', 'firefox@esr']",
+    "aarch64-darwin: 'Fork.app' owned by ['fork', 'fork@dev']",
+    "aarch64-darwin: 'fork' owned by ['fork', 'fork@dev']",
+    "aarch64-darwin: 'Freelens.app' owned by ['freelens', 'freelens@nightly']",
+    "aarch64-darwin: 'FreeShow.app' owned by ['freeshow', 'freeshow@beta']",
+    "aarch64-darwin: 'Gama.app' owned by ['gama-jdk', 'gama-platform']",
+    "aarch64-darwin: 'Outline.app' owned by ['getoutline', 'outline']",
+    "aarch64-darwin: 'GitHub Desktop.app' owned by ['github', 'github@beta']",
+    "aarch64-darwin: 'github' owned by ['github', 'github@beta']",
+    "aarch64-darwin: 'GitKraken.app' owned by ['gitkraken', 'gitkraken-on-premise-serverless']",
+    "aarch64-darwin: 'Glide.app' owned by ['glide', 'glide-browser']",
+    "aarch64-darwin: 'glide' owned by ['glide', 'glide-browser']",
+    "aarch64-darwin: 'Godot.app' owned by ['godot', 'godot@3']",
+    "aarch64-darwin: 'godot' owned by ['godot', 'godot@3']",
+    "aarch64-darwin: 'Hoppscotch.app' owned by ['hoppscotch', 'hoppscotch-selfhost']",
+    "aarch64-darwin: 'Hyper.app' owned by ['hyper', 'hyper@canary']",
+    "aarch64-darwin: 'hyper' owned by ['hyper', 'hyper@canary']",
+    "aarch64-darwin: 'inso' owned by ['inso', 'inso@beta']",
+    "aarch64-darwin: 'Insomnia.app' owned by ['insomnia', 'insomnia@alpha']",
+    "aarch64-darwin: 'iTerm.app' owned by ['iterm2', 'iterm2@beta', 'iterm2@nightly']",
+    "aarch64-darwin: 'Ice.app' owned by ['jordanbaird-ice', 'jordanbaird-ice@beta']",
+    "aarch64-darwin: 'LinearMouse.app' owned by ['linearmouse', 'linearmouse@beta']",
+    "aarch64-darwin: 'liquibase' owned by ['liquibase-community', 'liquibase-secure']",
+    "aarch64-darwin: 'Little Snitch.app' owned by ['little-snitch', 'little-snitch@5', 'little-snitch@nightly']",
+    "aarch64-darwin: 'Mac Mouse Fix.app' owned by ['mac-mouse-fix', 'mac-mouse-fix@2']",
+    "aarch64-darwin: 'mi.app' owned by ['mi', 'mi@beta']",
+    "aarch64-darwin: 'MindManager.app' owned by ['mindjet-mindmanager', 'mindmanager']",
+    "aarch64-darwin: 'Mixxx.app' owned by ['mixxx', 'mixxx@snapshot']",
+    "aarch64-darwin: 'Monal.app' owned by ['monal', 'monal@beta']",
+    "aarch64-darwin: 'Mos.app' owned by ['mos', 'mos@beta']",
+    "aarch64-darwin: 'Mouseless.app' owned by ['mouseless', 'mouseless@preview']",
+    "aarch64-darwin: 'NetNewsWire.app' owned by ['netnewswire', 'netnewswire@beta']",
+    "aarch64-darwin: 'OpenRA - Dune 2000.app' owned by ['openra', 'openra@playtest']",
+    "aarch64-darwin: 'OpenRA - Red Alert.app' owned by ['openra', 'openra@playtest']",
+    "aarch64-darwin: 'OpenRA - Tiberian Dawn.app' owned by ['openra', 'openra@playtest']",
+    "aarch64-darwin: 'OpenShot Video Editor.app' owned by ['openshot-video-editor', 'openshot-video-editor@daily']",
+    "aarch64-darwin: 'osu!.app' owned by ['osu', 'osu@tachyon']",
+    "aarch64-darwin: 'Ovito.app' owned by ['ovito', 'ovito-pro']",
+    "aarch64-darwin: 'PDF Expert.app' owned by ['pdf-expert', 'pdf-expert@beta']",
+    "aarch64-darwin: 'Pika.app' owned by ['pika', 'pika@beta']",
+    "aarch64-darwin: 'ProPresenter.app' owned by ['propresenter', 'propresenter@beta']",
+    "aarch64-darwin: 'Qt Creator.app' owned by ['qt-creator', 'qt-creator@dev']",
+    "aarch64-darwin: 'Royal TSX.app' owned by ['royal-tsx', 'royal-tsx@beta']",
+    "aarch64-darwin: 'RStudio.app' owned by ['rstudio', 'rstudio@daily']",
+    "aarch64-darwin: 'Slack.app' owned by ['slack', 'slack@beta']",
+    "aarch64-darwin: 'smcFanControl.app' owned by ['smcfancontrol', 'smcfancontrol@beta']",
+    "aarch64-darwin: 'soulver' owned by ['soulver', 'soulver-cli']",
+    "aarch64-darwin: 'Stremio.app' owned by ['stremio', 'stremio@beta']",
+    "aarch64-darwin: 'Sublime Merge.app' owned by ['sublime-merge', 'sublime-merge@dev']",
+    "aarch64-darwin: 'smerge' owned by ['sublime-merge', 'sublime-merge@dev']",
+    "aarch64-darwin: 'Sublime Text.app' owned by ['sublime-text', 'sublime-text@dev']",
+    "aarch64-darwin: 'subl' owned by ['sublime-text', 'sublime-text@dev']",
+    "aarch64-darwin: 'Telegram Desktop.app' owned by ['telegram-desktop', 'telegram-desktop@beta']",
+    "aarch64-darwin: 'Thunderbird.app' owned by ['thunderbird', 'thunderbird@esr']",
+    "aarch64-darwin: 'Transmission.app' owned by ['transmission', 'transmission@beta']",
+    "aarch64-darwin: 'Typora.app' owned by ['typora', 'typora@dev']",
+    "aarch64-darwin: 'Unity Hub.app' owned by ['unity-hub', 'unity-hub@beta']",
+    "aarch64-darwin: 'UTM.app' owned by ['utm', 'utm@beta']",
+    "aarch64-darwin: 'utmctl' owned by ['utm', 'utm@beta']",
+    "aarch64-darwin: 'VirtualBuddy.app' owned by ['virtualbuddy', 'virtualbuddy@beta']",
+    "aarch64-darwin: 'vctool' owned by ['virtualbuddy', 'virtualbuddy@beta']",
+    "aarch64-darwin: 'Voiden.app' owned by ['voiden', 'voiden@beta']",
+    "aarch64-darwin: 'WhatsApp.app' owned by ['whatsapp', 'whatsapp@beta']",
+    "aarch64-darwin: 'Xmind.app' owned by ['xmind', 'xmind@beta']",
+    "aarch64-darwin: 'Yaak.app' owned by ['yaak', 'yaak@beta']",
+    "aarch64-darwin: 'Zotero.app' owned by ['zotero', 'zotero@beta']",
+    "x86_64-linux: 'op' owned by ['1password-cli', '1password-cli@beta']",
+    "x86_64-linux: 'claude' owned by ['claude-code', 'claude-code@latest']",
+    "x86_64-linux: 'copilot' owned by ['copilot-cli', 'copilot-cli@prerelease']",
+    "x86_64-linux: 'liquibase' owned by ['liquibase-community', 'liquibase-secure']",
+    "x86_64-linux: 'qBittorrent' owned by ['qbittorrent', 'qbittorrent@lt20']",
+    "x86_64-linux: 'Unity Hub' owned by ['unity-hub', 'unity-hub@beta']",
+    "x86_64-linux: 'Yaak' owned by ['yaak', 'yaak@beta']"
+   ],
+   "note": "informational conflict, not an invariant failure: stable/beta variant casks legitimately write the same bundle name; serializing such installs is the native Nix runtime's concern. Plan-internal duplicates remain fatal"
+  },
+  "interpretation": "bounded structural metadata checks over the whole catalog, not successful installs and not proof of classifier equivalence"
+ }
+}

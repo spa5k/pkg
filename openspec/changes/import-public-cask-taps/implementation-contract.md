@@ -42,8 +42,16 @@ after validation succeeds. Failed refreshes preserve the previous source.
 
 Emit schema `pkg-cask-catalog/3`. Use `inputs` with source provenance.
 Each entry has `source`, bare `token`, and an identity `owner/tap/token`
-as its map key. Expose that identity as one quoted Nix attribute segment.
-Record source-relative file provenance when reading Ruby. Both worker
+as its map key. Expose that identity in Nix as one quoted attribute
+segment holding the deterministic escaped full identity. Escape in one
+pass over the original characters: `_` becomes `_u_`, `.` becomes `_d_`,
+and every other character stays unchanged. Never re-replace underscores
+inserted by the pass. Example: `example/tap/tool@1.2` becomes the physical
+attribute `example/tap/tool@1_d_2`. A normal token such as
+`owner/tap/token` needs no escaping. The mapping is reversible, so
+catalog and public search map keys keep the original identity. The
+physical attribute is never a claim that the identity equals the
+attribute. Record source-relative file provenance when reading Ruby. Both worker
 leads must exchange the precise envelope before changing decoders.
 Generate the official JSON catalog in schema 3 with source `homebrew/cask`.
 No schema-2 compatibility layer is required.
@@ -56,6 +64,18 @@ and approval scope before executing any tap Ruby. Interactive consent is
 remembered per origin; automation must explicitly opt in. No prompt or
 Ruby execution occurs during ordinary search of saved catalogs. Removing
 a tap prevents future source use but does not remove installed packages.
+
+Keep profile human labels decoded: profiles display the decoded
+identity, not the escaped physical attribute. A native manifest strips
+quotes from attributes, so a raw dotted full identity installs but
+breaks native upgrade as a nested lookup; the escaped attribute avoids
+that. Parent Nix-only probes (2026-09-29) passed native install, upgrade,
+and rollback with the escaped physical attribute on Linux and macOS.
+This is a standalone Nix proof. Product coverage of the escaped attribute
+comes from the `cask_catalog` module tests plus the native encoded-attribute
+lifecycle runs on both hosts (install, update, upgrade, rollback —
+`lifecycle-*-encoded.log`, `lifecycle-*-safeattr.log`); source/token
+accepted characters do not broaden.
 
 Use stable generated flake references for explicit updates and the native
 profile for installation, upgrade, rollback, and removal. Preserve old

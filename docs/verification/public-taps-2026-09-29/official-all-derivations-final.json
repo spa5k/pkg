@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"exitCode\":0,\"stdout\":\"exit 0\\n{\\\"result\\\": \\\"pass\\\", \\\"schema\\\": \\\"pkg-cask-catalog/3\\\", \\\"counts\\\": {\\\"aarch64-darwin\\\": 3143, \\\"x86_64-linux\\\": 160}, \\\"sha256\\\": \\\"e4236969da8ae9249a5fd9f7b46df8c101cd0ad5ed2c93af52685f0e26ba9f2f\\\", \\\"vendor_downloads\\\": 0}\\n\",\"stderr\":\"\"}"
+    }
+  ]
+}

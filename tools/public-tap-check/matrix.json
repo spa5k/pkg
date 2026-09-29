@@ -1,0 +1,350 @@
+{
+  "matrix_version": 4,
+  "description": "Data-only adversarial fixture matrix for local public-tap import. Expected results are explicit per case. No fixture is executed here. The cask_catalog::tap interface is agreed (see design.md section 4: import-tap CLI with --source/--revision/--system/--nix/--out); importer execution happens only in a clean verification sandbox without model credentials. The final normal-mode native reader stage ran on both hosts on 2026-09-29 (20 cases per OS; see docs/verification/public-taps-2026-09-29/normal-reader-summary.json); converter expectations below reflect the backend's final actual converter classification, proven by the seven capture-case regressions (docs/verification/public-taps-2026-09-29/converter-captures.log, 7/7) and the final whole import of the seven real pinned sources on both hosts (docs/verification/public-taps-2026-09-29/results.md section E1). This is stage evidence, not a claim that every case here was whole-imported natively: the installer-script and branch fixture whole-imports and the native two-tree collision import stay explicit limits, and the client-resolution and sandbox-probe cases remain documented-check rows. Normal mode means an explicitly unset HOMEBREW_DEVELOPER environment variable; upstream may still print a developer-command warning, which is not a failure. Internal path loading is explicitly permitted for our staged trusted reader. There is no fixture-runner interface; do not invent a production local-source bypass.",
+  "layout": "Every independent case gets its own small tree, because a source-wide failure (duplicate token) aborts its whole tree and must not hide other cases. The only cross-tree token sharing is the intentional collision pair (collision-a/collision-b). Tree names map to synthetic source ids in source_id below.",
+  "source_id": {
+    "release-archive": "pubtap-fixtures/release-archive",
+    "raw-binary": "pubtap-fixtures/raw-binary",
+    "app-bundle": "pubtap-fixtures/app-bundle",
+    "branches": "pubtap-fixtures/branches",
+    "staging": "pubtap-fixtures/staging",
+    "staging-rescued": "pubtap-fixtures/staging-rescued",
+    "flights": "pubtap-fixtures/flights",
+    "steps": "pubtap-fixtures/steps",
+    "installer": "pubtap-fixtures/installer",
+    "dup": "pubtap-fixtures/dup",
+    "broken": "pubtap-fixtures/broken",
+    "flood": "pubtap-fixtures/flood",
+    "url-localhost": "pubtap-fixtures/url-localhost",
+    "url-private": "pubtap-fixtures/url-private",
+    "url-linklocal": "pubtap-fixtures/url-linklocal",
+    "url-ipv6": "pubtap-fixtures/url-ipv6",
+    "collision-a": "pubtap-fixtures/collision-a",
+    "collision-b": "pubtap-fixtures/collision-b",
+    "invalidation/alpha-v1": "pubtap-fixtures/invalidation-v1",
+    "invalidation/alpha-v2": "pubtap-fixtures/invalidation-v2"
+  },
+  "policy": {
+    "reserved_hosts": ["example.com", "example.org"],
+    "url_policy": "Fixtures carry literal local/private destinations only (localhost, 192.168.1.9, 169.254.169.254, [::1]). Redirect and DNS policy belong to backend tests; no fixture can prove redirect handling, so only the documented literal-destination expectation is asserted here. Sandbox denial proofs are not fixtures here: the parent runs controlled native Nix probes and the backend runs the real reader-gate probe with positive controls; a missing control is a failure, never a pass.",
+    "bounds": {
+      "max_fixture_file_bytes": 65536,
+      "max_generated_files": 200,
+      "max_captured_output_bytes": 65536,
+      "output_exhaustion_emit_bytes": 2097152,
+      "harness_command_timeout_seconds": 300
+    },
+    "outcomes": [
+      "eligible",
+      "excluded",
+      "source-failure",
+      "cache-invalidation",
+      "output-bound",
+      "client-ambiguity",
+      "resolution-failure"
+    ]
+  },
+  "cases": [
+    {
+      "id": "gh-release-archive",
+      "class": "supported-subset",
+      "taps": ["release-archive"],
+      "token": "pubtap-release-archive",
+      "files": ["taps/release-archive/Casks/r/pubtap-release-archive.rb"],
+      "expect": {
+        "outcome": "eligible",
+        "codes": [],
+        "by_target": { "aarch64-darwin": "eligible", "x86_64-linux": "eligible" },
+        "notes": "Plain GitHub-style release zip. Both targets are supported through actual on_macos/on_linux blocks: app bundle on macOS, a binary from the archive on Linux. No platform support is marked without an OS block."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "raw-binary",
+      "class": "supported-subset",
+      "taps": ["raw-binary"],
+      "token": "pubtap-raw-binary",
+      "files": ["taps/raw-binary/Casks/b/pubtap-raw-binary.rb"],
+      "expect": {
+        "outcome": "eligible",
+        "codes": [],
+        "by_target": { "aarch64-darwin": "eligible", "x86_64-linux": "eligible" },
+        "notes": "Raw release binary. The binary source names the download basename (pubtap-raw-binary-0.9.0.bin) with an explicit target rename, so it is a valid generic raw-binary case on both systems via on_macos/on_linux blocks."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "app-bundle-dmg",
+      "class": "supported-subset",
+      "taps": ["app-bundle"],
+      "token": "pubtap-app-bundle",
+      "files": ["taps/app-bundle/Casks/a/pubtap-app-bundle.rb"],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["unsupported-platform"],
+        "by_target": { "aarch64-darwin": "eligible", "x86_64-linux": "excluded" },
+        "notes": "macOS-only app bundle in a dmg with the current supported symbol depends_on macos: :sonoma. Linux must be excluded with a platform reason, never guessed."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "os-arch-language-branches",
+      "class": "supported-subset",
+      "taps": ["branches"],
+      "token": "pubtap-branches",
+      "files": [
+        "taps/branches/Casks/t/pubtap-branches.rb",
+        "taps/branches/lib/pubtap_helper.rb"
+      ],
+      "expect": {
+        "outcome": "eligible",
+        "codes": [],
+        "by_target": { "aarch64-darwin": "eligible", "x86_64-linux": "eligible" },
+        "notes": "Actual arch branch (arch arm/intel interpolated into the URL and the sha256 variants), on_macos/on_linux blocks, depends_on macos: :ventura, two language blocks that each return their language code, and name/homepage/desc supplied normally outside the language blocks. The require_relative helper is part of whole-tree identity."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "helper-only-invalidation",
+      "class": "source-integrity",
+      "taps": ["invalidation-v1", "invalidation-v2"],
+      "token": "pubtap-invalidation",
+      "files": [
+        "taps/invalidation/alpha-v1/Casks/t/pubtap-invalidation.rb",
+        "taps/invalidation/alpha-v1/lib/pubtap_helper.rb",
+        "taps/invalidation/alpha-v2/Casks/t/pubtap-invalidation.rb",
+        "taps/invalidation/alpha-v2/lib/pubtap_helper.rb"
+      ],
+      "expect": {
+        "outcome": "cache-invalidation",
+        "codes": ["tree-identity-changed"],
+        "notes": "Both variants load cleanly: the cask requires the helper via require_relative and both helper variants define it. The cask file is byte-identical in v1/v2; only the helper VERSION value changes (1.4.0 vs 1.4.1), so the imported version and URL differ AND the whole-tree hash differs. Cached export output must be invalidated by the tree change; the test must not pass merely because a variant failed to load."
+      },
+      "harness": {
+        "step": "static-tree",
+        "documented_check": "helper-only invalidation one-off check in tools/public-tap-check/README.md"
+      }
+    },
+    {
+      "id": "staging-accessor",
+      "class": "conversion-limit",
+      "taps": ["staging"],
+      "token": "pubtap-staging",
+      "files": [
+        "taps/staging/Casks/s/pubtap-staging.rb",
+        "taps/staging/Casks/c/pubtap-staging-control.rb"
+      ],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["ruby-load-error"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "Artifact list derives from the upstream staging accessor. The importer maps every pkg_error to excluded reason ruby-load-error with bounded detail; for this case the detail must contain staged_path, and that explicit guard detail is what proves the record was excluded for the staging reason, not for an unrelated one. Excluded on both targets; no guessed empty artifact list; no payload download to satisfy it. The tree also holds one valid positive-control cask (pubtap-staging-control, expected eligible): the actual reader fails a whole export when every record fails, so the import must emit the excluded record plus the eligible control record. Both records are part of the expected inventory."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "staging-accessor-rescued",
+      "class": "conversion-limit",
+      "taps": ["staging-rescued"],
+      "token": "pubtap-staging-rescued",
+      "files": [
+        "taps/staging-rescued/Casks/s/pubtap-staging-rescued.rb",
+        "taps/staging-rescued/Casks/c/pubtap-staging-rescued-control.rb"
+      ],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["ruby-load-error"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "The source rescues the staging error and offers a static fallback, but the reader still fails during source eval, so the importer emits excluded reason ruby-load-error with bounded detail; the detail must contain staged-path-during-source-eval. The refusal flag must stay sticky; the rescue must not create eligibility. The tree also holds one valid positive-control cask (pubtap-staging-rescued-control, expected eligible): the actual reader fails a whole export when every record fails, so the import must emit the excluded record plus the eligible control record. Both records are part of the expected inventory."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "preflight-postflight",
+      "class": "conversion-limit",
+      "taps": ["flights"],
+      "token": "pubtap-flights",
+      "files": [
+        "taps/flights/Casks/p/pubtap-flights.rb",
+        "taps/flights/Casks/c/pubtap-flights-control.rb"
+      ],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["unsupported-artifact"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "Legacy preflight and postflight callback blocks load under the final normal-mode reader (HOMEBREW_DEVELOPER explicitly unset; the upstream developer-command warning may still print and is not a failure). The final actual converter test excludes this record as unsupported-artifact, with a detail naming the callback keys; it is NOT installer-script and NOT ruby-load-error. The deprecated legacy shape is preserved on purpose. The tree also holds one valid positive-control cask (pubtap-flights-control, expected eligible): the actual reader fails a whole export when every record fails, so the import must emit the excluded record plus the eligible control record. Both records are part of the expected inventory. Reader-only success is not converter eligibility."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "postflight-steps-run",
+      "class": "conversion-limit",
+      "taps": ["steps"],
+      "token": "pubtap-steps",
+      "files": ["taps/steps/Casks/p/pubtap-steps.rb"],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["installer-script"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "Structured postflight_steps block with a run stanza using a literal command shape (run \"/usr/bin/true\", args: []); no staged_path appears in the steps DSL, where it is undefined. Distinct from the legacy callback case: the steps must be captured as structured step data (not a legacy callback), preserved in metadata, and the final actual converter test excludes the record as installer-script. run describes a future command; it is never executed during export."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "installer-script",
+      "class": "conversion-limit",
+      "taps": ["installer"],
+      "token": "pubtap-installer",
+      "files": ["taps/installer/Casks/i/pubtap-installer.rb"],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["installer-script"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "Installer script stanza with a literal relative executable path (install.sh) and literal args; no staged_path interpolation. Installer scripts are excluded with the installer-script reason by the final actual converter test, never executed. The literal shape keeps the record loadable so the classifier exclusion can be asserted."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "duplicate-token",
+      "class": "source-integrity",
+      "taps": ["dup"],
+      "token": "pubtap-dup",
+      "files": [
+        "taps/dup/Casks/a/pubtap-dup.rb",
+        "taps/dup/Casks/b/pubtap-dup.rb"
+      ],
+      "expect": {
+        "outcome": "source-failure",
+        "codes": ["duplicate-token"],
+        "notes": "Two files with the same basename pubtap-dup.rb in Casks/a and Casks/b, both declaring token pubtap-dup: a genuine duplicate token, not a token/filename mismatch. The refresh must fail the whole (isolated) source and the previous catalog bytes must remain."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "malformed-load-error",
+      "class": "conversion-limit",
+      "taps": ["broken"],
+      "token": "pubtap-broken",
+      "files": [
+        "taps/broken/Casks/m/pubtap-broken.rb",
+        "taps/broken/Casks/c/pubtap-broken-control.rb"
+      ],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["ruby-load-error"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "Per-record syntax error becomes one excluded entry with reason ruby-load-error and bounded detail; the source continues; diagnostics are bounded. The tree also holds one valid positive-control cask (pubtap-broken-control, expected eligible): the actual reader fails a whole export when every record fails, so the import must emit the excluded record plus the eligible control record. Both records are part of the expected inventory."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "output-exhaustion",
+      "class": "sandbox-attack",
+      "taps": ["flood"],
+      "token": "pubtap-flood",
+      "files": ["taps/flood/Casks/f/pubtap-flood.rb"],
+      "expect": {
+        "outcome": "output-bound",
+        "codes": ["diagnostics-bounded"],
+        "notes": "Emits exactly output_exhaustion_emit_bytes (fixed, baked in from policy; no environment override can unbound the fixture) then stops; no infinite loop; one isolated tree. Captured diagnostics must be capped at max_captured_output_bytes by the runner WHILE the command runs; result size must be capped; the case passes only if the capture stays within bounds and no hang occurs. Classification may be eligible or excluded; the bound is the assertion."
+      },
+      "harness": {
+        "step": "sandbox-probe",
+        "documented_check": "bounded-run pattern in tools/public-tap-check/README.md (timeout plus capped capture); measured stage coverage and limits are recorded in docs/verification/public-taps-2026-09-29/results.md"
+      }
+    },
+    {
+      "id": "url-literal-localhost",
+      "class": "fetch-policy",
+      "taps": ["url-localhost"],
+      "token": "pubtap-url-localhost",
+      "files": ["taps/url-localhost/Casks/u/pubtap-url-localhost.rb"],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["unsupported-url"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "URL is a literal localhost address, so the destination policy must refuse it without any DNS lookup; the final actual converter test excludes it as unsupported-url. Redirect handling cannot be proven by any fixture; that belongs to backend tests."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "url-literal-private",
+      "class": "fetch-policy",
+      "taps": ["url-private"],
+      "token": "pubtap-url-private",
+      "files": ["taps/url-private/Casks/u/pubtap-url-private.rb"],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["unsupported-url"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "URL is a literal RFC1918 address; refused without a lookup and excluded as unsupported-url. Redirect/DNS policy stays in backend tests."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "url-literal-linklocal",
+      "class": "fetch-policy",
+      "taps": ["url-linklocal"],
+      "token": "pubtap-url-linklocal",
+      "files": ["taps/url-linklocal/Casks/u/pubtap-url-linklocal.rb"],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["unsupported-url"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "URL is the literal link-local metadata-service address; refused without a lookup and excluded as unsupported-url. Redirect/DNS policy stays in backend tests."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "url-literal-ipv6",
+      "class": "fetch-policy",
+      "taps": ["url-ipv6"],
+      "token": "pubtap-url-ipv6",
+      "files": ["taps/url-ipv6/Casks/u/pubtap-url-ipv6.rb"],
+      "expect": {
+        "outcome": "excluded",
+        "codes": ["unsupported-url"],
+        "by_target": { "aarch64-darwin": "excluded", "x86_64-linux": "excluded" },
+        "notes": "URL is a literal IPv6 loopback address; refused without a lookup and excluded as unsupported-url. Redirect/DNS policy stays in backend tests."
+      },
+      "harness": { "step": "importer" }
+    },
+    {
+      "id": "cross-tap-collision",
+      "class": "identity",
+      "taps": ["collision-a", "collision-b"],
+      "token": "editor, viewer",
+      "files": [
+        "taps/collision-a/Casks/e/editor.rb",
+        "taps/collision-a/Casks/v/viewer.rb",
+        "taps/collision-b/Casks/e/editor.rb",
+        "taps/collision-b/Casks/v/viewer.rb"
+      ],
+      "expect": {
+        "outcome": "client-ambiguity",
+        "codes": ["bare-token-ambiguous"],
+        "notes": "Intentional two-source pair. Both sources publish token editor (eligible in both). Token viewer is excluded in collision-a (the cask source touches the staging accessor, so it fails the reader load; ruby-load-error with a staged-path detail) and eligible in collision-b. Bare editor and bare viewer must both stay ambiguous; the excluded viewer match counts; no ordering precedence; qualified identities resolve only within their source."
+      },
+      "harness": {
+        "step": "client-resolution",
+        "documented_check": "client commands after import in the clean sandbox; measured stage coverage and limits are recorded in docs/verification/public-taps-2026-09-29/results.md"
+      }
+    },
+    {
+      "id": "unreadable-saved-catalog",
+      "class": "identity",
+      "taps": ["collision-a", "collision-b"],
+      "token": "editor",
+      "files": [],
+      "expect": {
+        "outcome": "resolution-failure",
+        "codes": ["saved-catalog-unreadable"],
+        "notes": "Acceptance case: one saved source catalog is unreadable or malformed while another saved source has the same bare token. Bare-token resolution must fail for the whole pass. The client must report the failed source. It must not ignore the failed source and select the other source. No fixture file: this is a client-state condition prepared during the run."
+      },
+      "harness": {
+        "step": "client-resolution",
+        "documented_check": "corrupt one saved catalog, then attempt bare-token install; measured stage coverage and limits are recorded in docs/verification/public-taps-2026-09-29/results.md"
+      }
+    }
+  ]
+}

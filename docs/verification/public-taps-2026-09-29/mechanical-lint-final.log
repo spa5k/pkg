@@ -1,0 +1,62 @@
+
+$ nixfmt --check nix/casks/flake.nix
+[exit=0]
+
+$ nixfmt --check nix/casks/lib/builders.nix
+[exit=0]
+
+$ nixfmt --check nix/casks/lib/catalog.nix
+[exit=0]
+
+$ nixfmt --check nix/casks/lib/public-fetch.nix
+[exit=0]
+
+$ nixfmt --check nix/casks/lib/tap/raw-export.nix
+[exit=0]
+
+$ nixfmt --check nix/casks/lib/tap/tests/default.nix
+nix/casks/lib/tap/tests/default.nix: not formatted
+[exit=1]
+
+$ nixfmt --check tools/cask-catalog/src/tap/flake-template.nix
+[exit=0]
+
+$ statix check nix/casks/lib/builders.nix
+[exit=0]
+
+$ statix check nix/casks/lib/catalog.nix
+[exit=0]
+
+$ statix check nix/casks/lib/public-fetch.nix
+[exit=0]
+
+$ statix check nix/casks/lib/tap/raw-export.nix
+[exit=0]
+
+$ statix check nix/casks/lib/tap/tests/default.nix
+[exit=0]
+
+$ statix check nix/casks/flake.nix
+[exit=0]
+
+$ statix check tools/cask-catalog/src/tap/flake-template.nix
+[exit=0]
+
+$ deadnix --fail nix/casks/flake.nix nix/casks/lib/builders.nix nix/casks/lib/catalog.nix nix/casks/lib/public-fetch.nix nix/casks/lib/tap/raw-export.nix nix/casks/lib/tap/tests/default.nix tools/cask-catalog/src/tap/flake-template.nix
+[exit=0]
+
+$ ruff check --isolated nix/casks/lib/safe-fetch.py tools/cask-catalog/tests/test_safe_fetch.py
+All checks passed!
+[exit=0]
+
+$ ruff format --check --isolated nix/casks/lib/safe-fetch.py tools/cask-catalog/tests/test_safe_fetch.py
+2 files already formatted
+[exit=0]
+
+$ python3 tools/cask-catalog/tests/test_safe_fetch.py
+.........................................................
+----------------------------------------------------------------------
+Ran 57 tests in 1.603s
+
+OK
+[exit=0]

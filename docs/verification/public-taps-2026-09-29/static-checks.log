@@ -1,0 +1,20 @@
+STATIC/CHECKER-ONLY evidence; no importer, raw tap evaluation, payload download, or product security proof.
+UTC: 2026-09-28T23:09:08.608703+00:00 Host: macOS-27.0-arm64-arm-64bit-Mach-O
+PASS A1: python3 -m json.tool tools/public-tap-check/matrix.json
+PASS A1: python3 -m json.tool tools/public-tap-check/public-sources.json
+PASS A2: python3 tools/public-tap-check/make_fixtures.py --out <fresh absolute dir>; two outputs byte-identical: 32 files including manifest
+PASS A3: nonempty, relative and leaf-symlink outputs rejected; macOS /var parent alias accepted by normal generation
+PASS fixture invariant: helper-only variants have identical cask bytes and different helper bytes; cache invalidation NOT tested
+PASS A8: /usr/bin/ruby -c on 30 generated files; only intentional pubtap-broken.rb is invalid; no Ruby evaluation
+PASS A9: check_sources.py manufactured valid control accepted; 5 independent negatives rejected: wrong revision, invalid status, same-count wrong token, archive URL as origin, extra raw target ; no actual imported catalog
+PASS A6: HTML parser, unique IDs, no scripts, 21 links/anchors checked
+PASS A6/F4: /opt/homebrew/opt/python@3.14/bin/python3.14 .github/scripts/check_docs_links.py
+Scanned 133 Markdown file(s); validated 495 local link(s).
+OK: all doc links and OpenSpec structural checks passed.
+PASS A6/F4: openspec validate import-public-cask-taps --strict
+Change 'import-public-cask-taps' is valid
+SHA256 9578ad3f4cc18af53d6c78f8d2a59245af3ce155bc25c2327430bb510608d7f4 tools/public-tap-check/README.md
+SHA256 e73b000fe5b1784b088c42ecd5127aad9d85761c18acd352b1adc09b22230282 tools/public-tap-check/check_sources.py
+SHA256 4f89a9c35e4a40d08df0a10829e91ac8ac5e3b0317ded643500d3e0bc733284b tools/public-tap-check/make_fixtures.py
+SHA256 a21b16217ec04a380e7c79f9b7f755f4d13d75c99887cfd5fe3a0404f36d3141 tools/public-tap-check/matrix.json
+SHA256 93a680fc6f001f02c1f2ce63ae09a92aa00b4b51400b8e6db39442f60d886b5a tools/public-tap-check/public-sources.json

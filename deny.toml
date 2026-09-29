@@ -36,6 +36,10 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
+    # webpki-roots 1.0.9 ships Mozilla trust roots under CDLA-Permissive-2.0
+    # (a permissive data license: use, modify, and share the data with
+    # the required notices; it imposes no share-alike terms).
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 # Private workspace crates are ignored because they are not published.

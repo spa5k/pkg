@@ -1,8 +1,8 @@
-# cask-catalog — maintainer tool that generates the pkg Cask catalog.
+# cask-catalog — maintainer tool for the pkg Cask catalog.
 #
-# Offline by contract: `fetch` is the only network step (curl subprocess,
-# maintainer machines only). `generate` reads the pinned input and writes
-# deterministic catalog data. See openspec/changes/generate-cask-catalog-with-rust.
+# `fetch` and `import-tap` are bounded network steps (maintainer machines
+# only); `import-tap` additionally drives a local sandboxed Nix build.
+# `generate` reads the pinned input and writes deterministic catalog data.
 
 [package]
 name = "cask-catalog"
@@ -11,14 +11,22 @@ edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
 publish = false
-description = "Generate the normalized Homebrew Cask catalog consumed by the pkg casks source"
+description = "Maintainer tool for the pkg Cask catalog: pinned snapshot generation and raw public tap import"
 
 [dependencies]
+libc = "=0.2.189"
 clap = { version = "=4.6.6", features = ["derive"] }
+flate2 = "=1.1.10"
+reqwest = { version = "=0.12.28", default-features = false, features = [
+  "blocking",
+  "rustls-tls",
+] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 sha2 = "=0.10.9"
+tar = "=0.4.46"
 tempfile = "=3.27.0"
+url = "=2.5.8"
 
 [lints]
 workspace = true

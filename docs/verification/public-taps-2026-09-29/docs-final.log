@@ -1,0 +1,6 @@
+    Checking cask-catalog v0.1.0 (/Users/pacific/.codex/worktrees/simplification-research/pkg/tools/cask-catalog)
+ Documenting cask-catalog v0.1.0 (/Users/pacific/.codex/worktrees/simplification-research/pkg/tools/cask-catalog)
+    Checking pkg-cli v0.2.0-alpha.2 (/Users/pacific/.codex/worktrees/simplification-research/pkg/crates/pkg-cli)
+ Documenting pkg-cli v0.2.0-alpha.2 (/Users/pacific/.codex/worktrees/simplification-research/pkg/crates/pkg-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.64s
+   Generated /Users/pacific/.codex/worktrees/simplification-research/pkg/target/doc/cask_catalog/index.html and 2 other files

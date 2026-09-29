@@ -1,0 +1,64 @@
+import json
+import os
+from pathlib import Path
+import platform
+import socket
+import subprocess
+import tempfile
+import threading
+
+root = Path(tempfile.mkdtemp(prefix="pkg-tap-sandbox-", dir="/tmp"))
+root.chmod(0o777)
+canary = root / "outside-canary"
+canary.write_text("public-test-marker")
+canary.chmod(0o644)
+escape = root / "outside-write"
+server = socket.socket()
+server.bind(("127.0.0.1", 0))
+server.listen(4)
+port = server.getsockname()[1]
+with socket.create_connection(("127.0.0.1", port), timeout=2):
+    pass
+conn, _ = server.accept()
+conn.close()
+system = "aarch64-darwin" if platform.system() == "Darwin" else "x86_64-linux"
+os.environ["PATH"] = "/nix/var/nix/profiles/default/bin:" + os.environ["PATH"]
+script = f'''
+import json, pathlib, socket
+results = {{}}
+try:
+    pathlib.Path({str(canary)!r}).read_text()
+    results['outside_read'] = 'ALLOWED'
+except OSError:
+    results['outside_read'] = 'denied'
+try:
+    pathlib.Path({str(escape)!r}).write_text('escape')
+    results['outside_write'] = 'ALLOWED'
+except OSError:
+    results['outside_write'] = 'denied'
+try:
+    with socket.create_connection(('127.0.0.1', {port}), timeout=2):
+        results['host_loopback'] = 'ALLOWED'
+except OSError:
+    results['host_loopback'] = 'denied'
+print(json.dumps(results), flush=True)
+assert set(results.values()) == {{'denied'}}, results
+'''
+shell = "python3 - <<'PY'\n" + script + "\nPY\ntouch \"$out\"\n"
+expr = f'''let pkgs = import (builtins.getFlake "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f").outPath {{ system = "{system}"; }};
+in pkgs.runCommand "pkg-public-tap-sandbox-probe" {{ nativeBuildInputs = [pkgs.python3]; __darwinAllowLocalNetworking = false; }} {json.dumps(shell)}
+'''
+(root / "probe.nix").write_text(expr)
+try:
+    result = subprocess.run(["nix", "build", "--no-link", "--print-out-paths", "-L",
+        "--option", "sandbox", "true", "--option", "sandbox-fallback", "false",
+        "--file", str(root / "probe.nix")], capture_output=True, text=True, timeout=300)
+    print(json.dumps({"system": system, "root": str(root), "loopback_positive_control": True,
+                      "canary_mode": oct(canary.stat().st_mode & 0o777),
+                      "outside_dir_mode": oct(root.stat().st_mode & 0o777),
+                      "returncode": result.returncode, "stdout": result.stdout,
+                      "stderr": result.stderr, "outside_write_exists": escape.exists()}), flush=True)
+    result.check_returncode()
+    assert not escape.exists()
+finally:
+    server.close()

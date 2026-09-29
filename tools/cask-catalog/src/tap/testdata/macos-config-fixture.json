@@ -1,0 +1,40 @@
+{
+  "allowed-impure-host-deps": {
+    "value": [
+      "/System/Library",
+      "/bin/sh",
+      "/dev",
+      "/usr/lib"
+    ]
+  },
+  "sandbox": {
+    "value": true
+  },
+  "sandbox-fallback": {
+    "value": false
+  },
+  "sandbox-paths": {
+    "value": {
+      "/System/Library/Frameworks": {
+        "optional": false,
+        "source": "/System/Library/Frameworks"
+      },
+      "/System/Library/PrivateFrameworks": {
+        "optional": false,
+        "source": "/System/Library/PrivateFrameworks"
+      },
+      "/bin/bash": {
+        "optional": false,
+        "source": "/bin/bash"
+      },
+      "/bin/sh": {
+        "optional": false,
+        "source": "/bin/sh"
+      },
+      "/usr/lib": {
+        "optional": false,
+        "source": "/usr/lib"
+      }
+    }
+  }
+}

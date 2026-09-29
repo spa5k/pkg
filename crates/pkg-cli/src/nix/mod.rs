@@ -24,14 +24,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub use error::NixError;
+pub use manifest::OFFICIAL_CASK_SOURCE;
 pub use manifest::{
     CATALOG_INDEX_SCHEMA, CatalogEntry, CatalogGenerator, CatalogIndex, CatalogInput,
-    CatalogSystem, EntryStatus, ProfileEntry, SearchMeta, SourceIdentity, decode_catalog_index,
-    valid_catalog_token,
+    CatalogSystem, EntryStatus, ProfileEntry, RawInputProvenance, SearchMeta, SourceIdentity,
+    decode_catalog_index, full_entry_id, split_entry_id, valid_catalog_source, valid_catalog_token,
 };
 use process::{IoMode, Reaped, run_child};
-pub use process::{Outcome, run_direct};
-pub use reference::is_fixed_reference;
+pub use process::{Outcome, run_direct, run_direct_captured};
+pub use reference::{
+    decode_path_reference, encode_path_reference, is_fixed_reference, is_full_commit_id,
+};
 
 /// The only natively verified runtime baseline.
 ///
@@ -519,5 +522,12 @@ mod tests {
                 stderr: String::from("helper diagnostic\n"),
             }
         );
+
+        // The captured variant returns the child's stdout next to the
+        // outcome; `run_direct` is its discard-stdout wrapper.
+        let (capture, _keep) = fake_runtime("echo 'status text'");
+        let (outcome, stdout) = run_direct_captured(&capture, &[]).expect("runs and captures");
+        assert_eq!(outcome, Outcome::Success);
+        assert_eq!(stdout, "status text\n");
     }
 }

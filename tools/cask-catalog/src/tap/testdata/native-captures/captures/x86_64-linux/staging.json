@@ -1,0 +1,87 @@
+{
+ "casks": [
+  {
+   "artifacts": [
+    {
+     "binary": [
+      "bin/pubtap-staging-control"
+     ],
+     "target": "$HOMEBREW_PREFIX/bin/pubtap-staging-control"
+    }
+   ],
+   "auto_updates": null,
+   "autobump": true,
+   "bundle_short_version": null,
+   "bundle_version": null,
+   "caveats": null,
+   "caveats_rosetta": null,
+   "conflicts_with": null,
+   "container": null,
+   "depends_on": {},
+   "deprecate_args": null,
+   "deprecated": false,
+   "deprecation_date": null,
+   "deprecation_reason": null,
+   "deprecation_replacement_cask": null,
+   "deprecation_replacement_formula": null,
+   "desc": "Valid positive control for its isolated tree (synthetic fixture)",
+   "disable_args": null,
+   "disable_date": null,
+   "disable_reason": null,
+   "disable_replacement_cask": null,
+   "disable_replacement_formula": null,
+   "disabled": false,
+   "full_token": "pubtap-fixtures/staging/pubtap-staging-control",
+   "homepage": "https://example.com/pubtap/pubtap-staging-control",
+   "installed": null,
+   "installed_time": null,
+   "languages": [],
+   "name": [
+    "PubTap Staging Control"
+   ],
+   "no_autobump_message": null,
+   "old_tokens": [],
+   "outdated": false,
+   "pinned": false,
+   "pinned_version": null,
+   "pkg_origin": {
+    "path": "Casks/c/pubtap-staging-control.rb",
+    "sha256": "f5ff125b3724d9db556b4bf1ce69eb1bc159b726b9463de84fd9db693e0f3d1c"
+   },
+   "rename": [],
+   "ruby_source_checksum": {
+    "sha256": "f5ff125b3724d9db556b4bf1ce69eb1bc159b726b9463de84fd9db693e0f3d1c"
+   },
+   "ruby_source_path": "Casks/c/pubtap-staging-control.rb",
+   "sha256": "2e5f61120bd5d7bc6c4080efcf084aeda67effce79d27fa28f9b7e8de7d21de7",
+   "skip_livecheck": false,
+   "tap": "pubtap-fixtures/staging",
+   "tap_git_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "token": "pubtap-staging-control",
+   "upstreamPlatformSupported": true,
+   "url": "https://example.com/pubtap/pubtap-staging-control/pubtap-staging-control-1.0.0.zip",
+   "url_specs": {},
+   "version": "1.0.0"
+  },
+  {
+   "pkg_error": "RuntimeError: pkg-export: staged_path called during cask source evaluation",
+   "pkg_origin": {
+    "path": "Casks/s/pubtap-staging.rb",
+    "sha256": "d08c8bc4a6fb28684f49984d4160a36fbd05973ffe185cf39f46723425051c0b"
+   },
+   "token": "pubtap-staging"
+  }
+ ],
+ "files": {
+  "failed": 1,
+  "ok": 1,
+  "total": 2
+ },
+ "homebrew": "cc9ff034b1d98cdd4061f68cf715bb967c483a8f",
+ "probe": "denied: host-read, host-write, loopback",
+ "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+ "ruby": "4.0.5",
+ "schema": "pkg-tap-raw-export/1",
+ "source": "pubtap-fixtures/staging",
+ "system": "x86_64-linux"
+}

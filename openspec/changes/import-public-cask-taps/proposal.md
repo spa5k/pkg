@@ -1,65 +1,86 @@
-# Import raw Ruby casks from public taps
+# Import public cask taps locally
 
-Status: proposed, 29 September 2026. This is a plan, not an implementation.
-Baseline: `f6f99a748653861302876dfe127dfc6bf498d323`, which merged
+Status: updated 29 September 2026 to the accepted implementation contract.
+The [implementation contract](implementation-contract.md) is authoritative.
+It supersedes the earlier maintainer-only proposal, including its forced
+raw-official source replacement and its three-PR delivery order.
+Baseline plan code: `f6f99a748653861302876dfe127dfc6bf498d323` from
 [PR #81](https://github.com/spa5k/pkg/pull/81).
 
 ## Why
 
-The merged catalog generator reads a pinned JSON snapshot. It cannot read
-a vendor's Ruby casks or combine taps with the same token. Adding public
-taps must not create a Ruby interpreter, package allowlist, hosted catalog
-service, or second package manager inside the client.
+The merged catalog generator reads one pinned JSON snapshot of the official
+tap. It cannot ingest any other public tap, and users cannot add one. The
+old answer was a maintainer-only export pipeline plus a raw-official
+cutover. That answer is retired.
 
-Homebrew already owns Ruby Cask semantics. Use its pinned reader during
-catalog updates. Rust keeps validation and catalog generation. Nix keeps
-builds and the package lifecycle. The
+The accepted answer is local import with explicit approval. `pkg` adds a
+public Homebrew Cask tap after consent, converts a pinned revision into
+native Nix packages on the user's machine, and keeps the existing official
+JSON catalog. Nix supplies the pinned Ruby and the upstream Homebrew reader
+dependencies. Ruby runs only inside our ordinary sandboxed Nix derivation.
+No Brew installation lifecycle, hosted API service, WASM runtime, per-app
+code, or formula-to-cask conversion is introduced. Nix keeps installed
+state. The
 [source research](../../../docs/research/2026-09-29-raw-ruby-public-taps.md)
-records upstream interfaces and their limits.
+and the [security research](../../../docs/research/2026-09-29-public-tap-security.md)
+record upstream interfaces, their limits, and the sandbox assumptions.
 
 ## What Changes
 
-- Add a declarative source registry and lock for public Git taps and pinned
-  JSON snapshots. A source entry is configuration, not package-specific code.
-- Add a small exporter around pinned Homebrew Ruby code. Run it only in
-  isolated maintainer environments. Use native ARM64 macOS and x86-64 Linux
-  runners where target behavior matters. No Ruby runs during client commands
-  or Nix evaluation.
-- Preserve unsupported operations in the export. Reject required install
-  steps, payload-dependent metadata, and missing target evidence. Do not
-  silently turn incomplete metadata into an eligible package.
-- **BREAKING:** Emit `pkg-cask-catalog/3` with source provenance and qualified
-  package identities. Same-token entries from different taps coexist.
-- Keep one generated flake and one client Cask source. Ordinary Nix install,
-  upgrade, rollback, and removal remain the lifecycle. Publishers can generate
-  their own catalog flake without a hosted API.
-- Replace the JSON-mirror-only fetch contract. Keep the existing JSON reader
-  as a real input adapter while the official tap moves to raw-source export.
+- Add client commands `pkg tap add SOURCE [--revision SHA] [--trust]`,
+  `pkg tap list`, `pkg tap update [SOURCE] [--revision SHA]`, and
+  `pkg tap remove SOURCE`. First consent is shown the canonical repository
+  and approval scope, must precede any tap Ruby execution, and is remembered
+  per origin. Noninteractive runs require `--trust`.
+- Add a backend importer library seam, `cask_catalog::tap`, that fetches the
+  pinned public source without credentials, runs the pinned Homebrew reader
+  Ruby in a sandboxed Nix derivation, captures metadata, and writes one
+  generated schema-3 flake into a caller-owned staging directory. The client
+  validates and publishes atomically. Failed refreshes preserve the previous
+  source. Ordinary search of saved catalogs never runs Ruby and never prompts.
+- Support a generic artifact subset: GitHub release archives, raw binaries,
+  app bundles, and the existing safe artifact plans. Reject installer
+  scripts, payload-dependent metadata, unsupported dependencies, and active
+  installer actions explicitly, with recorded reasons.
+- **BREAKING:** emit `pkg-cask-catalog/3` with `inputs` source provenance and
+  qualified `owner/tap/token` identities. Same bare tokens from different
+  taps coexist. No schema-2 compatibility layer ships.
+- Keep the official JSON source, regenerated in schema 3 with source
+  `homebrew/cask`. The forced raw-official replacement and default-mirror
+  retirement from the old plan are dropped.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `tap-source-ingestion`: pinned sources, isolated Ruby export, bounded error
-  handling, export snapshots, and atomic catalog publication.
-- `namespaced-cask-catalog`: source-qualified identity, schema version 3,
-  ambiguous-name handling, Nix attributes, and client source provenance.
+- `tap-source-ingestion`: consent-gated local import, credential-free public
+  fetch, sandboxed Nix-provided Ruby evaluation, bounded failure handling,
+  captured exports, and atomic catalog refresh.
+- `namespaced-cask-catalog`: qualified identity, schema 3 only, ambiguous
+  bare-token handling including excluded entries, one-quoted-segment
+  escaped Nix attributes (reversible `_`/`.` mapping), and client source
+  provenance.
 
 ### Modified Capabilities
 
-None in the canonical specs directory. Earlier changes remain unarchived.
-On implementation, this proposal replaces the single-input and token-key
-rules in `generate-cask-catalog-with-rust`. Archive both changes in order.
-It does not reopen the deleted package-state engine.
+None in the canonical specs directory. On implementation, this change
+replaces the single-input and bare-token-key rules left behind by
+`generate-cask-catalog-with-rust`. Archive both changes in order. It does
+not reopen the deleted package-state engine.
 
 ## Impact
 
-The changes are confined to `tools/cask-catalog`, a small maintainer Ruby
-exporter and its runner recipe, `nix/casks`, and the client's catalog identity
-and decoding code. Package builders keep their current artifact contract.
-There is no runtime Brew installation, tap server, dependency solver, or
-background updater. No schema-2 compatibility layer is planned.
-
-The [design](design.md) is authoritative. The [tasks](tasks.md) are all open.
-The [readable plan](../../../docs/plans/public-cask-taps.md) and
-[HTML plan](../../../artifacts/public-cask-taps-plan.html) explain the rollout.
+Backend work stays in `tools/cask-catalog`, `nix/casks`, and the raw-reader
+Nix/Ruby assets owned by the backend worker. Client work stays in
+`crates/pkg-cli`. The documentation worker owns this OpenSpec change, the
+readable plan, the `tools/public-tap-check` fixture harness, and the
+verification evidence pages. Delivery is one reviewable implementation PR.
+No merge or release happens without a later instruction. The
+[design](design.md) is authoritative, the [tasks](tasks.md) are nearly
+complete (all implementation and verification tasks are done with proof,
+including the final native macOS C6/C7 negative-gate record and the
+completed parent review; only the implementation PR stays open), and the
+[readable plan](../../../docs/plans/public-cask-taps.md) with its
+[HTML mirror](../../../artifacts/public-cask-taps-plan.html) explain the
+rollout.

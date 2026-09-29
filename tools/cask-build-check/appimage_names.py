@@ -7,7 +7,11 @@ whose cwd is the output directory, so hostile `touch MARKER` payloads
 land exactly there. No vendor payload is built or downloaded. Nix may
 fetch its pinned nixpkgs input if it is not cached.
 
-1. beaver-notes / unity-hub: mainProgram + rename round-trip;
+1. beaver-notes / unity-hub: mainProgram + rename round-trip. The real
+   package is addressed through the escaped source-qualified physical
+   attribute (one quoted attrpath segment, `_` -> `_u_`, `.` -> `_d_`),
+   and the real derivation pname (wrapper name, which may carry a source
+   suffix) is taken from the evaluation itself;
 2. hostile-but-legal names (spaces, quotes, $(), backticks, `;`, dash,
    Unicode): rename succeeds, payload survives, no stray file in $out;
 3. invalid targets (null, int, "", ".", "..", "a/b", control chars):
@@ -39,6 +43,17 @@ VALID = [
 INVALID = [None, 7, "", ".", "..", "a/b", "a\nb", "a\rb", "a\tb", "a\x7fb"]
 PASS = 0
 FAIL = 0
+OFFICIAL_SOURCE = "homebrew/cask"
+
+
+def escaped_attr(identity):
+    """One-pass whole-ID physical attr escape: `_` -> `_u_`, `.` -> `_d_`.
+
+    Catalog keys are never physically escaped; this is only the Nix
+    package attribute path segment. Applied in this order the two
+    replacements cannot re-trigger each other.
+    """
+    return identity.replace("_", "_u_").replace(".", "_d_")
 
 
 def ok(name):
@@ -143,16 +158,27 @@ PROBE = """let c = import ./core.nix; in
 }"""
 
 
+def _selfcheck():
+    """Physical-escape checks (no Nix): the whole-ID escape and its use
+    as one quoted attrpath segment."""
+    assert escaped_attr("homebrew/cask/a_b.c") == "homebrew/cask/a_u_b_d_c"
+    assert escaped_attr("homebrew/cask/beaver-notes") == "homebrew/cask/beaver-notes"
+    assert escaped_attr("x.y_z") == "x_d_y_u_z"
+
+
 def main():
+    _selfcheck()
+
     # 1. real packages: declared target survives the real flake evaluation
     for token, target in (("beaver-notes", "Beaver Notes"), ("unity-hub", "Unity Hub")):
+        attr = f'packages.x86_64-linux."{escaped_attr(f"{OFFICIAL_SOURCE}/{token}")}"'
         try:
             pkg = json.loads(
                 nix_eval(
                     [
-                        f"path:{FLAKE}#packages.x86_64-linux.{token}",
+                        f"path:{FLAKE}#{attr}",
                         "--apply",
-                        "p: { c = p.buildCommand; m = p.meta.mainProgram; }",
+                        "p: { c = p.buildCommand; m = p.meta.mainProgram; n = p.pname; }",
                     ]
                 ).stdout
             )
@@ -162,8 +188,9 @@ def main():
         if pkg["m"] != target:
             bad(token, f"mainProgram {pkg['m']!r} != {target!r}")
             continue
+        wrapper = pkg["n"]  # real derivation pname; may carry a source suffix
         if line := extract_mv(pkg["c"], token):
-            run_mv(line, f"cask-{token}", target, f"real {token}")
+            run_mv(line, wrapper, target, f"real {token}")
 
     work = tempfile.mkdtemp(prefix="appimage-nix-")
     try:

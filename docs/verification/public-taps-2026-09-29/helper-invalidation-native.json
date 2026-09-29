@@ -1,0 +1,16 @@
+[
+  {
+    "system": "aarch64-darwin",
+    "old_version": "1.4.0",
+    "new_version": "1.4.1",
+    "same_cask_source_hash": "f0c6d05363593e1fb772323e13f442f297900af308bacc3a02a4cd401cb49708",
+    "result": "pass"
+  },
+  {
+    "system": "x86_64-linux",
+    "old_version": "1.4.0",
+    "new_version": "1.4.1",
+    "same_cask_source_hash": "f0c6d05363593e1fb772323e13f442f297900af308bacc3a02a4cd401cb49708",
+    "result": "pass"
+  }
+]

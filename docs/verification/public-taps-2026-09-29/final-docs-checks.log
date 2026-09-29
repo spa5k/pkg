@@ -1,0 +1,10 @@
+$ python3 .github/scripts/check_docs_links.py
+Scanned 134 Markdown file(s); validated 613 local link(s).
+OK: all doc links and OpenSpec structural checks passed.
+[exit=0]
+$ openspec validate import-public-cask-taps --strict
+Change 'import-public-cask-taps' is valid
+[exit=0]
+PASS: final HTML unique IDs, anchors, local links and no scripts (15 IDs; 21 links).
+PASS: both fixture metadata JSON files parse.
+Scope: documentation/static validation only; no Ruby evaluation or payload downloads.

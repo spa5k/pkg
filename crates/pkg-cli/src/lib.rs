@@ -11,3 +11,4 @@ pub mod commands;
 pub mod config;
 pub mod nix;
 pub mod output;
+pub mod tap;

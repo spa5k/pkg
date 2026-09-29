@@ -33,6 +33,11 @@ tempfile = "=3.27.0"
 # description; the Nixpkgs lane keeps passing patterns to `nix search`
 # unchanged. Semantics are documented in docs/commands.md and docs/casks.md.
 regex = "=1.13.1"
+# Local public tap imports run through the backend library seam
+# `cask_catalog::tap` (openspec/changes/import-public-cask-taps). The
+# client owns consent, the tap registry, publishing, and routing; the
+# library owns fetching, sandboxed Ruby, and catalog/flake generation.
+cask-catalog = { path = "../../tools/cask-catalog" }
 
 # Opt into the workspace-wide lint policy (ADR 0005).
 [lints]

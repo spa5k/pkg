@@ -1,0 +1,42 @@
+{
+  "scope": "Official schema3 metadata and synthetic payload regression only. No vendor payload downloads. No raw public Ruby evaluation.",
+  "catalogSha256": "1017381d657fd026c6ddd25032974b91bc0b7a6bde4e0ef2aa3cc0a80c92692e",
+  "commands": [
+    {
+      "sandbox_id": "ircf7o9kqvtpe9amf0rkc",
+      "command": "cd /home/user/workspace && python3 tools/cask-catalog/audit.py --input /tmp/pkg-tap-audit/cask.json --catalog nix/casks/catalog/catalog.json --analytics /tmp/pkg-tap-audit/analytics-90d.json --output /tmp/pkg-tap-audit/final-official --analytics-url https://formulae.brew.sh/api/analytics/cask-install/homebrew-cask/90d.json --retrieved 2026-09-28T18:27:51Z > /tmp/pkg-tap-audit/final-audit.log 2>&1",
+      "exitCode": 0
+    },
+    {
+      "sandbox_id": "ircf7o9kqvtpe9amf0rkc",
+      "command": "cd /home/user/workspace && python3 tools/cask-build-check/catalog_plans.py --catalog nix/casks/catalog/catalog.json --jobs 2 --output /tmp/pkg-tap-audit/final-replay-all.json > /tmp/pkg-tap-audit/final-replay-all.log 2>&1",
+      "exitCode": 0
+    },
+    {
+      "sandbox_id": "ircf7o9kqvtpe9amf0rkc",
+      "command": "cd /home/user/workspace && python3 tools/cask-build-check/catalog_plans.py --catalog nix/casks/catalog/catalog.json --tokens docs/verification/cask-stress-2026-09-29/top1000-tokens.json --jobs 2 --output /tmp/pkg-tap-audit/final-replay-top1000.json > /tmp/pkg-tap-audit/final-replay-top1000.log 2>&1",
+      "exitCode": 0
+    },
+    {
+      "sandbox_id": "ircf7o9kqvtpe9amf0rkc",
+      "command": "cd /home/user/workspace && python3 tools/cask-build-check/plan_tests.py > /tmp/pkg-tap-audit/plan-tests.log 2>&1",
+      "exitCode": 0
+    },
+    {
+      "sandbox_id": "ircf7o9kqvtpe9amf0rkc",
+      "command": "cd /home/user/workspace && python3 tools/cask-build-check/appimage_names.py > /tmp/pkg-tap-audit/appimage-names.log 2>&1",
+      "exitCode": 0
+    },
+    {
+      "sandbox_id": "ircf7o9kqvtpe9amf0rkc",
+      "command": "cd /home/user/workspace && git diff --binary -- tools/cask-catalog/audit.py tools/cask-catalog/AUDIT.md tools/cask-build-check/catalog_plans.py tools/cask-build-check/appimage_names.py docs/verification/public-taps-2026-09-29/results.md docs/verification/public-taps-2026-09-29/README.md > /tmp/helpers16.patch",
+      "exitCode": 0
+    },
+    {
+      "sandbox_id": "ircf7o9kqvtpe9amf0rkc",
+      "command": "cd /home/user/workspace && python3 - <<'PY2'\nimport json,pathlib,tarfile\nout=pathlib.Path('/tmp/pkg-tap-audit')\nfor name in ['final-replay-all.json','final-replay-top1000.json']:\n d=json.loads((out/name).read_text()); print(name,json.dumps({k:d[k] for k in ['summary','expected_applicable','processed','count_check_ok','missing_tokens','failures','catalog_sha256']}))\nd=json.loads((out/'final-official/corpus-report.json').read_text());print('audit',d['invariants']['violationCount'],d['top1000']['matched'],d['wholeCatalog']['perTarget']['aarch64-darwin']['statuses'])\npairs={'final-audit.log':'audit.log','final-official/corpus-report.json':'official/corpus-report.json','final-official/top1000.csv':'official/top1000.csv','final-replay-all.json':'replay-all.json','final-replay-all.log':'replay-all.log','final-replay-top1000.json':'replay-top1000.json','final-replay-top1000.log':'replay-top1000.log'}\nwith tarfile.open('/tmp/pkg-tap-official-final21.tar.gz','w:gz') as t:\n for src,dest in pairs.items():t.add(out/src,arcname=dest)\nPY2\nruff check --isolated tools/cask-catalog/audit.py tools/cask-build-check/catalog_plans.py tools/cask-build-check/appimage_names.py tools/public-tap-check/make_fixtures.py tools/public-tap-check/check_sources.py && ruff format --check --isolated tools/cask-catalog/audit.py tools/cask-build-check/catalog_plans.py tools/cask-build-check/appimage_names.py tools/public-tap-check/make_fixtures.py tools/public-tap-check/check_sources.py && sha256sum tools/cask-catalog/audit.py tools/cask-build-check/catalog_plans.py tools/cask-build-check/appimage_names.py tools/public-tap-check/make_fixtures.py tools/public-tap-check/check_sources.py",
+      "exitCode": 0
+    }
+  ],
+  "note": "Archive and AppImage helper checks preceded the URL-only catalog change, which excluded one port-444 Darwin URL. Final metadata and both replay batches used the final catalog and final helper code."
+}

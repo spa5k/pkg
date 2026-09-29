@@ -13,8 +13,8 @@ Global options: `--help`, `--version`, `--no-color`, `--verbose`.
 | `pkg install ID…` | Resolve all names, then run one native profile add. |
 | `pkg list` | Read the dedicated profile. Shows native entry IDs and source identity. |
 | `pkg remove ENTRY…` | Remove exact installed entries in one native operation. |
-| `pkg update` | Refresh discovery data. Does not change installed packages. |
-| `pkg upgrade ENTRY…` / `--all` | Follow each entry's original reference. Reports fixed references. |
+| `pkg update` | Refresh discovery data. Does not change installed packages. Does not refresh saved tap catalogs; run `pkg tap update` for that. |
+| `pkg upgrade ENTRY…` / `--all` | Follow each entry's original reference. Reports fixed references. After `tap remove`, `--all` filters removed-source references and forwards the remaining entries by explicit native entry IDs (not native `--all`); upgrading a removed-source entry refuses. |
 | `pkg history` | Show native profile generations. |
 | `pkg rollback [N]` | Use Nix's native previous or selected generation. Refreshes launchers. |
 | `pkg prune --older-than Nd` | Remove only eligible non-current generations. Requires an explicit positive age. |
@@ -22,16 +22,71 @@ Global options: `--help`, `--version`, `--no-color`, `--verbose`.
 | `pkg shellenv` | Print idempotent Bash/Zsh path settings. Does not edit shell files. |
 | `pkg completion SHELL` | Generate completions for the current grammar. |
 | `pkg apps sync` | Rebuild pkg-owned macOS launchers from the active profile. |
+| `pkg tap add SOURCE [--revision SHA] [--trust]` | Save a public tap. Ask approval before any fetch, import, or Ruby runs. |
+| `pkg tap list [--json]` | List saved taps: source, origin, revision, and consent time. |
+| `pkg tap update [SOURCE] [--revision SHA]` | Re-import saved tap catalogs at a pinned revision. Runs tap Ruby under the same rules as `add`. |
+| `pkg tap remove SOURCE` | Block future use of a source. Installed packages stay. |
 
 Removed commands: `pin`, `unpin`, `outdated`, `repair`, `gc`, and
 `system uninstall`. Removed options: global dry-run, build approval,
 `--keep-going`, and JSONL progress. Use normal CLI usage errors for them.
 
+## Public cask taps
+
+`pkg tap` manages saved public Homebrew Cask taps. A saved tap is converted
+locally into ordinary Nix packages. Saved taps live in a per-user state
+directory. Catalog format, publication, and sandbox prerequisites are in
+[casks](casks.md). The accepted behavior is specified in the OpenSpec
+change
+[Import public cask taps locally](../openspec/changes/import-public-cask-taps/proposal.md).
+
+- `SOURCE` is a public GitHub `owner/tap` repository. The canonical
+  repository is `owner/homebrew-<tap>`; the common short source
+  `owner/tap` maps to `owner/homebrew-tap`. Arbitrary URLs are not
+  accepted in this version.
+- The first `tap add` for an origin shows the canonical repository and the
+  approval scope, then asks for consent. Consent is remembered per origin.
+  No fetch, import, or Ruby runs before it. A noninteractive `add` without
+  consent must pass `--trust` explicitly. Otherwise it stops and changes
+  nothing.
+- Only `tap add` and `tap update` execute tap Ruby. The Ruby runtime and
+  the Homebrew reader are pinned and supplied by Nix. They run inside an
+  ordinary sandboxed Nix derivation. `tap update` may execute source
+  revision Ruby under the same restrictions.
+- `pkg update` refreshes discovery data only. It does not refresh saved
+  tap catalogs.
+- Normal `search`, `info`, and `install` of saved catalogs run no source
+  Ruby and never prompt.
+- `tap remove` blocks future use of a source. It does not uninstall
+  packages. After a removal, `pkg upgrade --all` skips removed-source
+  references and upgrades the remaining entries by explicit native entry
+  IDs; an explicit upgrade of a removed-source entry refuses.
+- Updating tap metadata does not upgrade installed packages. Run
+  `pkg tap update`, then `pkg upgrade ENTRY` or `--all`.
+- Install, upgrade, rollback, and removal stay on the native Nix profile.
+  There is no second package state engine.
+
+Example with a real public tap:
+
+```sh
+pkg tap add goreleaser/tap
+pkg info cask:goreleaser/tap/mcp
+pkg install cask:goreleaser/tap/mcp   # only if info reports it eligible
+```
+
+This example shows the accepted flow. The final verification passed the
+whole import on both hosts (Linux 13 eligible / 17 excluded; macOS
+7 eligible / 23 excluded) and the negative product gates on both hosts
+(C6/C7). The parent review is complete; only the implementation PR
+remains open. See
+the [plan](plans/public-cask-taps.md) and the
+[verification status](verification/public-taps-2026-09-29/results.md).
+
 ## JSON query output
 
-`--json` works only with the four query commands: `search`, `info`,
-`list`, and `doctor`. With any other command it is a usage error
-(exit code 2). Every JSON result uses the same versioned envelope,
+`--json` works only with the five query commands: `search`, `info`,
+`list`, `tap list`, and `doctor`. With any other command it is a usage
+error (exit code 2). Every JSON result uses the same versioned envelope,
 pretty-printed:
 
 ```json
@@ -131,6 +186,18 @@ The result is an array with one row per **active** profile entry:
 | `locked_source` | string | The locked reference Nix resolved. |
 | `revision` | string, nullable | Locked revision of the locked source. |
 
+### `tap list`
+
+The envelope `command` is `tap-list`; the envelope is the same versioned
+envelope as the other query commands. The result holds one row per saved
+tap. Each row carries, at a high level:
+
+- `source` — the saved `owner/tap` identity.
+- `origin` — the canonical repository for the source.
+- `revision`, `eligible`, `excluded` — the recorded revision and catalog
+  counts, when a catalog is recorded.
+- `added_unix` — the recorded consent time for the source, in Unix time.
+
 ### `doctor`
 
 The result is an array of rows: `component` (string), `status` (string),
@@ -145,10 +212,21 @@ never repairs anything.
 ## Package IDs
 
 - `nixpkgs:<attribute>` selects a Nixpkgs attribute.
-- `cask:<token>` selects a Cask package from the generated catalog. Tokens
-  may use lowercase letters, digits, `+`, `.`, `_`, `-`, and `@`.
+- `cask:<token>` selects a Cask package by bare token. Tokens may use
+  lowercase letters, digits, `+`, `.`, `_`, `-`, and `@`. A bare token
+  resolves only when it is unique across the official catalog and every
+  saved tap catalog. Excluded entries count as matches.
+- `cask:owner/tap/token` selects a Cask package from one saved tap. It
+  resolves only inside its named source.
 - A bare name is valid only when it has one supported exact match. A cask
   bare name must equal one token exactly; a display name never resolves.
+  An ambiguous token lists the qualified choices instead of picking a
+  source by ordering.
+- A saved catalog that is unreadable or malformed fails bare-token
+  resolution and names the failed source. It is never silently ignored.
+- An unknown `cask:owner/tap/token` source fails with an explicit
+  `pkg tap add owner/tap` instruction. It is never converted silently and
+  never reinterpreted as Nix code.
 - Ambiguous names require a source-qualified ID.
 - Explicit public GitHub flake installables with an attribute after `#` are
   accepted.
@@ -173,4 +251,10 @@ Supported packages expose their app bundles as launchers in
 `~/Applications/pkg/`. Launchers refresh after install, remove, upgrade, and
 rollback. If a launcher sync fails, the command reports partial completion
 and names `pkg apps sync` as the retry. `pkg apps sync` rebuilds launchers
-only. It does not change package selection.
+only. It does not change package selection. For public-tap vendor `.app`
+bundles, sync requires vendor signatures to assess cleanly, and it
+requires Gatekeeper assessments to be enabled (`spctl --status` reports
+`assessments enabled`) before codesign/spctl assessment; a rejected app
+never changes existing launchers. This gate does not cover CLI binaries
+or ordinary Nixpkgs apps, and it does not claim GUI launch or
+application runtime isolation.
