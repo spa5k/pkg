@@ -787,7 +787,10 @@ fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     // native upgrade: no `profile upgrade` call happens at all.
     let (code, _, stderr) = run(&["upgrade", "tap-entry"]);
     assert_eq!(code, 1, "explicit removed-tap entry must fail");
-    assert!(stderr.contains("no longer registered"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("is removed; upgrade refuses to follow it"),
+        "stderr: {stderr}"
+    );
     assert!(
         !args_file.exists(),
         "no native upgrade may run for a removed tap entry"
@@ -798,7 +801,7 @@ fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     let (code, stdout, stderr) = run(&["upgrade", "--all"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("tap-entry"), "skip note: {stdout}");
-    assert!(stdout.contains("keeps its locked outputs"), "{stdout}");
+    assert!(stdout.contains("keeping locked outputs"), "{stdout}");
     let recorded = std::fs::read_to_string(&args_file).expect("upgrade args recorded");
     assert!(recorded.contains("github-entry"), "{recorded}");
     assert!(!recorded.contains("tap-entry"), "{recorded}");

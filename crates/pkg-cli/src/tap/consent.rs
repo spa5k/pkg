@@ -23,7 +23,7 @@ pub enum Decision {
 /// stdin is not a terminal the prompt is skipped and consent is refused:
 /// automation must pass `--trust`.
 #[must_use]
-pub fn ask(source: &str, origin: &str, trusted: bool) -> Decision {
+pub fn ask(_source: &str, origin: &str, trusted: bool) -> Decision {
     if trusted {
         return Decision::Approved;
     }
@@ -34,11 +34,7 @@ pub fn ask(source: &str, origin: &str, trusted: bool) -> Decision {
         );
         return Decision::Refused;
     }
-    println!("pkg will run this tap's Ruby code under our sandboxed Nix build:");
-    println!("  source: {source}");
-    println!("  repository: {origin}");
-    println!("  approval covers imports and updates of this source only");
-    print!("approve? [y/N] ");
+    print!("pkg will run Ruby code from {origin} in a sandboxed Nix build; approve? [y/N] ");
     let _ = std::io::stdout().flush();
     let mut answer = String::new();
     let read = std::io::stdin().lock().read_line(&mut answer);
@@ -50,7 +46,7 @@ pub fn ask(source: &str, origin: &str, trusted: bool) -> Decision {
             Decision::Approved
         }
         _ => {
-            println!("not approved; nothing was fetched or changed");
+            println!("not approved");
             Decision::Refused
         }
     }

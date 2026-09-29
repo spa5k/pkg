@@ -204,7 +204,7 @@ fn verify(nix: &Nix) -> Result<bool, String> {
     let sandbox = nix.setting("sandbox").unwrap_or_default();
     let fallback = nix.setting("sandbox-fallback").unwrap_or_default();
     if sandbox == "true" && fallback == "false" {
-        println!("pkg: sandbox settings verified from this account");
+        println!("pkg: sandbox settings verified");
         return Ok(true);
     }
     println!(
@@ -220,10 +220,7 @@ fn verify(nix: &Nix) -> Result<bool, String> {
 /// manual path instead. Every command is one fixed argument vector.
 pub(crate) fn offer_and_apply(nix: &Nix) -> Result<bool, String> {
     if !stdin_is_terminal() {
-        println!(
-            "pkg: rerun this command from a terminal to be offered the \
-             one-time sandbox setup"
-        );
+        println!("pkg: run from a terminal to apply the one-time sandbox setup");
         return Ok(false);
     }
     let world = inspect();
@@ -231,16 +228,10 @@ pub(crate) fn offer_and_apply(nix: &Nix) -> Result<bool, String> {
     if steps.is_empty() {
         return verify(nix);
     }
-    println!("pkg can apply these one-time administrator changes with sudo:");
-    for step in &steps {
-        println!("  - {}", step.summary);
-    }
-    if world.determinate_plist.is_none() {
-        println!(
-            "  - no Determinate daemon found; restart the Nix daemon yourself \
-             if the settings changed"
-        );
-    }
+    println!(
+        "pkg can apply {} one-time sudo fixes for the Nix sandbox",
+        steps.len()
+    );
     print!("apply now? [y/N] ");
     let _ = std::io::stdout().flush();
     let mut answer = String::new();
@@ -248,7 +239,7 @@ pub(crate) fn offer_and_apply(nix: &Nix) -> Result<bool, String> {
     let approved = read.is_ok()
         && (answer.trim().eq_ignore_ascii_case("y") || answer.trim().eq_ignore_ascii_case("yes"));
     if !approved {
-        println!("not approved; no administrator change was made");
+        println!("not approved");
         return Ok(false);
     }
     for step in &steps {

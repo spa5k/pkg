@@ -234,20 +234,12 @@ fn report_failed_mutation(
         eprintln!("pkg: {action} failed: {error}");
     }
     match installed_entries(session) {
-        Ok(entries) if entries.is_empty() => {
-            eprintln!("pkg: profile re-read: no installed entries");
-        }
-        Ok(entries) => {
-            eprintln!("pkg: profile re-read: {} installed entries", entries.len());
-            for (entry_id, entry) in &entries {
-                eprintln!("pkg:   {entry_id} ({})", entry.name());
-            }
-        }
+        Ok(entries) => eprintln!(
+            "pkg: profile re-read: {} entries; state may be partial",
+            entries.len()
+        ),
         Err(error) => eprintln!("pkg: could not re-read the profile: {error}"),
     }
-    eprintln!(
-        "pkg: the operation may have partially applied; run `pkg list` or `pkg history` for the native state"
-    );
     CommandError::Reported(ExitCode::from(if interrupted {
         INTERRUPTED
     } else {
@@ -285,10 +277,8 @@ fn apps_refresh_after_mutation(session: &Session) -> Result<(), CommandError> {
     match crate::apps::sync(&session.nix, &session.paths) {
         Ok(()) => Ok(()),
         Err(detail) => {
-            eprintln!(
-                "pkg: the package change completed, but refreshing app launchers failed: {detail}"
-            );
-            eprintln!("pkg: retry the derived launchers with `pkg apps sync`");
+            eprintln!("pkg: app launcher refresh failed: {detail}");
+            eprintln!("pkg: retry with `pkg apps sync`");
             Err(CommandError::Reported(ExitCode::from(FAILURE)))
         }
     }

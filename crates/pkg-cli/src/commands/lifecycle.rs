@@ -170,7 +170,7 @@ pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
                     .revision
                     .as_deref()
                     .unwrap_or("moving, no revision");
-                println!("{source} -> {revision} (metadata refreshed)");
+                println!("{source} -> {revision}");
             }
             Err(error) => {
                 eprintln!("pkg: source failure for {source}: {error}");
@@ -179,11 +179,7 @@ pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
         }
     }
     let removed = catalog::invalidate_cache(&session.paths.cache_dir)?;
-    println!(
-        "Discovery cache refreshed ({removed} cached catalog{} dropped).",
-        if removed == 1 { "" } else { "s" }
-    );
-    println!("Installed packages and their original references are unchanged.");
+    println!("Discovery cache refreshed ({removed} dropped); profile unchanged.");
     Ok(())
 }
 
@@ -230,9 +226,7 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
         for entry in &targets {
             if let Some(source) = removed_source(entry) {
                 return Err(format!(
-                    "`{entry}` was installed from tap source {source}, which is no \
-                     longer registered; upgrade refuses to follow it. Re-add the tap \
-                     (`pkg tap add {source}`) or remove the entry to change it."
+                    "pkg: {entry}: tap {source} is removed; upgrade refuses to follow it"
                 )
                 .into());
             }
@@ -243,11 +237,7 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
         remaining.retain(|entry| match removed_source(entry) {
             None => true,
             Some(source) => {
-                println!(
-                    "pkg: {entry} was installed from tap source {source}, which is no longer \
-                     registered; upgrade keeps its locked outputs. Re-add the tap or remove \
-                     the entry to change it."
-                );
+                println!("pkg: {entry}: tap {source} removed; keeping locked outputs");
                 false
             }
         });
@@ -263,10 +253,7 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
     let mut movable: Vec<String> = Vec::new();
     for entry in &targets {
         if nix::is_fixed_reference(installed[entry].original_url.as_str()) {
-            println!(
-                "pkg: {entry} uses an explicit full-commit reference; upgrade does not replace it. \
-                 Remove and install the new reference to change it."
-            );
+            println!("pkg: {entry} is pinned to a full commit; skipping");
         } else {
             movable.push(entry.clone());
         }
@@ -329,7 +316,6 @@ pub(super) fn prune(cli: &Cli, older_than: &str) -> Result<(), CommandError> {
         .map_err(|error| mutation_failed(&session, "prune", &error))?;
     // Eligibility stays with Nix: which generations are old enough is native
     // behavior and is not assumed by pkg.
-    println!("Requested deletion of non-current generations older than {days} days.");
-    println!("Nix decides which generations are eligible; run `pkg history` to verify.");
+    println!("Requested deletion of generations older than {days} days.");
     Ok(())
 }
