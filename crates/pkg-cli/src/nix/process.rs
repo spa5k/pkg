@@ -6,7 +6,7 @@
 //! pkg stays alive to re-read state and report. Every reaped run is
 //! classified exactly once, into [`Outcome`], by the code that reaped it.
 
-use std::process::{Command, ExitStatus, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
 /// How a native child's stdio is wired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +15,8 @@ pub(super) enum IoMode {
     Capture,
     /// Stream stdio to the user's terminal.
     Stream,
+    /// Inherit stdin/stdout, pipe stderr, and feed it live to a sink.
+    Filtered,
 }
 
 /// One reaped child: its complete output record and cancellation record.
@@ -210,29 +212,76 @@ mod forward {
     }
 }
 
+/// A live consumer of one filtered child's stderr chunks.
+pub(super) trait StderrSink {
+    /// One raw chunk in arrival order.
+    fn chunk(&mut self, bytes: &[u8]);
+    /// Called once after the child has exited and stderr reached EOF.
+    fn finish(&mut self, success: bool);
+}
+
+/// Drain one filtered child: stdin/stdout are inherited; stderr is read
+/// chunk by chunk through the sink while the child runs, and the complete
+/// raw stderr is preserved in the output record so failures keep their
+/// full native diagnostics.
+fn read_filtered(
+    mut child: Child,
+    mut sink: Option<&mut dyn StderrSink>,
+) -> Result<Output, std::io::Error> {
+    use std::io::Read as _;
+    let mut raw = Vec::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let mut buffer = [0u8; 8192];
+        loop {
+            let read = pipe.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            raw.extend_from_slice(&buffer[..read]);
+            if let Some(sink) = sink.as_deref_mut() {
+                sink.chunk(&buffer[..read]);
+            }
+        }
+    }
+    let status = child.wait()?;
+    if let Some(sink) = sink {
+        sink.finish(status.success());
+    }
+    Ok(Output {
+        status,
+        stdout: Vec::new(),
+        stderr: raw,
+    })
+}
+
 /// Spawn one prepared command through the shared signal forward/reap
 /// boundary, wait for it, and reap it.
 ///
 /// The same boundary serves native Nix children and direct external
 /// commands: termination signals sent only to pkg are forwarded to the
 /// child, the child is reaped, and pkg stays alive.
-pub(super) fn run_child(mut command: Command, mode: IoMode) -> Result<Reaped, String> {
+pub(super) fn run_child(
+    mut command: Command,
+    mode: IoMode,
+    sink: Option<&mut dyn StderrSink>,
+) -> Result<Reaped, String> {
     #[cfg(unix)]
     let _run = forward::lock();
     #[cfg(unix)]
     let guard = forward::install();
     #[cfg(unix)]
     forward::block();
+    let filtered = mode == IoMode::Filtered;
     let spawn = command
-        .stdin(if mode == IoMode::Stream {
-            Stdio::inherit()
-        } else {
+        .stdin(if mode == IoMode::Capture {
             Stdio::null()
-        })
-        .stdout(if mode == IoMode::Stream {
-            Stdio::inherit()
         } else {
+            Stdio::inherit()
+        })
+        .stdout(if mode == IoMode::Capture {
             Stdio::piped()
+        } else {
+            Stdio::inherit()
         })
         .stderr(if mode == IoMode::Stream {
             Stdio::inherit()
@@ -255,9 +304,13 @@ pub(super) fn run_child(mut command: Command, mode: IoMode) -> Result<Reaped, St
     forward::register(child.id());
     #[cfg(unix)]
     forward::unblock();
-    // Waiting is identical for both modes: piped streams are read to
-    // completion, inherited streams simply leave the buffers empty.
-    let waited = child.wait_with_output();
+    // Unfiltered children wait through wait_with_output; filtered ones
+    // drain stderr through the sink while the child runs.
+    let waited = if filtered {
+        read_filtered(child, sink)
+    } else {
+        child.wait_with_output()
+    };
     #[cfg(unix)]
     forward::unregister();
     // Read the forwarded-signal record before the dispositions are
@@ -288,7 +341,7 @@ pub fn run_direct_captured(
 ) -> Result<(Outcome, String), String> {
     let mut command = Command::new(executable);
     command.args(args);
-    run_child(command, IoMode::Capture).map(|reaped| {
+    run_child(command, IoMode::Capture, None).map(|reaped| {
         (
             reaped.classify(),
             String::from_utf8_lossy(&reaped.output.stdout).into_owned(),

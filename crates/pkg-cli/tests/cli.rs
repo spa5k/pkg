@@ -803,3 +803,83 @@ fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     assert!(!recorded.contains("tap-entry"), "{recorded}");
     assert!(!recorded.contains("--all"), "{recorded}");
 }
+
+/// Successful flake installs reduce native stderr to signal, not chatter:
+/// git fetch and evaluation lines are dropped, meaningful warnings stay,
+/// Nix's interactive trust prompt passes through before its newline
+/// exists, and the profile result is still reported. Proven with a fake
+/// Nix runtime that replays the Helix-style stderr captured from a real
+/// install.
+#[test]
+fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
+    let bin = tempfile::tempdir().expect("tempdir");
+    let home = tempfile::tempdir().expect("tempdir");
+    let nix = bin.path().join("nix");
+    let noisy = concat!(
+        "printf \"fetching Git repository 'https://gitlab.com/gabmus/tree-sitter-blueprint'\\n\" >&2\n",
+        "printf \"warning: redirecting to https://gitlab.com/gabmus/tree-sitter-blueprint.git/\\n\" >&2\n",
+        "printf \"remote: Enumerating objects: 32, done.\\n\" >&2\n",
+        "printf \"Receiving objects: 100%% (32/32), 42.45 KiB | 1.70 MiB/s, done.\\n\" >&2\n",
+        "printf \"Unpacking objects: 100%% (28/28), done.\\n\" >&2\n",
+        "printf \"warning: ignoring untrusted substituter 'https://helix.cachix.org'\\n\" >&2\n",
+        "printf \"evaluating derivation 'github:helix-editor/helix#helix'...\\n\" >&2\n",
+        "printf \"do you want to allow configuration setting 'extra-substituters' to be set (y/N)? \" >&2\n",
+        "printf \"\\n\"\n"
+    );
+    std::fs::write(
+        &nix,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*) echo '{{\"url\":\"github:helix-editor/helix\",\"locked\":{{\"type\":\"github\",\"owner\":\"helix-editor\",\"repo\":\"helix\",\"rev\":\"ba40e547426b0f9896c8bdc699a4ab11f2b37dbc\"}}}}';;\n  *'profile add'*) {noisy};;\n  *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n"
+        ),
+    )
+    .expect("write fake nix");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut permissions = std::fs::metadata(&nix).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&nix, permissions).expect("chmod");
+    }
+    let run = |args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+        command
+            .args(args)
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("XDG_CACHE_HOME")
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
+            .env("HOME", home.path())
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"));
+        let output = command.output().expect("spawn pkg");
+        (
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run(&["install", "github:helix-editor/helix#helix"]);
+    assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("Installed 1 entry"), "stdout: {stdout}");
+    for hidden in [
+        "fetching Git repository",
+        "Receiving objects",
+        "Unpacking objects",
+        "redirecting to",
+        "evaluating derivation",
+        "unexpected nix call",
+    ] {
+        assert!(
+            !stderr.contains(hidden),
+            "filtered output leaked: {hidden}\nstderr: {stderr}"
+        );
+    }
+    assert!(
+        stderr.contains("ignoring untrusted substituter"),
+        "warnings must stay visible\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("do you want to allow configuration setting"),
+        "trust prompts must stay visible\nstderr: {stderr}"
+    );
+}
