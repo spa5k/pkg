@@ -17,6 +17,7 @@ pub mod atomic;
 pub mod consent;
 pub mod registry;
 pub mod saved;
+pub mod setup;
 pub mod store;
 pub mod strict;
 

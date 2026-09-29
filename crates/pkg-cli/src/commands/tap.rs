@@ -19,7 +19,7 @@
 
 use crate::cli::{Cli, TapCommand};
 use crate::nix::OFFICIAL_CASK_SOURCE;
-use crate::tap::{self, consent, registry, store};
+use crate::tap::{self, consent, registry, setup, store};
 
 use super::{CommandError, Session, print_json};
 
@@ -34,6 +34,46 @@ fn validate_revision(revision: Option<&str>) -> Result<Option<String>, CommandEr
         Some(value) if crate::nix::is_full_commit_id(value) => Ok(Some(value.to_string())),
         Some(value) => {
             Err(format!("`{value}` is not an exact revision; pass a full 40-hex commit id").into())
+        }
+    }
+}
+
+/// Stage one import; on the daemon sandbox refusal, offer the one-time
+/// consent-gated setup and retry the import exactly once when it
+/// verified. A declined or failed setup keeps the refusal short instead
+/// of replaying the importer's full setup paragraph.
+fn stage_import_with_setup(
+    session: &Session,
+    source: &str,
+    origin: &str,
+    revision: Option<&str>,
+    now_unix: u64,
+) -> Result<
+    (
+        store::SourceStore,
+        std::path::PathBuf,
+        store::StagingGuard,
+        StagedImport,
+    ),
+    CommandError,
+> {
+    match stage_import(session, source, origin, revision, now_unix) {
+        Ok(staged) => Ok(staged),
+        Err(error) => {
+            let is_refusal =
+                matches!(&error, CommandError::Message(text) if setup::is_sandbox_refusal(text));
+            if !is_refusal {
+                return Err(error);
+            }
+            eprintln!("pkg: tap import refused: the Nix daemon is not proven sandboxed");
+            match setup::offer_and_apply(&session.nix) {
+                Ok(true) => stage_import(session, source, origin, revision, now_unix),
+                Ok(false) => Err(String::from(
+                    "the tap import needs the one-time sandbox setup; nothing was imported",
+                )
+                .into()),
+                Err(detail) => Err(format!("the sandbox setup failed: {detail}").into()),
+            }
         }
     }
 }
@@ -321,7 +361,7 @@ pub(super) fn add(
     // Only now do the runtime and the importer run.
     let session = super::session(cli)?;
     let (locked, flake, guard, staged) =
-        stage_import(&session, &source, &origin, revision.as_deref(), now_unix())?;
+        stage_import_with_setup(&session, &source, &origin, revision.as_deref(), now_unix())?;
     let published = locked.publish(&flake, &staged.provenance, &staged.index)?;
     settle_staging_guard(&published, guard);
 
@@ -524,7 +564,7 @@ pub(super) fn update(
             )
             .into());
         }
-        let (locked, flake, guard, staged) = stage_import(
+        let (locked, flake, guard, staged) = stage_import_with_setup(
             &session,
             &target.source,
             &target.origin,
