@@ -883,3 +883,64 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
         "trust prompts must stay visible\nstderr: {stderr}"
     );
 }
+
+/// A failed install keeps its diagnostics readable: the native error and
+/// its nix-log pointer survive, and the suppressed fetch chatter never
+/// replays inside the failure message, no matter how much of it Nix
+/// printed before failing.
+#[test]
+fn failed_install_reports_signal_lines_only() {
+    let bin = tempfile::tempdir().expect("tempdir");
+    let home = tempfile::tempdir().expect("tempdir");
+    let nix = bin.path().join("nix");
+    let noisy_fail = concat!(
+        "i=0\n",
+        "while [ \"$i\" -lt 60 ]; do\n",
+        "  printf \"fetching Git repository 'https://example.com/r%s\\n\" \"$i\" >&2\n",
+        "  i=$((i+1))\n",
+        "done\n",
+        "printf \"unpacking 'github:example/flake' into the Git cache...\\n\" >&2\n",
+        "printf \"error: Cannot build '/nix/store/aaa-tool.drv'.\\n\" >&2\n",
+        "printf \"For full logs, run:\\n  nix log /nix/store/aaa-tool.drv\\n\" >&2\n",
+        "exit 1\n"
+    );
+    std::fs::write(
+        &nix,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*) echo '{{\"url\":\"github:owner/repo\",\"locked\":{{\"type\":\"github\",\"owner\":\"owner\",\"repo\":\"repo\",\"rev\":\"1111111111111111111111111111111111111111\"}}}}';;\n  *'profile add'*) {noisy_fail};;\n  *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n"
+        ),
+    )
+    .expect("write fake nix");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut permissions = std::fs::metadata(&nix).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&nix, permissions).expect("chmod");
+    }
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+    command
+        .args(["install", "github:owner/repo#tool"])
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
+        .env("HOME", home.path())
+        .env("XDG_STATE_HOME", home.path().join("state"))
+        .env("XDG_CACHE_HOME", home.path().join("cache"));
+    let output = command.output().expect("spawn pkg");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("error: Cannot build"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("nix log /nix/store/aaa-tool.drv"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("fetching Git repository"),
+        "chatter must not replay: {stderr}"
+    );
+    assert!(
+        !stderr.contains("into the Git cache"),
+        "unpacking chatter must stay hidden: {stderr}"
+    );
+}
