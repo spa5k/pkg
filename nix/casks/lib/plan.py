@@ -602,7 +602,6 @@ KNOWN_KINDS = {
     "zsh-completion",
     "fish-completion",
 }
-MAN_RE = None  # compiled lazily
 
 
 def locate(staging, name):

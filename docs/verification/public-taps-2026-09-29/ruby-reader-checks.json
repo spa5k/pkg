@@ -1,8 +1,0 @@
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"exitCode\":0,\"stdout\":\"ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [x86_64-linux]\\n\",\"stderr\":\"reader-test: PASS normal-record\\nreader-test: PASS error-record+valid-control\\nreader-test: PASS huge-pipe-output\\nreader-test: PASS hang+term-trap\\nreader-test: PASS malformed-json-record\\nreader-test: PASS cumulative-cap\\nreader-test: PASS invalid-utf8-record\\nreader-test: PASS non-ascii-valid-record\\nreader-test: PASS noisy-child-containment\\nreader-test: ALL PASS (9 checks)\\n\"}"
-    }
-  ]
-}

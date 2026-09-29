@@ -1,7 +1,0 @@
-STATIC-ONLY. E2B sandbox ircf7o9kqvtpe9amf0rkc, 2026-09-28 UTC.
-Command: ruff format --check tools/public-tap-check/make_fixtures.py tools/public-tap-check/check_sources.py && ruff check tools/public-tap-check/make_fixtures.py tools/public-tap-check/check_sources.py && sha256sum tools/public-tap-check/make_fixtures.py tools/public-tap-check/check_sources.py
-exitCode: 0
-2 files already formatted
-All checks passed!
-4f89a9c35e4a40d08df0a10829e91ac8ac5e3b0317ded643500d3e0bc733284b  tools/public-tap-check/make_fixtures.py
-e73b000fe5b1784b088c42ecd5127aad9d85761c18acd352b1adc09b22230282  tools/public-tap-check/check_sources.py

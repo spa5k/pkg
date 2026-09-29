@@ -1,5 +1,4 @@
-//! Minimal maintainer CLI: `fetch` (network, curl subprocess) and
-//! `generate` (offline, deterministic). No self-test command.
+//! Catalog CLI: fetch pinned snapshots, generate catalogs, and import public taps as Nix flakes.
 
 use cask_catalog::{
     CACHE_DIR, Pin, emit, load_pin, read_verified_input, valid_repo, valid_revision, valid_sha256,

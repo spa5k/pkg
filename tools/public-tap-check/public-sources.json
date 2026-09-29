@@ -1,6 +1,6 @@
 {
   "matrix_version": 1,
-  "description": "Metadata-only expectations for seven real pinned public Cask taps. The parent verified the pins on 2026-09-29 via GitHub APIs and source reads: no Ruby executed, no payloads downloaded. Expected statuses derive from reading the pinned source files; they are hypotheses recorded before the final runs, kept unchanged. check_sources.py enforces status, inventory, and provenance; it does not assert the descriptive reason/codes strings. Vendor payload download budget for this matrix: 0. Final actual records (2026-09-29, normal mode, both hosts): every source's real Rust import, strict offline checker, and Nix derivation evaluation returned 0 with zero payloads — Linux 30 records, 13 eligible / 17 excluded (public-import-linux-final-evidence.tar.gz); macOS 30 records, 7 eligible / 23 excluded (public-import-macos-final-evidence.tar.gz and public-import-macos-final-summary.json; first three sources ran before the GitHub rate-limit reset, the last four after it), both archives under docs/verification/public-taps-2026-09-29. Per-entry outcomes are in the archive summary rows; the per-source 'actual' objects below are concise counts plus evidence paths.",
+  "description": "Metadata-only expectations for seven real pinned public Cask taps. The parent verified the pins on 2026-09-29 via GitHub APIs and source reads: no Ruby executed, no payloads downloaded. Expected statuses derive from reading the pinned source files; they are hypotheses recorded before the final runs, kept unchanged. check_sources.py enforces status, inventory, and provenance; it does not assert the descriptive reason/codes strings. Vendor payload download budget for this matrix: 0. Final actual records (2026-09-29, normal mode, both hosts): every source's real Rust import, strict offline checker, and Nix derivation evaluation returned 0 with zero payloads — Linux 30 records, 13 eligible / 17 excluded (public-import-linux-final-evidence.tar.gz); macOS 30 records, 7 eligible / 23 excluded (public-import-macos-final-evidence.tar.gz and public-import-macos-final-summary.json; first three sources ran before the GitHub rate-limit reset, the last four after it). Summary: docs/verification/public-taps.md; raw archives at the pinned baseline commit 913dedb3131a3f1db4c3ab385e3dc4ca495c21f3. Per-entry outcomes are in the archive summary rows; the per-source 'actual' objects below are concise counts plus evidence links.",
   "policy": {
     "revision_format": "40 lowercase hex",
     "import": "No imports execute here. Validation commands are documented in tools/public-tap-check/README.md.",
@@ -25,8 +25,8 @@
       ],
       "record_actual": "recorded: remaining 3 of 6 entries in the archive summaries",
       "actual": {
-        "aarch64-darwin": {"eligible": 6, "excluded": 0, "evidence": "docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
-        "x86_64-linux": {"eligible": 6, "excluded": 0, "evidence": "docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+        "aarch64-darwin": {"eligible": 6, "excluded": 0, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 6, "excluded": 0, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
       }
     },
     {
@@ -41,8 +41,8 @@
       ],
       "record_actual": "recorded: remaining 7 of 8 entries in the archive summaries",
       "actual": {
-        "aarch64-darwin": {"eligible": 0, "excluded": 8, "evidence": "docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
-        "x86_64-linux": {"eligible": 7, "excluded": 1, "evidence": "docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+        "aarch64-darwin": {"eligible": 0, "excluded": 8, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 7, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
       }
     },
     {
@@ -57,8 +57,8 @@
       ],
       "record_actual": "recorded: remaining 10 of 11 entries in the archive summaries",
       "actual": {
-        "aarch64-darwin": {"eligible": 0, "excluded": 11, "evidence": "docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
-        "x86_64-linux": {"eligible": 0, "excluded": 11, "evidence": "docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+        "aarch64-darwin": {"eligible": 0, "excluded": 11, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 11, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
       }
     },
     {
@@ -74,8 +74,8 @@
       ],
       "record_actual": "recorded: hashicorp-vagrant and hashicorp-boundary-desktop Linux results are in the archive summaries",
       "actual": {
-        "aarch64-darwin": {"eligible": 1, "excluded": 1, "evidence": "docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
-        "x86_64-linux": {"eligible": 0, "excluded": 2, "evidence": "docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+        "aarch64-darwin": {"eligible": 1, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 2, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
       }
     },
     {
@@ -90,8 +90,8 @@
       ],
       "record_actual": "recorded: the single entry's Linux result is in the archive summaries",
       "actual": {
-        "aarch64-darwin": {"eligible": 0, "excluded": 1, "evidence": "docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
-        "x86_64-linux": {"eligible": 0, "excluded": 1, "evidence": "docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+        "aarch64-darwin": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
       }
     },
     {
@@ -106,8 +106,8 @@
       ],
       "record_actual": "recorded: the single entry's outcome is in both archive summaries",
       "actual": {
-        "aarch64-darwin": {"eligible": 0, "excluded": 1, "evidence": "docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
-        "x86_64-linux": {"eligible": 0, "excluded": 1, "evidence": "docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+        "aarch64-darwin": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
       }
     },
     {
@@ -122,8 +122,8 @@
       ],
       "record_actual": "recorded: the single entry's Linux result is in the archive summaries",
       "actual": {
-        "aarch64-darwin": {"eligible": 0, "excluded": 1, "evidence": "docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
-        "x86_64-linux": {"eligible": 0, "excluded": 1, "evidence": "docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
+        "aarch64-darwin": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-macos-final-evidence.tar.gz"},
+        "x86_64-linux": {"eligible": 0, "excluded": 1, "evidence": "https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/public-import-linux-final-evidence.tar.gz"}
       }
     }
   ]

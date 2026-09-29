@@ -78,8 +78,8 @@ This example shows the accepted flow. The final verification passed the
 whole import on both hosts (Linux 13 eligible / 17 excluded; macOS
 7 eligible / 23 excluded) and the negative product gates on both hosts
 (C6/C7). The parent review is complete. The implementation is in [PR #82](https://github.com/spa5k/pkg/pull/82). See
-the [plan](plans/public-cask-taps.md) and the
-[verification status](verification/public-taps-2026-09-29/results.md).
+the [plan](../openspec/changes/import-public-cask-taps/design.md) and the
+[verification status](verification/public-taps.md).
 
 ## JSON query output
 

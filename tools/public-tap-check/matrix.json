@@ -1,6 +1,6 @@
 {
   "matrix_version": 4,
-  "description": "Data-only adversarial fixture matrix for local public-tap import. Expected results are explicit per case. No fixture is executed here. The cask_catalog::tap interface is agreed (see design.md section 4: import-tap CLI with --source/--revision/--system/--nix/--out); importer execution happens only in a clean verification sandbox without model credentials. The final normal-mode native reader stage ran on both hosts on 2026-09-29 (20 cases per OS; see docs/verification/public-taps-2026-09-29/normal-reader-summary.json); converter expectations below reflect the backend's final actual converter classification, proven by the seven capture-case regressions (docs/verification/public-taps-2026-09-29/converter-captures.log, 7/7) and the final whole import of the seven real pinned sources on both hosts (docs/verification/public-taps-2026-09-29/results.md section E1). This is stage evidence, not a claim that every case here was whole-imported natively: the installer-script and branch fixture whole-imports and the native two-tree collision import stay explicit limits, and the client-resolution and sandbox-probe cases remain documented-check rows. Normal mode means an explicitly unset HOMEBREW_DEVELOPER environment variable; upstream may still print a developer-command warning, which is not a failure. Internal path loading is explicitly permitted for our staged trusted reader. There is no fixture-runner interface; do not invent a production local-source bypass.",
+  "description": "Data-only adversarial fixture matrix for local public-tap import. Expected results are explicit per case. No fixture is executed here. The cask_catalog::tap interface is agreed (see design.md section 4: import-tap CLI with --source/--revision/--system/--nix/--out); importer execution happens only in a clean verification sandbox without model credentials. The final normal-mode native reader stage ran on both hosts on 2026-09-29 (20 cases per OS; see https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/normal-reader-summary.json); converter expectations below reflect the backend's final actual converter classification, proven by the seven capture-case regressions (https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-2026-09-29/converter-captures.log, 7/7) and the final whole import of the seven real pinned sources on both hosts (docs/verification/public-taps.md). This is stage evidence, not a claim that every case here was whole-imported natively: the installer-script and branch fixture whole-imports and the native two-tree collision import stay explicit limits, and the client-resolution and sandbox-probe cases remain documented-check rows. Normal mode means an explicitly unset HOMEBREW_DEVELOPER environment variable; upstream may still print a developer-command warning, which is not a failure. Internal path loading is explicitly permitted for our staged trusted reader. There is no fixture-runner interface; do not invent a production local-source bypass.",
   "layout": "Every independent case gets its own small tree, because a source-wide failure (duplicate token) aborts its whole tree and must not hide other cases. The only cross-tree token sharing is the intentional collision pair (collision-a/collision-b). Tree names map to synthetic source ids in source_id below.",
   "source_id": {
     "release-archive": "pubtap-fixtures/release-archive",
@@ -250,7 +250,7 @@
       },
       "harness": {
         "step": "sandbox-probe",
-        "documented_check": "bounded-run pattern in tools/public-tap-check/README.md (timeout plus capped capture); measured stage coverage and limits are recorded in docs/verification/public-taps-2026-09-29/results.md"
+        "documented_check": "bounded-run pattern in tools/public-tap-check/README.md (timeout plus capped capture); measured stage coverage and limits are recorded in docs/verification/public-taps.md"
       }
     },
     {
@@ -327,7 +327,7 @@
       },
       "harness": {
         "step": "client-resolution",
-        "documented_check": "client commands after import in the clean sandbox; measured stage coverage and limits are recorded in docs/verification/public-taps-2026-09-29/results.md"
+        "documented_check": "client commands after import in the clean sandbox; measured stage coverage and limits are recorded in docs/verification/public-taps.md"
       }
     },
     {
@@ -343,7 +343,7 @@
       },
       "harness": {
         "step": "client-resolution",
-        "documented_check": "corrupt one saved catalog, then attempt bare-token install; measured stage coverage and limits are recorded in docs/verification/public-taps-2026-09-29/results.md"
+        "documented_check": "corrupt one saved catalog, then attempt bare-token install; measured stage coverage and limits are recorded in docs/verification/public-taps.md"
       }
     }
   ]

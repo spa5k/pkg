@@ -1,8 +1,0 @@
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"exitCode\":0,\"stdout\":\"{\\\"result\\\": \\\"pass\\\", \\\"negative_exit\\\": 1, \\\"stderr\\\": \\\"cask-catalog: effective local nix config refuses the raw tap import: sandbox-fallback is true.Concrete setup: configure the nix daemon with sandbox = true and sandbox-fallback = false, and remove extra unsafe host paths (sandbox-paths, extra-sandbox-paths, allowed-impure-host-deps). Do not edit the daemon config here, do not rely on client --option flags (they are ignored for untrusted users); the in-build sandbox probe stays mandatory and authoritative.\\\\n\\\"}\\n Failed to connect to bus: No such file or directory\\n\\n    PID COMMAND\\n   2653 /nix/var/nix/profiles/default/bin/nix-daemon\\n \\nnix config files: ['/etc/nix/nix.custom.conf', '/etc/nix/nix.conf', '/etc/nix/sentry-endpoint']\\n\",\"stderr\":\"\"}"
-    }
-  ]
-}

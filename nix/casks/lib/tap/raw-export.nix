@@ -276,7 +276,7 @@ else
       cp -a "$homebrewSource" "$stage/brew"
       chmod -R u+w "$stage/brew"
 
-      # Controlled source patch #1 (the ONLY source patch): upstream utils/ruby.sh unconditionally unsets HOMEBREW_RUBY_PATH
+      # Controlled source patch #1: upstream utils/ruby.sh unconditionally unsets HOMEBREW_RUBY_PATH
       # and then prefers vendor portable-ruby (which does not exist on
       # Nix). Keep a pre-supplied, version-valid HOMEBREW_RUBY_PATH (the
       # Nix Ruby) when no vendored portable ruby is staged. Everything

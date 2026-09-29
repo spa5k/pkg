@@ -89,7 +89,7 @@ fn config_bool(config: &Value, name: &str) -> Option<bool> {
 }
 
 /// Validate one EFFECTIVE `nix config show --json` document (the
-/// verified parent shape: every setting object carries `.value`).
+/// effective document: every setting object carries `.value`).
 /// Fail-closed: `sandbox` must be exactly `true`, `sandbox-fallback`
 /// exactly `false`, and the merged `sandbox-paths` +
 /// `extra-sandbox-paths` mappings must be mandatory (optional = false)

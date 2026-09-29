@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pkg CONTROLLED BOOT ADAPTER over the pinned Homebrew tree.
 #
-# Why this exists (parent-approved startup adaptation, nothing else):
+# Why this exists (startup adaptation only):
 # upstream `bin/brew` hardcodes PATH="/usr/bin:/bin:/usr/sbin:/sbin",
 # then `exec /usr/bin/env -i "${FILTERED_ENV[@]}" /bin/bash -p brew.sh`,
 # which (a) does not exist on Nix Linux (no /usr/bin/env, no /bin/bash)
@@ -12,9 +12,9 @@
 # control to the UNMODIFIED upstream loader
 # ${HOMEBREW_LIBRARY}/Homebrew/brew.sh with the full environment kept.
 # All actual Homebrew loader logic, cask DSL, and vendored bundle stay
-# upstream. The only other adaptation (parent-approved) is applied by
-# raw-export.nix: utils/ruby.sh keeps a pre-supplied valid
-# HOMEBREW_RUBY_PATH (the Nix Ruby) instead of unsetting it.
+# upstream. The other adaptation is applied by raw-export.nix:
+# utils/ruby.sh keeps a pre-supplied valid HOMEBREW_RUBY_PATH (the Nix
+# Ruby) instead of unsetting it.
 set -eu
 
 fail() {

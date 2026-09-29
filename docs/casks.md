@@ -185,8 +185,8 @@ This public tap ships binaries, manual pages, and shell completions.
 Native imports and the package lifecycle were tested on both supported
 systems. Further Linux tests downloaded packages from three public taps
 and ran real commands. See the
-[native verification](verification/public-taps-2026-09-29/results.md) and
-[real installation results](verification/public-taps-real-installs-2026-09-29/README.md)
+[public-tap verification summary](verification/public-taps.md) and the
+[real installation report](https://github.com/spa5k/pkg/blob/913dedb3131a3f1db4c3ab385e3dc4ca495c21f3/docs/verification/public-taps-real-installs-2026-09-29/README.md)
 for the exact versions and limits.
 
 ### Consent and commands
@@ -254,8 +254,10 @@ Parent Nix-only evidence (2026-09-29):
 These are Nix-only proofs for the daemon settings themselves. The
 product reader runs, the Linux product refusal of
 `sandbox-fallback = true`, and the final Linux whole import passed. See
-the [plan](plans/public-cask-taps.md) and the
-[evidence records](verification/public-taps-2026-09-29/results.md).
+the
+[OpenSpec design](../openspec/changes/import-public-cask-taps/design.md)
+and the
+[verification summary](verification/public-taps.md).
 
 ### Trust limits
 

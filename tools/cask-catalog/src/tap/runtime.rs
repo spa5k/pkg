@@ -10,9 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-/// Trusted raw-export runtime assets (synced working upstream loader
-/// copies; never edited here — they are embedded verbatim).
-/// copies; never edited here — they are embedded verbatim).
+/// Trusted raw-export runtime assets embedded verbatim.
 const RAW_EXPORT_NIX: &str = include_str!("../../../../nix/casks/lib/tap/raw-export.nix");
 const EXPORT_RB: &str = include_str!("../../../../nix/casks/lib/tap/export.rb");
 const READER_RB: &str = include_str!("../../../../nix/casks/lib/tap/reader.rb");
@@ -73,7 +71,6 @@ impl Drop for CanaryControl {
 /// Randomness from the OS. RNG failure fails the import: there is no
 /// fallback.
 fn random_bytes(n: usize) -> Result<Vec<u8>, String> {
-    use std::io::Read as _;
     let mut file = std::fs::File::open("/dev/urandom")
         .map_err(|e| format!("cannot open /dev/urandom: {e}"))?;
     let mut buf = vec![0u8; n];

@@ -1,8 +1,0 @@
-HTTP/2 403
-date: Mon, 28 Sep 2026 23:43:51 GMT
-x-ratelimit-limit: 60
-x-ratelimit-remaining: 0
-x-ratelimit-used: 60
-x-ratelimit-resource: core
-x-ratelimit-reset: 1790639744
-Cause: unauthenticated API rate limit exceeded.
