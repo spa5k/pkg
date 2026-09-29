@@ -290,11 +290,11 @@ fn cask_json(display: &CaskDisplay) -> serde_json::Value {
 
 /// Build the human rendering for one collected info outcome.
 fn info_text(
-    resolved: &catalog::CatalogId,
+    _resolved: &catalog::CatalogId,
     data: &InfoData,
     reference: &str,
     installed: &Option<(String, ProfileEntry)>,
-    installable: &str,
+    _installable: &str,
 ) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -308,44 +308,47 @@ fn info_text(
         .as_ref()
         .map(|meta| meta.version.clone())
         .filter(|version| !version.is_empty());
+    let _ = writeln!(out, "Name        : {name}");
     let _ = writeln!(
         out,
-        "{}  {}  {}",
-        resolved.qualified(),
-        name,
-        version.as_deref().unwrap_or("unknown version")
-    );
-    let _ = writeln!(
-        out,
-        "source: {} ({})",
-        data.report.display.as_deref().unwrap_or(reference),
-        reference
-    );
-    if let Some(revision) = &data.report.revision {
-        let _ = writeln!(out, "revision: {revision}");
-    }
-    let _ = writeln!(
-        out,
-        "attribute: {}",
-        data.matched_attribute.as_deref().unwrap_or(&data.attribute)
+        "Version     : {}",
+        version.as_deref().unwrap_or("unknown")
     );
     if let Some(meta) = &data.meta
         && !meta.description.is_empty()
     {
-        let _ = writeln!(out, "{}", meta.description);
+        let _ = writeln!(out, "Description : {}", meta.description);
     }
+    if let Some(CaskDisplay::Status {
+        homepage: Some(homepage),
+        ..
+    }) = &data.cask
+    {
+        let _ = writeln!(out, "URL         : {homepage}");
+    }
+    let _ = writeln!(
+        out,
+        "Source      : {}",
+        crate::output::short_source(data.report.display.as_deref().unwrap_or(reference))
+    );
+    let mut status = if installed.is_some() {
+        String::from("installed")
+    } else {
+        String::from("not installed")
+    };
     if let Some(display) = &data.cask {
-        out.push_str(&render_cask_display(display));
-    }
-    match installed {
-        Some((entry_id, _)) => {
-            let _ = writeln!(out, "installed as entry {entry_id}");
+        match display {
+            CaskDisplay::Status {
+                status: catalog::CaskStatus::Excluded { reason, .. },
+                ..
+            } => status = format!("excluded ({reason})"),
+            CaskDisplay::UnsupportedPlatform { targets, .. } => {
+                status = format!("unsupported platform (targets: {})", targets.join(", "))
+            }
+            CaskDisplay::Status { .. } => {}
         }
-        None => {
-            let _ = writeln!(out, "not installed");
-        }
     }
-    let _ = writeln!(out, "installable: {installable}");
+    let _ = writeln!(out, "Status      : {status}");
     out
 }
 
@@ -422,52 +425,6 @@ enum CaskDisplay {
         /// The effective homepage, when the record has one.
         homepage: Option<String>,
     },
-}
-
-fn render_cask_display(display: &CaskDisplay) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::new();
-    match display {
-        CaskDisplay::UnsupportedPlatform { system, targets } => {
-            let _ = writeln!(
-                out,
-                "cask status: unsupported platform ({system}; catalog targets {})",
-                targets.join(", ")
-            );
-        }
-        CaskDisplay::Status {
-            status: catalog::CaskStatus::Eligible,
-            kind,
-            homepage,
-        } => {
-            let kind = kind.as_deref().unwrap_or("unknown kind");
-            let _ = writeln!(out, "cask status: eligible ({kind})");
-            if let Some(homepage) = homepage {
-                let _ = writeln!(out, "cask homepage: {homepage}");
-            }
-            let _ = writeln!(
-                out,
-                "cask eligibility is a metadata claim; the build proves the payload"
-            );
-        }
-        CaskDisplay::Status {
-            status: catalog::CaskStatus::Excluded { reason, detail },
-            ..
-        } => {
-            let detail = detail.as_deref().unwrap_or("no detail");
-            let _ = writeln!(out, "cask status: excluded ({reason}: {detail})");
-        }
-        CaskDisplay::Status {
-            status: catalog::CaskStatus::Unknown,
-            ..
-        } => {
-            let _ = writeln!(
-                out,
-                "cask status: not in the generated catalog for this system"
-            );
-        }
-    }
-    out
 }
 
 pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {

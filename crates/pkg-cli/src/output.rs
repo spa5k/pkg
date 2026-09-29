@@ -53,6 +53,28 @@ pub fn render_doctor(rows: &[DoctorRow]) -> String {
     out
 }
 
+/// The short display name: the last path segment.
+fn short_name(name: &str) -> &str {
+    name.rsplit('/').next().unwrap_or(name)
+}
+
+/// The short source label: nixpkgs, or owner/repo from a flake reference.
+#[must_use]
+pub fn short_source(source: &str) -> String {
+    if source.contains("nixpkgs") {
+        return String::from("nixpkgs");
+    }
+    let stripped = source.strip_prefix("github:").unwrap_or(source);
+    let no_query = stripped.split('?').next().unwrap_or(stripped);
+    let normalized = no_query.replace(":", "/");
+    match normalized.find('/') {
+        Some(first) => match normalized[first + 1..].find('/') {
+            Some(second) => normalized[..first + 1 + second].to_string(),
+            None => normalized,
+        },
+        None => normalized,
+    }
+}
 /// Render list rows for humans.
 #[must_use]
 pub fn render_list(rows: &[ListRow]) -> String {
@@ -62,12 +84,12 @@ pub fn render_list(rows: &[ListRow]) -> String {
         return out;
     }
     for row in rows {
-        let _ = writeln!(out, "{}  {}", row.entry_id, row.name);
-        let _ = writeln!(out, "  source: {}", row.source);
-        let _ = writeln!(out, "  locked source: {}", row.locked_source);
-        if let Some(revision) = &row.revision {
-            let _ = writeln!(out, "  locked revision: {revision}");
-        }
+        let _ = writeln!(
+            out,
+            "{} ({})",
+            short_name(&row.name),
+            short_source(&row.source)
+        );
     }
     out
 }
@@ -102,17 +124,13 @@ pub fn render_search(rows: &[crate::catalog::SearchResult]) -> String {
     for row in rows {
         let stale = if row.stale { "  [stale cache]" } else { "" };
         let support = match &row.support {
-            Some(crate::catalog::SupportBadge::Eligible) => "  [eligible]",
+            Some(crate::catalog::SupportBadge::Eligible) => "",
             Some(crate::catalog::SupportBadge::Excluded { reason, .. }) => {
                 &format!("  [excluded: {reason}]")
             }
             None => "",
         };
-        let _ = writeln!(
-            out,
-            "{}  {}  {}{}{}",
-            row.id, row.name, row.version, stale, support
-        );
+        let _ = writeln!(out, "{} {}{}{}", row.id, row.version, stale, support);
         if !row.description.is_empty() {
             let _ = writeln!(out, "  {}", truncate(&row.description, 100));
         }
@@ -126,6 +144,9 @@ pub fn render_source_reports(reports: &[crate::catalog::SourceReport]) -> String
     use std::fmt::Write as _;
     let mut out = String::new();
     for report in reports {
+        if report.status.label() == "fresh" {
+            continue;
+        }
         let label = report.display.as_deref().unwrap_or(report.source.as_str());
         let revision = report.revision.as_deref().unwrap_or("moving, no revision");
         let _ = writeln!(

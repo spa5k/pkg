@@ -64,12 +64,13 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                 .map_err(CommandError::Message)?,
         );
     }
+    let before = installed_entries(&session)?;
     session
         .nix
         .profile_add(&session.paths.profile, &installables)
         .map_err(|error| mutation_failed(&session, "install", &error))?;
-    let entries = installed_entries(&session)?;
-    report_entries(&entries, installables.len());
+    let after = installed_entries(&session)?;
+    report_names("installed", &added_names(&before, &after));
     apps_refresh_after_mutation(&session)
 }
 
@@ -123,16 +124,30 @@ fn gate_cask(
     }
 }
 
-fn report_entries(entries: &BTreeMap<String, ProfileEntry>, expected: usize) {
-    println!(
-        "Installed {expected} entr{} in the pkg profile ({} total):",
-        if expected == 1 { "y" } else { "ies" },
-        entries.len()
-    );
-    for (entry_id, entry) in entries {
-        let revision = entry.locked_revision().unwrap_or("no revision");
-        println!("  {entry_id}  {}  ({revision})", entry.name());
+/// The short display name: the last path segment of the native name.
+fn short_name(name: &str) -> String {
+    name.rsplit('/').next().unwrap_or(name).to_string()
+}
+
+/// Report one completed transaction: one line, only what changed.
+fn report_names(verb: &str, names: &[String]) {
+    match names {
+        [] => println!("{verb}: profile unchanged"),
+        [one] => println!("{verb} {}", one),
+        many => println!("{verb} {}: {}", many.len(), many.join(", ")),
     }
+}
+
+/// The names of the entries that exist only in the second profile.
+fn added_names(
+    before: &BTreeMap<String, ProfileEntry>,
+    after: &BTreeMap<String, ProfileEntry>,
+) -> Vec<String> {
+    after
+        .keys()
+        .filter(|id| !before.contains_key(*id))
+        .map(|id| short_name(&after[id].name()))
+        .collect()
 }
 
 pub(super) fn remove(cli: &Cli, entries: &[String]) -> Result<(), CommandError> {
@@ -153,7 +168,11 @@ pub(super) fn remove(cli: &Cli, entries: &[String]) -> Result<(), CommandError> 
         .nix
         .profile_remove(&session.paths.profile, entries)
         .map_err(|error| mutation_failed(&session, "remove", &error))?;
-    println!("Removed {} entries from the pkg profile.", entries.len());
+    let names: Vec<String> = entries
+        .iter()
+        .map(|entry| short_name(&installed[entry].name()))
+        .collect();
+    report_names("removed", &names);
     apps_refresh_after_mutation(&session)
 }
 
@@ -274,8 +293,8 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
         .nix
         .profile_upgrade(&session.paths.profile, target)
         .map_err(|error| mutation_failed(&session, "upgrade", &error))?;
-    let entries = installed_entries(&session)?;
-    report_entries(&entries, entries.len());
+    let names: Vec<String> = targets.iter().map(|t| short_name(t)).collect();
+    report_names("upgraded", &names);
     apps_refresh_after_mutation(&session)
 }
 
