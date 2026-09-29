@@ -18,7 +18,7 @@ baseline, so the binary also runs on older distributions.
 Download the client downloader for the exact release and run it:
 
 ```sh
-version="0.2.0-alpha.5"
+version="0.2.0-alpha.6"
 curl -fsSL -o pkg-install.sh \
   "https://raw.githubusercontent.com/spa5k/pkg/v${version}/install.sh"
 sh pkg-install.sh
@@ -26,7 +26,7 @@ sh pkg-install.sh
 
 The downloader is pinned to one tag. It fetches
 `pkg-${version}-${system}.tar.gz` and `SHA256SUMS` from the
-[v0.2.0-alpha.5 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.5),
+[v0.2.0-alpha.6 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.6),
 verifies the archive checksum, and installs only:
 
 - `~/.local/bin/pkg` — the whole client;
@@ -43,7 +43,7 @@ installations.
 # on x86_64 Linux; use aarch64-darwin on Apple silicon macOS
 tools/release/package_client.sh x86_64-linux
 
-version="0.2.0-alpha.5"
+version="0.2.0-alpha.6"
 system="x86_64-linux"
 cat "dist/SHA256SUMS-${system}"          # compare with your own sha256sum
 
