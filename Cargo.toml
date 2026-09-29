@@ -10,7 +10,7 @@ resolver = "3"
 members = ["crates/pkg-cli", "tools/cask-catalog"]
 
 [workspace.package]
-version = "0.2.0-alpha.6"
+version = "0.2.0-alpha.7"
 edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
