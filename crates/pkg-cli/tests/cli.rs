@@ -139,14 +139,294 @@ fn malformed_ids_are_refused_before_the_runtime_is_needed() {
     }
 }
 
+/// Whether `path` is a regular file with an executable bit, mirroring the
+/// discovery candidate rule.
+#[cfg(unix)]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    path.is_file()
+}
+
+/// Whether this machine holds a usable Nix at the stable system profile
+/// path. Machines with such a Nix exercise discovery with the real
+/// runtime; machines without it (the CI runners) exercise the per-user
+/// profile tiers with the fakes below. Tests branch on this machine state
+/// instead of letting the host Nix silently mask a fake candidate.
+fn system_profile_nix_present() -> bool {
+    is_executable_file(std::path::Path::new(
+        "/nix/var/nix/profiles/default/bin/nix",
+    ))
+}
+
+/// The version line of the real system profile Nix, probed once. Discovery
+/// on a machine that holds one must find and probe exactly this runtime
+/// when PATH holds no Nix.
+fn system_profile_nix_version() -> String {
+    let output = Command::new("/nix/var/nix/profiles/default/bin/nix")
+        .arg("--version")
+        .output()
+        .expect("probe the real system profile Nix");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Write one executable fake `nix` and return its path with the directory
+/// that keeps it alive for the test.
+fn fake_nix(body: &str) -> (std::path::PathBuf, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("nix");
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write fake nix");
+    make_executable(&path);
+    (path, dir)
+}
+
+/// One fake `nix` body that answers the three read-only probes doctor
+/// runs, marking the version line with `marker`; any other call fails
+/// loudly so an unexpected native call fails the test.
+fn doctor_fake_body(marker: &str) -> String {
+    format!(
+        "case \"$*\" in
+          *--version*) echo 'nix (Nix) {marker}';;
+          *'store info'*) echo 'store reachable';;
+          *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;
+          *) echo 'unexpected nix call: '$* >&2; exit 9;;
+        esac"
+    )
+}
+
+/// Install one executable fake `nix` at an exact path (parents created)
+/// and return its text path.
+fn install_fake_nix_at(path: &std::path::Path, body: &str) -> String {
+    let (nix, _keep) = fake_nix(body);
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    std::fs::copy(&nix, path).expect("copy fake nix");
+    make_executable(path);
+    path.display().to_string()
+}
+
+#[cfg(unix)]
+fn make_executable(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).expect("chmod");
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &std::path::Path) {}
+
+/// Run the real client with one isolated fresh home: fresh XDG bases and
+/// environment entries the caller chooses. Subprocess isolation keeps the
+/// test away from the runner's real files; the standard profile paths
+/// under the fresh home hold nothing unless the test creates them.
+fn run_with_home(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
+    let home = tempfile::tempdir().expect("tempdir");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+    command
+        .args(args)
+        .env_remove("NO_COLOR")
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env("HOME", home.path())
+        .env("XDG_STATE_HOME", home.path().join("state"))
+        .env("XDG_CACHE_HOME", home.path().join("cache"))
+        .env("XDG_CONFIG_HOME", home.path().join("config"));
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = command.output().expect("spawn pkg");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// Run the real client under one prepared isolated home with one `PATH`.
+fn run_pkg_under_home(home: &std::path::Path, args: &[&str], path: &str) -> (i32, String, String) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+    command
+        .args(args)
+        .env_remove("NO_COLOR")
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env("HOME", home)
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env("XDG_CACHE_HOME", home.join("cache"))
+        .env("XDG_CONFIG_HOME", home.join("config"))
+        .env("PATH", path);
+    let output = command.output().expect("spawn pkg");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
 #[test]
 fn missing_nix_gives_vendor_guidance_not_a_silent_result() {
-    // Doctor is read-only and must fail (nonzero) with guidance when Nix is
-    // absent, without starting any installer (spec: external-nix-runtime).
-    let (code, stdout, stderr) = pkg(&["doctor"], &[("PATH", "/nonexistent")]);
+    // Doctor is read-only and must fail (nonzero) with guidance when Nix
+    // is absent, without starting any installer (spec: external-nix-runtime).
+    // The home is isolated, so the per-user standard path holds nothing.
+    // The system profile path is machine state, so both of its states are
+    // asserted: with a real Nix there, discovery must find it without PATH
+    // (the alpha.4 fix); with nothing there, the not-found guidance must
+    // appear with the searched locations.
+    if system_profile_nix_present() {
+        let (code, stdout, stderr) = run_with_home(&["doctor"], &[("PATH", "/usr/bin:/bin")]);
+        let _ = code; // daemon health is machine state; discovery is not.
+        let expected = system_profile_nix_version();
+        assert!(
+            stdout.contains(&expected),
+            "the system profile Nix must be found and probed without PATH: {stdout}{stderr}"
+        );
+    } else {
+        let (code, stdout, stderr) = run_with_home(&["doctor"], &[("PATH", "/nonexistent")]);
+        assert_eq!(code, 1);
+        let text = format!("{stdout}{stderr}");
+        assert!(text.contains("Determinate"), "guidance: {text}");
+        assert!(text.contains("standard Nix locations"), "locations: {text}");
+    }
+}
+
+/// The per-user profile locations are searched after PATH: with no usable
+/// PATH candidate, doctor becomes healthy without manual PATH setup. Both
+/// tiers are exercised with fakes under isolated homes. On a machine with
+/// a real system profile Nix that runtime wins instead, and the branches
+/// assert exactly what each machine can prove — the host Nix never masks
+/// a fake candidate silently.
+#[test]
+fn doctor_finds_a_user_profile_nix_when_path_has_none() {
+    for (tier, marker) in [
+        ("state/nix/profile/bin/nix", "2.35.2-modern"),
+        (".nix-profile/bin/nix", "2.35.2-legacy"),
+    ] {
+        // run_pkg_under_home points XDG_STATE_HOME at <home>/state, so the
+        // first tier is the modern per-user state profile and the second
+        // the legacy one; each iteration starts from an empty home.
+        let home = tempfile::tempdir().expect("tempdir");
+        let fake = install_fake_nix_at(&home.path().join(tier), &doctor_fake_body(marker));
+        let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["doctor"], "/usr/bin:/bin");
+        assert_eq!(
+            code, 0,
+            "tier {tier} must satisfy doctor without PATH\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        if system_profile_nix_present() {
+            assert!(
+                stdout.contains(&system_profile_nix_version()),
+                "the real system profile runtime wins over tier {tier}: {stdout}"
+            );
+        } else {
+            assert!(
+                stdout.contains(&fake),
+                "tier {tier} must be reported: {stdout}"
+            );
+            assert!(
+                stdout.contains(marker),
+                "the tier {tier} fake runtime is the one probed: {stdout}"
+            );
+        }
+    }
+}
+
+/// Non-executable candidates are skipped: a plain file named `nix` on PATH
+/// does not stop discovery, and the standard profile candidate is used.
+#[test]
+fn non_executable_candidates_are_skipped() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let fake = install_fake_nix_at(
+        &home.path().join(".nix-profile/bin/nix"),
+        &doctor_fake_body("2.35.2-userprofile"),
+    );
+    let plain = tempfile::tempdir().expect("tempdir");
+    let plain_nix = plain.path().join("nix");
+    std::fs::write(&plain_nix, "not executable").expect("write plain file");
+    let (code, stdout, stderr) = run_pkg_under_home(
+        home.path(),
+        &["doctor"],
+        &format!("{}:/usr/bin:/bin", plain.path().display()),
+    );
+    assert_eq!(
+        code, 0,
+        "the non-executable PATH candidate must be skipped\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !stdout.contains(plain.path().display().to_string().as_str()),
+        "the plain file must never be the runtime: {stdout}"
+    );
+    if system_profile_nix_present() {
+        assert!(
+            stdout.contains(&system_profile_nix_version()),
+            "the real system profile runtime wins: {stdout}"
+        );
+    } else {
+        assert!(stdout.contains(&fake), "{stdout}");
+    }
+}
+
+/// A configured `runtime.nix` selects its runtime and, when unusable,
+/// fails alone instead of falling back to discoverable candidates.
+#[test]
+fn configured_runtime_selects_and_fails_alone() {
+    // Usable configured value: its unique version marker reaches the row.
+    let (nix, _keep) = fake_nix(
+        "case \"$*\" in
+          *--version*) echo 'nix (Nix) 9.9.9-configured';;
+          *'store info'*) echo 'store reachable';;
+          *'profile list'*) echo '{\"version\":3,\"elements\":{}}';;
+          *) exit 0;;
+        esac",
+    );
+    let home = tempfile::tempdir().expect("tempdir");
+    install_fake_nix_at(&home.path().join(".nix-profile/bin/nix"), "exit 1");
+    let config = home.path().join("config/pkg");
+    std::fs::create_dir_all(&config).expect("mkdir");
+    std::fs::write(
+        config.join("config.toml"),
+        format!("[runtime]\nnix = '{}'\n", nix.display()),
+    )
+    .expect("write config");
+    let (code, stdout, stderr) = run_pkg_under_home(
+        home.path(),
+        &["doctor"],
+        &format!("{}:/usr/bin:/bin", nix.parent().expect("parent").display()),
+    );
+    assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("9.9.9-configured"), "{stdout}");
+
+    // Unusable configured value: the error names it and refuses fallback,
+    // even though a usable standard profile Nix exists in the same home.
+    let home = tempfile::tempdir().expect("tempdir");
+    let fake = install_fake_nix_at(&home.path().join(".nix-profile/bin/nix"), "exit 0");
+    let config = home.path().join("config/pkg");
+    std::fs::create_dir_all(&config).expect("mkdir");
+    let configured = home.path().join("missing/nix");
+    std::fs::write(
+        config.join("config.toml"),
+        format!("[runtime]\nnix = '{}'\n", configured.display()),
+    )
+    .expect("write config");
+    let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["doctor"], "/usr/bin:/bin");
     assert_eq!(code, 1);
     let text = format!("{stdout}{stderr}");
-    assert!(text.contains("Determinate"), "guidance: {text}");
+    assert!(
+        text.contains(&configured.display().to_string()),
+        "the configured value is named: {text}"
+    );
+    assert!(text.contains("does not fall back"), "{text}");
+    assert!(
+        !stdout.contains(&fake),
+        "no fallback runtime may be reported: {stdout}"
+    );
 }
 
 #[test]
