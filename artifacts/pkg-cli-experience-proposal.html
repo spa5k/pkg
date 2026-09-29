@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>pkg CLI output proposal</title>
+  <meta name="description" content="A command-by-command proposal for clear, short pkg output across normal, empty, and failure states.">
+  <style>
+    :root { --paper:#f4f2ec; --white:#fffefa; --ink:#20312e; --muted:#596b65; --line:#d5ddd5; --pine:#153e34; --green:#24694e; --mint:#e4f1e9; --yellow:#f4e4b5; --red:#9e4438; --rose:#fae9e4; --code:#152721; --code-ink:#e8f4ea; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; scroll-padding-top:20px; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.58 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    a { color:var(--green); text-underline-offset:3px; }
+    a:focus-visible, summary:focus-visible { outline:3px solid #d39e39; outline-offset:4px; }
+    h1,h2,h3,p { margin-top:0; }
+    h1,h2 { font-family:Georgia,"Times New Roman",serif; font-weight:400; letter-spacing:-.035em; line-height:1.1; }
+    h1 { font-size:clamp(3rem,7vw,6.2rem); margin:16px 0 24px; max-width:840px; }
+    h2 { font-size:clamp(2rem,4vw,3.2rem); margin:0 0 15px; }
+    h3 { font-size:1.3rem; margin:0 0 6px; }
+    code,pre { font-family:var(--mono); }
+    :not(pre)>code { background:#e8eee8; padding:1px 5px; border-radius:4px; font-size:.88em; overflow-wrap:anywhere; }
+    pre { background:var(--code); color:var(--code-ink); margin:0; padding:17px 20px; border-radius:8px; overflow:auto; font-size:13px; line-height:1.65; white-space:pre; }
+    pre code { color:inherit; }
+    .skip { position:absolute; top:-100px; left:12px; background:white; padding:10px; z-index:10; }.skip:focus { top:12px; }
+    .hero { background:var(--pine); color:#f2f4e9; border-bottom:7px solid #d9ea99; padding:42px max(26px,calc((100vw - 1260px)/2)) 47px; }
+    .hero .eyebrow { color:#bfdbc8; }.hero p { max-width:760px; color:#dce9dd; font-size:1.1rem; }
+    .hero-meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:30px; }.hero-meta span { border:1px solid #648579; color:#e4eee2; border-radius:40px; padding:5px 11px; font:12px var(--mono); }
+    .eyebrow { text-transform:uppercase; letter-spacing:.14em; font:700 11px var(--mono); color:var(--green); margin-bottom:10px; }
+    .shell { display:grid; grid-template-columns:210px minmax(0,1fr); gap:42px; max-width:1260px; margin:auto; padding:34px 26px 80px; }
+    .side { position:sticky; top:20px; align-self:start; max-height:calc(100vh - 40px); overflow:auto; font-size:13px; }.side a { display:block; padding:5px 0; color:#53675c; text-decoration:none; }.side a:hover { color:var(--green); text-decoration:underline; }.side .minor { padding-left:12px; font-family:var(--mono); font-size:11px; }.side hr { border:0; border-top:1px solid var(--line); margin:15px 0; }
+    main { min-width:0; }.section { margin-bottom:68px; }.lede { font-size:1.19rem; max-width:820px; }.muted { color:var(--muted); }.small { font-size:13px; }
+    .callout { background:var(--mint); border-left:4px solid var(--green); padding:19px 23px; border-radius:0 8px 8px 0; margin:23px 0; }.callout p:last-child { margin-bottom:0; }.callout.warn { background:var(--yellow); border-color:#ad7925; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }.tile { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:19px; }.tile p:last-child { margin-bottom:0; }
+    .number { font:700 11px var(--mono); color:var(--green); display:block; margin-bottom:11px; }
+    .table-wrap { overflow:auto; background:var(--white); border:1px solid var(--line); border-radius:10px; } table { width:100%; border-collapse:collapse; font-size:14px; } th { text-align:left; background:#e7eee6; color:#365443; font:700 11px var(--mono); letter-spacing:.07em; text-transform:uppercase; } th,td { padding:12px 15px; vertical-align:top; border-bottom:1px solid var(--line); } tr:last-child td { border-bottom:0; }
+    .group-label { display:flex; gap:10px; align-items:center; border-bottom:1px solid #bccdc1; padding-bottom:10px; margin:36px 0 18px; }.group-label span { font:700 11px var(--mono); color:var(--green); }.group-label h3 { margin:0; }
+    .command { background:var(--white); border:1px solid var(--line); border-radius:12px; margin:0 0 17px; overflow:hidden; scroll-margin-top:20px; }.command-head { padding:20px 23px 16px; }.command-head p { margin:7px 0 0; color:var(--muted); font-size:14px; }.command-head h3 { display:flex; flex-wrap:wrap; align-items:center; gap:9px; }.command-head h3 code { font-size:17px; background:transparent; padding:0; }.tag { font:700 10px var(--mono); border-radius:4px; color:#2b6248; background:var(--mint); padding:4px 7px; text-transform:uppercase; letter-spacing:.03em; }.tag.fix { background:var(--yellow); color:#754f14; }
+    .stages { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); background:#f0f4ed; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }.stages div { padding:11px 14px; border-right:1px solid var(--line); font-size:12px; color:#496156; }.stages div:last-child { border-right:0; }.stages b { display:block; color:var(--green); font:700 11px var(--mono); text-transform:uppercase; margin-bottom:3px; }
+    .cases { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:15px; padding:16px; }.case { min-width:0; }.case h4 { font:700 11px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:#4a6256; margin:0 0 7px; }.case h4.bad { color:var(--red); }.case h4.good { color:var(--green); }.case.wide { grid-column:1/-1; }
+    .note { padding:0 22px 19px; font-size:13px; color:var(--muted); margin:0; }.note strong { color:var(--ink); }
+    .source-list { list-style:none; padding:0; margin:0; }.source-list li { padding:15px 0; border-top:1px solid var(--line); }.source-list li:first-child { border-top:0; }.source-list strong { display:inline-block; min-width:100px; }
+    .footer { border-top:1px solid var(--line); padding-top:25px; color:var(--muted); font-size:13px; }
+    @media(max-width:900px) { .shell { display:block; }.side { position:static; max-height:none; display:flex; flex-wrap:wrap; gap:8px 18px; margin-bottom:32px; }.side .eyebrow,.side hr { display:none; }.side .minor { padding-left:0; } }
+    @media(max-width:650px) { .grid,.cases { grid-template-columns:1fr; }.case.wide { grid-column:auto; }.stages { grid-template-columns:1fr 1fr; }.stages div:nth-child(2) { border-right:0; }.stages div:nth-child(-n+2) { border-bottom:1px solid var(--line); } .hero { padding:36px 23px; }.shell { padding:25px 16px 60px; } }
+    @media print { .hero { background:white; color:var(--ink); border-bottom:2px solid var(--ink); }.hero p { color:var(--ink); }.hero-meta span { color:var(--ink); }.shell { display:block; max-width:none; }.side { display:none; }.command,.tile { break-inside:avoid; } pre { color:#111; background:#eee; white-space:pre-wrap; } a { color:inherit; } }
+  </style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to proposal</a>
+<header class="hero">
+  <div class="eyebrow">Product design / terminal output</div>
+  <h1>Make <em>pkg</em> clear at every stage.</h1>
+  <p>A proposed output contract for every current command. Show the next useful fact. Keep technical detail available when a command fails.</p>
+  <div class="hero-meta"><span>18 command paths</span><span>Normal + empty + error states</span><span>Based on current main</span><span>Proposal, not implemented behavior</span></div>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Page sections">
+    <div class="eyebrow">Read the proposal</div>
+    <a href="#problem">The problem</a><a href="#rules">Output rules</a><a href="#stages">Stage model</a><a href="#commands">Command examples</a>
+    <a class="minor" href="#search">search · info · list</a><a class="minor" href="#install">install · remove · upgrade</a><a class="minor" href="#update">update · history · rollback</a><a class="minor" href="#prune">prune · doctor · apps sync</a><a class="minor" href="#tap-add">tap add · list · update · remove</a><a class="minor" href="#shellenv">shellenv · completion · help</a>
+    <hr><a href="#priority">Build order</a><a href="#references">References</a>
+  </nav>
+  <main id="main">
+    <section id="problem" class="section">
+      <div class="eyebrow">01 / The problem</div><h2>Say what changed. Say when it changed.</h2>
+      <p class="lede">Today, <code>pkg install cask:stats</code> can print <code>installed stats</code> before macOS app setup ends. If the app helper then fails, the command ends with a long chain of Nix build errors. The user sees success first and failure last.</p>
+      <div class="callout warn"><p><strong>Proposed rule:</strong> A completed success line is the last line of a successful transaction. If package state changed but app setup failed, report <em>partial completion</em>. Name the part that worked, the part that failed, and the next command.</p></div>
+      <div class="grid">
+        <div class="tile"><span class="number">CURRENT 01</span><h3>Noise hides the action.</h3><p>Native build output can show store paths, derivation names, repeated dependency errors, and a long diagnostic tail.</p></div>
+        <div class="tile"><span class="number">CURRENT 02</span><h3>Some status is hard to use.</h3><p><code>pkg list</code> prints short names. <code>pkg remove</code> requires exact profile entry IDs. The two views must agree.</p></div>
+        <div class="tile"><span class="number">CURRENT 03</span><h3>Read operations can be verbose.</h3><p><code>pkg update</code> prints source revisions and cache counts. <code>pkg doctor</code> prints details for healthy parts.</p></div>
+        <div class="tile"><span class="number">CURRENT 04</span><h3>Failures can repeat themselves.</h3><p>Search source failures and nested Nix errors can appear more than once. One clear error should lead the output.</p></div>
+      </div>
+      <p class="small muted">Evidence in current main: <code>crates/pkg-cli/src/commands/lifecycle.rs</code>, <code>commands/query.rs</code>, <code>commands/doctor.rs</code>, <code>commands/tap.rs</code>, <code>commands/mod.rs</code>, <code>nix/report.rs</code>, and <code>output.rs</code>. Example names and counts below are illustrative.</p>
+    </section>
+
+    <section id="rules" class="section">
+      <div class="eyebrow">02 / Output rules</div><h2>One status model for all commands.</h2>
+      <div class="table-wrap"><table><thead><tr><th>Rule</th><th>Proposal</th><th>Reason</th></tr></thead><tbody>
+        <tr><td>Default detail</td><td>Show the action, a useful working stage, and one final result.</td><td>Short output is easier to scan.</td></tr>
+        <tr><td>Working output</td><td>On a terminal, update one status line. In a pipe, print only stage changes.</td><td>Progress stays readable in logs.</td></tr>
+        <tr><td>Diagnostics</td><td>Show the first useful cause once. Put full Nix output under <code>--verbose</code>. Show <code>nix log &lt;drv&gt;</code> when a derivation is known.</td><td>The cause stays visible without an error cascade.</td></tr>
+        <tr><td>Truthful results</td><td>Read actual profile state before the final line. Report <code>Unchanged</code> when nothing changed. Report package state and app state separately if needed.</td><td>A command must not claim work that did not finish.</td></tr>
+        <tr><td>Output streams</td><td>Send progress and diagnostics to stderr. Send final query data and successful result lines to stdout. Send failed final results to stderr.</td><td>Scripts can read data without progress text.</td></tr>
+        <tr><td>Machine output</td><td>Keep the current <code>--json</code> scope and schema. Print no decoration in JSON, <code>shellenv</code>, or <code>completion</code> output.</td><td>These outputs are consumed by other tools.</td></tr>
+        <tr><td>Consent</td><td>Keep tap approval before any fetch or Ruby work. Do not hide the repository or approval scope.</td><td>The prompt supports a real choice.</td></tr>
+        <tr><td>Color</td><td>Use color as a hint only. Keep words, signs, and exit codes useful with <code>--no-color</code>.</td><td>Output must work in plain text.</td></tr>
+      </tbody></table></div>
+      <div class="callout"><p><strong>Compact result pattern:</strong> <code>Installed: stats</code>, <code>Unchanged: stats is already installed</code>, or <code>Partial: stats is installed; app launcher setup failed</code>. Put a next step on the next line only when the user can act on it.</p></div>
+      <div class="table-wrap"><table><thead><tr><th>Exit</th><th>Meaning</th><th>Output rule</th></tr></thead><tbody>
+        <tr><td><code>0</code></td><td>Complete or unchanged</td><td>State what is true now.</td></tr>
+        <tr><td><code>1</code></td><td>Failed or partial</td><td>State the confirmed change, the cause, and one useful next step.</td></tr>
+        <tr><td><code>2</code></td><td>Invalid command use</td><td>Show the bad argument and valid syntax.</td></tr>
+        <tr><td><code>130</code></td><td>Interrupted native operation</td><td>Read the profile again. Say what changed or say that the state is unknown.</td></tr>
+      </tbody></table></div>
+    </section>
+
+    <section id="stages" class="section">
+      <div class="eyebrow">03 / Stage model</div><h2>Show only stages that happen.</h2>
+      <div class="grid">
+        <div class="tile"><span class="number">01 / CHECK</span><h3>Check the request.</h3><p>Resolve the target. Stop early on an unknown name or invalid input. Show choices when a name is ambiguous.</p></div>
+        <div class="tile"><span class="number">02 / PLAN</span><h3>Show a plan when it matters.</h3><p>List exact targets before broad upgrades, removals, and generation deletion. Keep tap approval explicit.</p></div>
+        <div class="tile"><span class="number">03 / WORK</span><h3>Show useful progress.</h3><p>Use short verbs such as <code>Fetching</code>, <code>Building</code>, <code>Updating profile</code>, and <code>Setting up apps</code>. Do not show Nix store paths by default.</p></div>
+        <div class="tile"><span class="number">04 / RESULT</span><h3>State the final state.</h3><p>Use <code>Installed</code>, <code>Removed</code>, <code>Updated</code>, <code>Unchanged</code>, <code>Partial</code>, or <code>Failed</code>. Do not call the same action both installed and failed.</p></div>
+      </div>
+      <p class="small muted">A query command can go straight from check to data. Do not print an empty progress stage for a fast command.</p>
+      <div class="callout warn"><p><strong>Interrupted work:</strong> Print <code>Interrupted: install stopped.</code> Then print the verified profile state. If the profile cannot be read, print <code>Package state is unknown.</code> Do not guess from the last progress line.</p></div>
+    </section>
+
+    <section id="commands" class="section">
+      <div class="eyebrow">04 / Command examples</div><h2>Each command, in context.</h2>
+      <p class="muted">The examples show proposed text. A blank stage means the command has no work to report. Entry IDs and counts are examples.</p>
+      <div class="group-label"><span>A</span><h3>Find and inspect</h3></div>
+
+      <article class="command" id="search"><div class="command-head"><h3><code>pkg search QUERY</code> <span class="tag">query</span></h3><p>Show installable IDs first. Show a source warning once.</p></div><div class="stages"><div><b>Check</b>Parse query</div><div><b>Plan</b>None</div><div><b>Work</b>Only on slow first lookup</div><div><b>Result</b>Rows or clear empty state</div></div><div class="cases">
+        <div class="case"><h4 class="good">Matches</h4><pre>$ pkg search stats
+ID             VERSION  DESCRIPTION
+cask:stats     2.11.34  System monitor
+nixpkgs:stats  1.0.0    Statistics tool</pre></div>
+        <div class="case"><h4>Cold lookup</h4><pre>$ pkg search stats
+Searching nixpkgs and casks…
+
+ID             VERSION  DESCRIPTION
+cask:stats     2.11.34  System monitor</pre></div>
+        <div class="case"><h4>Empty</h4><pre>$ pkg search no-such-package
+No matches for "no-such-package".</pre></div>
+        <div class="case"><h4 class="bad">Degraded source</h4><pre>$ pkg search stats
+cask:stats  2.11.34  System monitor  [cached]
+Warning: Cask source is unavailable.
+Cached results may be old.</pre></div>
+      </div><p class="note">If all sources fail and no cache works, exit nonzero. Do not call that an empty search. Do not repeat the same source error below the rows.</p></article>
+
+      <article class="command" id="info"><div class="command-head"><h3><code>pkg info ID</code> <span class="tag">query</span></h3><p>Put the package decision before source metadata.</p></div><div class="stages"><div><b>Check</b>Resolve exact ID</div><div><b>Plan</b>None</div><div><b>Work</b>Only if lookup takes time</div><div><b>Result</b>Compact fact sheet</div></div><div class="cases">
+        <div class="case"><h4 class="good">Known package</h4><pre>$ pkg info cask:stats
+Stats  2.11.34
+System monitor for macOS
+ID: cask:stats
+Status: Available on this Mac
+Installed: No
+Source: Homebrew Cask</pre></div>
+        <div class="case"><h4 class="bad">Excluded package</h4><pre>$ pkg info cask:example
+Example  1.2.0
+Status: Cannot install on this Mac
+Reason: The package needs an installer type pkg cannot use.</pre></div>
+        <div class="case"><h4>Unknown ID</h4><pre>$ pkg info cask:unknown
+No package matches cask:unknown.
+Next: pkg search unknown</pre></div>
+        <div class="case"><h4>Ambiguous name</h4><pre>$ pkg info stats
+"stats" matches more than one package:
+  cask:stats
+  nixpkgs:stats
+Use a full ID.</pre></div>
+      </div><p class="note">Keep source revisions, locked references, and exact attributes in <code>--verbose</code> or <code>--json</code>. Do not invent a supported state when metadata is unknown.</p></article>
+
+      <article class="command" id="list"><div class="command-head"><h3><code>pkg list</code> <span class="tag fix">usability fix</span></h3><p>Print the exact entry ID that <code>pkg remove</code> and <code>pkg upgrade</code> accept.</p></div><div class="stages"><div><b>Check</b>Read profile</div><div><b>Plan</b>None</div><div><b>Work</b>None</div><div><b>Result</b>Entry IDs</div></div><div class="cases">
+        <div class="case"><h4 class="good">Installed entries</h4><pre>$ pkg list
+ENTRY ID  PACKAGE  SOURCE
+stats     stats    cask
+fd        fd       nixpkgs</pre></div>
+        <div class="case"><h4>Empty profile</h4><pre>$ pkg list
+No packages installed.
+Next: pkg search QUERY</pre></div>
+        <div class="case wide"><h4 class="bad">Profile cannot be read</h4><pre>$ pkg list
+Failed: Could not read the pkg profile.
+Next: pkg doctor</pre></div>
+      </div><p class="note">If an entry ID differs from the package name, show both. Do not shorten or transform an entry ID that another command needs.</p></article>
+
+      <div class="group-label"><span>B</span><h3>Change the active profile</h3></div>
+      <article class="command" id="install"><div class="command-head"><h3><code>pkg install ID…</code> <span class="tag fix">highest priority</span></h3><p>Finish app setup before a complete success line. Report partial state without an error cascade.</p></div><div class="stages"><div><b>Check</b>Resolve all IDs</div><div><b>Plan</b>Name targets</div><div><b>Work</b>Fetch · build · profile · apps</div><div><b>Result</b>Verified state</div></div><div class="cases">
+        <div class="case"><h4 class="good">Complete</h4><pre>$ pkg install cask:stats
+Installing stats…
+Building stats…
+Updating profile…
+Setting up app launcher…
+Installed: stats</pre></div>
+        <div class="case"><h4>Already installed</h4><pre>$ pkg install cask:stats
+Unchanged: stats is already installed.</pre></div>
+        <div class="case"><h4 class="bad">Build failed; profile unchanged</h4><pre>$ pkg install cask:stats
+Installing stats…
+Failed: Stats could not be built.
+Cause: A dependency could not allocate memory.
+Details: nix log &lt;derivation&gt;</pre></div>
+        <div class="case"><h4 class="bad">Package installed; launcher failed</h4><pre>$ pkg install cask:stats
+Installing stats…
+Updating profile…
+Setting up app launcher…
+Partial: stats is installed. App launcher setup failed.
+Cause: The helper build could not allocate memory.
+Next: Resolve the build error, then run pkg apps sync.</pre></div>
+      </div><p class="note"><strong>Exit:</strong> 0 only after all required steps succeed; nonzero for failed or partial work. Compare profile state before and after failure. Do not infer partial state from an entry count alone. Keep nested Nix errors under <code>--verbose</code>.</p></article>
+
+      <article class="command" id="remove"><div class="command-head"><h3><code>pkg remove ENTRY…</code> <span class="tag">mutation</span></h3><p>Use entry IDs from <code>pkg list</code>. Make app setup part of the final state.</p></div><div class="stages"><div><b>Check</b>Match exact entry IDs</div><div><b>Plan</b>List what will go</div><div><b>Work</b>Profile · apps</div><div><b>Result</b>Removed or partial</div></div><div class="cases">
+        <div class="case"><h4 class="good">Complete</h4><pre>$ pkg remove stats
+Removing: stats
+Updating profile…
+Updating app launchers…
+Removed: stats</pre></div>
+        <div class="case"><h4 class="bad">Unknown entry</h4><pre>$ pkg remove stat
+No installed entry has ID "stat".
+Next: pkg list</pre></div>
+        <div class="case wide"><h4 class="bad">Profile changed; launcher failed</h4><pre>$ pkg remove stats
+Partial: stats was removed. App launcher update failed.
+Next: pkg apps sync</pre></div>
+      </div><p class="note">Do not claim removal before a required launcher refresh. Show a short plan when more than one entry will be removed.</p></article>
+
+      <article class="command" id="upgrade"><div class="command-head"><h3><code>pkg upgrade ENTRY…</code> / <code>--all</code> <span class="tag">mutation</span></h3><p>Show the scope, and separate changed entries from skipped or fixed entries.</p></div><div class="stages"><div><b>Check</b>Read installed refs</div><div><b>Plan</b>Targets and skips</div><div><b>Work</b>Fetch · build · profile · apps</div><div><b>Result</b>Changed, unchanged, skipped</div></div><div class="cases">
+        <div class="case"><h4 class="good">Changes found</h4><pre>$ pkg upgrade --all
+Upgrading: 2 entries
+Skipping: 1 fixed reference
+Building 1 of 2…
+Updating profile…
+Upgraded: fd, stats
+Skipped: tool (fixed reference)</pre></div>
+        <div class="case"><h4>Nothing changed</h4><pre>$ pkg upgrade --all
+Up to date: 3 entries.
+Skipped: 1 fixed reference.</pre></div>
+        <div class="case"><h4 class="bad">Removed tap</h4><pre>$ pkg upgrade --all
+Skipping: 1 entry from a removed tap.
+Upgraded: fd
+Next: pkg list</pre></div>
+        <div class="case"><h4 class="bad">Explicit fixed entry</h4><pre>$ pkg upgrade tool
+Unchanged: tool uses a fixed source reference.
+To change its source, remove it and install the new ID.</pre></div>
+      </div><p class="note">Only say <code>Upgraded</code> for verified changed entries. Use <code>Unchanged</code> for an explicit fixed reference. Show exact skipped names when few; group them when many.</p></article>
+
+      <div class="group-label"><span>C</span><h3>Refresh, inspect, and recover</h3></div>
+      <article class="command" id="update"><div class="command-head"><h3><code>pkg update</code> <span class="tag">catalog</span></h3><p>Name the scope. This command does not upgrade packages or saved taps.</p></div><div class="stages"><div><b>Check</b>Find discovery sources</div><div><b>Plan</b>None</div><div><b>Work</b>Refresh source data</div><div><b>Result</b>Updated or unchanged</div></div><div class="cases">
+        <div class="case"><h4 class="good">Complete</h4><pre>$ pkg update
+Refreshing package search data…
+Updated: package search data.
+Installed packages did not change.</pre></div>
+        <div class="case"><h4>Already current</h4><pre>$ pkg update
+Package search data is up to date.</pre></div>
+        <div class="case wide"><h4 class="bad">Source failed</h4><pre>$ pkg update
+Failed: Could not refresh package search data.
+Cause: The nixpkgs source is unavailable.
+Installed packages did not change.</pre></div>
+      </div><p class="note">Show source URLs, revision hashes, and cache drop counts in <code>--verbose</code>. Mention <code>pkg tap update</code> only when the user asks about taps or a saved tap is stale.</p></article>
+
+      <article class="command" id="history"><div class="command-head"><h3><code>pkg history</code> <span class="tag">query</span></h3><p>Translate native generations into a readable list. Keep the generation numbers exact.</p></div><div class="stages"><div><b>Check</b>Read generations</div><div><b>Plan</b>None</div><div><b>Work</b>None</div><div><b>Result</b>History</div></div><div class="cases">
+        <div class="case"><h4 class="good">Generations</h4><pre>$ pkg history
+GEN  CREATED             STATUS
+12   2026-09-29 15:40    current
+11   2026-09-28 10:12    previous
+10   2026-09-27 09:00</pre></div>
+        <div class="case"><h4>Only current generation</h4><pre>$ pkg history
+GEN  CREATED             STATUS
+1    2026-09-29 15:40    current
+No earlier generation to restore.</pre></div>
+      </div><p class="note">Avoid passing raw native history text to the user. The timestamps here are examples, not current system state.</p></article>
+
+      <article class="command" id="rollback"><div class="command-head"><h3><code>pkg rollback [N]</code> <span class="tag">mutation</span></h3><p>State the destination before the change. Finish launcher setup before final success.</p></div><div class="stages"><div><b>Check</b>Find generation</div><div><b>Plan</b>Show destination</div><div><b>Work</b>Switch profile · apps</div><div><b>Result</b>Restored or partial</div></div><div class="cases">
+        <div class="case"><h4 class="good">Complete</h4><pre>$ pkg rollback 11
+Restoring generation 11…
+Updating app launchers…
+Restored: generation 11.</pre></div>
+        <div class="case"><h4 class="bad">No previous generation</h4><pre>$ pkg rollback
+No earlier generation is available.
+Next: pkg history</pre></div>
+        <div class="case wide"><h4 class="bad">Launcher failed</h4><pre>$ pkg rollback 11
+Partial: generation 11 is active. App launcher update failed.
+Next: pkg apps sync</pre></div>
+      </div><p class="note">Read the active generation after a failed switch. Do not say that a rollback happened when native state is unknown.</p></article>
+
+      <article class="command" id="prune"><div class="command-head"><h3><code>pkg prune --older-than Nd</code> <span class="tag">cleanup</span></h3><p>Show what can be deleted. Keep the current generation safe.</p></div><div class="stages"><div><b>Check</b>Validate age</div><div><b>Plan</b>Eligible old generations</div><div><b>Work</b>Delete eligible generations</div><div><b>Result</b>Actual deleted count</div></div><div class="cases">
+        <div class="case"><h4 class="good">Deleted</h4><pre>$ pkg prune --older-than 30d
+Pruning generations older than 30 days…
+Pruned: 3 old generations.
+Current generation kept.</pre></div>
+        <div class="case"><h4>Nothing eligible</h4><pre>$ pkg prune --older-than 30d
+No old generations to prune.</pre></div>
+        <div class="case wide"><h4 class="bad">Invalid age</h4><pre>$ pkg prune --older-than 0d
+Invalid age: use a positive value such as 30d.</pre></div>
+      </div><p class="note">Report a count only if deletion confirms it. If native output cannot give a reliable count, say <code>Prune complete</code> and do not invent one.</p></article>
+
+      <article class="command" id="doctor"><div class="command-head"><h3><code>pkg doctor</code> <span class="tag">read only</span></h3><p>Collapse healthy details. Expand problems with a next step.</p></div><div class="stages"><div><b>Check</b>Run health checks</div><div><b>Plan</b>None</div><div><b>Work</b>None</div><div><b>Result</b>Summary and issues</div></div><div class="cases">
+        <div class="case"><h4 class="good">Healthy</h4><pre>$ pkg doctor
+pkg is ready. 7 checks passed.</pre></div>
+        <div class="case"><h4 class="bad">Needs attention</h4><pre>$ pkg doctor
+2 checks need attention:
+  Nix daemon: Cannot connect.
+  App launchers: Out of date.
+Next: Start the Nix daemon; run pkg apps sync.</pre></div>
+        <div class="case wide"><h4>Verbose</h4><pre>$ pkg --verbose doctor
+Nix runtime       ok       version …
+Nix daemon        ok       socket …
+Tap sandbox       ok       …
+pkg profile       ok       …
+App launchers     healthy  …
+Config            defaults …
+Discovery cache   present  …</pre></div>
+      </div><p class="note">The command remains read only. Keep the current exit rule for unhealthy states and the current JSON row schema.</p></article>
+
+      <article class="command" id="apps-sync"><div class="command-head"><h3><code>pkg apps sync</code> <span class="tag">macOS</span></h3><p>Report launcher state, not package installation.</p></div><div class="stages"><div><b>Check</b>Read active profile</div><div><b>Plan</b>Find apps</div><div><b>Work</b>Build helper · link apps</div><div><b>Result</b>Synced or unchanged</div></div><div class="cases">
+        <div class="case"><h4 class="good">Changed</h4><pre>$ pkg apps sync
+Checking installed apps…
+Setting up app launchers…
+Updated: app launchers.</pre></div>
+        <div class="case"><h4>No change</h4><pre>$ pkg apps sync
+App launchers are up to date.</pre></div>
+        <div class="case wide"><h4 class="bad">Helper failed</h4><pre>$ pkg apps sync
+Failed: App launchers could not be updated.
+Cause: The helper build could not allocate memory.
+Installed packages did not change.
+Details: nix log &lt;derivation&gt;</pre></div>
+      </div><p class="note">On a platform without macOS app launchers, state that the command does not apply. Do not imply that a failed sync removed packages.</p></article>
+
+      <div class="group-label"><span>D</span><h3>Manage saved taps</h3></div>
+      <article class="command" id="tap-add"><div class="command-head"><h3><code>pkg tap add SOURCE</code> <span class="tag">consent</span></h3><p>Keep the real approval point. Then show import progress and one result.</p></div><div class="stages"><div><b>Check</b>Validate source</div><div><b>Plan</b>Show repository and scope</div><div><b>Work</b>Fetch · import</div><div><b>Result</b>Added or failed</div></div><div class="cases">
+        <div class="case"><h4>First approval</h4><pre>$ pkg tap add goreleaser/tap
+Source: github.com/goreleaser/homebrew-tap
+This tap can run source Ruby during import and update.
+Approve this source? [y/N]</pre></div>
+        <div class="case"><h4 class="good">After approval</h4><pre>Fetching goreleaser/tap…
+Importing packages…
+Added tap: goreleaser/tap (13 packages available).</pre></div>
+        <div class="case"><h4>Declined</h4><pre>Tap was not added. No source work ran.</pre></div>
+        <div class="case"><h4 class="bad">Noninteractive, no trust</h4><pre>Approval is required for goreleaser/tap.
+Next: Run interactively or pass --trust.</pre></div>
+      </div><p class="note">Do not fetch before approval. Show the exact repository. Keep excluded counts and revision hashes available in <code>--verbose</code> or <code>tap list --json</code>.</p></article>
+
+      <article class="command" id="tap-list"><div class="command-head"><h3><code>pkg tap list</code> <span class="tag">query</span></h3><p>Show source identity and usable state. Keep failure recovery visible.</p></div><div class="stages"><div><b>Check</b>Read registry</div><div><b>Plan</b>None</div><div><b>Work</b>None</div><div><b>Result</b>Tap rows</div></div><div class="cases">
+        <div class="case"><h4 class="good">Saved taps</h4><pre>$ pkg tap list
+SOURCE          PACKAGES  STATUS
+goreleaser/tap  13        ready
+owner/other     —         needs update</pre></div>
+        <div class="case"><h4>Empty</h4><pre>$ pkg tap list
+No saved taps.
+Next: pkg tap add SOURCE</pre></div>
+        <div class="case wide"><h4 class="bad">Damaged catalog</h4><pre>$ pkg tap list
+goreleaser/tap  needs update
+Next: pkg tap update goreleaser/tap</pre></div>
+      </div><p class="note">Keep the current JSON fields, including origin, revision, eligible and excluded counts, and consent time.</p></article>
+
+      <article class="command" id="tap-update"><div class="command-head"><h3><code>pkg tap update [SOURCE]</code> <span class="tag">catalog</span></h3><p>Distinguish a catalog update from a package upgrade.</p></div><div class="stages"><div><b>Check</b>Read registered taps</div><div><b>Plan</b>List targets</div><div><b>Work</b>Fetch · import · publish</div><div><b>Result</b>Updated, unchanged, or failed</div></div><div class="cases">
+        <div class="case"><h4 class="good">One tap</h4><pre>$ pkg tap update goreleaser/tap
+Updating tap: goreleaser/tap
+Fetching source…
+Importing packages…
+Updated tap: goreleaser/tap.
+Installed packages did not change.</pre></div>
+        <div class="case"><h4>None registered</h4><pre>$ pkg tap update
+No saved taps to update.
+Next: pkg tap add SOURCE</pre></div>
+        <div class="case wide"><h4 class="bad">One of several fails</h4><pre>$ pkg tap update
+Updated: 2 taps.
+Failed: owner/other could not be imported.
+Cause: Source Ruby exited with an error.
+Installed packages did not change.</pre></div>
+      </div><p class="note">If several taps update in sequence, list the ones that published before a later error. Do not use a single all-or-nothing claim. A changed origin still needs new approval.</p></article>
+
+      <article class="command" id="tap-remove"><div class="command-head"><h3><code>pkg tap remove SOURCE</code> <span class="tag">source</span></h3><p>State that installed packages stay installed.</p></div><div class="stages"><div><b>Check</b>Find registered source</div><div><b>Plan</b>State effect</div><div><b>Work</b>Unregister source</div><div><b>Result</b>Removed or partial</div></div><div class="cases">
+        <div class="case"><h4 class="good">Complete</h4><pre>$ pkg tap remove goreleaser/tap
+Removed tap: goreleaser/tap.
+Installed packages were kept.</pre></div>
+        <div class="case"><h4 class="bad">Not registered</h4><pre>$ pkg tap remove other/tap
+No saved tap has ID other/tap.
+Next: pkg tap list</pre></div>
+        <div class="case wide"><h4 class="bad">Registry changed; cleanup failed</h4><pre>$ pkg tap remove goreleaser/tap
+Partial: goreleaser/tap was unregistered.
+Its active catalog could not be removed.
+Installed packages were kept.</pre></div>
+      </div><p class="note">Keep the exact partial state if the registry write succeeds but active-generation cleanup fails.</p></article>
+
+      <div class="group-label"><span>E</span><h3>Shell integration and entry points</h3></div>
+      <article class="command" id="shellenv"><div class="command-head"><h3><code>pkg shellenv</code> <span class="tag">script output</span></h3><p>Keep stdout as shell code only.</p></div><div class="stages"><div><b>Check</b>Read path settings</div><div><b>Plan</b>None</div><div><b>Work</b>None</div><div><b>Result</b>Shell code</div></div><div class="cases">
+        <div class="case"><h4 class="good">Normal</h4><pre>$ eval "$(pkg shellenv)"
+# No message on stdout or stderr.</pre></div>
+        <div class="case"><h4 class="bad">Failure</h4><pre>$ pkg shellenv
+# stderr: Failed: Could not find pkg profile path.
+# exit: nonzero; stdout: empty</pre></div>
+      </div><p class="note">The real command prints shell statements on stdout. This example shows the user-facing effect after <code>eval</code>; it does not replace those statements.</p></article>
+
+      <article class="command" id="completion"><div class="command-head"><h3><code>pkg completion SHELL</code> <span class="tag">script output</span></h3><p>Keep stdout as completion code only.</p></div><div class="stages"><div><b>Check</b>Validate shell name</div><div><b>Plan</b>None</div><div><b>Work</b>None</div><div><b>Result</b>Completion script</div></div><div class="cases">
+        <div class="case"><h4 class="good">Normal</h4><pre>$ pkg completion zsh &gt; _pkg
+# No heading or success text in _pkg.</pre></div>
+        <div class="case"><h4 class="bad">Unsupported shell</h4><pre>$ pkg completion unknown
+Unsupported shell: unknown.
+Next: pkg completion --help</pre></div>
+      </div><p class="note">Do not add a spinner or status line to generated code.</p></article>
+
+      <article class="command" id="help"><div class="command-head"><h3><code>pkg --help</code> / <code>pkg --version</code> / usage errors <span class="tag">entry</span></h3><p>Make the first screen task based. Keep syntax errors short.</p></div><div class="stages"><div><b>Check</b>Parse arguments</div><div><b>Plan</b>None</div><div><b>Work</b>None</div><div><b>Result</b>Help, version, or one error</div></div><div class="cases">
+        <div class="case"><h4 class="good">Help opening</h4><pre>$ pkg --help
+Find and manage packages.
+
+Find:     search, info, list
+Change:   install, remove, upgrade, rollback
+Maintain: update, history, prune, doctor, apps
+Sources:  tap add, tap list, tap update, tap remove</pre></div>
+        <div class="case"><h4 class="bad">Usage error</h4><pre>$ pkg upgrde
+Unknown command: upgrde.
+Did you mean: pkg upgrade?
+Run pkg --help for all commands.</pre></div>
+      </div><p class="note">Show <code>--json</code> only on the five current query paths. Keep usage errors at exit code 2. <code>--version</code> stays a single machine-friendly line.</p></article>
+    </section>
+
+    <section id="priority" class="section">
+      <div class="eyebrow">05 / Build order</div><h2>Fix the harmful cases first.</h2>
+      <div class="table-wrap"><table><thead><tr><th>Order</th><th>Change</th><th>Acceptance check</th></tr></thead><tbody>
+        <tr><td>1</td><td>Move final success after app setup in install, remove, upgrade, and rollback. Add a verified partial result.</td><td>The Stats helper failure never prints a complete <code>Installed</code> line.</td></tr>
+        <tr><td>2</td><td>Reduce nested Nix errors to one cause and one detail route. Keep all raw output under <code>--verbose</code>.</td><td>A failed build shows one cause and one <code>nix log</code> path when known.</td></tr>
+        <tr><td>3</td><td>Make <code>list</code> show exact entry IDs. Make upgrade results match actual changes.</td><td>A copied ID works in <code>remove</code>; an unchanged entry is not called upgraded.</td></tr>
+        <tr><td>4</td><td>Shorten search, update, doctor, and tap output. Keep query JSON unchanged.</td><td>Healthy and no-op cases fit in one or two useful lines.</td></tr>
+        <tr><td>5</td><td>Use one shared formatter for statuses, hints, tables, and exit classes.</td><td>TTY, pipe, <code>--no-color</code>, JSON, and shell output follow the same rules.</td></tr>
+      </tbody></table></div>
+    </section>
+
+    <section id="references" class="section">
+      <div class="eyebrow">06 / References</div><h2>Patterns from other package tools.</h2>
+      <p>These are design references. The example output above is a proposal for <code>pkg</code>. It is not a copy of another tool.</p>
+      <ul class="source-list">
+        <li><strong>pacman</strong> The <a href="https://man.archlinux.org/man/pacman.8.en">official pacman manual</a> documents transaction operations, query modes, confirmation controls, and quiet output. Borrow its clear boundary between package selection and a state change.</li>
+        <li><strong>Homebrew</strong> The <a href="https://docs.brew.sh/Manpage">official Homebrew manual</a> separates <code>search</code>, <code>info</code>, <code>install</code>, <code>update</code>, and <code>upgrade</code>. Borrow its short action labels and clear command scope.</li>
+        <li><strong>paru</strong> The <a href="https://github.com/Morganamilo/paru/blob/master/man/paru.8">official paru manual</a> describes interactive selection and a review path for source build files. Borrow its clear choice point. Keep <code>pkg</code> tap approval before the first fetch.</li>
+        <li><strong>winget</strong> The <a href="https://learn.microsoft.com/en-us/windows/package-manager/winget/">official winget documentation</a> separates search, show, list, install, upgrade, and uninstall. Its <a href="https://learn.microsoft.com/en-us/windows/package-manager/winget/troubleshooting">troubleshooting guide</a> explains verbose logs. Borrow the split between default output and diagnostic detail.</li>
+      </ul>
+      <div class="footer">Scope: current <code>origin/main</code> command set at review time. This file is a design proposal. It does not change CLI behavior or the published JSON schema.</div>
+    </section>
+  </main>
+</div>
+</body>
+</html>
