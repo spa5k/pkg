@@ -23,7 +23,7 @@ use std::fmt;
 
 use crate::nix::NixError;
 
-pub use cache::{CACHE_SCHEMA, CachedSearch, invalidate_cache, read_cache, write_cache};
+pub use cache::invalidate_cache;
 pub use cask::{
     CaskStatus, CatalogOnce, CatalogView, INDEX_ATTRIBUTE, native_package_attribute,
     package_attribute, record, sources_with_token, status,

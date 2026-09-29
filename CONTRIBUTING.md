@@ -10,6 +10,10 @@ The proposed next phase is
 [Import raw Ruby casks from public taps](openspec/changes/import-public-cask-taps/proposal.md).
 The alpha.4 runtime discovery and installer shell setup change is
 [Improve runtime discovery and shell setup](openspec/changes/improve-runtime-discovery-and-shell-setup/proposal.md).
+Search amortization is
+[Amortize search with revision snapshots](openspec/changes/amortize-search-with-revision-snapshots/proposal.md)
+with its [design](openspec/changes/amortize-search-with-revision-snapshots/design.md) and
+[tasks](openspec/changes/amortize-search-with-revision-snapshots/tasks.md).
 
 ## 1. Before you open a PR
 

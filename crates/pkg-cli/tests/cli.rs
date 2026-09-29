@@ -597,6 +597,107 @@ fn cask_flows_read_the_generated_index() {
     assert!(stdout.contains("eligible"), "{stdout}");
 }
 
+/// The nixpkgs lane amortizes evaluation with a revision snapshot: the
+/// first search fetches the complete map once (`nix search <ref> ^`), a
+/// different query at the same revision answers from the snapshot without
+/// a second native search or index evaluation, and an invalid pattern
+/// fails before any child runs. Proven by a fake Nix runtime that logs
+/// every search and eval call.
+#[test]
+fn search_snapshots_amortize_new_queries() {
+    let bin = tempfile::tempdir().expect("tempdir");
+    let home = tempfile::tempdir().expect("tempdir");
+    let nix = bin.path().join("nix");
+    let log = bin.path().join("calls.log");
+    std::fs::write(
+        &nix,
+        format!(
+            "#!/bin/sh\nargs=\"$*\"\ncase \"$args\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*nixpkgs*) echo '{{\"url\":\"github:NixOS/nixpkgs/nixpkgs-unstable\",\"locked\":{{\"type\":\"github\",\"owner\":\"NixOS\",\"repo\":\"nixpkgs\",\"rev\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}}}';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}}}';;\n  *'search'*) echo \"search $args\" >> {log}; echo '{{\"legacyPackages.x86_64-linux.ripgrep\":{{\"pname\":\"ripgrep\",\"version\":\"15.2.0\",\"description\":\"grep-like searcher\"}},\"legacyPackages.x86_64-linux.gnugrep\":{{\"pname\":\"grep\",\"version\":\"3.11\",\"description\":\"search tool\"}},\"legacyPackages.x86_64-linux.zzz-empty\":{{\"pname\":\"zzz-empty\",\"version\":\"1.0\",\"description\":\"\"}}}}';;\n  *'eval --json'*) echo \"eval $args\" >> {log}; echo '{{\"schema\":\"pkg-cask-catalog/3\",\"generator\":{{\"name\":\"cask-catalog\",\"version\":\"0.1.0\"}},\"inputs\":{{\"homebrew/cask\":{{\"url\":\"https://example.com/cask.json\",\"revision\":\"245947c0\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"license\":\"Homebrew license\"}}}},\"targets\":[\"x86_64-linux\"],\"macosBaseline\":\"15.7.7\",\"systems\":{{\"x86_64-linux\":{{\"entries\":{{}}}}}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n",
+            log = log.display()
+        ),
+    )
+    .expect("write fake nix");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut permissions = std::fs::metadata(&nix).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&nix, permissions).expect("chmod");
+    }
+    let cache = home.path().join("cache");
+    let run = |args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+        command
+            .args(args)
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("XDG_CACHE_HOME")
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
+            .env("HOME", home.path())
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .env("XDG_CACHE_HOME", &cache);
+        let output = command.output().expect("spawn pkg");
+        (
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // First query: one full native search (pattern `^`) and one index eval.
+    let (code, stdout, stderr) = run(&["search", "ripgrep"]);
+    assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");
+    assert!(stdout.contains("[fresh]"), "{stdout}");
+    let calls = std::fs::read_to_string(&log).expect("log written");
+    assert_eq!(calls.lines().count(), 2, "one search + one eval: {calls}");
+    assert!(calls.contains("search "), "{calls}");
+    // A snapshot file was written for both sources.
+    let pkg_cache = cache.join("pkg");
+    let snapshots = std::fs::read_dir(&pkg_cache)
+        .expect("cache dir")
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("catalog-"))
+        .count();
+    assert_eq!(snapshots, 2, "one snapshot per source");
+
+    // A different query at the same revision: no new search, no new eval.
+    let (code, stdout, stderr) = run(&["search", "grep|searcher"]);
+    assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");
+    assert!(stdout.contains("nixpkgs:gnugrep"), "{stdout}");
+    let calls = std::fs::read_to_string(&log).expect("log written");
+    assert_eq!(calls.lines().count(), 2, "snapshot reused: {calls}");
+    assert!(stdout.contains("[fresh]"), "{stdout}");
+    // The zzz-empty fixture stays hidden here: its name and description
+    // (empty) do not match `grep|searcher`.
+    assert!(!stdout.contains("zzz-empty"), "{stdout}");
+
+    // Native matching fields, locally: a pattern anchored past the pname
+    // matches only through the full attribute path.
+    let (code, stdout, stderr) = run(&["search", "^legacyPackages\\.x86_64-linux\\.zzz"]);
+    assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("nixpkgs:zzz-empty"), "{stdout}");
+    assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");
+    let calls = std::fs::read_to_string(&log).expect("log written");
+    assert_eq!(calls.lines().count(), 2, "no new calls: {calls}");
+
+    // `^$` matches an empty description natively; it is not skipped.
+    let (code, stdout, stderr) = run(&["search", "^$"]);
+    assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("nixpkgs:zzz-empty"), "{stdout}");
+    assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");
+    assert!(!stdout.contains("nixpkgs:gnugrep"), "{stdout}");
+    let calls = std::fs::read_to_string(&log).expect("log written");
+    assert_eq!(calls.lines().count(), 2, "no new calls: {calls}");
+
+    // An invalid pattern fails before any child runs.
+    let (code, _, stderr) = run(&["search", "("]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("invalid regex"), "{stderr}");
+    let calls = std::fs::read_to_string(&log).expect("log written");
+    assert_eq!(calls.lines().count(), 2, "no new calls: {calls}");
+}
+
 /// Percent-encode one path the way a `path:` flake reference is encoded.
 fn encode_ref(path: &str) -> String {
     let mut out = String::new();
