@@ -42,8 +42,33 @@ pub struct DoctorRow {
 
 /// Render doctor rows for humans.
 #[must_use]
-pub fn render_doctor(rows: &[DoctorRow]) -> String {
+pub fn render_doctor(rows: &[DoctorRow], verbose: bool) -> String {
     let mut out = String::new();
+    if !verbose {
+        let issues: Vec<&DoctorRow> = rows
+            .iter()
+            .filter(|row| {
+                matches!(
+                    row.status.as_str(),
+                    "missing" | "unreachable" | "unreadable" | "unhealthy"
+                )
+            })
+            .collect();
+        if issues.is_empty() {
+            let _ = writeln!(out, "Healthy: no problems found.");
+        } else {
+            let _ = writeln!(out, "Needs attention: {} issue(s).", issues.len());
+            for row in issues {
+                let _ = writeln!(
+                    out,
+                    "  {}: {}",
+                    row.component,
+                    concise_detail(row.detail.as_deref().unwrap_or(&row.status))
+                );
+            }
+        }
+        return out;
+    }
     for row in rows {
         let _ = writeln!(out, "{}: {}", row.component, row.status);
         if let Some(detail) = &row.detail {
@@ -53,9 +78,14 @@ pub fn render_doctor(rows: &[DoctorRow]) -> String {
     out
 }
 
-/// The short display name: the last path segment.
-fn short_name(name: &str) -> &str {
-    name.rsplit('/').next().unwrap_or(name)
+/// Keep one useful line from a native diagnostic in compact output.
+fn concise_detail(detail: &str) -> &str {
+    detail
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("error:") && !line.starts_with("error (ignored):"))
+        .or_else(|| detail.lines().map(str::trim).find(|line| !line.is_empty()))
+        .unwrap_or("unknown cause")
 }
 
 /// The short source label: nixpkgs, or owner/repo from a flake reference.
@@ -80,16 +110,26 @@ pub fn short_source(source: &str) -> String {
 pub fn render_list(rows: &[ListRow]) -> String {
     let mut out = String::new();
     if rows.is_empty() {
-        let _ = writeln!(out, "No installed packages in the pkg profile.");
+        let _ = writeln!(out, "No packages installed.");
+        let _ = writeln!(out, "Next: pkg search QUERY");
         return out;
     }
+    let width = rows
+        .iter()
+        .map(|row| row.entry_id.len())
+        .max()
+        .unwrap_or(8)
+        .max(8);
+    let _ = writeln!(out, "{:<width$}  PACKAGE  SOURCE", "ENTRY ID");
     for row in rows {
-        let _ = writeln!(
-            out,
-            "{} ({})",
-            short_name(&row.name),
+        let is_cask = row.name.contains('/');
+        let name = row.name.rsplit('/').next().unwrap_or(&row.name);
+        let source = if is_cask {
+            String::from("cask")
+        } else {
             short_source(&row.source)
-        );
+        };
+        let _ = writeln!(out, "{:<width$}  {}  {}", row.entry_id, name, source);
     }
     out
 }
@@ -111,49 +151,68 @@ pub struct ListRow {
 
 /// Render search rows for humans.
 ///
-/// Rows carry their own provenance; per-source headers come from
-/// [`render_source_reports`].
+/// Rows carry their own provenance.
 #[must_use]
-pub fn render_search(rows: &[crate::catalog::SearchResult]) -> String {
+pub fn render_search(rows: &[crate::catalog::SearchResult], query: &str) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     if rows.is_empty() {
-        let _ = writeln!(out, "No matches in the supported sources.");
+        let _ = writeln!(out, "No matches for \"{query}\".");
+        let _ = writeln!(out, "Next: Try a shorter search term.");
         return out;
     }
+    let width = rows
+        .iter()
+        .map(|row| row.id.len())
+        .max()
+        .unwrap_or(2)
+        .max(2);
+    let _ = writeln!(out, "{:<width$}  VERSION  DESCRIPTION", "ID");
     for row in rows {
-        let stale = if row.stale { "  [stale cache]" } else { "" };
+        let stale = if row.stale { " [cached]" } else { "" };
         let support = match &row.support {
             Some(crate::catalog::SupportBadge::Eligible) => "",
             Some(crate::catalog::SupportBadge::Excluded { reason, .. }) => {
-                &format!("  [excluded: {reason}]")
+                &format!(" [excluded: {reason}]")
             }
             None => "",
         };
-        let _ = writeln!(out, "{} {}{}{}", row.id, row.version, stale, support);
-        if !row.description.is_empty() {
-            let _ = writeln!(out, "  {}", truncate(&row.description, 100));
-        }
+        let _ = writeln!(
+            out,
+            "{:<width$}  {}  {}{}{}",
+            row.id,
+            row.version,
+            truncate(&row.description, 80),
+            stale,
+            support
+        );
     }
     out
 }
 
 /// Render per-source provenance headers for humans.
 #[must_use]
-pub fn render_source_reports(reports: &[crate::catalog::SourceReport]) -> String {
+pub fn render_source_reports(reports: &[crate::catalog::SourceReport], verbose: bool) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     for report in reports {
-        if report.status.label() == "fresh" {
+        if !verbose && report.status.label() != "stale" {
             continue;
         }
         let label = report.display.as_deref().unwrap_or(report.source.as_str());
-        let revision = report.revision.as_deref().unwrap_or("moving, no revision");
-        let _ = writeln!(
-            out,
-            "source: {label} ({revision}) [{}]",
-            report.status.label()
-        );
+        if verbose {
+            let revision = report.revision.as_deref().unwrap_or("moving, no revision");
+            let _ = writeln!(
+                out,
+                "source: {label} ({revision}) [{}]",
+                report.status.label()
+            );
+        } else {
+            let _ = writeln!(out, "Warning: {label} uses cached results.");
+        }
+        if !verbose {
+            continue;
+        }
         if let Some(detail) = &report.detail {
             let _ = writeln!(out, "  {detail}");
         }
@@ -241,10 +300,11 @@ mod tests {
             status: String::from("ok"),
             detail: Some(String::from("2.35.2")),
         }];
-        assert_eq!(render_doctor(&rows), "nix: ok\n  2.35.2\n");
+        assert_eq!(render_doctor(&rows, false), "Healthy: no problems found.\n");
+        assert_eq!(render_doctor(&rows, true), "nix: ok\n  2.35.2\n");
         assert_eq!(
             render_list(&[]),
-            "No installed packages in the pkg profile.\n"
+            "No packages installed.\nNext: pkg search QUERY\n"
         );
     }
 }

@@ -37,7 +37,7 @@ pub(super) fn doctor(cli: &Cli) -> Result<(), CommandError> {
     if cli.json {
         print_json(&output::envelope("doctor", &rows))?;
     } else {
-        print!("{}", output::render_doctor(&rows));
+        print!("{}", output::render_doctor(&rows, cli.verbose));
     }
     if healthy {
         Ok(())

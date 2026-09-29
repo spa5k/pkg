@@ -6,6 +6,13 @@ rollback, and roots.
 
 Global options: `--help`, `--version`, `--no-color`, `--verbose`.
 
+Human output shows one work stage and a verified result. A mutation reports
+`Installed`, `Removed`, `Upgraded`, or `Restored` only after the native profile
+operation and macOS launcher refresh finish. If the profile changes but
+launcher refresh fails, it reports `Partial`, the cause, and `pkg apps sync` as
+the next step. Use `--verbose` to see native commands and detailed output.
+Query commands keep JSON output and shell commands keep script-only stdout.
+
 | Command | Behavior |
 | --- | --- |
 | `pkg search QUERY` | Search supported sources. Shows source-qualified names and eligibility. |
@@ -123,7 +130,7 @@ Search pattern grammar, per lane:
   `legacyPackages.<system>.python312Packages.requests`), the package
   name (already version-stripped), and the description (an empty
   description is matched; `^$` finds packages without one). An invalid
-  pattern is reported as a source failure with the regex error.
+  pattern fails as a usage error before any source is queried.
   Breaking note: native `nix search` uses POSIX ERE; pkg uses the Rust
   regex engine, so advanced patterns can differ. The tested fzf and ripgrep queries
   returned identical results.

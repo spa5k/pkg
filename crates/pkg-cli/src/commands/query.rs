@@ -13,13 +13,22 @@ use crate::output::{self, ListRow};
 use super::{CommandError, installed_entries, print_json, session};
 
 pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
+    // Reject a malformed pattern before any source query starts. Otherwise
+    // each source would report the same input error as an outage.
+    regex::RegexBuilder::new(query)
+        .case_insensitive(true)
+        .build()
+        .map_err(|error| {
+            eprintln!("Invalid search pattern `{query}`: {error}");
+            CommandError::Reported(std::process::ExitCode::from(super::USAGE))
+        })?;
     let session = session(cli)?;
     let system = session.nix.system()?;
     let tap_state = super::TapState::load(&session)?;
     let mut reports = Vec::new();
     let mut rows = Vec::new();
     for (kind, moving) in super::configured_sources(&session.config) {
-        // The Nixpkgs lane passes the pattern to native search unchanged.
+        // The Nixpkgs lane filters a cached native snapshot locally.
         // The cask lane reads the generated catalog index once and filters
         // locally; a system outside the catalog targets is skipped from the
         // envelope alone inside that lane, and an index failure is a
@@ -64,15 +73,17 @@ pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
         });
         print_json(&output::envelope("search", &result))?;
     } else {
-        print!("{}", output::render_source_reports(&reports));
-        print!("{}", output::render_search(&rows));
+        if !rows.is_empty() || failed.is_empty() {
+            print!("{}", output::render_search(&rows, query));
+        }
+        print!("{}", output::render_source_reports(&reports, cli.verbose));
     }
     if !failed.is_empty() {
         for report in &failed {
             eprintln!(
-                "pkg: source failure for {}: {}",
-                report.source,
-                report.detail.as_deref().unwrap_or("unknown")
+                "Warning: source {} is unavailable: {}",
+                output::short_source(&report.source),
+                super::concise_cause(report.detail.as_deref().unwrap_or("unknown"))
             );
         }
         if rows.is_empty() {
@@ -80,10 +91,7 @@ pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
         }
         // Only the failed sources are degraded: their rows are missing or
         // labeled stale. Rows from healthy sources above are fresh.
-        eprintln!(
-            "pkg: results above are incomplete. \
-             Rows from failed sources are missing or labeled [stale cache]."
-        );
+        eprintln!("Results may be incomplete. Cached rows may be old.");
     }
     Ok(())
 }
@@ -194,7 +202,14 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
     } else {
         print!(
             "{}",
-            info_text(&resolved, &data, &reference, &installed, &installable)
+            info_text(
+                &resolved,
+                &data,
+                &reference,
+                &installed,
+                &installable,
+                cli.verbose,
+            )
         );
     }
     Ok(())
@@ -290,11 +305,12 @@ fn cask_json(display: &CaskDisplay) -> serde_json::Value {
 
 /// Build the human rendering for one collected info outcome.
 fn info_text(
-    _resolved: &catalog::CatalogId,
+    resolved: &catalog::CatalogId,
     data: &InfoData,
     reference: &str,
     installed: &Option<(String, ProfileEntry)>,
-    _installable: &str,
+    installable: &str,
+    verbose: bool,
 ) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -308,47 +324,79 @@ fn info_text(
         .as_ref()
         .map(|meta| meta.version.clone())
         .filter(|version| !version.is_empty());
-    let _ = writeln!(out, "Name        : {name}");
     let _ = writeln!(
         out,
-        "Version     : {}",
-        version.as_deref().unwrap_or("unknown")
+        "{name}  {}",
+        version.as_deref().unwrap_or("version unknown")
     );
     if let Some(meta) = &data.meta
         && !meta.description.is_empty()
     {
-        let _ = writeln!(out, "Description : {}", meta.description);
+        let _ = writeln!(out, "{}", meta.description);
     }
-    if let Some(CaskDisplay::Status {
-        homepage: Some(homepage),
-        ..
-    }) = &data.cask
-    {
-        let _ = writeln!(out, "URL         : {homepage}");
-    }
+    let _ = writeln!(out, "ID: {}", resolved.qualified());
     let _ = writeln!(
         out,
-        "Source      : {}",
-        crate::output::short_source(data.report.display.as_deref().unwrap_or(reference))
+        "Installed: {}",
+        if installed.is_some() { "Yes" } else { "No" }
     );
-    let mut status = if installed.is_some() {
-        String::from("installed")
-    } else {
-        String::from("not installed")
-    };
     if let Some(display) = &data.cask {
         match display {
             CaskDisplay::Status {
-                status: catalog::CaskStatus::Excluded { reason, .. },
+                status: catalog::CaskStatus::Excluded { reason, detail },
                 ..
-            } => status = format!("excluded ({reason})"),
-            CaskDisplay::UnsupportedPlatform { targets, .. } => {
-                status = format!("unsupported platform (targets: {})", targets.join(", "))
+            } => {
+                let _ = writeln!(out, "Status: Cannot install on this system");
+                let _ = writeln!(
+                    out,
+                    "Reason: {reason}{}",
+                    detail
+                        .as_deref()
+                        .map(|text| format!(": {text}"))
+                        .unwrap_or_default()
+                );
             }
-            CaskDisplay::Status { .. } => {}
+            CaskDisplay::UnsupportedPlatform { targets, .. } => {
+                let _ = writeln!(
+                    out,
+                    "Status: Unsupported platform (targets: {})",
+                    targets.join(", ")
+                );
+            }
+            CaskDisplay::Status {
+                status: catalog::CaskStatus::Eligible,
+                ..
+            } => {
+                let _ = writeln!(out, "Status: Available on this system");
+            }
+            CaskDisplay::Status {
+                status: catalog::CaskStatus::Unknown,
+                ..
+            } => {
+                let _ = writeln!(out, "Status: Not in this catalog");
+            }
         }
     }
-    let _ = writeln!(out, "Status      : {status}");
+    let _ = writeln!(
+        out,
+        "Source: {}",
+        crate::output::short_source(data.report.display.as_deref().unwrap_or(reference))
+    );
+    if verbose {
+        let _ = writeln!(out, "Source reference: {reference}");
+        let _ = writeln!(out, "Attribute: {}", data.attribute);
+        let _ = writeln!(out, "Installable: {installable}");
+        if let Some(revision) = &data.report.revision {
+            let _ = writeln!(out, "Revision: {revision}");
+        }
+        if let Some(CaskDisplay::Status {
+            homepage: Some(homepage),
+            ..
+        }) = &data.cask
+        {
+            let _ = writeln!(out, "URL: {homepage}");
+        }
+    }
     out
 }
 

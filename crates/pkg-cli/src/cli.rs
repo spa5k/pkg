@@ -10,11 +10,12 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(
     name = "pkg",
     version,
-    about = "Manage packages in one native Nix profile",
+    about = "Find and manage packages.",
+    help_template = "{about}\n\nFind:     search, info, list\nChange:   install, remove, upgrade, rollback\nMaintain: update, history, prune, doctor, apps\nSources:  tap add, tap list, tap update, tap remove\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
     disable_help_subcommand = true
 )]
 pub struct Cli {
-    /// Emit versioned JSON for query commands (search, info, list, doctor).
+    /// Emit JSON for search, info, list, doctor, and tap list.
     #[arg(long, global = true)]
     pub json: bool,
 
@@ -22,7 +23,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_color: bool,
 
-    /// Show the native Nix command lines that pkg runs.
+    /// Show native commands and detailed output.
     #[arg(long, global = true)]
     pub verbose: bool,
 
@@ -36,9 +37,7 @@ pub struct Cli {
 pub enum Command {
     /// Search supported sources.
     Search {
-        /// Regex query. The nixpkgs lane passes it to native `nix search`;
-        /// the cask lane matches it locally (Rust regex, case-insensitive)
-        /// against token, name, and description.
+        /// Rust regex query, matched locally against names and descriptions.
         query: String,
     },
     /// Show source, attribute, revision, and limits for one ID.

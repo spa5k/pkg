@@ -139,6 +139,18 @@ fn malformed_ids_are_refused_before_the_runtime_is_needed() {
     }
 }
 
+#[test]
+fn invalid_search_pattern_is_a_usage_error_before_runtime_discovery() {
+    let (code, stdout, stderr) = pkg(&["search", "["], &[("PATH", "/nonexistent")]);
+    assert_eq!(code, 2, "stderr: {stderr}");
+    assert!(stdout.is_empty(), "stdout: {stdout}");
+    assert!(
+        stderr.contains("Invalid search pattern"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains("Nix executable"), "stderr: {stderr}");
+}
+
 /// Whether `path` is a regular file with an executable bit, mirroring the
 /// discovery candidate rule.
 #[cfg(unix)]
@@ -283,7 +295,8 @@ fn missing_nix_gives_vendor_guidance_not_a_silent_result() {
     // (the alpha.4 fix); with nothing there, the not-found guidance must
     // appear with the searched locations.
     if system_profile_nix_present() {
-        let (code, stdout, stderr) = run_with_home(&["doctor"], &[("PATH", "/usr/bin:/bin")]);
+        let (code, stdout, stderr) =
+            run_with_home(&["doctor", "--verbose"], &[("PATH", "/usr/bin:/bin")]);
         let _ = code; // daemon health is machine state; discovery is not.
         let expected = system_profile_nix_version();
         assert!(
@@ -291,7 +304,8 @@ fn missing_nix_gives_vendor_guidance_not_a_silent_result() {
             "the system profile Nix must be found and probed without PATH: {stdout}{stderr}"
         );
     } else {
-        let (code, stdout, stderr) = run_with_home(&["doctor"], &[("PATH", "/nonexistent")]);
+        let (code, stdout, stderr) =
+            run_with_home(&["doctor", "--verbose"], &[("PATH", "/nonexistent")]);
         assert_eq!(code, 1);
         let text = format!("{stdout}{stderr}");
         assert!(text.contains("Determinate"), "guidance: {text}");
@@ -316,17 +330,15 @@ fn doctor_finds_a_user_profile_nix_when_path_has_none() {
         // the legacy one; each iteration starts from an empty home.
         let home = tempfile::tempdir().expect("tempdir");
         let fake = install_fake_nix_at(&home.path().join(tier), &doctor_fake_body(marker));
-        let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["doctor"], "/usr/bin:/bin");
-        assert_eq!(
-            code, 0,
-            "tier {tier} must satisfy doctor without PATH\nstdout: {stdout}\nstderr: {stderr}"
-        );
+        let (code, stdout, stderr) =
+            run_pkg_under_home(home.path(), &["doctor", "--verbose"], "/usr/bin:/bin");
         if system_profile_nix_present() {
             assert!(
                 stdout.contains(&system_profile_nix_version()),
                 "the real system profile runtime wins over tier {tier}: {stdout}"
             );
         } else {
+            assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
             assert!(
                 stdout.contains(&fake),
                 "tier {tier} must be reported: {stdout}"
@@ -353,12 +365,8 @@ fn non_executable_candidates_are_skipped() {
     std::fs::write(&plain_nix, "not executable").expect("write plain file");
     let (code, stdout, stderr) = run_pkg_under_home(
         home.path(),
-        &["doctor"],
+        &["doctor", "--verbose"],
         &format!("{}:/usr/bin:/bin", plain.path().display()),
-    );
-    assert_eq!(
-        code, 0,
-        "the non-executable PATH candidate must be skipped\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         !stdout.contains(plain.path().display().to_string().as_str()),
@@ -370,6 +378,7 @@ fn non_executable_candidates_are_skipped() {
             "the real system profile runtime wins: {stdout}"
         );
     } else {
+        assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
         assert!(stdout.contains(&fake), "{stdout}");
     }
 }
@@ -398,7 +407,7 @@ fn configured_runtime_selects_and_fails_alone() {
     .expect("write config");
     let (code, stdout, stderr) = run_pkg_under_home(
         home.path(),
-        &["doctor"],
+        &["doctor", "--verbose"],
         &format!("{}:/usr/bin:/bin", nix.parent().expect("parent").display()),
     );
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
@@ -416,7 +425,8 @@ fn configured_runtime_selects_and_fails_alone() {
         format!("[runtime]\nnix = '{}'\n", configured.display()),
     )
     .expect("write config");
-    let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["doctor"], "/usr/bin:/bin");
+    let (code, stdout, stderr) =
+        run_pkg_under_home(home.path(), &["doctor", "--verbose"], "/usr/bin:/bin");
     assert_eq!(code, 1);
     let text = format!("{stdout}{stderr}");
     assert!(
@@ -492,14 +502,14 @@ fn doctor_forwards_verbose_and_no_color_to_native_children() {
         "no trace by default: {stderr}"
     );
     // `--no-color` forwards NO_COLOR=1 to the native children.
-    let (code, stdout, stderr) = run(&["doctor", "--no-color"]);
+    let (code, stdout, stderr) = run(&["doctor", "--verbose", "--no-color"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(
         stdout.contains("no-color=1"),
         "NO_COLOR forwarded: stdout: {stdout}\nstderr: {stderr}"
     );
     // Without the flag the child sees no NO_COLOR.
-    let (code, stdout, stderr) = run(&["doctor"]);
+    let (code, stdout, stderr) = run(&["doctor", "--verbose"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(
         stdout.contains("no-color=unset"),
@@ -567,7 +577,7 @@ fn cask_flows_read_the_generated_index() {
     // An excluded token reports its recorded reason through info.
     let (code, stdout, _) = run(&["info", "cask:iterm2"]);
     assert_eq!(code, 0, "info reports recorded exclusion");
-    assert!(stdout.contains("excluded"), "{stdout}");
+    assert!(stdout.contains("Cannot install"), "{stdout}");
     assert!(stdout.contains("unsupported-platform"), "{stdout}");
 
     // Install refuses the excluded token and an unknown token before any
@@ -693,8 +703,8 @@ fn search_snapshots_amortize_new_queries() {
 
     // An invalid pattern fails before any child runs.
     let (code, _, stderr) = run(&["search", "("]);
-    assert_eq!(code, 1);
-    assert!(stderr.contains("invalid regex"), "{stderr}");
+    assert_eq!(code, 2);
+    assert!(stderr.contains("Invalid search pattern"), "{stderr}");
     let calls = std::fs::read_to_string(&log).expect("log written");
     assert_eq!(calls.lines().count(), 2, "no new calls: {calls}");
 }
@@ -864,7 +874,10 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
 
     let (code, stdout, stderr) = run(&["install", "github:helix-editor/helix#helix"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
-    assert!(stdout.contains("installed"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("Unchanged: profile did not change."),
+        "the fake runtime leaves the profile unchanged: {stdout}"
+    );
     for hidden in [
         "fetching Git repository",
         "Receiving objects",
@@ -934,7 +947,7 @@ fn failed_install_reports_signal_lines_only() {
     let output = command.output().expect("spawn pkg");
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("error: Cannot build"), "stderr: {stderr}");
+    assert!(stderr.contains("Cause: Cannot build"), "stderr: {stderr}");
     assert!(
         stderr.contains("nix log /nix/store/aaa-tool.drv"),
         "stderr: {stderr}"
@@ -947,6 +960,81 @@ fn failed_install_reports_signal_lines_only() {
         !stderr.contains("into the Git cache"),
         "unpacking chatter must stay hidden: {stderr}"
     );
+}
+
+/// A package can reach the native profile before macOS launcher setup fails.
+/// The final output must call this partial work, never a complete install.
+#[cfg(target_os = "macos")]
+#[test]
+fn install_reports_partial_state_when_app_setup_fails() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let bundle = home
+        .path()
+        .join("fixture/Stats/Applications/Stats.app/Contents");
+    std::fs::create_dir_all(&bundle).expect("create app bundle");
+    let profile = home.path().join("state/nix/profiles/pkg");
+    std::fs::create_dir_all(profile.parent().expect("profile parent"))
+        .expect("create profile parent");
+    let marker = home.path().join("installed-marker");
+    let manifest = serde_json::json!({
+        "version": 3,
+        "elements": {
+            "stats-entry": {
+                "active": true,
+                "attrPath": "packages.aarch64-darwin.Stats",
+                "originalUrl": "github:owner/repo",
+                "url": "github:owner/repo/1111111111111111111111111111111111111111",
+                "storePaths": [home.path().join("fixture/Stats").display().to_string()]
+            }
+        }
+    });
+    let flake = serde_json::json!({
+        "url": "github:owner/repo",
+        "locked": {
+            "type": "github", "owner": "owner", "repo": "repo",
+            "rev": "1111111111111111111111111111111111111111"
+        }
+    });
+    let (nix, _keep) = fake_nix(&format!(
+        "case \"$*\" in\n\
+         *--version*) echo 'nix (Nix) 2.35.2';;\n\
+         *'config show system'*) echo 'aarch64-darwin';;\n\
+         *'flake metadata'*) printf '%s\\n' '{flake}';;\n\
+         *'profile list'*'pkg-app-tools'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n\
+         *'profile list'*) if [ -f '{marker}' ]; then printf '%s\\n' '{manifest}'; else echo '{{\"version\":3,\"elements\":{{}}}}'; fi;;\n\
+         *'profile add'*'hraban/mac-app-util'*) printf '%s\\n' \"error: Cannot build '/nix/store/example-system-alexandria.drv'.\" 'failed to allocate 1048576 bytes' 'For full logs, run:' '  nix log /nix/store/example-system-alexandria.drv' >&2; exit 1;;\n\
+         *'profile add'*) touch '{marker}' '{profile}';;\n\
+         *) echo \"unexpected nix call: $*\" >&2; exit 9;;\n\
+         esac",
+        marker = marker.display(),
+        profile = profile.display()
+    ));
+    let config = home.path().join("config/pkg");
+    std::fs::create_dir_all(&config).expect("create config directory");
+    std::fs::write(
+        config.join("config.toml"),
+        format!("[runtime]\nnix = '{}'\n", nix.display()),
+    )
+    .expect("write config");
+    let (code, stdout, stderr) = run_pkg_under_home(
+        home.path(),
+        &["install", "github:owner/repo#Stats"],
+        &format!("{}:/usr/bin:/bin", nix.parent().expect("parent").display()),
+    );
+    assert_eq!(code, 1, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(marker.exists(), "package profile changed");
+    assert!(!stdout.contains("Installed:"), "stdout: {stdout}");
+    assert!(
+        stderr.contains("Partial: install changed Stats"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Cause: failed to allocate"), "{stderr}");
+    assert!(
+        stderr.contains("nix log /nix/store/example-system-alexandria.drv"),
+        "{stderr}"
+    );
+    assert_eq!(stderr.matches("failed to allocate").count(), 1, "{stderr}");
+    assert!(stderr.contains("pkg apps sync"), "{stderr}");
 }
 
 /// A sandbox refusal stays concise and offers the one-time setup instead
