@@ -150,6 +150,28 @@ fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
+/// Strip the final filename extension, like Ruby's
+/// `File.basename(name, File.extname(name))`. A final dot is an extension
+/// delimiter only when some non-dot character occurs before it (Ruby
+/// `File.extname` skips leading dots until a non-dot appears), so
+/// `.bashrc`, `..bashrc`, and `...` have no extension, but `.tar.gz`
+/// strips `.gz` and `foo.` strips to `foo`.
+fn strip_final_extension(name: &str) -> &str {
+    match name.rfind('.') {
+        Some(dot) if name[..dot].contains(|c: char| c != '.') => &name[..dot],
+        _ => name,
+    }
+}
+
+/// The install destination namespace of one artifact kind.
+/// Collisions are only real inside the same namespace.
+fn destination_namespace(kind: &str) -> &str {
+    match kind {
+        "binary" | "appimage" => "bin",
+        _ => kind,
+    }
+}
+
 /// Walk one artifact entry's item list as (source, optional rename) pairs.
 ///
 /// Cask JSON pairs a string source with an optional following
@@ -227,6 +249,13 @@ fn item_pairs(items: &[Value]) -> Result<Vec<(String, Option<String>)>, PlanErro
         pairs.push((source, None));
     }
     Ok(pairs)
+}
+
+/// True when the URL's path (ignoring any query) ends in `.AppImage`.
+fn url_path_ends_with_appimage(url: &str) -> bool {
+    url::Url::parse(url)
+        .map(|parsed| parsed.path().ends_with(".AppImage"))
+        .unwrap_or(false)
 }
 
 /// Build the plan for one effective record on one target system.
@@ -362,21 +391,39 @@ pub fn build_plan(eff: &Value, system: &str) -> Result<Plan, PlanError> {
             "naked container requires exactly one binary artifact".to_string(),
         ));
     }
-    // Two artifacts claiming the same link or bundle name would collide
-    // in the output prefix; detectable here, so it never reaches a builder.
-    let mut claimed: Vec<&str> = Vec::new();
+    // Two artifacts claiming the same destination (namespace + final
+    // normalized target) would collide in the output prefix; detectable
+    // here, so it never reaches a builder. Different namespaces with the
+    // same basename (a binary and a completion) coexist.
+    let mut claimed: Vec<(&str, &str)> = Vec::new();
     for artifact in &artifacts {
         if let Some(target) = artifact.target.as_deref() {
-            if claimed.contains(&target) {
+            let slot = (destination_namespace(artifact.kind), target);
+            if claimed.contains(&slot) {
                 return Err(PlanError::Malformed(format!(
-                    "duplicate artifact target {target:?}"
+                    "duplicate artifact target {target:?} in {}",
+                    slot.0
                 )));
             }
-            claimed.push(target);
+            claimed.push(slot);
         }
     }
 
-    let archive_kind = if has_app_image {
+    // The unambiguous direct AppImage download: on Linux, a URL whose
+    // path ends `.AppImage` with exactly one binary whose source also
+    // ends `.AppImage` is promoted to the appimage plan and archive,
+    // keeping the already-normalized binary target verbatim. Every
+    // other recognizable AppImage-as-binary shape refuses closed with a
+    // bounded error instead of producing a raw executable that needs
+    // host libfuse. Explicit `app_image` handling is untouched, and
+    // non-Linux systems never enter this path.
+    let promoted_appimage = if system == "x86_64-linux" {
+        normalize_appimage_binaries(&mut artifacts, url_path_ends_with_appimage(&url))?
+    } else {
+        false
+    };
+
+    let archive_kind = if has_app_image || promoted_appimage {
         "appimage"
     } else if naked {
         "raw-binary"
@@ -390,6 +437,50 @@ pub fn build_plan(eff: &Value, system: &str) -> Result<Plan, PlanError> {
         artifacts,
         min_macos: None,
     })
+}
+
+/// Fail-closed AppImage-as-binary normalization on Linux. A direct
+/// `.AppImage` download whose only installable is exactly one binary
+/// with a matching source is promoted to the appimage plan (target
+/// preserved verbatim). Any other binary `.AppImage` source — including
+/// inside archives, mixed artifact sets, anchored sources, and mismatched
+/// lone sources on a direct URL — refuses with a bounded error.
+fn normalize_appimage_binaries(
+    artifacts: &mut [PlanArtifact],
+    direct_appimage_url: bool,
+) -> Result<bool, PlanError> {
+    if artifacts.iter().any(|a| a.kind == "appimage") {
+        // Existing explicit app_image plan; nothing to normalize.
+        return Ok(false);
+    }
+    // Any binary `.AppImage` source refuses when the download is not a
+    // direct `.AppImage` URL — including `$APPDIR`-anchored ones. Only
+    // the direct promotion predicate requires an unanchored source.
+    let any_appimage_source = artifacts
+        .iter()
+        .any(|a| a.kind == "binary" && a.source.ends_with(".AppImage"));
+    if !direct_appimage_url {
+        if any_appimage_source {
+            return Err(PlanError::UnsupportedContainer(
+                "AppImage inside archive unsupported; use a direct .AppImage download".to_string(),
+            ));
+        }
+        return Ok(false);
+    }
+    let lone_unanchored_appimage =
+        artifacts.len() == 1 && any_appimage_source && !artifacts[0].source.starts_with("$APPDIR/");
+    if lone_unanchored_appimage {
+        artifacts[0].kind = "appimage";
+        return Ok(true);
+    }
+    if artifacts.len() > 1 {
+        return Err(PlanError::UnsupportedKinds(vec![
+            "app_image mixed with other artifacts".to_string(),
+        ]));
+    }
+    Err(PlanError::UnsupportedContainer(
+        "direct .AppImage URL requires exactly one binary source ending .AppImage".to_string(),
+    ))
 }
 
 /// Normalize one artifact item into (source, target) plan fields.
@@ -434,7 +525,29 @@ fn normalize_item(
             safe_target_name(target)?;
             Ok((source.to_string(), Some(target.to_string())))
         }
-        // manpage and completion sources are relative payload paths.
+        // Completions follow the pinned Homebrew rename rules: the
+        // declared (or default) name is validated as-is first, then the
+        // shell-specific normalization is applied and re-validated.
+        "bash_completion" | "zsh_completion" | "fish_completion" => {
+            safe_source(source, false)?;
+            let original = rename
+                .map(ToString::to_string)
+                .unwrap_or_else(|| basename(source));
+            safe_target_name(&original)?;
+            let stripped = strip_final_extension(&original).to_string();
+            let target = match kind {
+                "zsh_completion" if !original.starts_with('_') => format!("_{stripped}"),
+                "fish_completion" if !original.ends_with(".fish") => {
+                    format!("{stripped}.fish")
+                }
+                "bash_completion" => stripped,
+                _ => original.clone(),
+            };
+            safe_target_name(&target)?;
+            Ok((source.to_string(), Some(target)))
+        }
+        // manpage sources are relative payload paths; the whole filename
+        // is kept as the target.
         _ => {
             safe_source(source, false)?;
             let target = rename
@@ -670,6 +783,316 @@ mod tests {
         }
         let src = build_plan(&eff(&json!([{"binary": ["a\u{b}tool"]}])), "x86_64-linux");
         assert!(matches!(src, Err(PlanError::Malformed(_))));
+    }
+
+    fn linux_eff(url: &str, artifacts: &Value) -> Value {
+        json!({"url": url, "sha256": "a".repeat(64), "artifacts": artifacts})
+    }
+
+    #[test]
+    fn direct_appimage_url_promotes_one_matching_binary() {
+        // Target with an explicit rename and the default basename target
+        // are both preserved verbatim; no suffix-stripping normalization.
+        let cases = [
+            (
+                "https://v/t-2.2.AppImage",
+                json!([{"binary": ["t-2.2.AppImage", {"target": "tool.AppImage"}]}]),
+                Some("tool.AppImage"),
+            ),
+            (
+                "https://v/t-1.0.AppImage?token=x",
+                json!([{"binary": ["t-1.0.AppImage"]}]),
+                Some("t-1.0.AppImage"),
+            ),
+            // Query string does not hide a direct .AppImage path.
+            (
+                "https://v/dl/t.AppImage?token=x",
+                json!([{"binary": ["t.AppImage"]}]),
+                Some("t.AppImage"),
+            ),
+            // A naked container plus a direct AppImage binary is still
+            // the direct download case, not a container error.
+            (
+                "https://v/t.AppImage",
+                json!([{"binary": ["t.AppImage"]}]),
+                Some("t.AppImage"),
+            ),
+        ];
+        for (url, artifacts, expected) in cases {
+            let mut eff = linux_eff(url, &artifacts);
+            if url == "https://v/t.AppImage" {
+                eff["container"] = json!({"type": "naked"});
+            }
+            let plan = build_plan(&eff, "x86_64-linux").unwrap_or_else(|e| panic!("{url}: {e:?}"));
+            assert_eq!(plan.archive.kind, "appimage", "{url}");
+            assert_eq!(plan.artifacts.len(), 1, "{url}");
+            assert_eq!(plan.artifacts[0].kind, "appimage", "{url}");
+            assert_eq!(plan.artifacts[0].target.as_deref(), expected, "{url}");
+        }
+    }
+
+    #[test]
+    fn appimage_as_binary_refuses_closed() {
+        // (url, artifacts, expected error needle)
+        let container_cases = [
+            // AppImage binary inside a ZIP, lone or mixed with a manpage
+            // or another binary, never stays eligible for archive:auto.
+            (
+                "https://v/x.zip",
+                json!([{"binary": ["t.AppImage"]}]),
+                "AppImage inside archive unsupported",
+            ),
+            (
+                "https://v/x.zip",
+                json!([{"binary": ["t.AppImage"]}, {"manpage": ["t.1"]}]),
+                "AppImage inside archive unsupported",
+            ),
+            (
+                "https://v/x.zip",
+                json!([{"binary": ["t.AppImage"]}, {"binary": ["u"]}]),
+                "AppImage inside archive unsupported",
+            ),
+            // Direct .AppImage URL with a wrong or anchored source.
+            (
+                "https://v/t.AppImage",
+                json!([{"binary": ["tool"]}]),
+                "direct .AppImage URL",
+            ),
+            (
+                "https://v/t.AppImage",
+                json!([{"binary": ["$APPDIR/T.app/Contents/t.AppImage"]}]),
+                "direct .AppImage URL",
+            ),
+        ];
+        for (url, artifacts, needle) in container_cases {
+            let err = build_plan(&linux_eff(url, &artifacts), "x86_64-linux")
+                .expect_err(&format!("{url} must refuse"));
+            assert!(
+                matches!(&err, PlanError::UnsupportedContainer(d) if d.contains(needle)),
+                "{url}: {err:?}"
+            );
+        }
+        // Direct .AppImage URL with mixed artifact sets refuses as mixed.
+        let mixed_cases = [
+            (
+                "https://v/t.AppImage",
+                json!([{"binary": ["t.AppImage"]}, {"binary": ["u.AppImage"]}]),
+            ),
+            (
+                "https://v/t.AppImage",
+                json!([{"binary": ["t.AppImage"]}, {"manpage": ["t.1"]}]),
+            ),
+        ];
+        for (url, artifacts) in mixed_cases {
+            let err = build_plan(&linux_eff(url, &artifacts), "x86_64-linux")
+                .expect_err(&format!("{url} must refuse"));
+            assert!(
+                matches!(&err, PlanError::UnsupportedKinds(k) if k.len() == 1),
+                "{url}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn appimage_promotion_never_triggers_on_lookalikes() {
+        // Query-only .AppImage mention: the path is what counts, so an
+        // ordinary binary stays an ordinary auto-archive binary.
+        let plan = build_plan(
+            &linux_eff(
+                "https://v/dl?file=t.AppImage",
+                &json!([{"binary": ["tool"]}]),
+            ),
+            "x86_64-linux",
+        )
+        .expect("ordinary binary stays ordinary");
+        assert_eq!(plan.artifacts[0].kind, "binary");
+        assert_eq!(plan.artifacts[0].target.as_deref(), Some("tool"));
+        assert_eq!(plan.archive.kind, "auto");
+        // Non-Linux: same records never gain appimage handling.
+        for url in ["https://v/t.AppImage", "https://v/x.zip"] {
+            let plan = build_plan(
+                &linux_eff(url, &json!([{"binary": ["t.AppImage"]}])),
+                "aarch64-darwin",
+            )
+            .unwrap_or_else(|e| panic!("{url}: {e:?}"));
+            assert_eq!(plan.artifacts[0].kind, "binary", "{url}");
+            assert_eq!(
+                plan.artifacts[0].target.as_deref(),
+                Some("t.AppImage"),
+                "{url}"
+            );
+            assert_eq!(plan.archive.kind, "auto", "{url}");
+        }
+    }
+
+    #[test]
+    fn completion_targets_are_normalized_per_shell() {
+        // (kind, source, rename, expected final target)
+        let cases = [
+            // Defaults come from the source basename.
+            (
+                "bash_completion",
+                "share/goreleaser.bash",
+                None,
+                "goreleaser",
+            ),
+            (
+                "zsh_completion",
+                "share/goreleaser.zsh",
+                None,
+                "_goreleaser",
+            ),
+            (
+                "fish_completion",
+                "share/goreleaser.fish",
+                None,
+                "goreleaser.fish",
+            ),
+            // Already-normalized names stay verbatim.
+            ("zsh_completion", "s/x", Some("_goreleaser"), "_goreleaser"),
+            ("fish_completion", "s/x", Some("g.fish"), "g.fish"),
+            ("bash_completion", "s/x", Some("noext"), "noext"),
+            // Declared renames apply the same rules.
+            ("bash_completion", "s/x.bash", Some("tool.bash"), "tool"),
+            ("zsh_completion", "s/x", Some("tool.zsh"), "_tool"),
+            ("fish_completion", "s/x", Some("tool"), "tool.fish"),
+            // Dotfiles and multi-dot names strip only the final extension.
+            ("bash_completion", "s/x", Some(".bashrc"), ".bashrc"),
+            ("bash_completion", "s/x", Some(".hidden.ext"), ".hidden"),
+            ("fish_completion", "s/x", Some(".hidden"), ".hidden.fish"),
+            // All-leading-dot names have no extension (Ruby File.extname
+            // skips leading dots until a non-dot occurs).
+            ("bash_completion", "s/x", Some("..bashrc"), "..bashrc"),
+            ("bash_completion", "s/x", Some("..."), "..."),
+            ("bash_completion", "s/x", Some("..foo.bar"), "..foo"),
+            // A trailing dot still strips to the stem.
+            ("bash_completion", "s/x", Some("foo."), "foo"),
+            ("bash_completion", "s/x", Some("foo.."), "foo."),
+            // Already shell-shaped names stay verbatim.
+            ("zsh_completion", "s/x", Some("_foo.zsh"), "_foo.zsh"),
+            ("fish_completion", "s/x", Some(".fish"), ".fish"),
+        ];
+        for (kind, source, rename, expected) in cases {
+            let items = match rename {
+                Some(r) => json!([source, {"target": r}]),
+                None => json!([source]),
+            };
+            let plan = build_plan(&eff(&json!([{kind: items}])), "x86_64-linux")
+                .unwrap_or_else(|e| panic!("{kind} {source}: {e:?}"));
+            assert_eq!(plan.artifacts[0].target.as_deref(), Some(expected));
+            assert_eq!(plan.artifacts[0].source, source);
+        }
+    }
+
+    #[test]
+    fn completion_normalization_never_hides_unsafe_targets() {
+        // The ORIGINAL declared name is validated before any rename.
+        for bad in ["../x", "a/b", "", "to\u{1}ol"] {
+            let err = build_plan(
+                &eff(&json!([{"zsh_completion": ["s/x", {"target": bad}]}])),
+                "x86_64-linux",
+            );
+            assert!(matches!(err, Err(PlanError::Malformed(_))), "{bad:?}");
+            let err = build_plan(
+                &eff(&json!([{"bash_completion": ["s/x", {"target": bad}]}])),
+                "x86_64-linux",
+            );
+            assert!(matches!(err, Err(PlanError::Malformed(_))), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn post_normalization_collisions_still_refuse() {
+        // goreleaser.bash and goreleaser (bash) land in the same file.
+        let err = build_plan(
+            &eff(&json!([
+                {"bash_completion": ["share/goreleaser.bash"]},
+                {"bash_completion": ["share/goreleaser", {"target": "goreleaser.txt"}]},
+            ])),
+            "x86_64-linux",
+        );
+        assert!(matches!(err, Err(PlanError::Malformed(d)) if d.contains("duplicate")));
+        // Same shell, both rename to _tool.
+        let err = build_plan(
+            &eff(&json!([
+                {"zsh_completion": ["a/tool.zsh"]},
+                {"zsh_completion": ["b/tool"]},
+            ])),
+            "x86_64-linux",
+        );
+        assert!(matches!(err, Err(PlanError::Malformed(d)) if d.contains("duplicate")));
+    }
+
+    #[test]
+    fn binary_plus_all_completions_coexist() {
+        // The real GoReleaser shape: one binary and its three completions.
+        let plan = build_plan(
+            &eff(&json!([
+                {"binary": ["bin/goreleaser"]},
+                {"bash_completion": ["completions/goreleaser.bash"]},
+                {"zsh_completion": ["completions/goreleaser.zsh"]},
+                {"fish_completion": ["completions/goreleaser.fish"]},
+            ])),
+            "x86_64-linux",
+        )
+        .expect("distinct namespaces coexist");
+        assert_eq!(
+            plan.artifacts
+                .iter()
+                .map(|a| a.target.as_deref())
+                .collect::<Vec<_>>(),
+            vec![
+                Some("goreleaser"),
+                Some("goreleaser"),
+                Some("_goreleaser"),
+                Some("goreleaser.fish")
+            ]
+        );
+    }
+
+    #[test]
+    fn distinct_namespaces_do_not_falsely_collide() {
+        // Manpages in distinct sections and same-name artifacts across
+        // different destinations are different files.
+        let plan = build_plan(
+            &eff(&json!([
+                {"manpage": ["man/tool.1"]},
+                {"manpage": ["man/tool.3"]},
+                {"manpage": ["man/tool.8.gz"]},
+                {"binary": ["bin/tool"]},
+                {"bash_completion": ["completions/tool.bash"]},
+            ])),
+            "x86_64-linux",
+        )
+        .expect("distinct destinations do not collide");
+        assert_eq!(plan.artifacts.len(), 5);
+        // But the same section twice is a real collision.
+        let err = build_plan(
+            &eff(&json!([
+                {"manpage": ["man/tool.1"]},
+                {"manpage": ["other/tool.1.gz", {"target": "tool.1"}]},
+            ])),
+            "x86_64-linux",
+        );
+        assert!(matches!(err, Err(PlanError::Malformed(d)) if d.contains("duplicate")));
+    }
+
+    #[test]
+    fn archive_with_anchored_appimage_binary_refuses() {
+        // The AppImage fix consistency correction: a $APPDIR-anchored
+        // .AppImage binary inside an archive still refuses closed; only
+        // the direct promotion path requires an unanchored source.
+        let err = build_plan(
+            &linux_eff(
+                "https://v/x.zip",
+                &json!([{"binary": ["$APPDIR/T.app/Contents/t.AppImage"]}]),
+            ),
+            "x86_64-linux",
+        );
+        assert!(
+            matches!(err, Err(PlanError::UnsupportedContainer(ref d)) if d.contains("AppImage inside archive")),
+            "{err:?}"
+        );
     }
 
     #[test]

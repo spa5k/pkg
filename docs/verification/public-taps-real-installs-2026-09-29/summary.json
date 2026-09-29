@@ -1,0 +1,139 @@
+{
+  "result": "pass",
+  "source_hashes": {
+    "tools/cask-catalog/src/plan.rs": "e24f89c8ddeb71739f316ac61ac5b2ada2048f965cb06f89861042ae6b770a42",
+    "nix/casks/lib/plan.py": "50af236ef4e8c167088bab86a62ab95e1d24dbc678f19a54c8fe0edafa99eccd",
+    "tools/cask-build-check/plan_tests.py": "f497d153b6a8872bcf4aeecdb9fc8a682d46ee00a5abcabc70bd0b2d6648bbc9"
+  },
+  "real_runtime": {
+    "result": "pass",
+    "shells": [
+      "zsh registration",
+      "bash registration",
+      "fish real suggestions"
+    ],
+    "manual_sha256": "9d967a4f585e748edb3dabd2affb26bdeb101354bf70a04b726a0757f08bab1d",
+    "manual_vendor_bytes_preserved": true,
+    "packages": [
+      {
+        "entry_id": "current",
+        "name": "gitfool/vpinball/vpxtool",
+        "source": "path:/tmp/pkg%20real%20installs/state%20with%20spaces/pkg/taps/src/gitfool/vpinball/current",
+        "locked_source": "path:/tmp/pkg%20real%20installs/state%20with%20spaces/pkg/taps/src/gitfool/vpinball/current",
+        "revision": null
+      },
+      {
+        "entry_id": "current-1",
+        "name": "dnscontrol/tap/dnscontrol",
+        "source": "path:/tmp/pkg%20real%20installs/state%20with%20spaces/pkg/taps/src/dnscontrol/tap/current",
+        "locked_source": "path:/tmp/pkg%20real%20installs/state%20with%20spaces/pkg/taps/src/dnscontrol/tap/current",
+        "revision": null
+      },
+      {
+        "entry_id": "current-2",
+        "name": "goreleaser/tap/goreleaser",
+        "source": "path:/tmp/pkg%20real%20installs/state%20with%20spaces/pkg/taps/src/goreleaser/tap/current",
+        "locked_source": "path:/tmp/pkg%20real%20installs/state%20with%20spaces/pkg/taps/src/goreleaser/tap/current",
+        "revision": null
+      },
+      {
+        "entry_id": "current-3",
+        "name": "gitfool/vpinball/pinone-config-tool",
+        "source": "path:/tmp/pkg%20real%20installs/state%20with%20spaces/pkg/taps/src/gitfool/vpinball/current",
+        "locked_source": "path:/tmp/pkg%20real%20installs/state%20with%20spaces/pkg/taps/src/gitfool/vpinball/current",
+        "revision": null
+      }
+    ],
+    "source_hashes": {
+      "tools/cask-catalog/src/plan.rs": "e24f89c8ddeb71739f316ac61ac5b2ada2048f965cb06f89861042ae6b770a42",
+      "nix/casks/lib/plan.py": "50af236ef4e8c167088bab86a62ab95e1d24dbc678f19a54c8fe0edafa99eccd",
+      "tools/cask-build-check/plan_tests.py": "f497d153b6a8872bcf4aeecdb9fc8a682d46ee00a5abcabc70bd0b2d6648bbc9"
+    }
+  },
+  "cleanup": "pass",
+  "unique_vendor_bytes": 215554198,
+  "rust_checks": [
+    {
+      "label": "rust-fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "rust-test",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--locked"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "rust-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "rust-doc",
+      "command": [
+        "cargo",
+        "doc",
+        "--workspace",
+        "--no-deps",
+        "--document-private-items",
+        "--locked"
+      ],
+      "exit": 0
+    }
+  ],
+  "python_checks": [
+    {
+      "label": "plan-tests",
+      "command": [
+        "python3",
+        "tools/cask-build-check/plan_tests.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "python-format",
+      "command": [
+        "ruff",
+        "format",
+        "--check",
+        "nix/casks/lib/plan.py",
+        "tools/cask-build-check/plan_tests.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "python-lint",
+      "command": [
+        "ruff",
+        "check",
+        "--output-format",
+        "json",
+        "nix/casks/lib/plan.py",
+        "tools/cask-build-check/plan_tests.py"
+      ],
+      "exit": 1
+    }
+  ],
+  "python_lint_baseline_unchanged": true,
+  "evidence_sha256": "cccef2a156159dded0f12df7ff03d62900fb774885f546f8b5bc04ab3220eebe"
+}

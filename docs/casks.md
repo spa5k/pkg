@@ -94,6 +94,10 @@ Known scope limits, by design:
 - Linux AppImage and binary support was verified headless only (for example
   `1password-cli` 2.39.0 and KOReader `v2026.07.1 --help`); no GUI launch is
   claimed.
+- A direct `.AppImage` download declared as one Linux `binary` uses the
+  same Nix wrapper as `app_image`. Its declared binary name is preserved.
+  AppImage binaries inside archives, or mixed with other artifacts, are
+  excluded. The wrapper supplies the runtime without host FUSE.
 - History note: the alpha Raycast exclusion came from a hidden bundle
   `Info.plist` found in on-device verification, not from visible cask
   metadata. That is why the generic build-time minimum check exists, and why
@@ -177,11 +181,13 @@ pkg info cask:goreleaser/tap/mcp
 pkg install cask:goreleaser/tap/mcp   # only if info reports it eligible
 ```
 
-This example uses a real public tap that ships plain binaries, manpage and
-shell completions, and one deliberate rename. It shows the accepted flow.
-It is not a claim that an import has passed verification yet. Current
-status is recorded in the
-[verification results](verification/public-taps-2026-09-29/results.md).
+This public tap ships binaries, manual pages, and shell completions.
+Native imports and the package lifecycle were tested on both supported
+systems. Further Linux tests downloaded packages from three public taps
+and ran real commands. See the
+[native verification](verification/public-taps-2026-09-29/results.md) and
+[real installation results](verification/public-taps-real-installs-2026-09-29/README.md)
+for the exact versions and limits.
 
 ### Consent and commands
 

@@ -2,6 +2,11 @@
 
 Status: **IMPLEMENTATION AND LOCAL VERIFICATION COMPLETE**. Delivered in
 [PR #82](https://github.com/spa5k/pkg/pull/82). GitHub CI status is available on the PR.
+
+Follow-up: [real Linux installs from three public taps](../public-taps-real-installs-2026-09-29/README.md)
+found and fixed three packaging defects. Four apps passed the recorded command
+or runtime checks. That report includes the exact payloads and test limits.
+
 Proven stages (details and links below):
 
 - Static preparation checks A1–A3, A6–A9 and F4

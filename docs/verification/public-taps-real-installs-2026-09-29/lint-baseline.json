@@ -1,0 +1,121 @@
+{
+  "baseline": {
+    "exit": 1,
+    "diagnostics": [
+      {
+        "file": "nix/casks/lib/plan.py",
+        "code": "EXE001",
+        "message": "Shebang is present but file is not executable",
+        "location": {
+          "column": 1,
+          "row": 1
+        }
+      },
+      {
+        "file": "nix/casks/lib/plan.py",
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "location": {
+          "column": 16,
+          "row": 647
+        }
+      },
+      {
+        "file": "nix/casks/lib/plan.py",
+        "code": "PIE810",
+        "message": "Call `startswith` once with a `tuple`",
+        "location": {
+          "column": 13,
+          "row": 785
+        }
+      },
+      {
+        "file": "tools/cask-build-check/plan_tests.py",
+        "code": "EXE001",
+        "message": "Shebang is present but file is not executable",
+        "location": {
+          "column": 1,
+          "row": 1
+        }
+      },
+      {
+        "file": "tools/cask-build-check/plan_tests.py",
+        "code": "RUF100",
+        "message": "Unused `noqa` directive (non-enabled: `E402`)",
+        "location": {
+          "column": 14,
+          "row": 19
+        }
+      },
+      {
+        "file": "tools/cask-build-check/plan_tests.py",
+        "code": "ISC004",
+        "message": "Unparenthesized implicit string concatenation in collection",
+        "location": {
+          "column": 17,
+          "row": 207
+        }
+      }
+    ]
+  },
+  "final": {
+    "exit": 1,
+    "diagnostics": [
+      {
+        "file": "nix/casks/lib/plan.py",
+        "code": "EXE001",
+        "message": "Shebang is present but file is not executable",
+        "location": {
+          "column": 1,
+          "row": 1
+        }
+      },
+      {
+        "file": "nix/casks/lib/plan.py",
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "location": {
+          "column": 16,
+          "row": 647
+        }
+      },
+      {
+        "file": "nix/casks/lib/plan.py",
+        "code": "PIE810",
+        "message": "Call `startswith` once with a `tuple`",
+        "location": {
+          "column": 13,
+          "row": 785
+        }
+      },
+      {
+        "file": "tools/cask-build-check/plan_tests.py",
+        "code": "EXE001",
+        "message": "Shebang is present but file is not executable",
+        "location": {
+          "column": 1,
+          "row": 1
+        }
+      },
+      {
+        "file": "tools/cask-build-check/plan_tests.py",
+        "code": "RUF100",
+        "message": "Unused `noqa` directive (non-enabled: `E402`)",
+        "location": {
+          "column": 14,
+          "row": 19
+        }
+      },
+      {
+        "file": "tools/cask-build-check/plan_tests.py",
+        "code": "ISC004",
+        "message": "Unparenthesized implicit string concatenation in collection",
+        "location": {
+          "column": 17,
+          "row": 207
+        }
+      }
+    ]
+  },
+  "same_diagnostics": true
+}
