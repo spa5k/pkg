@@ -643,15 +643,16 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
         println!("No taps are registered; add one with `pkg tap add SOURCE`.");
     } else {
         for row in &rows {
-            match (&row.revision, row.eligible, row.excluded) {
-                (Some(revision), Some(eligible), Some(excluded)) => println!(
-                    "{}  {}  revision {} ({} eligible, {} excluded)",
-                    row.source, row.origin, revision, eligible, excluded
+            match (row.eligible, row.excluded) {
+                (Some(eligible), Some(excluded)) => println!(
+                    "{}  {} package{}",
+                    row.source,
+                    eligible + excluded,
+                    if eligible + excluded == 1 { "" } else { "s" }
                 ),
                 _ => println!(
-                    "{}  {}  (no usable published generation: {})",
+                    "{}  unusable ({})",
                     row.source,
-                    row.origin,
                     row.error.as_deref().unwrap_or("unknown reason")
                 ),
             }
