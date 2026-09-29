@@ -125,8 +125,9 @@ fn gate_cask(
 
 fn report_entries(entries: &BTreeMap<String, ProfileEntry>, expected: usize) {
     println!(
-        "Installed {expected} entr{} in the pkg profile:",
-        if expected == 1 { "y" } else { "ies" }
+        "Installed {expected} entr{} in the pkg profile ({} total):",
+        if expected == 1 { "y" } else { "ies" },
+        entries.len()
     );
     for (entry_id, entry) in entries {
         let revision = entry.locked_revision().unwrap_or("no revision");

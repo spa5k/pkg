@@ -63,6 +63,11 @@ fn classify(line: &str) -> Kind {
     if line.is_empty() {
         return Kind::Hide;
     }
+    if line.starts_with("error (ignored): ") {
+        // Nix marks ignored non-fatal errors with this prefix; the raw
+        // text still reaches the failure diagnostic when a run fails.
+        return Kind::Hide;
+    }
     if let Some(rest) = line.strip_prefix("fetching Git repository '") {
         let url = rest.strip_suffix('\'').unwrap_or(rest);
         return Kind::Status(format!("fetching {}", short_name(url)));
@@ -229,6 +234,7 @@ mod tests {
             "these 3 derivations will be built:",
             "these 14 paths will be fetched (73.0 MiB download, 465.5 MiB unpacked):",
             "  /nix/store/nsh0cwzk8kxsq5s8znsp9qpq1dx2jl6y-cask-rectangle.drv",
+            "error (ignored): opening file \"/etc/nix/sentry-endpoint\": Permission denied",
         ] {
             assert_eq!(classify(line), Kind::Hide, "{line}");
         }
