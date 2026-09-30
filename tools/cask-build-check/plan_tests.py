@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import fcntl
+import struct
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "nix", "casks", "lib"))
@@ -1034,6 +1036,7 @@ def main():
     #     through the same materializer. Calibre exposed the original loss.
     with tempfile.TemporaryDirectory() as d:
         signature_values = {}
+        resource_data = "PYFROZEN" * 131072
         native_runtime = None
         if sys.platform == "darwin":
             spec = importlib.util.spec_from_file_location("app_runtime", os.path.join(libdir, "app-runtime.py"))
@@ -1051,7 +1054,7 @@ def main():
 
             with open(os.path.join(w, "Cal.app/Contents/Info.plist"), "wb") as f:
                 f.write(plan.plistlib.dumps({"CFBundleIdentifier": "test.cal", "CFBundleVersion": "1", "CFBundleExecutable": "cal"}))
-            put(os.path.join(plugins, "python-lib.bypy.frozen"), "PYFROZEN")
+            put(os.path.join(plugins, "python-lib.bypy.frozen"), resource_data)
             place("Cal.app/Contents/Resources/notes:with:colons.txt", "NOTES")
             if native_runtime:
                 main = os.path.join(w, "Cal.app/Contents/MacOS/cal")
@@ -1101,7 +1104,7 @@ def main():
         assert entry["signatures"][resource] == {a: v.hex() for a, v in signature_values.items()}
         assert not os.path.exists(os.path.join(output, "Applications/Renamed.app"))
         app = os.path.join(output, entry["source"])
-        assert get(os.path.join(app, resource)) == "PYFROZEN"
+        assert get(os.path.join(app, resource)) == resource_data
         assert get(os.path.join(app, "Contents/Resources/notes:with:colons.txt")) == "NOTES"
         assert not any(":com.apple." in name for _r, _d, files in os.walk(app) for name in files)
         command = get(os.path.join(output, "bin/cal-cli"))
@@ -1116,16 +1119,35 @@ def main():
                 os.chmod(root, 0o555)
             home = os.path.join(d, "home")
             os.mkdir(home, 0o700)
+            cache = os.path.join(home, "private-apps")
+            os.mkdir(cache, 0o700)
             command = os.path.join(output, "bin/cal-cli")
-            result = subprocess.run([command, "space value", "$(literal)"], env=dict(os.environ, HOME=home), capture_output=True, text=True, check=False)
+            result = subprocess.run([command, "space value", "$(literal)"], env=dict(os.environ, HOME=home, PKG_APP_CACHE_DIR=cache), capture_output=True, text=True, check=False)
             assert result.returncode == 0, result.stderr
             assert result.stdout == "native-cask\nspace value\n$(literal)\n"
-            restored = os.path.join(home, "Library/Caches/pkg/cask-apps/installed/Renamed.app")
+            restored = os.path.join(cache, "installed/Renamed.app")
             assert os.path.isdir(restored)
             assert os.stat(restored).st_mode & 0o777 == 0o555
             assert {a: native_runtime.get_attribute(os.path.join(restored, resource), a) for a in signature_values} == signature_values
             subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", restored], check=True, capture_output=True)
-            ok("native external signature restored from serialized data; readonly app published; CLI arguments unchanged")
+            # Check physical extent sharing, not du (which counts shared
+            # blocks twice). F_LOG2PHYS_EXT uses Apple's packed log2phys.
+            original = os.path.join(app, resource)
+            cloned = os.path.join(restored, resource)
+            assert os.stat(original).st_ino != os.stat(cloned).st_ino
+            with open(original, "rb") as a, open(cloned, "rb") as b:
+                offset = 0
+                size = os.stat(original).st_size
+                while offset < size:
+                    extent = struct.pack("=Iqq", 0, size - offset, offset)
+                    _flags_a, length_a, block_a = struct.unpack("=Iqq", fcntl.fcntl(a.fileno(), 65, extent))
+                    _flags_b, length_b, block_b = struct.unpack("=Iqq", fcntl.fcntl(b.fileno(), 65, extent))
+                    assert block_a >= 0 and block_a == block_b
+                    length = min(length_a, length_b, size - offset)
+                    assert length > 0
+                    offset += length
+            assert not any(a.startswith("com.apple.cs.") for a in native_runtime.attribute_names(original))
+            ok("native signature restored on separate inode with shared file blocks; readonly app published; CLI arguments unchanged")
 
         # A missing target and a symlinked signature must still fail during
         # preflight, before the otherwise valid app payload is extracted.

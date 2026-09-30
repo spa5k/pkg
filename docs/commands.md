@@ -29,6 +29,7 @@ Query commands keep JSON output and shell commands keep script-only stdout.
 | `pkg shellenv` | Print idempotent Bash/Zsh path settings. Does not edit shell files. |
 | `pkg completion SHELL` | Generate completions for the current grammar. |
 | `pkg apps sync` | Rebuild pkg-owned macOS launchers from the active profile. |
+| `pkg apps setup` | Create private app storage on the Nix volume. Requests administrator access once. |
 | `pkg tap add SOURCE [--revision SHA] [--trust]` | Save a public tap. Ask approval before any fetch, import, or Ruby runs. |
 | `pkg tap list [--json]` | List saved taps: source, origin, revision, and consent time. |
 | `pkg tap update [SOURCE] [--revision SHA]` | Re-import saved tap catalogs at a pinned revision. Runs tap Ruby under the same rules as `add`. |
@@ -281,12 +282,27 @@ application runtime isolation.
 
 Some casks store vendor signatures in file metadata that Nix cannot retain.
 For these apps, sync restores the original signatures on a private app copy
-under `~/Library/Caches/pkg/cask-apps/`. Bundled CLI commands use the same
+under `/nix/var/pkg/cask-apps/<uid>/`. Bundled CLI commands use the same
 copy. Both paths verify the signatures before use. No file is re-signed.
 Other apps continue to use their store bundles.
 
-These copies are disposable and may use one extra app copy per version.
+Run `pkg apps setup` once before using these apps. It creates root-owned
+parent directories and a private directory for your account. Normal installs,
+syncs, and app use require no administrator access. The copies share file
+data with their Nix payload through APFS cloning. Only file metadata,
+signature attributes, and later private writes need additional storage.
+There is no fallback to a full second copy. The store volume must support
+cloning. `du` and Finder can report the full logical size of each view even
+when its data blocks are shared.
+
+For a custom location, set `PKG_APP_CACHE_DIR` to an existing absolute,
+user-owned directory with mode 0700 on the same volume as the app payload.
+Use the same setting for pkg and bundled commands.
+
 Removal removes the native entry and launcher. Cached copies can remain for
 running apps. A cache copy alone does not mean that the package is installed.
+If Nix later collects the source version, a remaining clone retains its data
+blocks. Old views can keep space until removed. There is no automatic cleanup
+of old views in this change.
 Update apps through `pkg upgrade`. If a copy is missing or damaged,
 `pkg apps sync` recreates it from its Nix payload.

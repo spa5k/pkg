@@ -136,6 +136,7 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
         Command::Shellenv => support::shellenv(),
         Command::Completion { shell } => support::completion(*shell),
         Command::Apps(crate::cli::AppsCommand::Sync) => support::apps_sync(cli),
+        Command::Apps(crate::cli::AppsCommand::Setup) => support::apps_setup(),
         Command::Tap(command) => tap::dispatch(cli, command),
     }
 }

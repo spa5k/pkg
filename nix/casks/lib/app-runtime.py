@@ -135,10 +135,10 @@ def load(output, name):
 
 def cache_path(output, name):
     app_name(name)
-    home = os.environ.get("HOME")
-    if not home or not Path(home).is_absolute():
-        raise ValueError("HOME must be an absolute directory")
-    return Path(home) / "Library/Caches/pkg/cask-apps" / output.name / name
+    root = Path(os.environ.get("PKG_APP_CACHE_DIR", "/nix/var/pkg/cask-apps/" + str(os.getuid())))
+    if not root.is_absolute():
+        raise ValueError("PKG_APP_CACHE_DIR must be an absolute directory")
+    return root / output.name / name
 
 
 def owned_directory(path):
@@ -149,16 +149,13 @@ def owned_directory(path):
 
 def cache_root(output, name):
     dest = cache_path(output, name)
-    home = Path(os.environ["HOME"])
-    owned_directory(home)
-    current = home
-    for component in ("Library", "Caches", "pkg", "cask-apps"):
-        current /= component
-        try:
-            current.mkdir(mode=0o700)
-        except FileExistsError:
-            pass
-        owned_directory(current)
+    root = dest.parent.parent
+    try:
+        owned_directory(root)
+    except FileNotFoundError:
+        raise ValueError("app storage is not ready; run `pkg apps setup`") from None
+    if stat.S_IMODE(root.lstat().st_mode) & 0o777 != 0o700:
+        raise ValueError("app storage must be private (mode 0700): " + str(root))
     return dest
 
 
@@ -242,11 +239,31 @@ def remove_copy(path):
     shutil.rmtree(path)
 
 
+def copy_payload(source, candidate):
+    # Clone each regular file. Unlike a hard link, its attributes and later
+    # writes are private. Never silently fall back to a second full copy.
+    library = ctypes.CDLL(None, use_errno=True)
+    clone = library.clonefile
+    clone.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+    clone.restype = ctypes.c_int
+
+    def clone_file(src, dst):
+        # CLONE_NOFOLLOW | CLONE_NOOWNERCOPY. copytree handles bundle links.
+        if clone(os.fsencode(src), os.fsencode(dst), 0x0003) < 0:
+            code = ctypes.get_errno()
+            raise OSError(code, "cannot share app file data: " + os.strerror(code), src)
+        return dst
+
+    shutil.copytree(source, candidate, symlinks=True, copy_function=clone_file)
+
+
 def prepare(output, name):
     if sys.platform != "darwin":
         raise ValueError("external-signature apps require macOS")
     source, signatures = load(output, name)
     dest = cache_root(output, name)
+    if source.stat().st_dev != dest.parent.parent.stat().st_dev:
+        raise ValueError("app storage must be on the Nix store volume; run `pkg apps setup`")
     with locked_output(output, dest):
         if os.path.lexists(dest):
             owned_directory(dest)  # Refuse symlink/file replacements, never remove them.
@@ -259,7 +276,7 @@ def prepare(output, name):
         candidate = staging / name
         previous = staging / "previous.app"
         try:
-            shutil.copytree(source, candidate, symlinks=True)
+            copy_payload(source, candidate)
             for path, attributes in signatures.items():
                 target = contained(candidate, path)
                 mode = stat.S_IMODE(target.stat().st_mode)

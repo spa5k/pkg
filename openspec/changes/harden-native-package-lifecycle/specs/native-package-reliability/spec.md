@@ -65,6 +65,20 @@ The cask builder SHALL preserve supported external signature attributes as ordin
 ### Requirement: Restored app copies are derived state
 Native profiles SHALL remain the package inventory. A restored app cache SHALL be private, versioned by its store output, protected by an ownership marker and a preparation lock, and published only after verification. Cancellation SHALL NOT publish an incomplete app. Public tap assessment SHALL check the restored bundle before launcher exposure. Missing or damaged owned copies SHALL be recoverable from the store payload.
 
+#### Scenario: Prepare an app without duplicating its file data
+- **WHEN** an externally signed app needs a restored copy
+- **THEN** the runtime uses APFS clones on the payload's volume
+- **AND** the files have separate inodes and private signature attributes
+- **AND** their data blocks remain shared with the Nix payload
+- **AND** unavailable cloning or a different volume fails without a full-copy fallback
+
+#### Scenario: Set up shared app storage
+- **WHEN** the user runs `pkg apps setup`
+- **THEN** it creates root-owned parents and a private per-user directory on the Nix volume
+- **AND** it requests administrator access only for that setup
+- **AND** normal preparation never requests administrator access
+- **AND** existing symlinked, unowned, or shared directories are refused
+
 #### Scenario: Remove and roll back an externally signed app
 - **WHEN** the user removes the native entry and then rolls back
 - **THEN** removal removes its launcher

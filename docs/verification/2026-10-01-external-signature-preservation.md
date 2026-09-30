@@ -1,5 +1,9 @@
 # Preserve external app signatures — 2026-10-01
 
+This records the initial repair. The later
+[shared storage update](2026-10-01-shared-app-storage.md) replaces its full
+home-folder copies with same-volume APFS clones.
+
 Calibre 9.13.0 and Obsidian 1.13.7 now install and start with their original
 vendor signatures. This completes NR-08 in [PR #98](https://github.com/spa5k/pkg/pull/98).
 It replaces the refusal recorded in the earlier [15-app test](2026-09-30-real-app-stress.md).

@@ -58,3 +58,9 @@ pub(super) fn apps_sync(cli: &Cli) -> Result<(), CommandError> {
     println!("App launchers synced.");
     Ok(())
 }
+
+pub(super) fn apps_setup() -> Result<(), CommandError> {
+    crate::apps::setup_storage().map_err(CommandError::Message)?;
+    println!("Shared app storage is ready.");
+    Ok(())
+}

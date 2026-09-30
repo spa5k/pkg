@@ -100,6 +100,8 @@ pub enum Command {
 /// Launcher subcommands. Execution is supplied by the apps module.
 #[derive(Debug, Subcommand)]
 pub enum AppsCommand {
+    /// Set up private app storage that shares file data with the Nix store.
+    Setup,
     /// Rebuild pkg-owned launchers from the active profile.
     Sync,
 }

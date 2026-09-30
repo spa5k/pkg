@@ -59,5 +59,8 @@ are refused. Native signing attributes are also captured before copying.
 
 App sync and bundled command wrappers use the same materializer. It restores
 the original attributes on a private versioned copy, verifies the bundle and
-each externally signed file, and then publishes the copy. It does not re-sign
+each externally signed file, and then publishes the copy. APFS clones share
+file data with the store and retain independent attributes. `pkg apps setup`
+creates the private same-volume storage once. An unavailable clone operation
+fails without falling back to a full copy. It does not re-sign
 files. See the [design](../../../openspec/changes/harden-native-package-lifecycle/external-signatures.md).
