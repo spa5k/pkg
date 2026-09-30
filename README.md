@@ -17,19 +17,20 @@ repair, or remove Nix. Install Determinate Nix from
 > adopted, or erased. See
 > [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
 > and its [verification record](docs/verification/native-nix-2026-09-28.md).
-> The current release improves runtime discovery and installer shell
-> setup ([change proposal](openspec/changes/improve-runtime-discovery-and-shell-setup/proposal.md)).
+> The current release gives shorter CLI output and reports partial package
+> changes when macOS app launcher setup fails. See the
+> [command guide](docs/commands.md).
 
 ## Install
 
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.7 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.7):
+   [v0.2.0-alpha.8 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.8):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.7/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.8/install.sh
    sh pkg-install.sh
    ```
 
