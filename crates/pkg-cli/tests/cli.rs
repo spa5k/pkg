@@ -835,6 +835,8 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
         "printf \"remote: Enumerating objects: 32, done.\\n\" >&2\n",
         "printf \"Receiving objects: 100%% (32/32), 42.45 KiB | 1.70 MiB/s, done.\\n\" >&2\n",
         "printf \"Unpacking objects: 100%% (28/28), done.\\n\" >&2\n",
+        "printf \"warning: not writing modified lock file of flake 'github:hraban/mac-app-util/test':\\n\" >&2\n",
+        "printf \"• Updated input 'nixpkgs':\\n    'github:NixOS/nixpkgs/80d591e' (2026-07-02)\\n  → 'github:NixOS/nixpkgs/b6c8664' (2026-09-29)\\n\" >&2\n",
         "printf \"warning: ignoring untrusted substituter 'https://helix.cachix.org'\\n\" >&2\n",
         "printf \"evaluating derivation 'github:helix-editor/helix#helix'...\\n\" >&2\n",
         "printf \"do you want to allow configuration setting 'extra-substituters' to be set (y/N)? \" >&2\n",
@@ -885,6 +887,9 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
         "redirecting to",
         "evaluating derivation",
         "unexpected nix call",
+        "not writing modified lock file",
+        "Updated input",
+        "github:NixOS/nixpkgs/b6c8664",
     ] {
         assert!(
             !stderr.contains(hidden),
@@ -899,6 +904,13 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
         stderr.contains("do you want to allow configuration setting"),
         "trust prompts must stay visible\nstderr: {stderr}"
     );
+    let (code, _, stderr) = run(&["--verbose", "install", "github:helix-editor/helix#helix"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("not writing modified lock file"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Updated input"), "{stderr}");
 }
 
 /// A failed install keeps its diagnostics readable: the native error and
@@ -1002,7 +1014,7 @@ fn install_reports_partial_state_when_app_setup_fails() {
          *'flake metadata'*) printf '%s\\n' '{flake}';;\n\
          *'profile list'*'pkg-app-tools'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n\
          *'profile list'*) if [ -f '{marker}' ]; then printf '%s\\n' '{manifest}'; else echo '{{\"version\":3,\"elements\":{{}}}}'; fi;;\n\
-         *'profile add'*'hraban/mac-app-util'*) printf '%s\\n' \"error: Cannot build '/nix/store/example-system-alexandria.drv'.\" 'failed to allocate 1048576 bytes' 'For full logs, run:' '  nix log /nix/store/example-system-alexandria.drv' >&2; exit 1;;\n\
+         *'profile add'*'hraban/mac-app-util'*) printf '%s\\n' \"error: Cannot build '/nix/store/example-system-alexandria.drv'.\" '> failed to allocate 1048576 bytes' 'For full logs, run:' '  nix log /nix/store/example-system-alexandria.drv' '❌ github:hraban/mac-app-util/example#' >&2; exit 1;;\n\
          *'profile add'*) touch '{marker}' '{profile}';;\n\
          *) echo \"unexpected nix call: $*\" >&2; exit 9;;\n\
          esac",
@@ -1034,6 +1046,8 @@ fn install_reports_partial_state_when_app_setup_fails() {
         "{stderr}"
     );
     assert_eq!(stderr.matches("failed to allocate").count(), 1, "{stderr}");
+    assert!(!stderr.contains("❌"), "{stderr}");
+    assert!(!stderr.contains("Cause: >"), "{stderr}");
     assert!(stderr.contains("pkg apps sync"), "{stderr}");
 }
 

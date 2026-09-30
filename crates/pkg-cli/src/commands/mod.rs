@@ -338,6 +338,7 @@ fn concise_cause(detail: &str) -> &str {
         })
         .or_else(|| detail.lines().map(str::trim).find(|line| !line.is_empty()))
         .unwrap_or("unknown cause")
+        .trim_start_matches("> ")
         .trim_start_matches("error: ")
 }
 
