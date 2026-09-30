@@ -930,6 +930,7 @@ fn failed_install_reports_signal_lines_only() {
         "done\n",
         "printf \"unpacking 'github:example/flake' into the Git cache...\\n\" >&2\n",
         "printf \"error: Cannot build '/nix/store/aaa-tool.drv'.\\n\" >&2\n",
+        "printf '%s\\n' '> cask-build: cannot preserve an external code signature in the Nix store: python-lib.bypy.frozen:com.apple.cs.CodeEntitlements' >&2\n",
         "printf \"For full logs, run:\\n  nix log /nix/store/aaa-tool.drv\\n\" >&2\n",
         "exit 1\n"
     );
@@ -959,7 +960,10 @@ fn failed_install_reports_signal_lines_only() {
     let output = command.output().expect("spawn pkg");
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("Cause: Cannot build"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("Cause: cannot preserve an external code signature in the Nix store"),
+        "stderr: {stderr}"
+    );
     assert!(
         stderr.contains("nix log /nix/store/aaa-tool.drv"),
         "stderr: {stderr}"

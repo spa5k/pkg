@@ -391,11 +391,18 @@ fn concise_cause(detail: &str) -> &str {
             detail
                 .lines()
                 .map(str::trim)
+                .find(|line| line.trim_start_matches("> ").starts_with("cask-build:"))
+        })
+        .or_else(|| {
+            detail
+                .lines()
+                .map(str::trim)
                 .find(|line| line.starts_with("error:"))
         })
         .or_else(|| detail.lines().map(str::trim).find(|line| !line.is_empty()))
         .unwrap_or("unknown cause")
         .trim_start_matches("> ")
+        .trim_start_matches("cask-build: ")
         .trim_start_matches("error: ")
 }
 

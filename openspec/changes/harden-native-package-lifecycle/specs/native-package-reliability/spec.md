@@ -46,3 +46,12 @@ Extraction SHALL remove materialized Apple metadata streams at every directory l
 - **WHEN** 7zz materializes nested extended attributes as regular files
 - **THEN** those metadata files are removed
 - **AND** the extracted vendor resources and links match the original app
+
+### Requirement: External signatures are not silently discarded
+The cask builder SHALL refuse an archive when 7zz reports materialized external code-signature streams. It SHALL refuse before extraction writes. Normal client failure output SHALL show the specific builder cause when Nix provides it.
+
+#### Scenario: A vendor data file uses a signature in extended attributes
+- **WHEN** the archive contains a stream with `:com.apple.cs.` in a path component
+- **THEN** the build fails with a diagnostic that names the unsupported signature stream
+- **AND** extraction does not write the archive payload
+- **AND** the native package profile remains unchanged

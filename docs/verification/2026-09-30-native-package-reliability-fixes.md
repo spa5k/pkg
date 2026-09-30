@@ -5,6 +5,10 @@ implemented the repairs in disposable E2B sandboxes. The parent agent reviewed
 the changes, corrected edge cases, and verified the final code with real Nix
 on Linux and macOS. The native Nix profile remains the package-state authority.
 
+The later [15-app stress test](2026-09-30-real-app-stress.md) adds an
+external-signature refusal and a clearer builder cause. It records the
+supported apps and the Calibre/Obsidian storage limit.
+
 The earlier Stats launcher error had a separate cause: SBCL 2.6.4 could not
 start on macOS 27. The helper fix is already in this branch's base. See the
 [helper verification](2026-09-30-macos27-app-helper.md) and

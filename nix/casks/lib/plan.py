@@ -44,6 +44,22 @@ HFS_LINK_TRAILER_HEAD = b"\x01\x02\x00"
 # 7zz materializes Apple extended-attribute streams as names such as
 # "Info.plist:com.apple.provenance", including inside nested bundles.
 APPLE_STREAM_MARK = ":com.apple."
+# Code-signing xattrs (CodeDirectory, CodeEntitlements, CodeRequirements,
+# CodeRequirements-1, CodeSignature) carry a vendor's EXTERNAL code
+# signature. 7zz materializes them as "<file>:com.apple.cs.<attr>". The
+# Nix store cannot retain them, so an archive that carries one must be
+# refused whole -- never silently stripped or re-signed.
+APPLE_CS_STREAM_MARK = ":com.apple.cs."
+
+
+def _is_codesign_stream(name):
+    """True when ANY path component carries a materialized Apple
+    code-signing stream (7zz names them '<file>:com.apple.cs.<attr>')."""
+    return any(APPLE_CS_STREAM_MARK in part for part in name.split("/"))
+
+
+def _die_external_signature(name):
+    die(f"cannot preserve an external code signature in the Nix store: {name}")
 
 
 def _prune_apple_streams(dest):
@@ -51,15 +67,22 @@ def _prune_apple_streams(dest):
 
     Do not follow symlinks or remove unrelated colon names. Prune removed
     directories from the walk. A failed removal must fail the build.
+    Defense in depth: a code-signing stream must never reach this walk
+    (preflight refuses such archives at listing time); if one appears
+    anyway, fail closed rather than silently strip the vendor signature.
     """
     for dirpath, dirnames, filenames in os.walk(dest, followlinks=False):
         for name in dirnames[:]:
             path = os.path.join(dirpath, name)
+            if _is_codesign_stream(name):
+                _die_external_signature(name)
             if APPLE_STREAM_MARK in name and not os.path.islink(path):
                 shutil.rmtree(path)
                 dirnames.remove(name)
         for name in filenames:
             path = os.path.join(dirpath, name)
+            if _is_codesign_stream(name):
+                _die_external_signature(name)
             if APPLE_STREAM_MARK in name and not os.path.islink(path):
                 os.remove(path)
 
@@ -391,6 +414,11 @@ def sevenz_members(archive):
     for p, r in records:
         if not p or "\r" in p or "\n" in p:
             die(f"unparseable 7zz listing entry: {p!r}")
+        if _is_codesign_stream(p):
+            # Reject during the read-only listing. AppleDouble bodies and
+            # tar/pax xattr headers need separate detection; this guard
+            # covers the explicit stream names emitted by 7zz.
+            _die_external_signature(p)
         if r.get("hard"):
             # APFS records also emit `Hard Link = ` with an EMPTY value for
             # ordinary members; only a nonempty value is a real hard link

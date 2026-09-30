@@ -1028,6 +1028,85 @@ def main():
         else:
             FAILED.append(f"nested Apple stream cleanup or preservation failed: {leftovers}")
 
+    # 21. external code-signature streams must be refused BEFORE any
+    #     extraction write. Calibre 9.13.0's frozen resource
+    #     python-lib.bypy.frozen carries com.apple.cs.* xattrs; 7zz
+    #     materializes them as stream members and _prune_apple_streams
+    #     silently deleted them, so the installed app failed
+    #     codesign --verify --deep --strict with "code object not signed
+    #     at all, In subcomponent python-lib.bypy.frozen". The Nix store
+    #     cannot retain these signatures, so the archive is refused whole
+    #     (no stripping, no re-sign), naming the offending member. REAL
+    #     7zz -snl roundtrip; ordinary provenance/metadata streams and an
+    #     unrelated colon name ride along as controls (they alone must
+    #     never trigger a refusal -- case 20 covers their pruning).
+    #     Previous behavior: the archive extracted "fine" and installed
+    #     with no signing metadata at all, so this case failed silently.
+    with tempfile.TemporaryDirectory() as d:
+
+        def signed_tree(w):
+            plugins = os.path.join(w, "Cal.app/Contents/Frameworks/plugins")
+            os.makedirs(plugins, exist_ok=True)
+
+            def place(name, data):
+                path = os.path.join(w, name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                put(path, data)
+
+            place("Cal.app/Contents/Info.plist", "PLIST")
+            put(os.path.join(plugins, "python-lib.bypy.frozen"), "PYFROZEN")
+            for attr in (
+                "CodeDirectory",
+                "CodeEntitlements",
+                "CodeRequirements",
+                "CodeRequirements-1",
+                "CodeSignature",
+            ):
+                put(
+                    os.path.join(
+                        plugins, f"python-lib.bypy.frozen:com.apple.cs.{attr}"
+                    ),
+                    "SIG",
+                )
+            place(
+                "Cal.app/Contents/Info.plist:com.apple.provenance",
+                "meta",
+            )
+            place(
+                "Cal.app/Contents/PkgInfo:com.apple.metadata:kMDItemWhereFroms",
+                "meta",
+            )
+            place(
+                "Cal.app/Contents/Resources/notes:with:colons.txt",
+                "NOTES",
+            )
+
+        arc = snl_archive(os.path.join(d, "signed.7z"), signed_tree)
+        dest = os.path.join(d, "out")
+        os.makedirs(dest)
+        code = (
+            f"import sys;sys.path.insert(0,{libdir!r});import plan;"
+            f"plan.extract_7zz({arc!r},{dest!r})"
+        )
+        p = subprocess.run(
+            [PY, "-c", code], capture_output=True, text=True, check=False
+        )
+        member = "python-lib.bypy.frozen:com.apple.cs.CodeDirectory"
+        if (
+            p.returncode == 1
+            and "cannot preserve" in p.stderr
+            and "external code signature" in p.stderr
+            and "Nix store" in p.stderr
+            and member in p.stderr
+            and os.listdir(dest) == []
+        ):
+            ok("real 7zz nested cs.* stream refused pre-write; extraction area unchanged")
+        else:
+            FAILED.append(
+                "external code-signature stream not refused: "
+                f"rc={p.returncode} dest={os.listdir(dest)} err={p.stderr.strip()[:120]}"
+            )
+
     if FAILED:
         for f in FAILED:
             print(f"FAIL: {f}")
