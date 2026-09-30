@@ -105,15 +105,26 @@ fn version_lt(a: &str, b: &str) -> Option<bool> {
 /// to `aarch64-darwin`: a macOS version requirement says nothing about
 /// Linux, so a Linux-supporting record stays Linux-eligible whatever
 /// macOS version it demands (and `maximum_macos` limits nothing there).
+///
+/// The bounds are COLLECTED and VALIDATED on every target first
+/// (numeric shape, single-value operators, coherent ordering); only
+/// then is the baseline decision applied, and only on Darwin, so an
+/// inverted or malformed range is consistently malformed on both
+/// targets. A Linux plan therefore carries null macOS bounds while an
+/// inverted or malformed range is still refused there.
+/// The macOS bounds a record declares for one target (min, max).
+pub type MacosBounds = (Option<String>, Option<String>);
+
 fn macos_constraints(
     eff: &Value,
     system: &str,
     baseline: &str,
-) -> Result<Option<String>, (&'static str, String)> {
+) -> Result<MacosBounds, (&'static str, String)> {
     let Some(depends) = eff.get("depends_on").filter(|v| !v.is_null()) else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let mut min: Option<String> = None;
+    let mut max: Option<String> = None;
     for (key, mode) in [("macos", "minimum"), ("maximum_macos", "maximum")] {
         let Some(field) = depends.get(key).filter(|v| !v.is_null()) else {
             continue;
@@ -145,23 +156,10 @@ fn macos_constraints(
             }
             match (mode, op.as_str()) {
                 ("minimum", ">=") => {
-                    if system == "aarch64-darwin" {
-                        if version_lt(baseline, value) == Some(true) {
-                            return Err((
-                                "minimum-os",
-                                format!("requires macOS >= {value}; baseline is {baseline}"),
-                            ));
-                        }
-                        min = Some(value.to_string());
-                    }
+                    min = Some(value.to_string());
                 }
                 ("maximum", "<=") => {
-                    if system == "aarch64-darwin" && version_lt(value, baseline) == Some(true) {
-                        return Err((
-                            "minimum-os",
-                            format!("requires macOS <= {value}; baseline is {baseline}"),
-                        ));
-                    }
+                    max = Some(value.to_string());
                 }
                 _ => {
                     return Err((
@@ -172,7 +170,44 @@ fn macos_constraints(
             }
         }
     }
-    Ok(min)
+    // A declared range must be coherent: an empty minimum above a
+    // nonempty maximum is malformed, never a guessable interval.
+    if let (Some(min), Some(max)) = (&min, &max)
+        && version_lt(max, min) == Some(true)
+    {
+        return Err((
+            "malformed-record",
+            format!("macOS range is inverted: >= {min} and <= {max}"),
+        ));
+    }
+    // Only now, with the whole declared range parsed and coherent, is
+    // the baseline decision applied — and only on Darwin. A malformed
+    // or inverted range is malformed on every target; the baseline
+    // never fires first and masks it.
+    if system == "aarch64-darwin" {
+        if let Some(min) = &min
+            && version_lt(baseline, min) == Some(true)
+        {
+            return Err((
+                "minimum-os",
+                format!("requires macOS >= {min}; baseline is {baseline}"),
+            ));
+        }
+        if let Some(max) = &max
+            && version_lt(max, baseline) == Some(true)
+        {
+            return Err((
+                "minimum-os",
+                format!("requires macOS <= {max}; baseline is {baseline}"),
+            ));
+        }
+    }
+    // macOS runtime requirements bind only the Darwin target; a Linux
+    // plan publishes null bounds (the validation above still ran).
+    if system != "aarch64-darwin" {
+        return Ok((None, None));
+    }
+    Ok((min, max))
 }
 
 /// Evaluate `depends_on arch` against the target architecture.
@@ -504,13 +539,14 @@ fn classify_effective(
     {
         return excluded("missing-checksum");
     }
-    let min_macos = match macos_constraints(eff, system, baseline) {
-        Ok(min) => min,
+    let (min_macos, max_macos) = match macos_constraints(eff, system, baseline) {
+        Ok(bounds) => bounds,
         Err((reason, detail)) => return excluded_with_detail(reason, &detail),
     };
     match plan::build_plan(eff, system) {
         Ok(mut plan) => {
             plan.min_macos = min_macos;
+            plan.max_macos = max_macos;
             let kind = summary_kind(&plan);
             TargetStatus {
                 status: "eligible",
@@ -733,6 +769,82 @@ mod tests {
         let junk = record(&both, &json!({"depends_on": {"macos": ">= 12"}}));
         assert_eq!(
             classify_target(&junk, "x86_64-linux", BASE)
+                .reason
+                .as_deref(),
+            Some("malformed-record")
+        );
+    }
+
+    #[test]
+    fn eligible_maximum_macos_reaches_the_plan() {
+        // A tiny synthetic eligible record whose declared maximum is
+        // above the baseline: the bound must reach the Darwin plan.
+        let both = ["arm64_sequoia", "x86_64_linux"];
+        let rec = record(
+            &both,
+            &json!({"depends_on": {"maximum_macos": {"<=": ["15.9"]}}}),
+        );
+        let darwin = classify_target(&rec, "aarch64-darwin", BASE);
+        assert_eq!(darwin.status, "eligible");
+        let plan = darwin.plan.clone().expect("plan");
+        assert_eq!(plan.min_macos, None);
+        assert_eq!(plan.max_macos.as_deref(), Some("15.9"));
+        // The same record serializes the bound into the emitted index
+        // entry (the client decodes `maxMacos` from exactly this shape).
+        let emitted = serde_json::to_value(&darwin).expect("serializes");
+        assert_eq!(emitted["plan"]["maxMacos"].as_str(), Some("15.9"));
+        // Linux stays eligible with null bounds.
+        let linux = classify_target(&rec, "x86_64-linux", BASE);
+        assert_eq!(linux.status, "eligible");
+        let linux_plan = linux.plan.expect("plan");
+        assert_eq!(linux_plan.min_macos, None);
+        assert_eq!(linux_plan.max_macos, None);
+    }
+
+    #[test]
+    fn inverted_macos_range_is_refused_on_every_target() {
+        // Bounds are collected on ALL targets before any baseline
+        // decision, so an inverted range is malformed on Linux too —
+        // previously Linux accepted it because it never collected min.
+        let both = ["arm64_sequoia", "x86_64_linux"];
+        let rec = record(
+            &both,
+            &json!({"depends_on": {
+                "macos": {">=": ["16"]},
+                "maximum_macos": {"<=": ["15.9"]}
+            }}),
+        );
+        // Darwin refuses it as malformed too: the range is validated
+        // whole before any baseline comparison runs.
+        assert_eq!(
+            classify_target(&rec, "aarch64-darwin", BASE)
+                .reason
+                .as_deref(),
+            Some("malformed-record")
+        );
+        assert_eq!(
+            classify_target(&rec, "x86_64-linux", BASE)
+                .reason
+                .as_deref(),
+            Some("malformed-record")
+        );
+    }
+
+    #[test]
+    fn oversized_macos_versions_are_refused_on_every_target() {
+        let both = ["arm64_sequoia", "x86_64_linux"];
+        let rec = record(
+            &both,
+            &json!({"depends_on": {"macos": {">=": ["99999999999999999999"]}}}),
+        );
+        assert_eq!(
+            classify_target(&rec, "aarch64-darwin", BASE)
+                .reason
+                .as_deref(),
+            Some("malformed-record")
+        );
+        assert_eq!(
+            classify_target(&rec, "x86_64-linux", BASE)
                 .reason
                 .as_deref(),
             Some("malformed-record")

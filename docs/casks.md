@@ -14,12 +14,16 @@ The base design is the OpenSpec change
 [Generate the Cask catalog with a Rust tool](../openspec/changes/generate-cask-catalog-with-rust/proposal.md).
 Public tap ingestion is specified in
 [Import public cask taps locally](../openspec/changes/import-public-cask-taps/proposal.md).
+The current schema-4 and native lifecycle results are recorded in the
+[reliability verification](verification/2026-09-30-native-package-reliability-fixes.md).
+External vendor signatures use a verified private app copy as specified in
+the [signature preservation design](../openspec/changes/harden-native-package-lifecycle/external-signatures.md).
 
 ## What this source is
 
 A maintainer-run Rust generator (`tools/cask-catalog`) reads a pinned
 offline Homebrew Cask JSON snapshot and emits one deterministic catalog file
-(`nix/casks/catalog/catalog.json`, schema `pkg-cask-catalog/3`). The Nix
+(`nix/casks/catalog/catalog.json`, schema `pkg-cask-catalog/4`). The Nix
 flake reads that committed data with plain `builtins.fromJSON` and builds
 generic packages from it. The client converts nothing per install.
 
@@ -31,7 +35,7 @@ generic packages from it. The client converts nothing per install.
 - The only flake input is a pinned `nixpkgs` revision. The generated catalog
   is committed data, not a live service.
 
-Schema 3 is source-qualified:
+Schema 4 keeps source identities and macOS version bounds:
 
 - `inputs` maps each source to its provenance. The official JSON source is
   `homebrew/cask` and is retained; official metadata is not re-evaluated
@@ -78,6 +82,17 @@ loads, and are never executed.
 There are no package allowlists and no per-token flags. The full catalog
 output and the index state eligibility only; they never state compatibility.
 Verification results live in `docs/verification/` as observational records.
+
+Eligible macOS plans retain `minMacos` and `maxMacos`. Each bound is a
+numeric version or null when it is not declared. The client reads the actual
+host version before install and upgrade. It refuses a package outside that
+range before it changes the profile. Linux plans have null macOS bounds.
+The catalog still selects variants for the declared 15.7.7 baseline.
+
+The client requires schema 4. Run `pkg tap update` to regenerate older saved
+tap catalogs. Doctor reports unreadable saved taps. A qualified request reads
+only its selected tap. Bare names still require all registered taps to be
+readable, so a failed source cannot hide another match.
 
 Known scope limits, by design:
 

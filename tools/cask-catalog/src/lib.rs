@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// The catalog schema identifier this generator emits.
-pub const CATALOG_SCHEMA: &str = "pkg-cask-catalog/3";
+pub const CATALOG_SCHEMA: &str = "pkg-cask-catalog/4";
 /// Generator identity recorded in every output.
 pub const GENERATOR_NAME: &str = "cask-catalog";
 /// Generator version recorded in every output (contract value).

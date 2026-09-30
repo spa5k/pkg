@@ -50,8 +50,14 @@ follows it.
 _Avoid_: Migration, state restore
 
 **Launcher**:
-A pkg-owned macOS app trampoline derived from an intact store bundle.
+A pkg-owned macOS app trampoline derived from an active native package.
 _Avoid_: App install, app copy
+
+**Restored App Copy**:
+A disposable copy that retains a vendor app's external signatures and shares
+file data with its Nix payload through APFS cloning.
+Its presence does not establish that the package is installed.
+_Avoid_: Package inventory, repaired signature
 
 ## Runtime
 

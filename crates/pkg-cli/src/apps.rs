@@ -16,6 +16,9 @@
 //! manually, and callers skip automatic refresh. No helper source is
 //! bundled; the helper is installed on demand from one exact pinned flake
 //! reference and verified by its native profile identity.
+//! Externally signed cask data files need a verified private app copy:
+//! their attributes are retained as ordinary Nix data and restored by
+//! the generated materializer. The native profile still owns inventory.
 //!
 //! Requires the `tempfile` crate for the unique temporary source view
 //! (a normal workspace dependency).
@@ -24,7 +27,7 @@
 //! tap store may carry vendor-built `.app` bundles pkg did not build.
 //! Before any launcher is exposed, Gatekeeper assessment must be enabled
 //! on this system (confirmed read-only with `spctl --status`), and then
-//! every such bundle must pass the read-only `codesign` and `spctl`
+//! every such bundle (restored first when required) must pass `codesign` and `spctl`
 //! verification in `assess_public_tap_apps`; a failed, disabled, or
 //! interrupted check stops the sync before the destination is touched.
 //! Passing these checks does not claim a bundle is malware-free.
@@ -34,7 +37,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::Write;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 
 use crate::config::Paths;
@@ -77,7 +80,7 @@ const ASSESSMENTS_ENABLED: &str = "assessments enabled";
 const HELPER_BINARY_RELATIVE: &str = "bin/mac-app-util";
 
 /// Launcher destination, relative to the user's home directory. The only
-/// directory this module ever writes to.
+/// launcher directory this module manages.
 const DEST_RELATIVE: &str = "Applications/pkg";
 /// Marker file that claims the destination for `pkg`; its exact payload
 /// must be present before any destination content is replaced.
@@ -88,14 +91,118 @@ const MARKER_PAYLOAD: &str = "pkg-apps-owned/1\n";
 /// successful sync and compared by [`status`]. It is derived state, not
 /// package inventory; it is preserved on failed syncs.
 const SOURCE_MAP_NAME: &str = ".pkg-launcher-sources";
+/// Builder data for apps whose external signatures require a private copy.
+const CASK_APP_MANIFEST: &str = "share/pkg/cask-apps.json";
+/// Root-owned parent of private per-user app views on the Nix volume.
+const APP_CACHE_PARENT: &str = "/nix/var/pkg/cask-apps";
 
 /// Name of the advisory lock file inside the state home.
 const SYNC_LOCK_NAME: &str = "app-sync.lock";
 
+/// The real user's identity, matching os.getuid() in the app materializer.
+fn app_uid() -> u32 {
+    // SAFETY: getuid has no arguments and cannot fail.
+    unsafe { libc::getuid() }
+}
+
+/// Shared with the app runtime. Custom roots must already be private and
+/// on the payload's volume; preparation validates them before any write.
+fn app_cache_root() -> Result<PathBuf, String> {
+    let root = std::env::var_os("PKG_APP_CACHE_DIR").map_or_else(
+        || PathBuf::from(APP_CACHE_PARENT).join(app_uid().to_string()),
+        PathBuf::from,
+    );
+    if !root.is_absolute() {
+        return Err(String::from(
+            "PKG_APP_CACHE_DIR must be an absolute directory",
+        ));
+    }
+    Ok(root)
+}
+
+/// Validate a cache location without following its final link.
+fn check_storage_directory(path: &Path, owner: u32, private: bool) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+    let forbidden = if private { 0o077 } else { 0o022 };
+    if !metadata.is_dir()
+        || metadata.uid() != owner
+        || metadata.permissions().mode() & forbidden != 0
+        || (private && metadata.permissions().mode() & 0o700 != 0o700)
+    {
+        return Err(format!("refusing unsafe app storage: {}", path.display()));
+    }
+    Ok(())
+}
+
+/// Set up the private same-volume cache. This explicit command is the only
+/// administrator operation; normal installation and app use stay unprivileged.
+pub fn setup_storage() -> Result<(), String> {
+    if !cfg!(target_os = "macos") {
+        return Err(String::from("shared app storage supports macOS only"));
+    }
+    let uid = app_uid();
+    if uid == 0 {
+        return Err(String::from(
+            "run `pkg apps setup` as your user; it will request administrator access",
+        ));
+    }
+    let root = app_cache_root()?;
+    if std::env::var_os("PKG_APP_CACHE_DIR").is_none() {
+        for parent in ["/nix", "/nix/var"] {
+            check_storage_directory(Path::new(parent), 0, false)?;
+        }
+        for (path, mode, owner) in [
+            (PathBuf::from("/nix/var/pkg"), "0755", 0),
+            (PathBuf::from(APP_CACHE_PARENT), "0755", 0),
+            (root.clone(), "0700", uid),
+        ] {
+            match fs::symlink_metadata(&path) {
+                Ok(_) => check_storage_directory(&path, owner, owner == uid)?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!("Preparing app storage at {}…", path.display());
+                    let args = vec![
+                        String::from("/usr/bin/install"),
+                        String::from("-d"),
+                        String::from("-m"),
+                        String::from(mode),
+                        String::from("-o"),
+                        owner.to_string(),
+                        path.to_string_lossy().into_owned(),
+                    ];
+                    match run_direct(Path::new("/usr/bin/sudo"), &args)? {
+                        Outcome::Success => check_storage_directory(&path, owner, owner == uid)?,
+                        Outcome::Failed { status, stderr } => {
+                            return Err(format!(
+                                "app storage setup failed ({status}): {}",
+                                stderr.trim()
+                            ));
+                        }
+                        Outcome::Interrupted { signal } => {
+                            return Err(format!(
+                                "app storage setup was interrupted by signal {signal}"
+                            ));
+                        }
+                    }
+                }
+                Err(error) => return Err(format!("could not inspect {}: {error}", path.display())),
+            }
+        }
+    }
+    check_storage_directory(&root, uid, true)?;
+    if fs::metadata(&root).map_err(|e| e.to_string())?.dev()
+        != fs::metadata("/nix/store").map_err(|e| e.to_string())?.dev()
+    {
+        return Err(String::from("app storage must be on the Nix store volume"));
+    }
+    Ok(())
+}
+
 /// Refreshes macOS launchers (and Dock entries) for active profile outputs.
 ///
 /// Reads the active profile, collects intact `.app` bundles from its store
-/// outputs, builds a unique temporary source view of symlinks to them, and
+/// outputs, prepares externally signed copies when required, builds a
+/// unique temporary source view of symlinks, and
 /// runs the pinned helper's `sync-trampolines` against the verified
 /// pkg-owned destination. The destination is only accepted for writing when
 /// missing or owned (exact marker payload); the marker is restored after a
@@ -113,10 +220,11 @@ pub fn sync(nix: &Nix, paths: &Paths) -> Result<(), String> {
     let _lock = SyncLock::acquire(paths)?;
     let entries = list_profile(nix, &paths.profile)?;
     let apps = scan_apps(&entries)?;
-    // Vendor assessment runs under the sync lock but before every write:
+    // Vendor assessment runs under the sync lock before launcher writes:
     // the destination guard, the marker, the helper profile, and any
     // launcher change all come later, so a failed check leaves the
-    // previous launchers and source map untouched.
+    // previous launchers and source map untouched. Preparing a private
+    // cache copy does not run vendor code or change the package profile.
     assess_public_tap_apps(&paths.state_home, &entries)?;
     let dest = destination_path()?;
     let state = inspect_destination(&dest)?;
@@ -145,7 +253,8 @@ pub fn sync(nix: &Nix, paths: &Paths) -> Result<(), String> {
     let view = tempfile::tempdir()
         .map_err(|e| format!("could not create a temporary source view: {e}"))?;
     for (name, source) in &apps {
-        symlink(source, view.path().join(name)).map_err(|e| {
+        let prepared = prepare_bundle(source)?;
+        symlink(&prepared, view.path().join(name)).map_err(|e| {
             format!(
                 "could not link {} into the temporary source view: {e}",
                 source.display()
@@ -221,7 +330,11 @@ pub fn status(nix: &Nix, paths: &Paths) -> Result<String, String> {
             None => missing.push(name),
             Some(old) if old != source => changed.push(name),
             Some(_) => {
-                if !dest.join(name).exists() {
+                if !dest.join(name).exists()
+                    || restored_path(source)?.is_some_and(|path| {
+                        !fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
+                    })
+                {
                     missing.push(name);
                 }
             }
@@ -370,7 +483,7 @@ fn marker_is_valid(dest: &Path) -> bool {
     }
 }
 
-/// Collects intact `.app` bundles from all *active* store outputs.
+/// Collects intact bundles and declared private payloads from active outputs.
 ///
 /// A bundle counts as intact when it is a directory whose name ends in
 /// `.app` and that contains a `Contents` directory. Inactive profile
@@ -387,6 +500,15 @@ fn scan_apps(
         let mut store_paths = entry.store_paths.clone();
         store_paths.sort();
         for store_path in &store_paths {
+            for (name, path) in scan_restorable_apps(Path::new(store_path))? {
+                if let Some(existing) = apps.insert(name.clone(), path.clone())
+                    && existing != path
+                {
+                    return Err(format!(
+                        "two active packages provide {name}; remove one before syncing app launchers"
+                    ));
+                }
+            }
             let applications = Path::new(store_path).join("Applications");
             let read = match fs::read_dir(&applications) {
                 Ok(read) => read,
@@ -430,6 +552,108 @@ fn scan_apps(
         }
     }
     Ok(apps)
+}
+
+/// Read generated app data without executing vendor code or writing state.
+fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+    let path = output.join(CASK_APP_MANIFEST);
+    let metadata = match fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(format!("could not inspect {}: {e}", path.display())),
+        Ok(metadata) => metadata,
+    };
+    if !metadata.is_file() || metadata.len() > 8 * 1024 * 1024 {
+        return Err(format!("invalid cask app data: {}", path.display()));
+    }
+    #[derive(serde::Deserialize)]
+    struct AppData {
+        source: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        schema: String,
+        apps: BTreeMap<String, AppData>,
+    }
+    let data: Manifest = serde_json::from_slice(
+        &fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?,
+    )
+    .map_err(|e| format!("invalid cask app data {}: {e}", path.display()))?;
+    if data.schema != "pkg-cask-apps/1" || !output.join("libexec/pkg-cask-app").is_file() {
+        return Err(format!("unsupported cask app data: {}", path.display()));
+    }
+    let mut apps = BTreeMap::new();
+    for (name, entry) in data.apps {
+        if name == ".app"
+            || !name.ends_with(".app")
+            || name.contains(['/', '\0', '\n', '\r'])
+            || entry.source != format!("libexec/pkg/app-sources/{name}")
+        {
+            return Err(format!("invalid cask app payload: {name}"));
+        }
+        let source = output.join(entry.source);
+        if !fs::symlink_metadata(&source).is_ok_and(|m| m.is_dir())
+            || !source.join("Contents").is_dir()
+        {
+            return Err(format!("missing cask app payload: {}", source.display()));
+        }
+        apps.insert(name, source);
+    }
+    Ok(apps)
+}
+
+/// Locate the shared materializer only for the generated private layout.
+fn app_output(bundle: &Path) -> Option<&Path> {
+    let sources = bundle.parent()?;
+    let pkg = sources.parent()?;
+    let libexec = pkg.parent()?;
+    if sources.file_name()? != "app-sources"
+        || pkg.file_name()? != "pkg"
+        || libexec.file_name()? != "libexec"
+    {
+        return None;
+    }
+    libexec.parent()
+}
+
+/// Read-only destination calculation, shared with the builder runtime.
+fn restored_path(bundle: &Path) -> Result<Option<PathBuf>, String> {
+    let Some(output) = app_output(bundle) else {
+        return Ok(None);
+    };
+    Ok(Some(
+        app_cache_root()?
+            .join(output.file_name().ok_or("app output has no name")?)
+            .join(bundle.file_name().ok_or("app bundle has no name")?),
+    ))
+}
+
+/// Prepare and verify a private app copy through the shared child supervisor.
+fn prepare_bundle(bundle: &Path) -> Result<PathBuf, String> {
+    let Some(expected) = restored_path(bundle)? else {
+        return Ok(bundle.to_path_buf());
+    };
+    let output = app_output(bundle).ok_or("missing cask app output")?;
+    let helper = output.join("libexec/pkg-cask-app");
+    let name = bundle
+        .file_name()
+        .ok_or("missing cask app name")?
+        .to_string_lossy()
+        .into_owned();
+    match run_direct_captured(&helper, &[String::from("prepare"), name])? {
+        (Outcome::Success, text)
+            if text.trim() == expected.to_string_lossy() && expected.is_dir() =>
+        {
+            Ok(expected)
+        }
+        (Outcome::Success, _) => Err(String::from("app preparation returned an unexpected path")),
+        (Outcome::Failed { status, stderr }, _) => Err(format!(
+            "app preparation failed ({status}): {}",
+            stderr.trim()
+        )),
+        (Outcome::Interrupted { signal }, _) => Err(format!(
+            "app preparation was interrupted by signal {signal}"
+        )),
+    }
 }
 
 /// Active entries installed from this state home's local public tap store.
@@ -486,7 +710,7 @@ fn assess_public_tap_apps(
     // check cannot mean anything.
     require_assessments_enabled()?;
     for (_name, bundle) in apps {
-        assess_bundle(&bundle)?;
+        assess_bundle(&prepare_bundle(&bundle)?)?;
     }
     Ok(())
 }
@@ -881,6 +1105,22 @@ impl Drop for SyncLock {
 mod tests {
     use super::*;
 
+    #[test]
+    fn private_storage_rejects_shared_permissions_wrong_owner_and_links() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = dir.path().join("cache");
+        fs::create_dir(&cache).expect("create cache");
+        fs::set_permissions(&cache, fs::Permissions::from_mode(0o700)).expect("private mode");
+        assert!(check_storage_directory(&cache, app_uid(), true).is_ok());
+        assert!(check_storage_directory(&cache, app_uid().wrapping_add(1), true).is_err());
+        fs::set_permissions(&cache, fs::Permissions::from_mode(0o755)).expect("shared mode");
+        assert!(check_storage_directory(&cache, app_uid(), true).is_err());
+        fs::set_permissions(&cache, fs::Permissions::from_mode(0o700)).expect("private mode");
+        let link = dir.path().join("link");
+        symlink(&cache, &link).expect("create link");
+        assert!(check_storage_directory(&link, app_uid(), true).is_err());
+    }
+
     /// The fake runtime records promotion separately from building, so
     /// failures prove the old helper remains selected.
     fn check_helper_repair(old_error: Option<&str>, build_fails: bool, new_error: Option<&str>) {
@@ -1024,6 +1264,48 @@ mod tests {
             Ok(DestinationState::Owned)
         ));
         assert_eq!(ensure_owned_destination(&dest), Ok(true));
+    }
+
+    #[test]
+    fn private_cask_payload_is_discovered_without_executing_its_helper() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output = dir.path();
+        let bundle = output.join("libexec/pkg/app-sources/Vendor.app");
+        fs::create_dir_all(bundle.join("Contents")).expect("bundle");
+        fs::create_dir_all(output.join("share/pkg")).expect("data folder");
+        fs::write(output.join("libexec/pkg-cask-app"), "must not run").expect("helper");
+        let entry = crate::nix::ProfileEntry {
+            active: true,
+            attr_path: String::from("packages.aarch64-darwin.vendor"),
+            original_url: String::new(),
+            locked_url: String::new(),
+            store_paths: vec![output.display().to_string()],
+        };
+        let entries = BTreeMap::from([(String::from("opaque-native-id"), entry)]);
+        let manifest = |source: &str| {
+            serde_json::json!({
+                "schema": "pkg-cask-apps/1", "apps": {"Vendor.app": {"source": source}}
+            })
+        };
+        fs::write(
+            output.join(CASK_APP_MANIFEST),
+            manifest("libexec/pkg/app-sources/Vendor.app").to_string(),
+        )
+        .expect("manifest");
+        assert_eq!(
+            scan_apps(&entries).expect("apps"),
+            BTreeMap::from([(String::from("Vendor.app"), bundle)])
+        );
+        fs::write(
+            output.join(CASK_APP_MANIFEST),
+            manifest("../outside.app").to_string(),
+        )
+        .expect("invalid manifest");
+        assert!(
+            scan_apps(&entries)
+                .expect_err("unsafe path")
+                .contains("invalid cask app payload")
+        );
     }
 
     #[test]

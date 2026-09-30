@@ -1,6 +1,6 @@
 # Generic cask-plan builders (see ./README.md for provenance).
 #
-# Data-driven only: every input comes from a generated `pkg-cask-catalog/3`
+# Data-driven only: every input comes from a generated `pkg-cask-catalog/4`
 # plan. Vendor strings never reach the shell: the plan travels as JSON into
 # the stdlib Python helper (./plan.py) which does sniffing, pre-write member
 # and link validation, extraction, artifact placement, plist checks, and the
@@ -20,6 +20,7 @@ let
   inherit (lib.strings) escapeShellArg;
 
   planPy = pkgs.writeText "cask-plan.py" (builtins.readFile ./plan.py);
+  appRuntimePy = pkgs.writeText "cask-app-runtime.py" (builtins.readFile ./app-runtime.py);
 
   # Both vendor-source network fetches go through the shared safe-fetch
   # fixed-output derivation (SSRF-guarded HTTPS, flat hash contract).
@@ -100,6 +101,10 @@ let
             plan
             baseline
             ;
+          appRuntime = {
+            python = "${pkgs.python3}/bin/python3";
+            source = toString appRuntimePy;
+          };
         }
       );
     in

@@ -48,7 +48,7 @@ COMP_DIRS = {
     "fish-completion": "share/fish/vendor_completions.d",
 }
 SCOPE = "synthetic helper replay, not vendor installs"
-SCHEMA = "pkg-cask-catalog/3"
+SCHEMA = "pkg-cask-catalog/4"
 OFFICIAL_SOURCE = "homebrew/cask"
 
 

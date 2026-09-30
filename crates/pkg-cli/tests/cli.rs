@@ -526,7 +526,7 @@ fn cask_flows_read_the_generated_index() {
     let bin = tempfile::tempdir().expect("tempdir");
     let home = tempfile::tempdir().expect("tempdir");
     let nix = bin.path().join("nix");
-    let catalog = r#"{"schema":"pkg-cask-catalog/3",
+    let catalog = r#"{"schema":"pkg-cask-catalog/4",
       "generator":{"name":"cask-catalog","version":"0.1.0"},
       "inputs":{"homebrew/cask":{"url":"github:BatteredBunny/brew-api/245947c0","revision":"245947c0",
         "sha256":"9f3b1c47ae5d2801c6a1b74f0e39c4d2a8f60c15d7e3b28a4c05f6e9d1a7b3c2",
@@ -623,7 +623,7 @@ fn search_snapshots_amortize_new_queries() {
     std::fs::write(
         &nix,
         format!(
-            "#!/bin/sh\nargs=\"$*\"\ncase \"$args\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*nixpkgs*) echo '{{\"url\":\"github:NixOS/nixpkgs/nixpkgs-unstable\",\"locked\":{{\"type\":\"github\",\"owner\":\"NixOS\",\"repo\":\"nixpkgs\",\"rev\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}}}';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}}}';;\n  *'search'*) echo \"search $args\" >> {log}; echo '{{\"legacyPackages.x86_64-linux.ripgrep\":{{\"pname\":\"ripgrep\",\"version\":\"15.2.0\",\"description\":\"grep-like searcher\"}},\"legacyPackages.x86_64-linux.gnugrep\":{{\"pname\":\"grep\",\"version\":\"3.11\",\"description\":\"search tool\"}},\"legacyPackages.x86_64-linux.zzz-empty\":{{\"pname\":\"zzz-empty\",\"version\":\"1.0\",\"description\":\"\"}}}}';;\n  *'eval --json'*) echo \"eval $args\" >> {log}; echo '{{\"schema\":\"pkg-cask-catalog/3\",\"generator\":{{\"name\":\"cask-catalog\",\"version\":\"0.1.0\"}},\"inputs\":{{\"homebrew/cask\":{{\"url\":\"https://example.com/cask.json\",\"revision\":\"245947c0\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"license\":\"Homebrew license\"}}}},\"targets\":[\"x86_64-linux\"],\"macosBaseline\":\"15.7.7\",\"systems\":{{\"x86_64-linux\":{{\"entries\":{{}}}}}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n",
+            "#!/bin/sh\nargs=\"$*\"\ncase \"$args\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*nixpkgs*) echo '{{\"url\":\"github:NixOS/nixpkgs/nixpkgs-unstable\",\"locked\":{{\"type\":\"github\",\"owner\":\"NixOS\",\"repo\":\"nixpkgs\",\"rev\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}}}';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}}}';;\n  *'search'*) echo \"search $args\" >> {log}; echo '{{\"legacyPackages.x86_64-linux.ripgrep\":{{\"pname\":\"ripgrep\",\"version\":\"15.2.0\",\"description\":\"grep-like searcher\"}},\"legacyPackages.x86_64-linux.gnugrep\":{{\"pname\":\"grep\",\"version\":\"3.11\",\"description\":\"search tool\"}},\"legacyPackages.x86_64-linux.zzz-empty\":{{\"pname\":\"zzz-empty\",\"version\":\"1.0\",\"description\":\"\"}}}}';;\n  *'eval --json'*) echo \"eval $args\" >> {log}; echo '{{\"schema\":\"pkg-cask-catalog/4\",\"generator\":{{\"name\":\"cask-catalog\",\"version\":\"0.1.0\"}},\"inputs\":{{\"homebrew/cask\":{{\"url\":\"https://example.com/cask.json\",\"revision\":\"245947c0\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"license\":\"Homebrew license\"}}}},\"targets\":[\"x86_64-linux\"],\"macosBaseline\":\"15.7.7\",\"systems\":{{\"x86_64-linux\":{{\"entries\":{{}}}}}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n",
             log = log.display()
         ),
     )
@@ -930,6 +930,7 @@ fn failed_install_reports_signal_lines_only() {
         "done\n",
         "printf \"unpacking 'github:example/flake' into the Git cache...\\n\" >&2\n",
         "printf \"error: Cannot build '/nix/store/aaa-tool.drv'.\\n\" >&2\n",
+        "printf '%s\\n' '> cask-build: cannot preserve an external code signature in the Nix store: python-lib.bypy.frozen:com.apple.cs.CodeEntitlements' >&2\n",
         "printf \"For full logs, run:\\n  nix log /nix/store/aaa-tool.drv\\n\" >&2\n",
         "exit 1\n"
     );
@@ -959,7 +960,10 @@ fn failed_install_reports_signal_lines_only() {
     let output = command.output().expect("spawn pkg");
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("Cause: Cannot build"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("Cause: cannot preserve an external code signature in the Nix store"),
+        "stderr: {stderr}"
+    );
     assert!(
         stderr.contains("nix log /nix/store/aaa-tool.drv"),
         "stderr: {stderr}"

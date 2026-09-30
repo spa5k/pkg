@@ -8,11 +8,14 @@ whitespace guard. Run: python3 tools/cask-build-check/plan_tests.py
 """
 
 import json
+import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import fcntl
+import struct
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "nix", "casks", "lib"))
@@ -976,6 +979,196 @@ def main():
             ok(f"invalid manpage target refused: {tgt!r}")
         else:
             FAILED.append(f"invalid manpage target accepted: {tgt!r}")
+
+    # 20. Real extraction must remove nested Apple streams and preserve
+    #     signed resources, ordinary colon names, and framework links.
+    resources = {
+        "Good.app/Contents/MacOS/App": "MACHO",
+        "Good.app/Contents/_CodeSignature/CodeResources": "SIGNED",
+        "Good.app/Contents/Library/LoginItems/Login.app/Contents/PkgInfo": "APPL",
+        "Good.app/Contents/Resources/notes:with:colons.txt": "NOTES",
+        "Good.app/Contents/Resources/com.apple.shipped.txt": "KEPT",
+    }
+    streams = [
+        "Good.app/Contents/Info.plist:com.apple.provenance",
+        "Good.app/Contents/_CodeSignature/CodeResources:com.apple.provenance",
+        "Good.app/Contents/Library/LoginItems/Login.app/Contents/PkgInfo:com.apple.provenance",
+        "Good.app/Contents/Library/LoginItems/Login.app/Contents/Info.plist:com.apple.metadata:kMDItemWhereFroms",
+    ]
+
+    def stream_tree(w):
+        for name, data in resources.items():
+            path = os.path.join(w, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            put(path, data)
+        for name in streams:
+            put(os.path.join(w, name), "metadata")
+        folder = os.path.join(w, "Good.app/Contents/MacOS:com.apple.provenance")
+        os.makedirs(folder)
+        put(os.path.join(folder, "inner"), "metadata")
+
+    with tempfile.TemporaryDirectory() as d:
+        arc = snl_archive(os.path.join(d, "streams.7z"), stream_tree)
+        dest = os.path.join(d, "out")
+        os.makedirs(dest)
+        plan.extract_7zz(arc, dest)
+        leftovers = [
+            os.path.join(root, name)
+            for root, dirs, files in os.walk(dest, followlinks=False)
+            for name in dirs + files if ":com.apple." in name
+        ]
+        preserved = all(
+            os.path.isfile(os.path.join(dest, name))
+            and get(os.path.join(dest, name)) == data
+            for name, data in resources.items()
+        )
+        current = os.path.join(dest, "Fw.framework/Versions/Current")
+        if (not leftovers and preserved
+                and get(os.path.join(dest, "Good.app/Contents/Info.plist")) == "PLIST"
+                and os.path.islink(current) and os.readlink(current) == "A"
+                and get(os.path.join(current, "R")) == "R"):
+            ok("real 7zz nested Apple streams removed; resources, colon names and links preserved")
+        else:
+            FAILED.append(f"nested Apple stream cleanup or preservation failed: {leftovers}")
+
+    # 21. A real 7zz archive must preserve external signatures as ordinary
+    #     data, hide the incomplete store bundle, and route bundled commands
+    #     through the same materializer. Calibre exposed the original loss.
+    with tempfile.TemporaryDirectory() as d:
+        signature_values = {}
+        resource_data = "PYFROZEN" * 131072
+        native_runtime = None
+        if sys.platform == "darwin":
+            spec = importlib.util.spec_from_file_location("app_runtime", os.path.join(libdir, "app-runtime.py"))
+            native_runtime = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(native_runtime)
+
+        def signed_tree(w):
+            plugins = os.path.join(w, "Cal.app/Contents/Frameworks/plugins")
+            os.makedirs(plugins, exist_ok=True)
+
+            def place(name, data):
+                path = os.path.join(w, name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                put(path, data)
+
+            with open(os.path.join(w, "Cal.app/Contents/Info.plist"), "wb") as f:
+                f.write(plan.plistlib.dumps({"CFBundleIdentifier": "test.cal", "CFBundleVersion": "1", "CFBundleExecutable": "cal"}))
+            put(os.path.join(plugins, "python-lib.bypy.frozen"), resource_data)
+            place("Cal.app/Contents/Resources/notes:with:colons.txt", "NOTES")
+            if native_runtime:
+                main = os.path.join(w, "Cal.app/Contents/MacOS/cal")
+                os.makedirs(os.path.dirname(main))
+                c_file = os.path.join(d, "main.c")
+                put(c_file, '#include <stdio.h>\nint main(int n,char**v){puts("native-cask");for(int i=1;i<n;i++)puts(v[i]);return 0;}\n')
+                subprocess.run(["/usr/bin/clang", c_file, "-o", main], check=True, capture_output=True)
+                target = os.path.join(plugins, "python-lib.bypy.frozen")
+                subprocess.run(["/usr/bin/codesign", "--sign", "-", target], check=True, capture_output=True)
+                subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", os.path.join(w, "Cal.app")], check=True, capture_output=True)
+                subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", os.path.join(w, "Cal.app")], check=True, capture_output=True)
+                signature_values.clear()
+                signature_values.update({a: native_runtime.get_attribute(target, a) for a in native_runtime.attribute_names(target) if a.startswith("com.apple.cs.")})
+            else:
+                signature_values.update({"com.apple.cs." + a: b"SIG" for a in ("CodeDirectory", "CodeEntitlements", "CodeRequirements", "CodeRequirements-1", "CodeSignature")})
+            for attr, value in signature_values.items():
+                with open(os.path.join(plugins, "python-lib.bypy.frozen:" + attr), "wb") as f:
+                    f.write(value)
+            place(
+                "Cal.app/Contents/Info.plist:com.apple.provenance",
+                "meta",
+            )
+            place(
+                "Cal.app/Contents/PkgInfo:com.apple.metadata:kMDItemWhereFroms",
+                "meta",
+            )
+            place(
+                "Cal.app/Contents/Resources/notes:with:colons.txt",
+                "NOTES",
+            )
+
+        arc = snl_archive(os.path.join(d, "signed.7z"), signed_tree)
+        dest = os.path.join(d, "out")
+        os.makedirs(dest)
+        plan.extract_7zz(arc, dest)
+        output = os.path.join(d, "installed")
+        context = {"token": "cal", "system": "aarch64-darwin", "baseline": "14.0", "appRuntime": {
+            "python": PY, "source": os.path.join(libdir, "app-runtime.py")}, "plan": {"artifacts": [
+                {"kind": "app", "source": "Cal.app", "target": "Renamed.app"},
+                {"kind": "binary", "source": "$APPDIR/Cal.app/Contents/" + ("MacOS/cal" if native_runtime else "Frameworks/plugins/python-lib.bypy.frozen"), "target": "cal-cli"}]}}
+        config = os.path.join(d, "plan.json")
+        put(config, json.dumps(context))
+        plan.cmd_install(config, dest, output)
+        metadata = json.loads(get(os.path.join(output, "share/pkg/cask-apps.json")))
+        entry = metadata["apps"]["Renamed.app"]
+        resource = "Contents/Frameworks/plugins/python-lib.bypy.frozen"
+        assert entry["signatures"][resource] == {a: v.hex() for a, v in signature_values.items()}
+        assert not os.path.exists(os.path.join(output, "Applications/Renamed.app"))
+        app = os.path.join(output, entry["source"])
+        assert get(os.path.join(app, resource)) == resource_data
+        assert get(os.path.join(app, "Contents/Resources/notes:with:colons.txt")) == "NOTES"
+        assert not any(":com.apple." in name for _r, _d, files in os.walk(app) for name in files)
+        command = get(os.path.join(output, "bin/cal-cli"))
+        assert "cask-app.py" in command and "Renamed.app" in command and '"$@"' in command
+        ok("real 7zz external signatures serialized; incomplete bundle hidden; command uses shared runtime")
+        if native_runtime:
+            # Emulate Nix's canonical modes, including read-only app dirs.
+            for root, dirs, files in os.walk(app):
+                for name in files:
+                    path = os.path.join(root, name)
+                    os.chmod(path, 0o555 if os.stat(path).st_mode & 0o111 else 0o444)
+                os.chmod(root, 0o555)
+            home = os.path.join(d, "home")
+            os.mkdir(home, 0o700)
+            cache = os.path.join(home, "private-apps")
+            os.mkdir(cache, 0o700)
+            command = os.path.join(output, "bin/cal-cli")
+            result = subprocess.run([command, "space value", "$(literal)"], env=dict(os.environ, HOME=home, PKG_APP_CACHE_DIR=cache), capture_output=True, text=True, check=False)
+            assert result.returncode == 0, result.stderr
+            assert result.stdout == "native-cask\nspace value\n$(literal)\n"
+            restored = os.path.join(cache, "installed/Renamed.app")
+            assert os.path.isdir(restored)
+            assert os.stat(restored).st_mode & 0o777 == 0o555
+            assert {a: native_runtime.get_attribute(os.path.join(restored, resource), a) for a in signature_values} == signature_values
+            subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", restored], check=True, capture_output=True)
+            # Check physical extent sharing, not du (which counts shared
+            # blocks twice). F_LOG2PHYS_EXT uses Apple's packed log2phys.
+            original = os.path.join(app, resource)
+            cloned = os.path.join(restored, resource)
+            assert os.stat(original).st_ino != os.stat(cloned).st_ino
+            with open(original, "rb") as a, open(cloned, "rb") as b:
+                offset = 0
+                size = os.stat(original).st_size
+                while offset < size:
+                    extent = struct.pack("=Iqq", 0, size - offset, offset)
+                    _flags_a, length_a, block_a = struct.unpack("=Iqq", fcntl.fcntl(a.fileno(), 65, extent))
+                    _flags_b, length_b, block_b = struct.unpack("=Iqq", fcntl.fcntl(b.fileno(), 65, extent))
+                    assert block_a >= 0 and block_a == block_b
+                    length = min(length_a, length_b, size - offset)
+                    assert length > 0
+                    offset += length
+            assert not any(a.startswith("com.apple.cs.") for a in native_runtime.attribute_names(original))
+            ok("native signature restored on separate inode with shared file blocks; readonly app published; CLI arguments unchanged")
+
+        # A missing target and a symlinked signature must still fail during
+        # preflight, before the otherwise valid app payload is extracted.
+        for label, symlink in (("orphan", False), ("symlink", True)):
+            def invalid_tree(w):
+                signed_tree(w)
+                target = os.path.join(w, "Cal.app/Contents/Frameworks/plugins/python-lib.bypy.frozen")
+                if not symlink:
+                    os.remove(target)
+                else:
+                    stream = target + ":com.apple.cs.CodeDirectory"
+                    os.remove(stream)
+                    os.symlink("python-lib.bypy.frozen", stream)
+            bad = snl_archive(os.path.join(d, label + ".7z"), invalid_tree)
+            area = os.path.join(d, label)
+            os.makedirs(area)
+            code = f"import sys;sys.path.insert(0,{libdir!r});import plan;plan.extract_7zz({bad!r},{area!r})"
+            result = subprocess.run([PY, "-c", code], capture_output=True, text=True, check=False)
+            assert result.returncode == 1 and "signature stream needs a regular file target" in result.stderr
+            assert os.listdir(area) == []
+        ok("real orphan and symlink signature streams refused before writes")
 
     if FAILED:
         for f in FAILED:

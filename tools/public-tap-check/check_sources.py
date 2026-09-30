@@ -50,7 +50,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SCHEMA = "pkg-cask-catalog/3"
+SCHEMA = "pkg-cask-catalog/4"
 KIND = "raw-ruby-tap"
 STATUSES = {"eligible", "excluded"}
 HEX40 = re.compile(r"[0-9a-f]{40}")

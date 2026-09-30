@@ -113,6 +113,8 @@ Search cost is amortized by
 one cached catalog per source answers every later query locally.
 The Cask extension is
 [import of public taps](openspec/changes/import-public-cask-taps/design.md).
+Native lifecycle and archive repairs are specified in
+[harden native package lifecycle](openspec/changes/harden-native-package-lifecycle/proposal.md).
 
 ## License
 

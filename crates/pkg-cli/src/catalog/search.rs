@@ -203,6 +203,54 @@ fn strip_output_set<'a>(attr: &'a str, system: Option<&str>) -> &'a str {
     attr
 }
 
+/// The exposed suffix of every attribute in one result set, with full
+/// paths kept where short forms would collide.
+///
+/// `packages.<system>.probe` and `legacyPackages.<system>.probe` expose
+/// the same short name. Two search rows, two bare-name choices, and two
+/// exact-lookup choices must never share one ID, and a choice must
+/// round-trip through `info` and `install`, so an attribute whose short
+/// form is claimed by another attribute keeps its full path. Uniquely
+/// short names stay short. `system` follows [`strip_output_set`]: the
+/// current system for search rows and bare resolution, `None` for the
+/// exact lookup, whose matches already name their own system.
+/// The short (exposed) suffix of one attribute, with the claim map used to
+/// decide whether that suffix is safe to expose.
+fn exposed_form<'a>(
+    attr: &'a str,
+    claimed: &BTreeMap<&'a str, usize>,
+    system: Option<&str>,
+) -> &'a str {
+    let exposed = strip_output_set(attr, system);
+    if claimed[exposed] > 1 { attr } else { exposed }
+}
+
+/// Claim counts for the short forms of every attribute in the universe.
+fn claimed_short_forms<'a>(universe: &[&'a str], system: Option<&str>) -> BTreeMap<&'a str, usize> {
+    let mut claimed: BTreeMap<&str, usize> = BTreeMap::new();
+    for attr in universe {
+        *claimed.entry(strip_output_set(attr, system)).or_insert(0) += 1;
+    }
+    claimed
+}
+
+fn unique_exposed_forms<'a>(attrs: &[&'a str], system: Option<&str>) -> Vec<&'a str> {
+    let claimed = claimed_short_forms(attrs, system);
+    attrs
+        .iter()
+        .map(|attr| exposed_form(attr, &claimed, system))
+        .collect()
+}
+
+/// Exposed forms for a filtered result set, counted against the FULL
+/// source namespace (`universe`), not the filtered rows.
+///
+/// A query that matches only one namespace's description must not earn
+/// the short form: the same short name is still claimed by another
+/// attribute in the full snapshot, and a short ID would map to a
+/// different or ambiguous package through `info` and `install`. Claims
+/// are therefore counted over the universe, and each matched result is
+/// exposed through `exposed_form` with those full-snapshot claims.
 /// Resolve a bare name to exactly one supported output.
 ///
 /// The Nixpkgs lane runs an anchored native search against the moving
@@ -262,15 +310,14 @@ fn resolve_inner(
     if let Some(nixpkgs) = nixpkgs {
         let pattern = format!("^{}$", escape_regex(name));
         let nixpkgs = nix.search(nixpkgs, &pattern).map_err(CatalogError::from)?;
-        for attr in exact_attribute_matches(&nixpkgs, name)
-            .into_iter()
-            .map(|(attr, _)| attr)
-        {
-            // Choices are exposed as the normalized suffix (matching search
-            // rows); the full native attribute is resolved again at info time.
-            choices.push(CatalogId::Nixpkgs(
-                exposed_attribute(&attr, system).to_string(),
-            ));
+        let matches = exact_attribute_matches(&nixpkgs, name);
+        let attrs: Vec<&str> = matches.iter().map(|(attr, _)| attr.as_str()).collect();
+        // Choices are exposed as the normalized suffix when that suffix
+        // is unique, and as the full native attribute when `packages` and
+        // `legacyPackages` expose the same short name; either form
+        // round-trips through info and install.
+        for attr in unique_exposed_forms(&attrs, Some(system)) {
+            choices.push(CatalogId::Nixpkgs(attr.to_string()));
         }
     }
     // The cask lane: the official index is evaluated (fail closed) and
@@ -419,9 +466,13 @@ pub fn search_source(
                 .results
                 .iter()
                 .filter(|(attr, meta)| matches_native(&pattern, attr, meta));
+            // The universe for ID claims is the complete snapshot: every
+            // attribute of the locked revision, not only the matches.
+            let universe: Vec<&str> = lane.results.keys().map(String::as_str).collect();
             (
                 rows_from(
                     matched,
+                    &universe,
                     kind,
                     &lane.reference,
                     &lane.revision,
@@ -855,25 +906,36 @@ pub fn catalog_meta(token: &str, entry: &CatalogEntry) -> SearchMeta {
 
 pub(super) fn rows_from<'a>(
     results: impl Iterator<Item = (&'a String, &'a SearchMeta)>,
+    universe: &[&str],
     kind: SourceKind,
     reference: &str,
     revision: &Option<String>,
     system: &str,
     stale: bool,
 ) -> Vec<SearchResult> {
-    results
-        .map(|(attr, meta)| SearchResult {
-            id: format!("{}:{}", kind.label(), exposed_attribute(attr, system)),
-            attribute: attr.clone(),
-            name: meta.pname.clone(),
-            version: meta.version.clone(),
-            description: meta.description.clone(),
-            source: kind.label().to_string(),
-            reference: Some(reference.to_string()),
-            revision: revision.clone(),
-            system: system.to_string(),
-            stale,
-            support: None,
+    let collected: Vec<(&'a String, &'a SearchMeta)> = results.collect();
+    // Search IDs never collide: claims are counted against the complete
+    // snapshot (`universe`), so an attribute whose short form is shared
+    // anywhere in the source keeps its full path as the ID suffix even
+    // when the query matched only that one attribute.
+    let claimed = claimed_short_forms(universe, Some(system));
+    collected
+        .into_iter()
+        .map(|(attr, meta)| {
+            let id_suffix = exposed_form(attr, &claimed, Some(system));
+            SearchResult {
+                id: format!("{}:{id_suffix}", kind.label()),
+                attribute: attr.clone(),
+                name: meta.pname.clone(),
+                version: meta.version.clone(),
+                description: meta.description.clone(),
+                source: kind.label().to_string(),
+                reference: Some(reference.to_string()),
+                revision: revision.clone(),
+                system: system.to_string(),
+                stale,
+                support: None,
+            }
         })
         .collect()
 }
@@ -1033,11 +1095,16 @@ pub fn exact_lookup_in(
     let report = report_for(moving_source, identity);
     let matches = exact_attribute_matches(&results, attribute);
     if matches.len() > 1 {
+        // Choices must separate the namespaces that share a short name:
+        // `packages.<system>.probe` and `legacyPackages.<system>.probe`
+        // stay full paths, so repeating a choice resolves it instead of
+        // reproducing the ambiguity.
+        let attrs: Vec<&str> = matches.iter().map(|(attr, _)| attr.as_str()).collect();
         return Err(CatalogError::Ambiguous {
             name: attribute.to_string(),
-            choices: matches
-                .iter()
-                .map(|(attr, _)| strip_output_set(attr, None).to_string())
+            choices: unique_exposed_forms(&attrs, None)
+                .into_iter()
+                .map(str::to_string)
                 .collect(),
         });
     }
@@ -1395,5 +1462,119 @@ mod tests {
 
         // No match stays empty.
         assert!(exact_attribute_matches(&results, "fd").is_empty());
+    }
+
+    /// Attributes that share one short name keep their full paths as IDs
+    /// and choices; unique short names stay short. This is the rule that
+    /// keeps `packages` and `legacyPackages` entries with the same name
+    /// from colliding in search rows, bare-name choices, and exact-lookup
+    /// choices (review 2026-09-30, P3).
+    #[test]
+    fn shared_short_names_keep_full_paths_in_ids_and_choices() {
+        let system = "x86_64-linux";
+        let attrs = [
+            "packages.x86_64-linux.probe",
+            "legacyPackages.x86_64-linux.probe",
+            "packages.x86_64-linux.cursor",
+        ];
+
+        // The colliding pair keeps full paths; the unique name stays short.
+        let forms = unique_exposed_forms(&attrs, Some(system));
+        assert_eq!(
+            forms,
+            vec![
+                "packages.x86_64-linux.probe",
+                "legacyPackages.x86_64-linux.probe",
+                "cursor",
+            ]
+        );
+
+        // The exact lookup strips whatever system the match names, so the
+        // same collision rule applies through `None`.
+        let forms = unique_exposed_forms(&attrs, None);
+        assert_eq!(
+            forms,
+            vec![
+                "packages.x86_64-linux.probe",
+                "legacyPackages.x86_64-linux.probe",
+                "cursor",
+            ]
+        );
+
+        // Search rows never share one ID for the colliding pair, and the
+        // full-path IDs still round-trip through install and info.
+        let meta = SearchMeta {
+            pname: String::from("probe"),
+            version: String::from("1"),
+            description: String::new(),
+        };
+        let results: BTreeMap<String, SearchMeta> = attrs
+            .iter()
+            .map(|attr| (attr.to_string(), meta.clone()))
+            .collect();
+        let rows = rows_from(
+            results.iter(),
+            &attrs,
+            SourceKind::Nixpkgs,
+            "nixpkgs-ref",
+            &None,
+            system,
+            false,
+        );
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "nixpkgs:legacyPackages.x86_64-linux.probe",
+                "nixpkgs:cursor",
+                "nixpkgs:packages.x86_64-linux.probe",
+            ]
+        );
+        for id in &ids {
+            let suffix = id.strip_prefix("nixpkgs:").expect("prefixed");
+            assert!(crate::catalog::parse_id(id).is_ok(), "{id} must parse");
+            let matches = exact_attribute_matches(&results, suffix);
+            assert_eq!(matches.len(), 1, "{id} must resolve to one attribute");
+        }
+    }
+
+    #[test]
+    fn description_only_match_in_a_shared_namespace_keeps_its_full_path() {
+        // One query matches only the `packages` copy through its
+        // description, but the full snapshot still contains the
+        // `legacyPackages` twin: the short form stays claimed by the
+        // universe, so the row ID keeps the full path.
+        let system = "x86_64-linux";
+        let full: BTreeMap<String, SearchMeta> = [
+            ("packages.x86_64-linux.probe", "probing tool"),
+            ("legacyPackages.x86_64-linux.probe", "unrelated"),
+        ]
+        .into_iter()
+        .map(|(attr, description)| {
+            (
+                attr.to_string(),
+                SearchMeta {
+                    pname: String::from("probe"),
+                    version: String::from("1"),
+                    description: String::from(description),
+                },
+            )
+        })
+        .collect();
+        let universe: Vec<&str> = full.keys().map(String::as_str).collect();
+        let matched = full
+            .iter()
+            .filter(|(_, meta)| meta.description.contains("probing"));
+        let rows = rows_from(
+            matched,
+            &universe,
+            SourceKind::Nixpkgs,
+            "nixpkgs-ref",
+            &None,
+            system,
+            false,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "nixpkgs:packages.x86_64-linux.probe");
     }
 }

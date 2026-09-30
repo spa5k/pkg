@@ -28,10 +28,10 @@ before running.
 
 ## Semantics
 
-- Envelope (schema `pkg-cask-catalog/3` only; no schema2 fallback):
+- Envelope (schema `pkg-cask-catalog/4` only; no older-schema fallback):
   the catalog must declare exactly this schema, an `inputs` map, and an
   official input at `inputs["homebrew/cask"]` with kind `json-snapshot`
-  and `raw` set to null (the final schema3 shape; `raw.path`/`raw.sha256`
+  and `raw` set to null (`raw.path`/`raw.sha256`
   sub-provenance is no longer present). The input's primary `sha256` must
   equal the raw input file's
   exact bytes. Anything else is invalid input (exit 2).
@@ -83,7 +83,7 @@ recorded, never run. The audit validates structural invariants and popularity
 coverage of the pinned data, not successful installs and not full classifier
 equivalence. Inline `_selfcheck` assertions (ranking aggregation, tie-breaks,
 truncation, count rejection, variation merge, platform gate, token and
-artifact-name validation, and the schema-3 identity boundaries:
+artifact-name validation, and the schema-4 identity boundaries:
 qualified-key mismatch, unexpected source, and duplicate bare tokens)
 run on every invocation — no test framework.
 

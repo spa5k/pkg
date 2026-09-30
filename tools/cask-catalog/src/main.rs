@@ -65,7 +65,7 @@ enum Command {
     /// Import one raw Homebrew tap through the ACTUAL public flow
     /// (GitHub identity check, codeload fetch, sandboxed Nix raw
     /// export) into a self-contained native-only flake tree (schema
-    /// pkg-cask-catalog/3). Emits one JSON result on stdout.
+    /// pkg-cask-catalog/4). Emits one JSON result on stdout.
     ImportTap {
         /// Tap identity `owner/tap` or
         /// `https://github.com/owner/homebrew-tap`.

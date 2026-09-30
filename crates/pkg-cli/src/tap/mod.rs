@@ -58,7 +58,7 @@ mod tests {
     fn fake_nix(capture: &Path) -> (crate::nix::Nix, tempfile::TempDir) {
         let bin = tempfile::tempdir().expect("tempdir");
         let script = bin.path().join("nix");
-        let catalog = r#"{"schema":"pkg-cask-catalog/3",
+        let catalog = r#"{"schema":"pkg-cask-catalog/4",
           "generator":{"name":"cask-catalog","version":"0.1.0"},
           "inputs":{"somebody/apps":{"url":"https://github.com/somebody/homebrew-apps",
             "revision":"0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a",

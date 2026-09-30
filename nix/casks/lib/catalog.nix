@@ -1,4 +1,4 @@
-# Shared catalog projection helper (schema pkg-cask-catalog/3).
+# Shared catalog projection helper (schema pkg-cask-catalog/4).
 #
 # Used by BOTH flake wrappers:
 #   - the official `nix/casks/flake.nix` (two targets, official snapshot)
@@ -30,7 +30,7 @@ let
   # Whole-catalog integrity gate: schema must match, and invalid
   # identity segments (not usable as map keys or store names) fail
   # evaluation.
-  schemaOk = catalog.schema or "" == "pkg-cask-catalog/3";
+  schemaOk = catalog.schema or "" == "pkg-cask-catalog/4";
 
   segmentOk =
     seg:
@@ -121,6 +121,10 @@ let
             reason
             detail
             ;
+          # Declared macOS runtime range of the plan, for the cheap
+          # client gate: null on Linux records and when undeclared.
+          minMacos = if t ? plan then t.plan.minMacos or null else null;
+          maxMacos = if t ? plan then t.plan.maxMacos or null else null;
         }
       ) (lib.filterAttrs (_: entry: entry ? targets.${system}) catalog.entries);
     });

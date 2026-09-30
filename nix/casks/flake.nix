@@ -6,7 +6,7 @@
   outputs =
     { nixpkgs, ... }:
     let
-      # Committed generated catalog (schema pkg-cask-catalog/3), plain
+      # Committed generated catalog (schema pkg-cask-catalog/4), plain
       # JSON: no IFD, no compiler, no per-token Nix files. All
       # package/index/status projection lives in the shared
       # ./lib/catalog.nix helper (also used by generated tap flakes).

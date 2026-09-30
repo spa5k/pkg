@@ -2,13 +2,16 @@
 
 ## What lives here
 
-- `builders.nix` — generic data-driven builders over `pkg-cask-catalog/2`
+- `builders.nix` — generic data-driven builders over `pkg-cask-catalog/4`
   plans (no per-token files, lists, or overrides; vendor strings never
   become shell syntax; the plan travels as JSON into `plan.py`).
 - `plan.py` — stdlib-only build-time helper: content sniffing, pre-write
   member and symlink validation, safe extraction, artifact placement,
   read-only plist checks (XML and binary via `plistlib`), pkg structural
   rules, post-install link audit.
+- `app-runtime.py` — shared preparation for app launchers and bundled
+  commands when vendor signatures use extended attributes. It restores
+  exact signature bytes on a private copy and verifies it before use.
 - `brew-nix-LICENSE` — full MIT license text of the ported upstream.
 - `licenses/homebrew-cask-LICENSE.txt` — actual BSD-2-Clause license text
   of the Homebrew cask data.
@@ -45,3 +48,19 @@ extraction. ZIP symlink targets are limited to 4,096 bytes. This is not a
 general archive size quota. See the
 [stress-check report](../../../docs/verification/2026-09-29-cask-stress.md)
 for verified formats, regressions, and remaining limits.
+
+## External app signatures
+
+Nix does not retain macOS signature attributes. The builder stores supported
+signatures in `share/pkg/cask-apps.json` and keeps the app payload under
+`libexec/pkg/app-sources/`. It does not expose the incomplete bundle in
+`Applications`. Malformed, unknown, orphaned, and symlinked signing streams
+are refused. Native signing attributes are also captured before copying.
+
+App sync and bundled command wrappers use the same materializer. It restores
+the original attributes on a private versioned copy, verifies the bundle and
+each externally signed file, and then publishes the copy. APFS clones share
+file data with the store and retain independent attributes. `pkg apps setup`
+creates the private same-volume storage once. An unavailable clone operation
+fails without falling back to a full copy. It does not re-sign
+files. See the [design](../../../openspec/changes/harden-native-package-lifecycle/external-signatures.md).

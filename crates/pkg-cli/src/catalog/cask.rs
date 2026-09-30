@@ -1,6 +1,6 @@
 //! Cask catalog index access (design D6).
 //!
-//! Status decisions come from the generated `pkg-cask-catalog/3` index the
+//! Status decisions come from the generated `pkg-cask-catalog/4` index the
 //! casks flake exposes as `catalogIndex`, evaluated from the same locked
 //! source reference that search rows use, so status and rows always describe
 //! one source revision. The client classifies nothing itself: eligibility,

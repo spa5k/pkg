@@ -224,38 +224,69 @@ pub(super) trait StderrSink {
 /// chunk by chunk through the sink while the child runs, and the complete
 /// raw stderr is preserved in the output record so failures keep their
 /// full native diagnostics.
+///
+/// An interrupted read is not a failure: a termination signal forwarded to
+/// the child also interrupts this thread's `read`, so the read resumes and
+/// the child decides when the pipe closes. That is what keeps a cancelled
+/// run classifiable instead of collapsing into a spawn-style error; only
+/// `ErrorKind::Interrupted` is retried, and a retry re-reads the same pipe,
+/// so it never repeats a mutation. A genuinely failed pipe kills the child
+/// before the wait, so this drain reaps on every one of its own paths and
+/// the wait after a kill cannot hang.
 fn read_filtered(
     mut child: Child,
     mut sink: Option<&mut dyn StderrSink>,
 ) -> Result<Output, std::io::Error> {
     use std::io::Read as _;
     let mut raw = Vec::new();
+    let mut pipe_failed: Option<std::io::Error> = None;
     if let Some(mut pipe) = child.stderr.take() {
         let mut buffer = [0u8; 8192];
         loop {
-            let read = pipe.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            raw.extend_from_slice(&buffer[..read]);
-            if let Some(sink) = sink.as_deref_mut() {
-                sink.chunk(&buffer[..read]);
+            match pipe.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    raw.extend_from_slice(&buffer[..read]);
+                    if let Some(sink) = sink.as_deref_mut() {
+                        sink.chunk(&buffer[..read]);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                    continue;
+                }
+                Err(error) => {
+                    pipe_failed = Some(error);
+                    break;
+                }
             }
         }
     }
+    if pipe_failed.is_some() {
+        // A dead pipe must not leave a live child behind the error: kill
+        // first, so the wait below cannot block on a running child.
+        let _ = child.kill();
+    }
+    // `Child::wait` resumes interrupted waits itself, so one call reaps.
     let status = child.wait()?;
     if let Some(sink) = sink {
-        sink.finish(status.success());
+        sink.finish(status.success() && pipe_failed.is_none());
     }
-    Ok(Output {
-        status,
-        stdout: Vec::new(),
-        stderr: raw,
-    })
+    match pipe_failed {
+        Some(error) => Err(error),
+        None => Ok(Output {
+            status,
+            stdout: Vec::new(),
+            stderr: raw,
+        }),
+    }
 }
 
 /// Spawn one prepared command through the shared signal forward/reap
-/// boundary, wait for it, and reap it.
+/// boundary, wait for it, and reap it. A spawn failure restores the
+/// forwarding dispositions before returning; a filtered run reaps on
+/// every path inside [`read_filtered`]; captured and streamed runs wait
+/// through `wait_with_output`, whose internal read or wait error would
+/// propagate here without an extra reap.
 ///
 /// The same boundary serves native Nix children and direct external
 /// commands: termination signals sent only to pkg are forwarded to the
