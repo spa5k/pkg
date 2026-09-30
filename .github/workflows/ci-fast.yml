@@ -135,5 +135,14 @@ jobs:
       - name: Install Nix for native lifecycle checks
         uses: DeterminateSystems/determinate-nix-action@668647a33843b1f280cb2ef4c41736f86b29f826 # v3.22.1
 
+      - name: macOS archive and external-signature checks
+        if: matrix.os == 'macos-15'
+        run: >-
+          nix shell
+          github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#python3
+          github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#_7zz
+          github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#libarchive
+          --command python3 tools/cask-build-check/plan_tests.py
+
       - name: Native package lifecycle and regression checks
         run: python3 tools/native-cli-check.py --pkg target/release/pkg

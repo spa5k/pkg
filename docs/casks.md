@@ -16,6 +16,8 @@ Public tap ingestion is specified in
 [Import public cask taps locally](../openspec/changes/import-public-cask-taps/proposal.md).
 The current schema-4 and native lifecycle results are recorded in the
 [reliability verification](verification/2026-09-30-native-package-reliability-fixes.md).
+External vendor signatures use a verified private app copy as specified in
+the [signature preservation design](../openspec/changes/harden-native-package-lifecycle/external-signatures.md).
 
 ## What this source is
 

@@ -48,10 +48,25 @@ Extraction SHALL remove materialized Apple metadata streams at every directory l
 - **AND** the extracted vendor resources and links match the original app
 
 ### Requirement: External signatures are not silently discarded
-The cask builder SHALL refuse an archive when 7zz reports materialized external code-signature streams. It SHALL refuse before extraction writes. Normal client failure output SHALL show the specific builder cause when Nix provides it.
+The cask builder SHALL preserve supported external signature attributes as ordinary Nix data. It SHALL refuse malformed, unknown, orphaned, and symlinked signing streams before extraction writes. Normal client failure output SHALL show the specific builder cause when Nix provides it.
 
 #### Scenario: A vendor data file uses a signature in extended attributes
-- **WHEN** the archive contains a stream with `:com.apple.cs.` in a path component
-- **THEN** the build fails with a diagnostic that names the unsupported signature stream
-- **AND** extraction does not write the archive payload
+- **WHEN** a supported regular in-bundle file carries external signature attributes
+- **THEN** the builder records the exact attribute bytes outside the app payload
+- **AND** the incomplete store bundle is not exposed in `Applications`
+- **AND** launcher sync and bundled commands restore and verify a private copy before use
+- **AND** neither path changes or creates a vendor signature
+
+#### Scenario: A signature stream names no regular file
+- **WHEN** a signing stream is orphaned, symlinked, or unsupported
+- **THEN** the build refuses it before extraction writes
 - **AND** the native package profile remains unchanged
+
+### Requirement: Restored app copies are derived state
+Native profiles SHALL remain the package inventory. A restored app cache SHALL be private, versioned by its store output, protected by an ownership marker and a preparation lock, and published only after verification. Cancellation SHALL NOT publish an incomplete app. Public tap assessment SHALL check the restored bundle before launcher exposure. Missing or damaged owned copies SHALL be recoverable from the store payload.
+
+#### Scenario: Remove and roll back an externally signed app
+- **WHEN** the user removes the native entry and then rolls back
+- **THEN** removal removes its launcher
+- **AND** rollback derives a verified launcher from the restored native entry
+- **AND** cache presence alone never establishes that a package is installed

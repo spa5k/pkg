@@ -278,3 +278,15 @@ requires Gatekeeper assessments to be enabled (`spctl --status` reports
 never changes existing launchers. This gate does not cover CLI binaries
 or ordinary Nixpkgs apps, and it does not claim GUI launch or
 application runtime isolation.
+
+Some casks store vendor signatures in file metadata that Nix cannot retain.
+For these apps, sync restores the original signatures on a private app copy
+under `~/Library/Caches/pkg/cask-apps/`. Bundled CLI commands use the same
+copy. Both paths verify the signatures before use. No file is re-signed.
+Other apps continue to use their store bundles.
+
+These copies are disposable and may use one extra app copy per version.
+Removal removes the native entry and launcher. Cached copies can remain for
+running apps. A cache copy alone does not mean that the package is installed.
+Update apps through `pkg upgrade`. If a copy is missing or damaged,
+`pkg apps sync` recreates it from its Nix payload.

@@ -6,6 +6,9 @@ and Obsidian. The repair refuses their unsupported signature streams before
 extraction. The other 13 apps pass the repeated lifecycle checks.
 
 This extends [PR #98](https://github.com/spa5k/pkg/pull/98), task NR-07.
+The later [signature preservation repair](2026-10-01-external-signature-preservation.md)
+replaces these two refusals with verified app copies. This report retains
+the original test results.
 The earlier [reliability report](2026-09-30-native-package-reliability-fixes.md)
 records the six preceding repairs and the required helper base in PR #97.
 

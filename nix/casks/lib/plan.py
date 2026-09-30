@@ -22,10 +22,12 @@ Safety model, in order:
 
 import contextlib
 import gzip
+import importlib.util
 import json
 import os
 import plistlib
 import shutil
+import shlex
 import stat
 import subprocess
 import sys
@@ -47,9 +49,15 @@ APPLE_STREAM_MARK = ":com.apple."
 # Code-signing xattrs (CodeDirectory, CodeEntitlements, CodeRequirements,
 # CodeRequirements-1, CodeSignature) carry a vendor's EXTERNAL code
 # signature. 7zz materializes them as "<file>:com.apple.cs.<attr>". The
-# Nix store cannot retain them, so an archive that carries one must be
-# refused whole -- never silently stripped or re-signed.
+# Nix cannot retain them. Supported app signatures are serialized as
+# ordinary data and restored outside the store; malformed streams fail.
 APPLE_CS_STREAM_MARK = ":com.apple.cs."
+SIGNATURE_ATTRS = frozenset(
+    "com.apple.cs." + name for name in (
+        "CodeDirectory", "CodeEntitlements", "CodeRequirements",
+        "CodeRequirements-1", "CodeSignature",
+    )
+)
 
 
 def _is_codesign_stream(name):
@@ -58,8 +66,16 @@ def _is_codesign_stream(name):
     return any(APPLE_CS_STREAM_MARK in part for part in name.split("/"))
 
 
-def _die_external_signature(name):
-    die(f"cannot preserve an external code signature in the Nix store: {name}")
+def _signature_stream(name):
+    if not _is_codesign_stream(name):
+        return None
+    base, mark, suffix = name.rpartition(APPLE_CS_STREAM_MARK)
+    attribute = "com.apple.cs." + suffix
+    if not mark or _is_codesign_stream(base) or "/" in suffix or attribute not in SIGNATURE_ATTRS:
+        die(f"unsupported external signature stream: {name}")
+    if not any(p.endswith(".app") and p != ".app" for p in base.split("/")[:-1]):
+        die(f"external signature outside an app bundle: {name}")
+    return base, attribute
 
 
 def _prune_apple_streams(dest):
@@ -67,22 +83,23 @@ def _prune_apple_streams(dest):
 
     Do not follow symlinks or remove unrelated colon names. Prune removed
     directories from the walk. A failed removal must fail the build.
-    Defense in depth: a code-signing stream must never reach this walk
-    (preflight refuses such archives at listing time); if one appears
-    anyway, fail closed rather than silently strip the vendor signature.
+    Valid signing streams remain until app installation captures them.
     """
     for dirpath, dirnames, filenames in os.walk(dest, followlinks=False):
         for name in dirnames[:]:
             path = os.path.join(dirpath, name)
             if _is_codesign_stream(name):
-                _die_external_signature(name)
+                die(f"signature stream is not a regular file: {path}")
             if APPLE_STREAM_MARK in name and not os.path.islink(path):
                 shutil.rmtree(path)
                 dirnames.remove(name)
         for name in filenames:
             path = os.path.join(dirpath, name)
             if _is_codesign_stream(name):
-                _die_external_signature(name)
+                _signature_stream(os.path.relpath(path, dest))
+                if os.path.islink(path):
+                    die(f"signature stream is not a regular file: {path}")
+                continue
             if APPLE_STREAM_MARK in name and not os.path.islink(path):
                 os.remove(path)
 
@@ -260,6 +277,14 @@ def validate_members(members):
                 die(f"reject absolute vendor link: {name} -> {t}")
             links[name] = t
     existing = set(seen)
+    for name, m in names:
+        stream = _signature_stream(name)
+        if stream:
+            base, _attribute = stream
+            if seen.get(name) != "f" or seen.get(base) != "f":
+                die(f"signature stream needs a regular file target: {name}")
+            if m.get("size") is not None and m["size"] > 1024 * 1024:
+                die(f"signature stream is too large: {name}")
     for name in list(existing):
         parts = name.split("/")
         for i in range(1, len(parts)):
@@ -414,11 +439,7 @@ def sevenz_members(archive):
     for p, r in records:
         if not p or "\r" in p or "\n" in p:
             die(f"unparseable 7zz listing entry: {p!r}")
-        if _is_codesign_stream(p):
-            # Reject during the read-only listing. AppleDouble bodies and
-            # tar/pax xattr headers need separate detection; this guard
-            # covers the explicit stream names emitted by 7zz.
-            _die_external_signature(p)
+        _signature_stream(p)
         if r.get("hard"):
             # APFS records also emit `Hard Link = ` with an EMPTY value for
             # ordinary members; only a nonempty value is a real hard link
@@ -817,7 +838,100 @@ def audit_output(out):
                 die(f"vendor link escapes output: {p} -> {t}")
 
 
-def install_pkg(ctx, plan, staging, out, baseline):
+def capture_signatures(bundle, runtime):
+    """Serialize external signatures before Python or Nix can drop EAs.
+
+    Explicit 7zz streams and native attributes share the same contract.
+    Only regular in-bundle files and the known Apple signing names pass.
+    """
+    signatures = {}
+    native = None
+    if sys.platform == "darwin":
+        source = runtime["source"] if runtime else os.path.join(os.path.dirname(__file__), "app-runtime.py")
+        spec = importlib.util.spec_from_file_location("pkg_app_runtime", source)
+        native = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(native)
+        if any(a.startswith("com.apple.cs.") for a in native.attribute_names(bundle)):
+            die("external signature on an app directory is unsupported")
+
+    def add(rel, attribute, value):
+        path = os.path.join(bundle, safe_rel_path(rel, "signature target"))
+        if os.path.islink(path) or not os.path.isfile(path) or not inside(bundle, path):
+            die(f"signature target is not a regular in-bundle file: {rel}")
+        if (attribute not in SIGNATURE_ATTRS or len(value) > 1024 * 1024
+                or (attribute == "com.apple.cs.CodeDirectory" and not value)):
+            die(f"unsupported external signature: {rel}:{attribute}")
+        attrs = signatures.setdefault(rel, {})
+        encoded = value.hex()
+        if attribute in attrs and attrs[attribute] != encoded:
+            die(f"conflicting external signature: {rel}:{attribute}")
+        attrs[attribute] = encoded
+
+    for root, dirs, files in os.walk(bundle, followlinks=False):
+        for name in dirs + files:
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, bundle)
+            if _is_codesign_stream(rel):
+                stream = _signature_stream(os.path.basename(bundle) + "/" + rel)
+                if os.path.islink(path) or not os.path.isfile(path):
+                    die(f"signature stream is not a regular file: {rel}")
+                with open(path, "rb") as f:
+                    value = f.read(1024 * 1024 + 1)
+                base, attribute = stream
+                add(base.split("/", 1)[1], attribute, value)
+            elif native:
+                for attribute in native.attribute_names(path):
+                    if attribute.startswith("com.apple.cs."):
+                        add(rel, attribute, native.get_attribute(path, attribute))
+    for rel, attrs in signatures.items():
+        if "com.apple.cs.CodeDirectory" not in attrs:
+            die(f"external signature has no CodeDirectory: {rel}")
+    return signatures
+
+
+def copy_app(source, dest, ctx, signed):
+    signatures = capture_signatures(source, ctx.get("appRuntime"))
+    if signatures and not ctx.get("appRuntime"):
+        die("cannot preserve external signatures without the app runtime")
+    shutil.copytree(source, dest, symlinks=True)
+    if signatures:
+        for root, _dirs, files in os.walk(dest, followlinks=False):
+            for name in files:
+                if _is_codesign_stream(name):
+                    os.remove(os.path.join(root, name))
+        signed[os.path.basename(dest)] = signatures
+
+
+def pack_signed_apps(ctx, out, signed):
+    if not signed:
+        return
+    runtime = ctx["appRuntime"]
+    base = os.path.join(out, "libexec", "pkg")
+    source_dir = os.path.join(base, "app-sources")
+    os.makedirs(source_dir, exist_ok=True)
+    manifest = {"schema": "pkg-cask-apps/1", "apps": {}}
+    for name, signatures in sorted(signed.items()):
+        os.rename(os.path.join(out, "Applications", name), os.path.join(source_dir, name))
+        manifest["apps"][name] = {
+            "source": f"libexec/pkg/app-sources/{name}",
+            "signatures": signatures,
+        }
+    data_dir = os.path.join(out, "share", "pkg")
+    os.makedirs(data_dir, exist_ok=True)
+    with open(os.path.join(data_dir, "cask-apps.json"), "w") as f:
+        encoded = json.dumps(manifest, sort_keys=True)
+        if len(encoded.encode()) > 8 * 1024 * 1024:
+            die("external-signature manifest is too large")
+        f.write(encoded)
+    script = os.path.join(base, "cask-app.py")
+    shutil.copyfile(runtime["source"], script)
+    helper = os.path.join(out, "libexec", "pkg-cask-app")
+    with open(helper, "w") as f:
+        f.write("#!/bin/sh\nexec " + shlex.quote(runtime["python"]) + " " + shlex.quote(script) + ' "$@"\n')
+    os.chmod(helper, 0o555)
+
+
+def install_pkg(ctx, plan, staging, out, baseline, signed):
     pkg_arts = [a for a in plan["artifacts"] if a["kind"] == "pkg"]
     if len(pkg_arts) != 1:
         die(f"pkg plans need exactly one pkg artifact, got {len(pkg_arts)}")
@@ -906,10 +1020,10 @@ def install_pkg(ctx, plan, staging, out, baseline):
                     if os.path.lexists(dest):
                         die(f"duplicate bundle in pkg payload: {child}")
                     os.makedirs(apps_dir, exist_ok=True)
-                    shutil.copytree(os.path.join(p, child), dest, symlinks=True)
+                    copy_app(os.path.join(p, child), dest, ctx, signed)
             elif rel.endswith(".app"):
                 os.makedirs(apps_dir, exist_ok=True)
-                shutil.copytree(p, os.path.join(apps_dir, rel), symlinks=True)
+                copy_app(p, os.path.join(apps_dir, rel), ctx, signed)
             elif rel == "Contents":
                 name = one_component(
                     str(
@@ -919,9 +1033,12 @@ def install_pkg(ctx, plan, staging, out, baseline):
                     "CFBundleName",
                 )
                 os.makedirs(apps_dir, exist_ok=True)
-                shutil.copytree(
-                    p, os.path.join(apps_dir, f"{name}.app", "Contents"), symlinks=True
-                )
+                # Capture signing attributes while the original pkg payload
+                # still has them. Present a normal app root to the copier.
+                bundle = os.path.join(staging, ".pkg-app", f"{name}.app")
+                os.makedirs(bundle, exist_ok=True)
+                os.rename(p, os.path.join(bundle, "Contents"))
+                copy_app(bundle, os.path.join(apps_dir, f"{name}.app"), ctx, signed)
             else:
                 die(f"pkg payload component outside supported layouts: {rel}")
         else:
@@ -952,6 +1069,7 @@ def cmd_install(plan_file, staging, out):
     # apps first: rename map source -> installed target, plist check
     apps_dir = os.path.join(out, "Applications")
     app_targets = {}
+    signed = {}
     for a in [x for x in plan["artifacts"] if x["kind"] == "app"]:
         src = locate(staging, a["source"])
         tgt = one_component(a["target"], "app target")
@@ -961,12 +1079,12 @@ def cmd_install(plan_file, staging, out):
         dest = os.path.join(apps_dir, tgt)
         if os.path.lexists(dest):
             die(f"duplicate app target: {tgt}")
-        shutil.copytree(src, dest, symlinks=True)  # intact bundle
+        copy_app(src, dest, ctx, signed)
         plist_min_ok(dest, baseline)
         app_targets[os.path.basename(a["source"].rstrip("/"))] = tgt
 
     if "pkg" in kinds:
-        install_pkg(ctx, plan, staging, out, baseline)
+        install_pkg(ctx, plan, staging, out, baseline, signed)
 
     for a in plan["artifacts"]:
         kind = a["kind"]
@@ -994,7 +1112,15 @@ def cmd_install(plan_file, staging, out):
                 resolved = os.path.join(apps_dir, installed, inner)
                 if not os.path.lexists(resolved):
                     die(f"$APPDIR binary points at a missing file: {src}")
-                os.symlink(os.path.relpath(resolved, bindir), dest)
+                if installed in signed:
+                    runtime = ctx["appRuntime"]
+                    script = os.path.join(out, "libexec", "pkg", "cask-app.py")
+                    with open(dest, "w") as f:
+                        f.write("#!/bin/sh\nexec " + " ".join(shlex.quote(v) for v in
+                            (runtime["python"], script, "exec", installed, inner)) + ' "$@"\n')
+                    os.chmod(dest, 0o555)
+                else:
+                    os.symlink(os.path.relpath(resolved, bindir), dest)
             else:
                 path = locate(staging, src)
                 if arch.endswith("-linux"):
@@ -1027,6 +1153,7 @@ def cmd_install(plan_file, staging, out):
             if os.path.lexists(dest):
                 die(f"duplicate {kind} target: {tgt}")
             shutil.copy2(locate(staging, a["source"]), dest)
+    pack_signed_apps(ctx, out, signed)
     audit_output(out)
 
 

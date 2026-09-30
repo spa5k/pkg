@@ -11,7 +11,7 @@ The native Nix profile remains the authority for package state.
 - Exact lookup must give distinct, usable choices when package namespaces have the same short name.
 - The catalog must retain both declared macOS bounds. The client must compare these bounds with the actual host before an install or upgrade. Invalid bounds must fail closed. The existing catalog baseline policy remains in force.
 - Archive extraction must remove materialized macOS metadata streams at every directory level. It must preserve vendor files, signed resources, and validated relative links.
-- A build must refuse external code-signature streams reported by 7zz before extraction. Native Nix store import does not retain the extended attributes needed for these signatures. Do not install an app with a signature that this path cannot preserve.
+- Supported external signatures must be retained as ordinary Nix data and restored on a verified private app copy. The incomplete store bundle must not be exposed as an app. Malformed and unsupported streams must fail before extraction. See [external signatures](external-signatures.md) for the NR-08 design that extends the NR-07 refusal.
 - Normal failure output must show the specific cask builder cause when Nix includes it. Keep the log command for full details.
 
 ## Verification

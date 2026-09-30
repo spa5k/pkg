@@ -14,6 +14,7 @@ use std::path::Path;
 /// Embedded builder assets (our own static files only).
 const BUILDERS_NIX: &str = include_str!("../../../../nix/casks/lib/builders.nix");
 const PLAN_PY: &str = include_str!("../../../../nix/casks/lib/plan.py");
+const APP_RUNTIME_PY: &str = include_str!("../../../../nix/casks/lib/app-runtime.py");
 const PUBLIC_FETCH_NIX: &str = include_str!("../../../../nix/casks/lib/public-fetch.nix");
 const SAFE_FETCH_PY: &str = include_str!("../../../../nix/casks/lib/safe-fetch.py");
 const FLAKE_TEMPLATE: &str = include_str!("flake-template.nix");
@@ -403,6 +404,10 @@ pub(super) fn convert_capture(
     )?;
     write_asset(&flake_dir.join("lib").join("builders.nix"), BUILDERS_NIX)?;
     write_asset(&flake_dir.join("lib").join("plan.py"), PLAN_PY)?;
+    write_asset(
+        &flake_dir.join("lib").join("app-runtime.py"),
+        APP_RUNTIME_PY,
+    )?;
     // Both vendor-source network fetches route through the shared
     // safe-fetch FOD; the generated flake is self-contained.
     write_asset(
@@ -442,6 +447,7 @@ pub(super) fn convert_capture(
         "lib/catalog.nix",
         "lib/builders.nix",
         "lib/plan.py",
+        "lib/app-runtime.py",
         "lib/public-fetch.nix",
         "lib/safe-fetch.py",
         "lib/brew-nix-LICENSE",
@@ -596,6 +602,7 @@ mod tests {
             "flake/lib/catalog.nix",
             "flake/lib/builders.nix",
             "flake/lib/plan.py",
+            "flake/lib/app-runtime.py",
             "flake/lib/public-fetch.nix",
             "flake/lib/safe-fetch.py",
             "flake/lib/brew-nix-LICENSE",

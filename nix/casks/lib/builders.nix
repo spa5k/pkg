@@ -20,6 +20,7 @@ let
   inherit (lib.strings) escapeShellArg;
 
   planPy = pkgs.writeText "cask-plan.py" (builtins.readFile ./plan.py);
+  appRuntimePy = pkgs.writeText "cask-app-runtime.py" (builtins.readFile ./app-runtime.py);
 
   # Both vendor-source network fetches go through the shared safe-fetch
   # fixed-output derivation (SSRF-guarded HTTPS, flat hash contract).
@@ -100,6 +101,10 @@ let
             plan
             baseline
             ;
+          appRuntime = {
+            python = "${pkgs.python3}/bin/python3";
+            source = toString appRuntimePy;
+          };
         }
       );
     in
