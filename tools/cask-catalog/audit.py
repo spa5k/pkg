@@ -32,7 +32,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 TARGETS = ["aarch64-darwin", "x86_64-linux"]
-SCHEMA = "pkg-cask-catalog/3"
+SCHEMA = "pkg-cask-catalog/4"
 OFFICIAL_SOURCE = "homebrew/cask"
 VARIATION_KEY = {"aarch64-darwin": "arm64_sequoia", "x86_64-linux": "x86_64_linux"}
 PLATFORM_TAG = {"aarch64-darwin": "arm64_sequoia", "x86_64-linux": "x86_64_linux"}

@@ -1,6 +1,6 @@
 # Generic cask-plan builders (see ./README.md for provenance).
 #
-# Data-driven only: every input comes from a generated `pkg-cask-catalog/3`
+# Data-driven only: every input comes from a generated `pkg-cask-catalog/4`
 # plan. Vendor strings never reach the shell: the plan travels as JSON into
 # the stdlib Python helper (./plan.py) which does sniffing, pre-write member
 # and link validation, extraction, artifact placement, plist checks, and the

@@ -14,6 +14,8 @@ Search amortization is
 [Amortize search with revision snapshots](openspec/changes/amortize-search-with-revision-snapshots/proposal.md)
 with its [design](openspec/changes/amortize-search-with-revision-snapshots/design.md) and
 [tasks](openspec/changes/amortize-search-with-revision-snapshots/tasks.md).
+The native lifecycle reliability repair is
+[Harden native package lifecycle](openspec/changes/harden-native-package-lifecycle/proposal.md).
 
 ## 1. Before you open a PR
 

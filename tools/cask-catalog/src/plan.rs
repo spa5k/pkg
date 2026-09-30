@@ -46,6 +46,10 @@ pub struct Plan {
     /// Declared minimum macOS from `depends_on macos >=`, or null.
     #[serde(rename = "minMacos")]
     pub min_macos: Option<String>,
+    /// Declared maximum macOS from `depends_on maximum_macos <=`, or
+    /// null. Linux records never carry macOS runtime requirements.
+    #[serde(rename = "maxMacos")]
+    pub max_macos: Option<String>,
 }
 
 /// Why a plan could not be built for the effective record's artifacts.
@@ -436,6 +440,7 @@ pub fn build_plan(eff: &Value, system: &str) -> Result<Plan, PlanError> {
         archive: PlanArchive { kind: archive_kind },
         artifacts,
         min_macos: None,
+        max_macos: None,
     })
 }
 

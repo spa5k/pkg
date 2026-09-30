@@ -559,7 +559,7 @@ mod tests {
             &std::fs::read_to_string(dir.path().join("flake/catalog/catalog.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(catalog["schema"], "pkg-cask-catalog/3");
+        assert_eq!(catalog["schema"], "pkg-cask-catalog/4");
         assert_eq!(catalog["targets"], json!([system]));
         let input = &catalog["inputs"]["example/foo"];
         assert_eq!(input["url"], "https://github.com/example/homebrew-foo");

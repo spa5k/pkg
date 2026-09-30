@@ -1,5 +1,5 @@
 //! Raw tap importer: one public Homebrew tap in, one self-contained
-//! native-only flake tree out (schema `pkg-cask-catalog/3`).
+//! native-only flake tree out (schema `pkg-cask-catalog/4`).
 //!
 //! The actual public import flow, end to end:
 //!

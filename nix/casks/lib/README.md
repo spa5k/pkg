@@ -2,7 +2,7 @@
 
 ## What lives here
 
-- `builders.nix` — generic data-driven builders over `pkg-cask-catalog/2`
+- `builders.nix` — generic data-driven builders over `pkg-cask-catalog/4`
   plans (no per-token files, lists, or overrides; vendor strings never
   become shell syntax; the plan travels as JSON into `plan.py`).
 - `plan.py` — stdlib-only build-time helper: content sniffing, pre-write

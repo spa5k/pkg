@@ -10,9 +10,32 @@ use std::path::{Path, PathBuf};
 /// A full commit id length in hex characters.
 const FULL_COMMIT_LEN: usize = 40;
 
+/// Flake reference schemes that pin a commit as the final path segment
+/// (`owner/repo/<commit>`): the forge reference syntax shared by GitHub,
+/// GitLab, and SourceHut.
+const FINAL_SEGMENT_COMMIT_SCHEMES: [&str; 3] = ["github", "gitlab", "sourcehut"];
+
 /// Whether `text` is exactly one full commit id.
 fn is_full_commit(text: &str) -> bool {
     text.len() == FULL_COMMIT_LEN && text.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// The reference scheme prefix of `text`, when it starts with one.
+///
+/// A scheme is the run of ASCII letters, digits, `+`, `-`, and `.` before
+/// the first `:` — `github`, `gitlab`, `git+file`, `path`, `https`. A plain
+/// filesystem path (`/tmp/...`, `./...`) has no scheme.
+fn scheme(text: &str) -> Option<&str> {
+    let (prefix, _) = text.split_once(':')?;
+    (!prefix.is_empty()
+        && prefix
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+        && prefix
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+    .then_some(prefix)
 }
 
 /// The exact full commit named by one `rev=` query parameter, if one is.
@@ -30,16 +53,34 @@ fn query_commit(query: &str) -> Option<&str> {
 
 /// The exact full commit a reference or locked URL names, if any.
 ///
-/// Exactly one rule serves both fixed classification and locked-revision
-/// extraction: an exact `rev=` parameter wins, else the final path segment
-/// must itself be a full commit. Tags, branch names, short hex-looking
-/// branch names, and near-miss values never match.
+/// Classification is scheme-aware, because a commit pin means what the
+/// transport makes it mean:
+///
+/// * Forge references (`github:`, `gitlab:`, `sourcehut:`) pin a commit
+///   either as the final `owner/repo/<commit>` segment or through an exact
+///   `rev=<commit>` parameter.
+/// * `git:` and `git+` schemes pin a commit only through an exact
+///   `rev=<commit>` parameter; Nix reads a git URL's path as a repository
+///   location, never as a revision. `git:` is the bare ssh form of the
+///   same family the Nix manual documents as
+///   `git(+http|+https|+ssh|+git|+file):`.
+/// * Everything else names a location, not a commit: a `path:` reference,
+///   a `file://` or tarball URL, and a plain filesystem path stay movable
+///   even when the final segment happens to be 40 hex characters, because
+///   a directory or file basename does not make content immutable.
 fn full_commit_named(text: &str) -> Option<&str> {
     let without_fragment = text.split('#').next().unwrap_or(text);
     let (base, query) = without_fragment
         .split_once('?')
         .unwrap_or((without_fragment, ""));
-    query_commit(query).or_else(|| final_segment_commit(base))
+    let forge_reference = scheme(without_fragment)
+        .is_some_and(|prefix| FINAL_SEGMENT_COMMIT_SCHEMES.contains(&prefix));
+    let names_revision = forge_reference
+        || scheme(without_fragment)
+            .is_some_and(|prefix| prefix == "git" || prefix.starts_with("git+"));
+    query_commit(query)
+        .filter(|_| names_revision)
+        .or_else(|| final_segment_commit(base).filter(|_| forge_reference))
 }
 
 /// The final path segment, when it is exactly one full commit id.
@@ -50,11 +91,13 @@ fn final_segment_commit(base: &str) -> Option<&str> {
 
 /// Detect explicit full-commit semantics in a reference.
 ///
-/// Only a full-length (40 hex character) commit id proves a fixed reference:
-/// either an exact `rev=<commit>` parameter or a full commit as the final
-/// path segment. Tags, branch names, and short hex-looking branch names are
-/// moving references and never get fixed status here; the locked revision
-/// comes from actual flake metadata instead (design D4).
+/// Only a commit pin the reference scheme actually has — a forge
+/// `owner/repo/<commit>` segment, or an exact `rev=<commit>` parameter on
+/// a forge or `git+` reference — proves a fixed reference. Tags, branch
+/// names, short hex-looking branch names, and 40-hex directory or file
+/// basenames on `path:`, tarball, `file://`, or plain filesystem
+/// references are moving locations and never get fixed status here; the
+/// locked revision comes from actual flake metadata instead (design D4).
 #[must_use]
 pub fn is_fixed_reference(reference: &str) -> bool {
     full_commit_named(reference).is_some()
@@ -159,6 +202,10 @@ mod tests {
         assert!(is_fixed_reference(&format!(
             "github:NixOS/nixpkgs/{COMMIT}"
         )));
+        assert!(is_fixed_reference(&format!("gitlab:owner/repo/{COMMIT}")));
+        assert!(is_fixed_reference(&format!(
+            "sourcehut:~owner/repo/{COMMIT}"
+        )));
         assert!(is_fixed_reference(&format!(
             "github:NixOS/nixpkgs?rev={COMMIT}"
         )));
@@ -192,6 +239,71 @@ mod tests {
         );
         assert_eq!(
             locked_revision(&format!("github:owner/repo?prev={COMMIT}")),
+            None
+        );
+    }
+
+    /// The audited misclassification: a mutable source whose final path
+    /// segment is 40 hex characters is a location, not a commit pin. Only
+    /// the forge schemes read that segment as a revision; `path:` and
+    /// tarball/`file://`/plain references stay movable, and `git+` URLs pin
+    /// only through `rev=`.
+    #[test]
+    fn hex_basenames_pin_only_where_the_scheme_names_a_commit() {
+        // Forge references keep final-segment commit semantics.
+        assert!(is_fixed_reference(&format!("github:owner/repo/{COMMIT}")));
+        // A local path flake, plain path, and file URL never become fixed
+        // from a 40-hex basename, with or without a `rev=` parameter a
+        // path cannot carry.
+        assert!(!is_fixed_reference(&format!("path:/state/src/{COMMIT}")));
+        assert!(!is_fixed_reference(&format!("path:{COMMIT}")));
+        assert!(!is_fixed_reference(&format!("/tmp/{COMMIT}")));
+        assert!(!is_fixed_reference(&format!("./{COMMIT}")));
+        assert!(!is_fixed_reference(&format!("file:///tmp/{COMMIT}")));
+        assert!(!is_fixed_reference(&format!(
+            "path:/state/src/repo?rev={COMMIT}"
+        )));
+        // Tarball URLs name downloadable content, not revisions.
+        assert!(!is_fixed_reference(&format!(
+            "https://example.com/archive/{COMMIT}.tar.gz"
+        )));
+        assert!(!is_fixed_reference(&format!(
+            "https://example.com/src/{COMMIT}"
+        )));
+        assert!(!is_fixed_reference(&format!(
+            "tarball+https://example.com/{COMMIT}"
+        )));
+        // Git URLs read their path as a repository location; only an exact
+        // `rev=` pins.
+        assert!(!is_fixed_reference(&format!("git+file:///tmp/{COMMIT}")));
+        assert!(!is_fixed_reference(&format!(
+            "git+https://example.com/repo/{COMMIT}"
+        )));
+        assert!(is_fixed_reference(&format!(
+            "git+https://example.com/repo?rev={COMMIT}"
+        )));
+        // The bare ssh `git:` scheme is the same family per the Nix
+        // manual (`git(+http|+https|+ssh|+git|+file):`) and pins only
+        // through `rev=`.
+        assert!(is_fixed_reference(&format!(
+            "git:example.com/repo?rev={COMMIT}"
+        )));
+        assert!(!is_fixed_reference(&format!(
+            "git:example.com/repo/{COMMIT}"
+        )));
+        // Locked-revision identity follows the same scheme-aware rule.
+        assert_eq!(
+            locked_revision(&format!("github:owner/repo/{COMMIT}")),
+            Some(COMMIT)
+        );
+        assert_eq!(
+            locked_revision(&format!("git+file:///tmp/repo?rev={COMMIT}")),
+            Some(COMMIT)
+        );
+        assert_eq!(locked_revision(&format!("path:/state/src/{COMMIT}")), None);
+        assert_eq!(locked_revision(&format!("/tmp/{COMMIT}")), None);
+        assert_eq!(
+            locked_revision(&format!("https://example.com/src/{COMMIT}")),
             None
         );
     }

@@ -15,6 +15,7 @@
 //! rules.
 
 mod error;
+mod host;
 mod manifest;
 mod process;
 mod reference;
@@ -25,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub use error::NixError;
+pub use host::{in_range, macos_product_version};
 pub use manifest::OFFICIAL_CASK_SOURCE;
 pub use manifest::{
     CATALOG_INDEX_SCHEMA, CatalogEntry, CatalogGenerator, CatalogIndex, CatalogInput,

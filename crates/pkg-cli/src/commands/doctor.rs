@@ -1,8 +1,8 @@
-//! Doctor: read-only runtime, profile, and launcher status.
+//! Doctor: read-only runtime, profile, launcher, and tap status.
 //!
 //! Doctor reports and never repairs (design D7 review rule). Unhealthy
 //! required components make the command fail with a nonzero exit; a fresh
-//! profile or a skipped platform component does not.
+//! profile, a home without taps, or a skipped platform component does not.
 
 use std::process::ExitCode;
 
@@ -123,6 +123,12 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
     } else {
         "defaults"
     };
+    // Saved tap health is read through the same strict per-source loader
+    // the query paths use; doctor reports the state and never repairs
+    // it. A registered tap without a usable published generation is
+    // unhealthy here, so a home in that state cannot pass doctor while
+    // its installs are being blocked.
+    rows.extend(tap_rows(&paths.state_home));
     rows.push(observed(
         "config",
         config_status,
@@ -141,6 +147,47 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
     Ok(rows)
 }
 
+/// Read-only tap health rows: the registry, then one row per registered
+/// source.
+///
+/// Each source row reports whether its saved catalog generation is
+/// published, readable, and bound to its provenance, using the same
+/// loader the install and query paths use. An unhealthy row carries the
+/// loader's own repair command; a home with no registered taps is one
+/// healthy `none` row, not an error.
+fn tap_rows(state_home: &std::path::Path) -> Vec<DoctorRow> {
+    let registry =
+        match crate::tap::Registry::load(&crate::tap::registry::registry_path(state_home)) {
+            Ok(registry) => registry,
+            Err(error) => return vec![observed("tap registry", "unreadable", error)],
+        };
+    if registry.sources.is_empty() {
+        return vec![observed(
+            "taps",
+            "none",
+            String::from("no cask taps are registered"),
+        )];
+    }
+    registry
+        .sources
+        .keys()
+        .map(
+            |source| match crate::tap::SavedCatalogs::load_one(&registry, state_home, source) {
+                Ok(catalog) => observed(
+                    &format!("tap {source}"),
+                    "ok",
+                    format!(
+                        "{} entries saved at revision {}",
+                        catalog.provenance.eligible + catalog.provenance.excluded,
+                        catalog.provenance.revision
+                    ),
+                ),
+                Err(error) => observed(&format!("tap {source}"), "unhealthy", error),
+            },
+        )
+        .collect()
+}
+
 /// The doctor row for macOS app launchers, mapped from the read-only apps
 /// status (`healthy:`/`unhealthy:` prefix, or an operational error).
 fn app_launchers_row(runtime: &nix::Nix, paths: &crate::config::Paths) -> DoctorRow {
@@ -149,5 +196,55 @@ fn app_launchers_row(runtime: &nix::Nix, paths: &crate::config::Paths) -> Doctor
         Ok(text) if text.starts_with("unhealthy:") => observed("app launchers", "unhealthy", text),
         Ok(text) => observed("app launchers", "unreadable", text),
         Err(error) => observed("app launchers", "unreadable", error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tap::registry::Registry;
+
+    /// Doctor's tap rows are read-only observations of the same state the
+    /// loaders read (review 2026-09-30): a home without taps is healthy,
+    /// a registered tap without a usable generation is unhealthy with the
+    /// loader's repair command, and a malformed registry is unreadable.
+    /// The healthy `ok` row is the loader's success mapped straight
+    /// through; its per-source load is covered in `tap::saved`.
+    #[test]
+    fn tap_rows_report_health_without_repairing_anything() {
+        // No registry file at all: a fresh home, not an error.
+        let fresh = tempfile::tempdir().expect("tempdir");
+        let rows = tap_rows(fresh.path());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].component, "taps");
+        assert_eq!(rows[0].status, "none");
+        assert!(!UNHEALTHY_STATUSES.contains(&rows[0].status.as_str()));
+
+        // A registered tap without a published generation: unhealthy,
+        // naming the repair command, and doctor's failure set catches it.
+        let broken = tempfile::tempdir().expect("tempdir");
+        let mut registry = Registry::empty();
+        registry.approve("broken/apps", "https://github.com/broken/homebrew-apps", 1);
+        let path = crate::tap::registry::registry_path(broken.path());
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+        std::fs::write(&path, serde_json::to_string(&registry).expect("serializes"))
+            .expect("writes registry");
+        let rows = tap_rows(broken.path());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].component, "tap broken/apps");
+        assert_eq!(rows[0].status, "unhealthy");
+        assert!(UNHEALTHY_STATUSES.contains(&rows[0].status.as_str()));
+        let detail = rows[0].detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("pkg tap update broken/apps"), "{detail}");
+
+        // A malformed registry is unreadable, which also fails doctor.
+        let corrupt = tempfile::tempdir().expect("tempdir");
+        let path = crate::tap::registry::registry_path(corrupt.path());
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+        std::fs::write(&path, "{ not json").expect("writes registry");
+        let rows = tap_rows(corrupt.path());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].component, "tap registry");
+        assert_eq!(rows[0].status, "unreadable");
     }
 }

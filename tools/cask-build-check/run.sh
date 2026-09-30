@@ -22,6 +22,13 @@ pass=0; fail=0
 ok()  { echo "PASS: $1"; pass=$((pass+1)); }
 bad() { echo "FAIL: $1"; fail=$((fail+1)); }
 
+if nix eval --json --impure --expr '(import ./checks.nix {}).osBoundsIndex' \
+  | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"aarch64-darwin": {"minMacos": "14.2", "maxMacos": "15.9"}, "x86_64-linux": {"minMacos": None, "maxMacos": None}}, x'; then
+  ok "macOS bounds survive the client index projection"
+else
+  bad "macOS bounds index projection"
+fi
+
 # --- positive: real static ELF through the full builder
 if op_out="$(nix-build checks.nix -A op --no-out-link 2>/dev/null)" \
   && [ "$("$op_out/bin/op" --version)" = "2.39.0" ]; then

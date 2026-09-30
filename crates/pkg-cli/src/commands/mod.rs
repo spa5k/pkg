@@ -179,28 +179,85 @@ fn paths_only() -> Result<PathsOnly, CommandError> {
     })
 }
 
-/// The tap state one query or mutation run uses: the strictly loaded
-/// registry, the routing it implies, and every saved catalog.
+/// The tap state one query or mutation run uses: the registry, the
+/// routing it implies, and saved catalogs loaded per source on demand.
+///
+/// Qualified requests are isolated from unrelated broken taps: a
+/// source's saved catalog loads only when that source is actually read
+/// ([`TapState::saved_one`]). Bare-name resolution is the strict
+/// exception: it must see every source to fail closed on ambiguity, so
+/// it loads all of them ([`TapState::saved_all`]) and the first broken
+/// source fails the resolution.
 struct TapState {
     /// Source routing for every catalog source.
     routing: catalog::Routing,
-    /// The saved catalog of every registered tap, loaded strictly.
-    saved: crate::tap::SavedCatalogs,
+    /// The loaded tap registry.
+    registry: crate::tap::Registry,
+    /// The state home the saved catalogs live under.
+    state_home: std::path::PathBuf,
+    /// Saved catalogs loaded so far, keyed by source.
+    saved: std::cell::RefCell<BTreeMap<String, crate::tap::SavedCatalog>>,
 }
 
 impl TapState {
-    /// Load the tap state for one command run; malformed state fails the
-    /// command before any query runs.
+    /// Load the tap state for one command run: the registry and the
+    /// routing it implies. A malformed registry fails the command before
+    /// any query runs; saved generations are deliberately not touched
+    /// here, so a request that names its source never reads an
+    /// unrelated one.
     fn load(session: &Session) -> Result<Self, CommandError> {
-        let (registry, saved) =
-            crate::tap::load_all(&session.paths.state_home).map_err(CommandError::Message)?;
+        let registry = crate::tap::Registry::load(&crate::tap::registry::registry_path(
+            &session.paths.state_home,
+        ))
+        .map_err(CommandError::Message)?;
         let routing = catalog::Routing::from_registry(
             &session.config.sources,
             &registry,
             &session.paths.state_home,
         )
         .map_err(CommandError::Message)?;
-        Ok(Self { routing, saved })
+        Ok(Self {
+            routing,
+            registry,
+            state_home: session.paths.state_home.clone(),
+            saved: std::cell::RefCell::new(BTreeMap::new()),
+        })
+    }
+
+    /// One registered source's saved catalog, loaded on first use.
+    ///
+    /// Loading is strict and reads exactly this source: a broken
+    /// unrelated tap cannot fail a request that never reads it, and an
+    /// unregistered source is refused like routing refuses it.
+    fn saved_one(&self, source: &str) -> Result<crate::tap::SavedCatalog, String> {
+        if let Some(hit) = self.saved.borrow().get(source) {
+            return Ok(hit.clone());
+        }
+        if !self.registry.sources.contains_key(source) {
+            return Err(format!(
+                "unknown cask source `{source}`; \
+                 add it first with `pkg tap add {source}`"
+            ));
+        }
+        let catalog =
+            crate::tap::SavedCatalogs::load_one(&self.registry, &self.state_home, source)?;
+        self.saved
+            .borrow_mut()
+            .insert(source.to_string(), catalog.clone());
+        Ok(catalog)
+    }
+
+    /// Every registered source's saved catalog, loaded strictly.
+    ///
+    /// Bare-name resolution needs the complete source set to stay
+    /// fail-closed: one unreadable or malformed capture fails the whole
+    /// load, exactly like [`crate::tap::load_all`].
+    fn saved_all(&self) -> Result<crate::tap::SavedCatalogs, String> {
+        let mut catalogs = BTreeMap::new();
+        for source in self.registry.sources.keys() {
+            catalogs.insert(source.clone(), self.saved_one(source)?);
+        }
+        Ok(crate::tap::SavedCatalogs::from_catalogs(catalogs))
     }
 }
 

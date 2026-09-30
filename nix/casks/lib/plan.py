@@ -41,6 +41,27 @@ MAX_LINK_TARGET = 4096  # PATH_MAX bound; macOS symlink targets are < 1024
 # bytes after the target fail closed.
 HFS_LINK_TRAILER_LEN = 11
 HFS_LINK_TRAILER_HEAD = b"\x01\x02\x00"
+# 7zz materializes Apple extended-attribute streams as names such as
+# "Info.plist:com.apple.provenance", including inside nested bundles.
+APPLE_STREAM_MARK = ":com.apple."
+
+
+def _prune_apple_streams(dest):
+    """Remove materialized Apple streams before validated links are made.
+
+    Do not follow symlinks or remove unrelated colon names. Prune removed
+    directories from the walk. A failed removal must fail the build.
+    """
+    for dirpath, dirnames, filenames in os.walk(dest, followlinks=False):
+        for name in dirnames[:]:
+            path = os.path.join(dirpath, name)
+            if APPLE_STREAM_MARK in name and not os.path.islink(path):
+                shutil.rmtree(path)
+                dirnames.remove(name)
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            if APPLE_STREAM_MARK in name and not os.path.islink(path):
+                os.remove(path)
 
 
 def resolve_graph(links, path):
@@ -558,13 +579,11 @@ def extract_7zz(src, dest):
     # so `-x!` after the archive would act as an extract-only name filter
     # and silently drop every other member (verified on a real DMG)
     run(["7zz", "x", f"-o{dest}"] + excludes + ["--", src])
-    for n in os.listdir(dest):  # AppleDouble metadata must not survive
-        if ":com.apple." in n:
-            p = os.path.join(dest, n)
-            shutil.rmtree(p, ignore_errors=True)
-            # plain-file AppleDouble remnants only; OSError is expected noise
-            with contextlib.suppress(OSError):
-                os.remove(p)
+    # AppleDouble/xattr stream remnants must not survive ANYWHERE in the
+    # extracted tree: a signed bundle fails codesign --verify when a
+    # stray "PkgInfo:com.apple.provenance" sits next to the real PkgInfo
+    # at a nested path (the old direct-children-only loop left them)
+    _prune_apple_streams(dest)
     for name, target in sorted(links.items()):
         _check_target_path(dest, name)
         if not link_target_ok(os.path.dirname(name), target):

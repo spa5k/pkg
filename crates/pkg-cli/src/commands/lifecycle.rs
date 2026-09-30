@@ -36,23 +36,33 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     let mut catalog_handle = catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks);
     let mut installables = Vec::new();
     for parsed in parsed_ids {
+        // Qualified IDs resolve without reading any saved tap: an
+        // unrelated broken tap cannot block a request that names its
+        // source. Bare names load every source, because bare
+        // resolution must stay strict across all of them.
         let resolved = match parsed {
             ParsedId::Qualified(qualified) => qualified,
-            ParsedId::Bare(name) => catalog::resolve_bare(
-                &session.nix,
-                &tap_state.routing,
-                &tap_state.saved,
-                &name,
-                &system,
-                &mut catalog_handle,
-            )?,
-            ParsedId::BareCask(token) => catalog::resolve_bare_cask(
-                &session.nix,
-                &tap_state.saved,
-                &token,
-                &system,
-                &mut catalog_handle,
-            )?,
+            ParsedId::Bare(name) => {
+                let saved = tap_state.saved_all()?;
+                catalog::resolve_bare(
+                    &session.nix,
+                    &tap_state.routing,
+                    &saved,
+                    &name,
+                    &system,
+                    &mut catalog_handle,
+                )?
+            }
+            ParsedId::BareCask(token) => {
+                let saved = tap_state.saved_all()?;
+                catalog::resolve_bare_cask(
+                    &session.nix,
+                    &saved,
+                    &token,
+                    &system,
+                    &mut catalog_handle,
+                )?
+            }
         };
         if let catalog::CatalogId::Cask { source, token } = &resolved {
             gate_cask(&mut catalog_handle, &tap_state, &system, source, token)
@@ -98,13 +108,22 @@ fn gate_cask(
     let view = if source == nix::OFFICIAL_CASK_SOURCE {
         catalog.load().map_err(|error| error.to_string())?
     } else {
-        let saved = state
-            .saved
-            .get(source)
-            .ok_or_else(|| format!("tap source `{source}` has no saved catalog"))?;
-        saved_view = catalog::CatalogView::from_saved(saved);
+        // The gate reads exactly the source it judges: an unrelated
+        // broken tap cannot block this install.
+        let saved = state.saved_one(source)?;
+        saved_view = catalog::CatalogView::from_saved(&saved);
         &saved_view
     };
+    gate_view(view, system, source, token)
+}
+
+/// Gate one (source, token) against one already-loaded index view.
+fn gate_view(
+    view: &catalog::CatalogView,
+    system: &str,
+    source: &str,
+    token: &str,
+) -> Result<(), String> {
     if !view.targeted(system) {
         return Err(format!(
             "cask:{source}/{token} needs a catalog target system ({}); this system is {system}",
@@ -116,7 +135,7 @@ fn gate_cask(
         .and_then(|entry| entry.version.clone())
         .unwrap_or_else(|| String::from("unknown version"));
     match view.entry(system, source, token) {
-        catalog::CaskStatus::Eligible => Ok(()),
+        catalog::CaskStatus::Eligible => gate_host_macos_range(view, system, source, token),
         catalog::CaskStatus::Excluded { reason, detail } => Err(format!(
             "cask:{source}/{token} {version} is excluded on {system}: {reason}: {}",
             detail.as_deref().unwrap_or("no detail")
@@ -125,6 +144,53 @@ fn gate_cask(
             "cask:{source}/{token} is not in the generated catalog for {system}"
         )),
     }
+}
+
+/// Refuse an eligible cask whose declared macOS range excludes the host.
+///
+/// The bounds come from the same decoded index entry: `minMacos` and
+/// `maxMacos` are null on Linux records, so the host version is read only
+/// when a cask actually declares a macOS range on this target — never for
+/// Linux, Nixpkgs, or an untargeted catalog. The read goes through the
+/// absolute `/usr/bin/sw_vers` path and the shared child signal boundary;
+/// a failed read fails the install closed. The refusal happens before any
+/// `profile_add` mutation.
+fn gate_host_macos_range(
+    view: &catalog::CatalogView,
+    system: &str,
+    source: &str,
+    token: &str,
+) -> Result<(), String> {
+    let Some(entry) = view.record(system, source, token) else {
+        return Ok(());
+    };
+    let (min, max) = (&entry.min_macos, &entry.max_macos);
+    if min.is_none() && max.is_none() {
+        return Ok(());
+    }
+    // Explicit platform guard: the host read happens only on macOS
+    // hosts. Even an imported malformed index that carries macOS fields
+    // on a Linux record never triggers `/usr/bin/sw_vers` here.
+    if !system.ends_with("-darwin") {
+        return Ok(());
+    }
+    let host = nix::macos_product_version().map_err(|detail| {
+        format!(
+            "cask:{source}/{token} declares a macOS range, but the host version cannot be read: {detail}"
+        )
+    })?;
+    if !nix::in_range(&host, min.as_deref(), max.as_deref()) {
+        let range = match (min.as_deref(), max.as_deref()) {
+            (Some(min), Some(max)) => format!("macOS >= {min} and <= {max}"),
+            (Some(min), None) => format!("macOS >= {min}"),
+            (None, Some(max)) => format!("macOS <= {max}"),
+            (None, None) => unreachable!("at least one bound is declared"),
+        };
+        return Err(format!(
+            "cask:{source}/{token} requires {range}; this host runs macOS {host}"
+        ));
+    }
+    Ok(())
 }
 
 /// The short display name: the last path segment of the native name.
@@ -303,6 +369,17 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
     }
     // The remaining IDs are passed explicitly so fixed sources and removed
     // taps are never followed.
+    //
+    // Each movable CASK entry is re-gated against its OWN current
+    // catalog record before `profile_upgrade`: the installed source is
+    // the entry's original URL — saved taps through the verified tap
+    // store, every other casks source loaded directly from that URL —
+    // and the cask identity is confirmed as the whole native attribute
+    // through `catalog::native_package_attribute`. Today's configured
+    // casks source never judges an entry installed from another one;
+    // Nixpkgs entries are never gated as casks. Unsupported, excluded,
+    // and unknown targets are gated with the install policy.
+    gate_upgrade_macos_range(&session, &installed, &movable).map_err(CommandError::Message)?;
     eprintln!("Upgrading: {}", movable.join(", "));
     session
         .nix
@@ -317,6 +394,128 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
     apps_refresh_after_mutation(&session, "upgrade", &names)?;
     report_names("Upgraded", &names);
     Ok(())
+}
+
+/// Re-gate every movable cask entry against its own current catalog
+/// record before `profile_upgrade`.
+///
+/// Identity recovery is exact: the whole native attribute path must be
+/// `packages.{system}.{encoded full id}` — the final segment decodes
+/// through `decode_package_attribute` and the result is confirmed back
+/// through `catalog::native_package_attribute` as one whole identity,
+/// never by naive attribute text splitting. A Nixpkgs entry whose
+/// attribute merely ends in a cask-shaped id is never gated: an entry
+/// whose original URL canonicalizes to the configured Nixpkgs source is
+/// left to the plain upgrade unless the tap store verifies a saved
+/// source for it. The judged index comes from the entry's OWN original
+/// URL — the selected saved generation for a verified tap-store source,
+/// the index evaluated at the original reference for any other casks
+/// source — so an older installed source is judged by its own catalog
+/// even after `sources.casks` names a different source today. Native
+/// upgrade follows the original URL; this gate judges the same source,
+/// never today's configured one. Tap state loads lazily, only when a
+/// movable entry is actually a saved tap cask.
+fn gate_upgrade_macos_range(
+    session: &super::Session,
+    installed: &BTreeMap<String, ProfileEntry>,
+    movable: &[String],
+) -> Result<(), String> {
+    // Recover exact cask identities first; Nixpkgs-only upgrades never
+    // touch tap state or any index.
+    let mut casks: Vec<(&str, String, String, String)> = Vec::new();
+    for entry in movable {
+        let profile = &installed[entry];
+        let saved_source =
+            store::source_of_reference(&session.paths.state_home, &profile.original_url);
+        // A Nixpkgs entry is never a cask however cask-shaped its final
+        // attribute segment looks: only a verified tap-store source
+        // overrides the configured-source classification.
+        if saved_source.is_none()
+            && catalog::canonical_source(&profile.original_url)
+                == catalog::canonical_source(&session.config.sources.nixpkgs)
+        {
+            continue;
+        }
+        let Some((system, source, token)) = cask_identity(&profile.attr_path) else {
+            continue;
+        };
+        // A saved tap is judged only under its exact verified source; an
+        // attribute that names a different source is not that cask.
+        if saved_source.as_deref().is_some_and(|saved| saved != source) {
+            continue;
+        }
+        casks.push((entry, system, source, token));
+    }
+    if casks.is_empty() {
+        return Ok(());
+    }
+    let host_system = session.nix.system().map_err(|error| error.to_string())?;
+    let mut tap_state: Option<super::TapState> = None;
+    // One index load per distinct original source, cached for the run.
+    let mut views: BTreeMap<String, catalog::CatalogView> = BTreeMap::new();
+    for (entry, system, source, token) in casks {
+        if system != host_system {
+            return Err(format!(
+                "cask:{source}/{token} was installed for {system}; this host is {host_system}"
+            ));
+        }
+        let original = installed[entry].original_url.clone();
+        let saved_source = store::source_of_reference(&session.paths.state_home, &original);
+        let view = if saved_source.as_deref() == Some(source.as_str()) {
+            // The saved tap reads exactly its selected saved generation.
+            if tap_state.is_none() {
+                tap_state = Some(super::TapState::load(session).map_err(|error| match error {
+                    super::CommandError::Message(message) => message,
+                    super::CommandError::Reported(_) => {
+                        String::from("tap state could not be loaded for the upgrade gate")
+                    }
+                })?);
+            }
+            let saved = tap_state
+                .as_ref()
+                .expect("tap state was loaded above")
+                .saved_one(&source)?;
+            views.insert(source.clone(), catalog::CatalogView::from_saved(&saved));
+            &views[&source]
+        } else {
+            // Any other casks source is judged by the index of its own
+            // original URL, however `sources.casks` is configured today.
+            let key = catalog::canonical_source(&original);
+            if !views.contains_key(&key) {
+                let view = catalog::CatalogView::load(&session.nix, &original)
+                    .map_err(|error| error.to_string())?;
+                views.insert(key.clone(), view);
+            }
+            &views[&key]
+        };
+        gate_view(view, &system, &source, &token)?;
+    }
+    Ok(())
+}
+
+/// The exact cask identity of one native attribute path.
+///
+/// The path must be exactly `packages.{system}.{encoded full id}`: the
+/// final segment decodes through the shared strict inverse, the id
+/// splits as one whole `owner/tap/token`, and the result is confirmed
+/// back through `catalog::native_package_attribute` — so the identity
+/// is the whole recorded path, never a naive final-segment split.
+fn cask_identity(attr_path: &str) -> Option<(String, String, String)> {
+    let mut parts = attr_path.split('.');
+    if parts.next()? != "packages" {
+        return None;
+    }
+    let system = parts.next()?.to_string();
+    let segment = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let id = cask_catalog::decode_package_attribute(segment).ok()?;
+    let (source, token) = nix::split_entry_id(&id)?;
+    if catalog::native_package_attribute(&system, &id) != attr_path {
+        return None;
+    }
+    Some((system, source, token))
 }
 
 pub(super) fn history(cli: &Cli) -> Result<(), CommandError> {

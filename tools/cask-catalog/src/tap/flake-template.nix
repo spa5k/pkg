@@ -1,5 +1,5 @@
 # Generated flake for one imported public Homebrew tap (schema
-# pkg-cask-catalog/3, single native target). SELF-CONTAINED by contract:
+# pkg-cask-catalog/4, single native target). SELF-CONTAINED by contract:
 # the catalog and every builder asset live inside this directory; no
 # path outside it is ever imported. Regenerating this output is the
 # importer's job (`cask_catalog::tap`), not the client's.

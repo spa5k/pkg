@@ -1,10 +1,14 @@
 //! Saved catalog data of every registered tap.
 //!
 //! Query, gate, and bare-resolution paths read the locally saved catalog
-//! captures; they never execute tap Ruby. Loading is strict and all-or-
-//! nothing: when any registered source's saved catalog is missing or
-//! malformed, loading fails and no query silently proceeds with the
-//! remaining sources.
+//! captures; they never execute tap Ruby. Loading is strict per source:
+//! when a source's saved catalog is missing or malformed, loading that
+//! source fails and no query silently proceeds without it. Who loads
+//! which source is the isolation rule (see the namespaced-cask-catalog
+//! spec): a qualified request reads only the source it names, through
+//! [`SavedCatalogs::load_one`]; bare-name resolution loads every source
+//! through [`SavedCatalogs::load`], because ignoring one failed source
+//! could select the wrong package.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -107,6 +111,17 @@ impl SavedCatalogs {
             provenance,
             index,
         })
+    }
+
+    /// Assemble saved catalogs that were loaded individually.
+    ///
+    /// Qualified request paths load one source at a time through
+    /// [`SavedCatalogs::load_one`]; this constructor builds the same
+    /// strict set from those loads, so a caller that needs every source
+    /// (bare-name resolution) reuses the per-source errors unchanged.
+    #[must_use]
+    pub fn from_catalogs(catalogs: BTreeMap<String, SavedCatalog>) -> Self {
+        Self { catalogs }
     }
 
     /// Iterate every saved catalog in source order.
@@ -353,6 +368,72 @@ mod tests {
         let error = SavedCatalogs::load(&registry, state.path())
             .expect_err("an origin mismatch fails the load");
         assert!(error.contains("origin"), "{error}");
+    }
+
+    /// Publish one valid generation for `somebody/apps` under `state`.
+    fn publish_apps(state: &std::path::Path) {
+        let store = SourceStore::lock(state, "somebody/apps").expect("locks");
+        let provenance = Provenance {
+            source: String::from("somebody/apps"),
+            origin: String::from("https://github.com/somebody/homebrew-apps"),
+            revision: String::from("0a56ceb53d69f3e0eaea0f9f4d5b8cf5b9b9d1a"),
+            metadata_sha256: String::from(
+                "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251",
+            ),
+            eligible: 1,
+            excluded: 0,
+            published_unix: 1,
+        };
+        let (staging, guard) = store.new_staging().expect("stages");
+        let flake = staging.join("flake");
+        std::fs::create_dir(&flake).expect("flake dir");
+        store
+            .publish(
+                &flake,
+                &provenance,
+                &index_for("0a56ceb53d69f3e0eaea0f9f4d5b8cf5b9b9d1a"),
+            )
+            .expect("publishes");
+        guard.keep();
+    }
+
+    /// A qualified read of one source is isolated from an unrelated
+    /// broken tap (review 2026-09-30, P2): loading every source fails on
+    /// the broken one, while loading the healthy source alone succeeds.
+    /// Bare-name resolution uses the strict whole-set load; qualified
+    /// requests use the per-source load.
+    #[test]
+    fn load_one_isolates_a_qualified_read_from_a_broken_unrelated_tap() {
+        let state = tempfile::tempdir().expect("tempdir");
+        let mut registry = Registry::empty();
+        registry.approve(
+            "somebody/apps",
+            "https://github.com/somebody/homebrew-apps",
+            1,
+        );
+        registry.approve("other/cli", "https://github.com/other/homebrew-cli", 1);
+        publish_apps(state.path());
+
+        // The whole-set load still fails on the unrelated broken tap.
+        let error = SavedCatalogs::load(&registry, state.path())
+            .expect_err("the broken source fails the whole-set load");
+        assert!(error.contains("other/cli"), "{error}");
+
+        // The per-source load reads exactly the source it names.
+        let catalog = SavedCatalogs::load_one(&registry, state.path(), "somebody/apps")
+            .expect("a healthy source loads alone");
+        assert_eq!(catalog.source, "somebody/apps");
+        assert!(catalog.index.systems.contains_key("x86_64-linux"));
+
+        // The broken source still fails its own qualified read.
+        let error = SavedCatalogs::load_one(&registry, state.path(), "other/cli")
+            .expect_err("the broken source fails its own load");
+        assert!(error.contains("other/cli"), "{error}");
+
+        // An unregistered source is refused, never guessed.
+        let error = SavedCatalogs::load_one(&registry, state.path(), "ghost/apps")
+            .expect_err("an unregistered source is refused");
+        assert!(error.contains("ghost/apps"), "{error}");
     }
 
     #[test]

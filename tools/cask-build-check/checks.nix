@@ -207,6 +207,45 @@ let
 
 in
 {
+  # A declared maximum must survive the actual client index projection.
+  # This catches the data-loss defect even when the pinned vendor snapshot
+  # has no maximum_macos records. No package or archive is forced here.
+  osBoundsIndex =
+    let
+      catalog = {
+        schema = "pkg-cask-catalog/4";
+        targets = [ "aarch64-darwin" "x86_64-linux" ];
+        entries."homebrew/cask/os-probe" = {
+          source = "homebrew/cask";
+          token = "os-probe";
+          name = "OS probe";
+          description = null;
+          version = "1";
+          homepage = null;
+          targets = pkgs.lib.genAttrs catalog.targets (system: {
+            status = "eligible";
+            kind = "binary";
+            reason = null;
+            detail = null;
+            plan = {
+              minMacos = if system == "aarch64-darwin" then "14.2" else null;
+              maxMacos = if system == "aarch64-darwin" then "15.9" else null;
+            };
+          });
+        };
+      };
+      projected = import ../../nix/casks/lib/catalog.nix {
+        nixpkgs.lib = pkgs.lib;
+        inherit catalog;
+      };
+    in
+    pkgs.lib.genAttrs catalog.targets (system:
+      let entry = projected.catalogIndex.systems.${system}.entries."homebrew/cask/os-probe";
+      in {
+        minMacos = entry.minMacos or null;
+        maxMacos = entry.maxMacos or null;
+      });
+
   op = builders.buildEntry (
     common
     // {

@@ -87,7 +87,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -131,3 +131,9 @@ jobs:
               exit 1
             fi
           fi
+
+      - name: Install Nix for native lifecycle checks
+        uses: DeterminateSystems/determinate-nix-action@668647a33843b1f280cb2ef4c41736f86b29f826 # v3.22.1
+
+      - name: Native package lifecycle and regression checks
+        run: python3 tools/native-cli-check.py --pkg target/release/pkg

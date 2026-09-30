@@ -977,6 +977,57 @@ def main():
         else:
             FAILED.append(f"invalid manpage target accepted: {tgt!r}")
 
+    # 20. Real extraction must remove nested Apple streams and preserve
+    #     signed resources, ordinary colon names, and framework links.
+    resources = {
+        "Good.app/Contents/MacOS/App": "MACHO",
+        "Good.app/Contents/_CodeSignature/CodeResources": "SIGNED",
+        "Good.app/Contents/Library/LoginItems/Login.app/Contents/PkgInfo": "APPL",
+        "Good.app/Contents/Resources/notes:with:colons.txt": "NOTES",
+        "Good.app/Contents/Resources/com.apple.shipped.txt": "KEPT",
+    }
+    streams = [
+        "Good.app/Contents/Info.plist:com.apple.provenance",
+        "Good.app/Contents/_CodeSignature/CodeResources:com.apple.provenance",
+        "Good.app/Contents/Library/LoginItems/Login.app/Contents/PkgInfo:com.apple.provenance",
+        "Good.app/Contents/Library/LoginItems/Login.app/Contents/Info.plist:com.apple.metadata:kMDItemWhereFroms",
+    ]
+
+    def stream_tree(w):
+        for name, data in resources.items():
+            path = os.path.join(w, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            put(path, data)
+        for name in streams:
+            put(os.path.join(w, name), "metadata")
+        folder = os.path.join(w, "Good.app/Contents/MacOS:com.apple.provenance")
+        os.makedirs(folder)
+        put(os.path.join(folder, "inner"), "metadata")
+
+    with tempfile.TemporaryDirectory() as d:
+        arc = snl_archive(os.path.join(d, "streams.7z"), stream_tree)
+        dest = os.path.join(d, "out")
+        os.makedirs(dest)
+        plan.extract_7zz(arc, dest)
+        leftovers = [
+            os.path.join(root, name)
+            for root, dirs, files in os.walk(dest, followlinks=False)
+            for name in dirs + files if ":com.apple." in name
+        ]
+        preserved = all(
+            os.path.isfile(os.path.join(dest, name))
+            and get(os.path.join(dest, name)) == data
+            for name, data in resources.items()
+        )
+        current = os.path.join(dest, "Fw.framework/Versions/Current")
+        if (not leftovers and preserved
+                and get(os.path.join(dest, "Good.app/Contents/Info.plist")) == "PLIST"
+                and os.path.islink(current) and os.readlink(current) == "A"
+                and get(os.path.join(current, "R")) == "R"):
+            ok("real 7zz nested Apple streams removed; resources, colon names and links preserved")
+        else:
+            FAILED.append(f"nested Apple stream cleanup or preservation failed: {leftovers}")
+
     if FAILED:
         for f in FAILED:
             print(f"FAIL: {f}")

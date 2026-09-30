@@ -1,4 +1,4 @@
-//! Whole-catalog generation (schema `pkg-cask-catalog/3`).
+//! Whole-catalog generation (schema `pkg-cask-catalog/4`).
 //!
 //! Integrity checks, one deterministic catalog with per-source `inputs`
 //! provenance and source-qualified entry identities, and a printable
@@ -383,7 +383,7 @@ mod tests {
         assert!(one.catalog.ends_with('\n') && !one.catalog.ends_with("\n\n"));
 
         let catalog: Value = serde_json::from_str(&one.catalog).unwrap();
-        assert_eq!(catalog["schema"], "pkg-cask-catalog/3");
+        assert_eq!(catalog["schema"], "pkg-cask-catalog/4");
         assert_eq!(catalog["macosBaseline"], "15.7.7");
         assert_eq!(
             catalog["targets"],

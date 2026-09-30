@@ -55,8 +55,10 @@ pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
     }
     // Every registered tap answers from its saved catalog capture: no tap
     // Ruby runs, no source is contacted, and a malformed capture fails the
-    // search instead of being skipped.
-    for saved in tap_state.saved.iter() {
+    // search instead of being skipped. Search lists every source, so it
+    // loads the complete strict set.
+    let saved_all = tap_state.saved_all()?;
+    for saved in saved_all.iter() {
         let (source_rows, report) = catalog::search_saved_catalog(saved, query, &system);
         reports.push(report);
         rows.extend(source_rows);
@@ -120,23 +122,25 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
     let system = session.nix.system()?;
     let mut catalog_handle = catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks);
     let tap_state = super::TapState::load(&session)?;
+    // Qualified IDs resolve without reading any saved tap; bare names
+    // load every source so their resolution stays strict.
     let resolved = match parsed {
         ParsedId::Qualified(qualified) => qualified,
-        ParsedId::Bare(name) => catalog::resolve_bare(
-            &session.nix,
-            &tap_state.routing,
-            &tap_state.saved,
-            &name,
-            &system,
-            &mut catalog_handle,
-        )?,
-        ParsedId::BareCask(token) => catalog::resolve_bare_cask(
-            &session.nix,
-            &tap_state.saved,
-            &token,
-            &system,
-            &mut catalog_handle,
-        )?,
+        ParsedId::Bare(name) => {
+            let saved = tap_state.saved_all()?;
+            catalog::resolve_bare(
+                &session.nix,
+                &tap_state.routing,
+                &saved,
+                &name,
+                &system,
+                &mut catalog_handle,
+            )?
+        }
+        ParsedId::BareCask(token) => {
+            let saved = tap_state.saved_all()?;
+            catalog::resolve_bare_cask(&session.nix, &saved, &token, &system, &mut catalog_handle)?
+        }
     };
     let (reference, attribute) = resolved
         .source_and_attribute(&tap_state.routing, &system)
@@ -150,7 +154,7 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
     let data = if let catalog::CatalogId::Cask { source, token } = &resolved {
         cask_info(
             &mut catalog_handle,
-            &tap_state.saved,
+            &tap_state,
             &system,
             &reference,
             source,
@@ -171,6 +175,20 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
                     "`{}` has no exact match in `{reference}`; \
                      pkg does not report package identities it cannot evaluate",
                     resolved.qualified()
+                )));
+            }
+            Err(catalog::CatalogError::Ambiguous { name, mut choices }) => {
+                // Each choice becomes a CLI ID that round-trips through
+                // info and install for this request: `packages` and
+                // `legacyPackages` entries that share a short name stay
+                // full attribute paths, never two identical choices.
+                for choice in &mut choices {
+                    *choice = request_qualified(&resolved, choice);
+                }
+                return Err(CommandError::Message(format!(
+                    "`{name}` is ambiguous in `{reference}`; \
+                     choose one of: {}",
+                    choices.join(", ")
                 )));
             }
             Err(error) => return Err(error.into()),
@@ -400,6 +418,21 @@ fn info_text(
     out
 }
 
+/// One ambiguity choice as a CLI ID that round-trips through `info` and
+/// `install` for the request it came from.
+///
+/// The attribute part is the choice the catalog layer produced — a full
+/// attribute path when namespaces collide — so the ID stays unambiguous.
+fn request_qualified(resolved: &catalog::CatalogId, attribute: &str) -> String {
+    match resolved {
+        catalog::CatalogId::Nixpkgs(_) => format!("nixpkgs:{attribute}"),
+        catalog::CatalogId::Explicit { reference, .. } => {
+            format!("{reference}#{attribute}")
+        }
+        catalog::CatalogId::Cask { source, token } => format!("cask:{source}/{token}"),
+    }
+}
+
 /// Build info data for one cask identity from the official generated index
 /// or the source's saved catalog capture.
 ///
@@ -410,7 +443,7 @@ fn info_text(
 /// catalog targets reports the target list.
 fn cask_info(
     catalog: &mut catalog::CatalogOnce<'_>,
-    saved: &crate::tap::SavedCatalogs,
+    state: &super::TapState,
     system: &str,
     reference: &str,
     source: &str,
@@ -420,10 +453,10 @@ fn cask_info(
     let view = if source == nix::OFFICIAL_CASK_SOURCE {
         catalog.load().map_err(|error| error.to_string())?
     } else {
-        let saved = saved
-            .get(source)
-            .ok_or_else(|| format!("tap source `{source}` has no saved catalog"))?;
-        saved_view = catalog::CatalogView::from_saved(saved);
+        // Info reads exactly the source it reports: an unrelated broken
+        // tap cannot block a qualified cask lookup.
+        let saved = state.saved_one(source)?;
+        saved_view = catalog::CatalogView::from_saved(&saved);
         &saved_view
     };
     let attribute = catalog::package_attribute(system, &nix::full_entry_id(source, token));

@@ -18,16 +18,16 @@ pub const PROFILE_MANIFEST_VERSION: u64 = 3;
 
 /// The cask catalog index schema this client decodes (design D6).
 ///
-/// The index is the generated `pkg-cask-catalog/3` envelope exposed by a
+/// The index is the generated `pkg-cask-catalog/4` envelope exposed by a
 /// casks flake as `catalogIndex`. It carries one provenance object per
 /// source (`inputs`), the target system list, and per-system status entries
 /// keyed by the full entry identity `owner/tap/token` (the official source
 /// is `homebrew/cask`). Schema 2 is gone: no compatibility layer exists.
-pub const CATALOG_INDEX_SCHEMA: &str = "pkg-cask-catalog/3";
+pub const CATALOG_INDEX_SCHEMA: &str = "pkg-cask-catalog/4";
 
 /// The source identity of the official generated cask catalog.
 ///
-/// The official catalog is a schema-3 catalog like any tap catalog; its
+/// The official catalog is a schema-4 catalog like any tap catalog; its
 /// source key is reserved and can never be added as a local tap.
 pub const OFFICIAL_CASK_SOURCE: &str = "homebrew/cask";
 
@@ -133,6 +133,16 @@ pub struct CatalogEntry {
     /// Human-readable exclusion detail, when present.
     #[serde(default)]
     pub detail: Option<String>,
+    /// The declared minimum macOS of the plan (`depends_on macos >=`),
+    /// or null. Null on Linux records and when undeclared; validated as
+    /// a numeric version by the decoder.
+    #[serde(rename = "minMacos", default)]
+    pub min_macos: Option<String>,
+    /// The declared maximum macOS of the plan (`depends_on
+    /// maximum_macos <=`), or null. Same null and validation rules as
+    /// [`Self::min_macos`]; together they must form a coherent range.
+    #[serde(rename = "maxMacos", default)]
+    pub max_macos: Option<String>,
 }
 
 /// One system section of the catalog index.
@@ -147,7 +157,7 @@ pub struct CatalogSystem {
 ///
 /// The envelope serializes back to the exact shape it decodes from — the
 /// `schema` identity and the `macosBaseline` field name included — so a
-/// published generation's capture file is the same strict schema-3 index
+/// published generation's capture file is the same strict schema-4 index
 /// the decoder consumes. No parallel encoding exists in this client.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct CatalogIndex {
@@ -346,7 +356,7 @@ pub(super) fn decode_source_identity(reference: &str, value: &serde_json::Value)
     }
 }
 
-/// Decode one captured `catalogIndex` envelope (schema 3).
+/// Decode one captured `catalogIndex` envelope (schema 4).
 ///
 /// The schema gate is strict: an envelope whose `schema` is absent or is
 /// not [`CATALOG_INDEX_SCHEMA`] fails naming the schema found and the
@@ -573,7 +583,104 @@ fn validate_entry(
             }
         }
     }
+    // The declared macOS range fails closed: each bound must be a
+    // non-empty numeric version, and together they must be coherent.
+    for (field, value) in [
+        ("minMacos", &entry.min_macos),
+        ("maxMacos", &entry.max_macos),
+    ] {
+        match value {
+            None => {}
+            Some(value) if !numeric_version(value) => {
+                return Err(format!(
+                    "{field} must be a non-empty numeric version, found {value:?}"
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    if let (Some(min), Some(max)) = (&entry.min_macos, &entry.max_macos)
+        && version_lt(max, min)
+    {
+        return Err(format!(
+            "macOS range is inverted: minMacos {min:?} exceeds maxMacos {max:?}"
+        ));
+    }
     Ok(entry)
+}
+
+/// Whether `text` is a non-empty dot-separated numeric version.
+///
+/// Delegates to the ONE strict parser owner in [`super::host`], so
+/// oversized components that overflow `u64` are rejected here too.
+fn numeric_version(text: &str) -> bool {
+    super::host::parse_numeric_version(text).is_some()
+}
+
+/// Compare two numeric versions with zero fill: `a < b`.
+///
+/// Both sides go through the strict parser; an unparseable side can
+/// never be proven less, so it returns `false` (never ordered).
+fn version_lt(a: &str, b: &str) -> bool {
+    let parts = |text: &str| super::host::parse_numeric_version(text);
+    let (Some(mut a), Some(mut b)) = (parts(a), parts(b)) else {
+        return false;
+    };
+    while a.len() < b.len() {
+        a.push(0);
+    }
+    while b.len() < a.len() {
+        b.push(0);
+    }
+    a < b
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+
+    /// Invalid declared ranges fail the whole decode, named by entry.
+    #[test]
+    fn invalid_macos_ranges_fail_closed() {
+        let manifest = include_str!("../../tests/fixtures/catalog-index.json");
+        let mut raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
+        let (system, id) = raw["systems"]
+            .as_object()
+            .and_then(|systems| {
+                systems.keys().next().map(|system| {
+                    let id = systems[system]["entries"]
+                        .as_object()
+                        .and_then(|entries| entries.keys().next().cloned())
+                        .expect("fixture entry");
+                    (system.clone(), id)
+                })
+            })
+            .expect("fixture system");
+        // Non-numeric bound.
+        raw["systems"][&system]["entries"][&id]["minMacos"] = serde_json::json!("Sonoma");
+        assert!(decode_catalog_index(&raw).is_err());
+        // Empty bound.
+        raw["systems"][&system]["entries"][&id]["minMacos"] = serde_json::json!("");
+        assert!(decode_catalog_index(&raw).is_err());
+        // Inverted range.
+        raw["systems"][&system]["entries"][&id]["minMacos"] = serde_json::json!("15");
+        raw["systems"][&system]["entries"][&id]["maxMacos"] = serde_json::json!("14");
+        assert!(decode_catalog_index(&raw).is_err());
+        // Oversized component that overflows u64: rejected, never zero.
+        raw["systems"][&system]["entries"][&id]["minMacos"] =
+            serde_json::json!("99999999999999999999");
+        assert!(decode_catalog_index(&raw).is_err());
+        // Signed component is rejected too.
+        raw["systems"][&system]["entries"][&id]["minMacos"] = serde_json::json!("-15");
+        assert!(decode_catalog_index(&raw).is_err());
+        // A coherent range decodes.
+        raw["systems"][&system]["entries"][&id]["minMacos"] = serde_json::json!("15");
+        raw["systems"][&system]["entries"][&id]["maxMacos"] = serde_json::json!("16");
+        let index = decode_catalog_index(&raw).expect("coherent range decodes");
+        let entry = &index.systems[&system].entries[&id];
+        assert_eq!(entry.min_macos.as_deref(), Some("15"));
+        assert_eq!(entry.max_macos.as_deref(), Some("16"));
+    }
 }
 
 /// The full entry identity of one source and token: `owner/tap/token`.
@@ -856,7 +963,7 @@ mod tests {
     }
 
     /// Decodes the fixture: an actual generated-catalog slice (revision
-    /// `245947c0`, schema `pkg-cask-catalog/3`) projected to the flake
+    /// `245947c0`, schema `pkg-cask-catalog/4`) projected to the flake
     /// `catalogIndex` shape by the same rule `nix/casks/flake.nix` uses.
     /// Values are real generated data, not invented examples. The official
     /// catalog is one source among possibly many: its identity is
@@ -1012,10 +1119,14 @@ mod tests {
     fn catalog_index_schema_gate_names_both_schemas() {
         let manifest = include_str!("../../tests/fixtures/catalog-index.json");
         let mut raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
-        raw["schema"] = serde_json::json!("pkg-cask-catalog/4");
+        raw["schema"] = serde_json::json!("pkg-cask-catalog/5");
         let error = decode_catalog_index(&raw).expect_err("future schema is refused");
         let text = error.to_string();
-        assert!(text.contains("pkg-cask-catalog/4"), "{text}");
+        assert!(text.contains("pkg-cask-catalog/5"), "{text}");
+        // The previous schema 3 (before the macOS range gate) is refused
+        // by the same gate: an old catalog cannot bypass the new bounds.
+        raw["schema"] = serde_json::json!("pkg-cask-catalog/3");
+        assert!(decode_catalog_index(&raw).is_err());
         assert!(text.contains(CATALOG_INDEX_SCHEMA), "{text}");
         // The removed schema 2 is refused by the same gate.
         raw["schema"] = serde_json::json!("pkg-cask-catalog/2");
