@@ -395,9 +395,26 @@ impl Nix {
     /// The manifest shape is checked read-only first; a runtime that
     /// cannot speak it fails before the profile is touched.
     pub fn profile_add(&self, profile: &Path, installables: &[String]) -> Result<(), NixError> {
+        self.profile_add_with_inputs(profile, installables, &[])
+    }
+
+    /// Add installables with explicit, fixed flake input overrides.
+    ///
+    /// Overrides apply only to this operation and never write a lockfile.
+    /// The app helper uses this to select a macOS-compatible Lisp runtime
+    /// without changing the user's package sources.
+    pub fn profile_add_with_inputs(
+        &self,
+        profile: &Path,
+        installables: &[String],
+        inputs: &[(&str, &str)],
+    ) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
         let profile = profile.to_string_lossy().into_owned();
         let mut args: Vec<&str> = vec!["profile", "add", "--profile", &profile];
+        for &(input, reference) in inputs {
+            args.extend(["--override-input", input, reference]);
+        }
         // `--` keeps installables from being read as flags.
         args.push("--");
         args.extend(installables.iter().map(String::as_str));
@@ -438,6 +455,25 @@ impl Nix {
             _ => args.push("--all"),
         }
         self.run_filtered(&args)
+    }
+
+    /// Switch a profile to a previously built and verified store profile.
+    ///
+    /// Native Nix creates a new generation and switches it atomically. The
+    /// previous generation remains available if helper setup later fails.
+    /// `--no-link` prevents an unrelated `result` link in the working directory.
+    pub fn profile_replace(&self, profile: &Path, replacement: &Path) -> Result<(), NixError> {
+        self.require_decodable_profile(profile)?;
+        let profile = profile.to_string_lossy().into_owned();
+        let replacement = replacement.to_string_lossy().into_owned();
+        self.run_filtered(&[
+            "build",
+            "--no-link",
+            "--profile",
+            &profile,
+            "--",
+            &replacement,
+        ])
     }
 
     /// Roll back to the previous or a selected native generation.

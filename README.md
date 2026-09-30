@@ -26,11 +26,11 @@ repair, or remove Nix. Install Determinate Nix from
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.8 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.8):
+   [v0.2.0-alpha.9 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.9):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.8/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.9/install.sh
    sh pkg-install.sh
    ```
 

@@ -69,6 +69,7 @@ fn classify(line: &str) -> Kind {
         return Kind::Hide;
     }
     if line.starts_with("error:")
+        || line.starts_with("❌ ")
         || line.starts_with("Reason:")
         || line.starts_with("Output paths:")
         || line.starts_with("Last ") && line.contains(" log lines:")
@@ -133,6 +134,8 @@ pub struct MutationReporter {
     passthrough: bool,
     /// Whether the compact status line is on screen.
     status_active: bool,
+    /// Nix is printing the informational diff for an input override.
+    lock_diff: bool,
 }
 
 impl MutationReporter {
@@ -143,6 +146,7 @@ impl MutationReporter {
             partial: Vec::new(),
             passthrough: false,
             status_active: false,
+            lock_diff: false,
         }
     }
 
@@ -179,6 +183,20 @@ impl MutationReporter {
 
     /// Report one complete line.
     fn line(&mut self, text: &str) {
+        let line = text.trim();
+        if line.starts_with("warning: not writing modified lock file of flake ") {
+            // Input overrides deliberately do not write the upstream lock.
+            // This warning and its diff are expected setup detail; verbose
+            // output retains them. Other warnings still pass through.
+            self.lock_diff = true;
+            return;
+        }
+        if self.lock_diff {
+            if line.starts_with("• ") || line.starts_with('\'') || line.starts_with("→ '") {
+                return;
+            }
+            self.lock_diff = false;
+        }
         match classify(text) {
             Kind::Show => self.show(text),
             Kind::Hide => {}
@@ -272,6 +290,10 @@ mod tests {
         );
         assert_eq!(
             classify("failed to allocate 1048576 bytes at 0x300100000"),
+            Kind::Hide
+        );
+        assert_eq!(
+            classify("❌ github:hraban/mac-app-util/039f33de#"),
             Kind::Hide
         );
     }

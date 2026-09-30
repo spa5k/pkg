@@ -7,8 +7,9 @@
 //! `sync-trampolines` command runs through the shared signal forward/reap
 //! boundary, so launcher and Dock refresh happen together and a cancelled
 //! run is reaped and reported. This module never mutates `/Applications`, any
-//! other user application folder, or package state; every failure is
-//! reported to the caller and nothing is retried here.
+//! other user application folder, or package state. A verified helper with
+//! the known macOS 27 SBCL startup failure is replaced once; other failures
+//! are reported to the caller without a retry.
 //!
 //! Platform policy: `.app` exposure is macOS-only. On other platforms
 //! [`sync`] fails with an explicit unsupported message when invoked
@@ -51,6 +52,13 @@ const HELPER_FLAKE_REF: &str =
 const HELPER_REPO_PREFIX: &str = "github:hraban/mac-app-util/";
 /// Exact locked revision required in the helper profile entry.
 const HELPER_REVISION: &str = "039f33deef21782d4db97087f426504951239887";
+/// The helper's upstream lock selects SBCL 2.6.4, whose static memory
+/// address conflicts with macOS 27 on ARM64. Pin Nixpkgs with SBCL 2.6.8
+/// (the fix landed in 2.6.6) while retaining the exact helper source.
+const HELPER_INPUTS: &[(&str, &str)] = &[(
+    "nixpkgs",
+    "github:NixOS/nixpkgs/b6c8664de9b6cc07fe5666a29f91884ba81197c4",
+)];
 
 /// Apple's code-signature verifier, run read-only on vendor bundles.
 const CODESIGN_BIN: &str = "/usr/bin/codesign";
@@ -599,15 +607,16 @@ fn run_assessment_check(
 /// entry names are opaque (Determinate macOS uses `originalUrl#attrPath`
 /// keys), so identity is verified from the entry's own native fields
 /// instead of its map key. Anything else is an error for the user to
-/// resolve; an existing profile is never blindly reused and never silently
-/// modified.
+/// resolve. A verified helper that cannot start because of the macOS 27
+/// SBCL address conflict is rebuilt with the fixed dependency pin. Other
+/// failures do not trigger a repair.
 fn ensure_helper(nix: &Nix, paths: &Paths) -> Result<PathBuf, String> {
     let profile = &paths.helper_profile;
     let mut entries = nix
         .profile_list(profile)
         .map_err(|e| format!("could not list helper profile {}: {e}", profile.display()))?;
     if entries.is_empty() {
-        nix.profile_add(profile, &[HELPER_FLAKE_REF.to_string()])
+        nix.profile_add_with_inputs(profile, &[HELPER_FLAKE_REF.to_string()], HELPER_INPUTS)
             .map_err(|e| format!("could not install helper {HELPER_FLAKE_REF}: {e}"))?;
         entries = nix.profile_list(profile).map_err(|e| {
             format!(
@@ -621,7 +630,63 @@ fn ensure_helper(nix: &Nix, paths: &Paths) -> Result<PathBuf, String> {
             ));
         }
     }
+    let helper = verify_pinned_helper(profile, &entries)?;
+    if helper_runtime_compatible(&helper)? {
+        return Ok(helper);
+    }
+
+    eprintln!("Updating app helper for macOS compatibility…");
+    // Locked flake references cannot be upgraded by `nix profile upgrade`.
+    // Build a fresh native profile and verify it before replacing the old
+    // generation. A build or probe failure leaves that profile intact.
+    let staging = tempfile::tempdir()
+        .map_err(|e| format!("could not create an app helper staging directory: {e}"))?;
+    let staged_profile = staging.path().join("helper");
+    nix.profile_add_with_inputs(
+        &staged_profile,
+        &[HELPER_FLAKE_REF.to_string()],
+        HELPER_INPUTS,
+    )
+    .map_err(|e| format!("could not update app helper runtime: {e}"))?;
+    let staged_entries = nix
+        .profile_list(&staged_profile)
+        .map_err(|e| format!("could not read staged app helper profile: {e}"))?;
+    let staged_helper = verify_pinned_helper(&staged_profile, &staged_entries)?;
+    if !helper_runtime_compatible(&staged_helper)? {
+        return Err("app helper still cannot start after updating its SBCL runtime".to_string());
+    }
+    let store_profile = fs::canonicalize(&staged_profile)
+        .map_err(|e| format!("could not resolve staged app helper profile: {e}"))?;
+    nix.profile_replace(profile, &store_profile)
+        .map_err(|e| format!("could not activate updated app helper: {e}"))?;
+    let entries = nix.profile_list(profile).map_err(|e| {
+        format!(
+            "could not re-read helper profile {}: {e}",
+            profile.display()
+        )
+    })?;
     verify_pinned_helper(profile, &entries)
+}
+
+/// Probe only the verified helper. The exact SBCL static-address failure
+/// allows one dependency repair; interruption and unrelated failures stop
+/// the sync before any launcher is replaced.
+fn helper_runtime_compatible(helper: &Path) -> Result<bool, String> {
+    match run_direct(helper, &[String::from("--help")])? {
+        Outcome::Success => Ok(true),
+        Outcome::Failed { stderr, .. }
+            if stderr.contains("failed to allocate 1048576 bytes at 0x300100000") =>
+        {
+            Ok(false)
+        }
+        Outcome::Failed { status, stderr } => Err(format!(
+            "app helper could not start ({status}): {}",
+            stderr.trim()
+        )),
+        Outcome::Interrupted { signal } => Err(format!(
+            "app helper check was interrupted by signal {signal}"
+        )),
+    }
 }
 
 /// Verify the helper profile holds exactly one active entry pinned to the
@@ -815,6 +880,122 @@ impl Drop for SyncLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fake runtime records promotion separately from building, so
+    /// failures prove the old helper remains selected.
+    fn check_helper_repair(old_error: Option<&str>, build_fails: bool, new_error: Option<&str>) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::from_bases(dir.path(), dir.path(), dir.path());
+        let promoted = dir.path().join("promoted");
+        let built = dir.path().join("built");
+        let calls = dir.path().join("calls");
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        for (root, error) in [(&old, old_error), (&new, new_error)] {
+            fs::create_dir_all(root.join("bin")).expect("create bin");
+            let binary = root.join(HELPER_BINARY_RELATIVE);
+            let body = error.map_or_else(
+                || String::from("exit 0"),
+                |error| format!("printf '%s\\n' '{error}' >&2; exit 1"),
+            );
+            fs::write(&binary, format!("#!/bin/sh\n{body}\n")).expect("write helper");
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let manifest = |root: &Path| {
+            serde_json::json!({
+                "version": 3,
+                "elements": {
+                    "opaque-helper-id": {
+                        "active": true,
+                        "attrPath": "packages.aarch64-darwin.default",
+                        "originalUrl": HELPER_FLAKE_REF,
+                        "url": HELPER_FLAKE_REF,
+                        "storePaths": [root.display().to_string()]
+                    }
+                }
+            })
+        };
+        let runtime = dir.path().join("nix");
+        fs::write(
+            &runtime,
+            format!(
+                "#!/bin/sh\n\
+                 printf '%s\\n' \"$*\" >> '{calls}'\n\
+                 args=$*\n\
+                 case \"$args\" in *--version*) echo 'nix (Nix) 2.35.2'; exit 0;; esac\n\
+                 while [ \"$1\" != '--profile' ]; do shift; done\n\
+                 profile=$2\n\
+                 case \"$args\" in\n\
+                 *'profile list'*)\n\
+                   if [ \"$profile\" = '{profile}' ] && [ ! -f '{promoted}' ]; then\n\
+                     printf '%s\\n' '{old_manifest}'\n\
+                   elif [ -f '{built}' ]; then printf '%s\\n' '{new_manifest}'\n\
+                   else echo '{{\"version\":3,\"elements\":{{}}}}'; fi;;\n\
+                 *'profile add'*)\n\
+                   if {build_fails}; then echo 'error: replacement build failed' >&2; exit 1; fi\n\
+                   mkdir -p \"$profile\"; touch '{built}';;\n\
+                 *'build --no-link'*) touch '{promoted}';;\n\
+                 *) echo \"unexpected nix call: $args\" >&2; exit 9;;\n\
+                 esac\n",
+                calls = calls.display(),
+                profile = paths.helper_profile.display(),
+                promoted = promoted.display(),
+                built = built.display(),
+                old_manifest = manifest(&old),
+                new_manifest = manifest(&new),
+            ),
+        )
+        .expect("write runtime");
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).expect("chmod");
+        let nix = crate::nix::discover(runtime.to_str()).expect("discover runtime");
+        let result = ensure_helper(&nix, &paths);
+        let expected_repair = old_error
+            .is_some_and(|error| error.contains("failed to allocate 1048576 bytes at 0x300100000"));
+        let expected_success =
+            old_error.is_none() || expected_repair && !build_fails && new_error.is_none();
+        assert_eq!(result.is_ok(), expected_success, "{result:?}");
+        assert_eq!(promoted.exists(), expected_success && expected_repair);
+        if expected_success {
+            let root = if expected_repair { &new } else { &old };
+            assert_eq!(
+                result.expect("repaired helper"),
+                root.join(HELPER_BINARY_RELATIVE)
+            );
+        }
+        let calls = fs::read_to_string(calls).expect("read calls");
+        assert_eq!(calls.contains("profile add"), expected_repair);
+        if expected_repair {
+            assert!(
+                calls.contains(&format!(
+                    "--override-input nixpkgs {} -- {HELPER_FLAKE_REF}",
+                    HELPER_INPUTS[0].1
+                )),
+                "{calls}"
+            );
+        }
+        assert!(!calls.contains("profile remove"), "{calls}");
+        assert!(!calls.contains("profile upgrade"), "{calls}");
+    }
+
+    #[test]
+    fn helper_address_conflict_repairs_only_after_replacement_is_verified() {
+        let error = Some("failed to allocate 1048576 bytes at 0x300100000");
+        check_helper_repair(error, false, None);
+        check_helper_repair(error, true, None);
+        check_helper_repair(error, false, Some("replacement could not start"));
+    }
+
+    #[test]
+    fn unrelated_helper_startup_failure_does_not_modify_profile() {
+        check_helper_repair(Some("permission denied"), false, None);
+    }
+
+    #[test]
+    fn working_helper_is_reused_without_a_profile_change() {
+        check_helper_repair(None, true, None);
+    }
 
     #[test]
     fn destination_inspection_separates_missing_owned_and_unowned() {
