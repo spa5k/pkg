@@ -116,7 +116,7 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
         )
     {
         eprintln!(
-            "pkg: `--json` is a query option (search, info, list, doctor); \
+            "pkg: `--json` is a query option (search, info, list, doctor, tap list); \
              it is not accepted here"
         );
         return Err(CommandError::Reported(ExitCode::from(USAGE)));
@@ -227,18 +227,68 @@ fn report_failed_mutation(
     action: &str,
     error: &nix::NixError,
     interrupted: bool,
+    before: Option<&BTreeMap<String, ProfileEntry>>,
 ) -> CommandError {
-    if interrupted {
-        eprintln!("pkg: {action} was interrupted; the native profile stays authoritative");
-    } else {
-        eprintln!("pkg: {action} failed: {error}");
-    }
     match installed_entries(session) {
-        Ok(entries) => eprintln!(
-            "pkg: profile re-read: {} entries; state may be partial",
-            entries.len()
-        ),
-        Err(error) => eprintln!("pkg: could not re-read the profile: {error}"),
+        Ok(entries) => match before {
+            Some(previous) if previous == &entries => {
+                if interrupted {
+                    eprintln!("Interrupted: {action} stopped.");
+                } else {
+                    eprintln!("Failed: {action} did not complete.");
+                }
+                eprintln!("Installed entries unchanged.");
+            }
+            Some(previous) => {
+                if interrupted {
+                    eprintln!("Interrupted: {action} stopped after the profile changed.");
+                } else {
+                    eprintln!("Partial: {action} changed the profile before it stopped.");
+                }
+                let added: Vec<_> = entries
+                    .keys()
+                    .filter(|key| !previous.contains_key(*key))
+                    .collect();
+                let removed: Vec<_> = previous
+                    .keys()
+                    .filter(|key| !entries.contains_key(*key))
+                    .collect();
+                let changed: Vec<_> = entries
+                    .keys()
+                    .filter(|key| {
+                        previous
+                            .get(*key)
+                            .is_some_and(|old| Some(old) != entries.get(*key))
+                    })
+                    .collect();
+                eprintln!(
+                    "Profile: {} added, {} removed, {} updated.",
+                    added.len(),
+                    removed.len(),
+                    changed.len()
+                );
+                eprintln!("Next: run `pkg list` to inspect the active profile.");
+            }
+            None => {
+                if interrupted {
+                    eprintln!("Interrupted: {action} stopped.");
+                } else {
+                    eprintln!("Failed: {action} did not complete.");
+                }
+                eprintln!("Profile checked: {} entries are active.", entries.len());
+            }
+        },
+        Err(_) => {
+            if interrupted {
+                eprintln!("Interrupted: {action} stopped.");
+            } else {
+                eprintln!("Failed: {action} did not complete.");
+            }
+            eprintln!("Package state is unknown. Next: run `pkg doctor`.");
+        }
+    }
+    if !interrupted {
+        report_cause(&error.to_string());
     }
     CommandError::Reported(ExitCode::from(if interrupted {
         INTERRUPTED
@@ -249,9 +299,46 @@ fn report_failed_mutation(
 
 /// Classify a mutation error, report re-read native state, and end the
 /// command with the matching exit status.
-fn mutation_failed(session: &Session, action: &str, error: &nix::NixError) -> CommandError {
+fn mutation_failed(
+    session: &Session,
+    action: &str,
+    error: &nix::NixError,
+    before: Option<&BTreeMap<String, ProfileEntry>>,
+) -> CommandError {
     let interrupted = matches!(error, nix::NixError::Interrupted { .. });
-    report_failed_mutation(session, action, error, interrupted)
+    report_failed_mutation(session, action, error, interrupted, before)
+}
+
+/// Report one useful native cause and one log command from a nested error.
+fn report_cause(detail: &str) {
+    let cause = concise_cause(detail);
+    if !cause.is_empty() {
+        eprintln!("Cause: {cause}");
+    }
+    if let Some(log) = detail
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("nix log "))
+    {
+        eprintln!("Details: {log}");
+    }
+}
+
+/// Select one actionable native error from a nested failure report.
+fn concise_cause(detail: &str) -> &str {
+    detail
+        .lines()
+        .map(str::trim)
+        .find(|line| line.contains("failed to allocate"))
+        .or_else(|| {
+            detail
+                .lines()
+                .map(str::trim)
+                .find(|line| line.starts_with("error:"))
+        })
+        .or_else(|| detail.lines().map(str::trim).find(|line| !line.is_empty()))
+        .unwrap_or("unknown cause")
+        .trim_start_matches("error: ")
 }
 
 /// Read installed entries, treating a not-yet-created profile as empty.
@@ -270,15 +357,29 @@ fn installed_entries(session: &Session) -> Result<BTreeMap<String, ProfileEntry>
 /// launcher sync fails, the failure is reported as partial completion with a
 /// nonzero exit and `pkg apps sync` named as the retry (design D4). On other
 /// systems app exposure does not apply and this is a no-op.
-fn apps_refresh_after_mutation(session: &Session) -> Result<(), CommandError> {
+fn apps_refresh_after_mutation(
+    session: &Session,
+    action: &str,
+    names: &[String],
+) -> Result<(), CommandError> {
     if !cfg!(target_os = "macos") {
         return Ok(());
     }
     match crate::apps::sync(&session.nix, &session.paths) {
         Ok(()) => Ok(()),
         Err(detail) => {
-            eprintln!("pkg: app launcher refresh failed: {detail}");
-            eprintln!("pkg: retry with `pkg apps sync`");
+            if names.is_empty() {
+                eprintln!(
+                    "Partial: {action} left installed entries unchanged. App launcher setup failed."
+                );
+            } else {
+                eprintln!(
+                    "Partial: {action} changed {}. App launcher setup failed.",
+                    names.join(", ")
+                );
+            }
+            report_cause(&detail);
+            eprintln!("Next: Resolve the cause, then run `pkg apps sync`.");
             Err(CommandError::Reported(ExitCode::from(FAILURE)))
         }
     }

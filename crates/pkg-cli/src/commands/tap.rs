@@ -172,7 +172,7 @@ fn stage_import(
     // sandboxed Nix build. Name the approved source, origin, and scope
     // before it starts — for `--trust` and updates too, which otherwise
     // print only after success.
-    println!("pkg: importing {source}");
+    eprintln!("Importing tap: {source}…");
     let request = cask_catalog::tap::ImportRequest {
         source: String::from(source),
         revision: revision.map(ToString::to_string),
@@ -385,7 +385,7 @@ pub(super) fn add(
         cleanup_replaced_staging(parent, saved_generation);
     }
     drop(global);
-    report_publication(&source, &origin, &staged, &published);
+    report_publication(&source, &staged, &published, cli.verbose);
     Ok(())
 }
 
@@ -539,7 +539,7 @@ pub(super) fn update(
     let registry = registry::Registry::load(&registry_path)?;
     let targets = targets(&registry, source)?;
     if targets.is_empty() {
-        println!("No taps are registered; add one with `pkg tap add SOURCE`.");
+        println!("No saved taps to update.\nNext: pkg tap add SOURCE");
         return Ok(());
     }
     for target in &targets {
@@ -578,27 +578,36 @@ pub(super) fn update(
         {
             cleanup_replaced_staging(parent, saved_generation);
         }
-        report_publication(&target.source, &target.origin, &staged, &published);
+        report_publication(&target.source, &staged, &published, cli.verbose);
     }
     drop(global);
+    println!("Installed packages did not change.");
     Ok(())
 }
 
 /// Report one published generation with its exact revision.
 fn report_publication(
     source: &str,
-    _origin: &str,
     staged: &StagedImport,
     published: &store::Published,
+    verbose: bool,
 ) {
     match published {
-        store::Published::First => println!("Added tap {source}: "),
-        store::Published::Replaced { .. } => println!("Updated tap {source}: "),
+        store::Published::First => println!(
+            "Added tap: {source} ({} packages available).",
+            staged.result.eligible
+        ),
+        store::Published::Replaced { .. } => println!(
+            "Updated tap: {source} ({} packages available).",
+            staged.result.eligible
+        ),
     }
-    println!(
-        "  revision {}; {} eligible, {} excluded",
-        staged.result.revision, staged.result.eligible, staged.result.excluded
-    );
+    if verbose {
+        eprintln!(
+            "pkg: revision {}; {} eligible, {} excluded",
+            staged.result.revision, staged.result.eligible, staged.result.excluded
+        );
+    }
 }
 
 /// `pkg tap list [--json]`
@@ -640,21 +649,28 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
     if cli.json {
         print_json(&crate::output::envelope("tap-list", &rows))?;
     } else if rows.is_empty() {
-        println!("No taps are registered; add one with `pkg tap add SOURCE`.");
+        println!("No saved taps.\nNext: pkg tap add SOURCE");
     } else {
+        let width = rows
+            .iter()
+            .map(|row| row.source.len())
+            .max()
+            .unwrap_or(6)
+            .max(6);
+        println!("{:<width$}  PACKAGES  STATUS", "SOURCE");
         for row in &rows {
             match (row.eligible, row.excluded) {
-                (Some(eligible), Some(excluded)) => println!(
-                    "{}  {} package{}",
-                    row.source,
-                    eligible + excluded,
-                    if eligible + excluded == 1 { "" } else { "s" }
-                ),
-                _ => println!(
-                    "{}  unusable ({})",
-                    row.source,
-                    row.error.as_deref().unwrap_or("unknown reason")
-                ),
+                (Some(eligible), Some(_excluded)) => {
+                    println!("{:<width$}  {}  ready", row.source, eligible)
+                }
+                _ => println!("{:<width$}  —  needs update", row.source,),
+            }
+            if cli.verbose {
+                if let Some(error) = &row.error {
+                    eprintln!("pkg: {}: {error}", row.source);
+                }
+            } else if row.error.is_some() {
+                eprintln!("Next: pkg tap update {}", row.source);
             }
         }
     }
@@ -696,11 +712,10 @@ pub(super) fn remove(_cli: &Cli, source: &str) -> Result<(), CommandError> {
     registry.save(&path)?;
     store::remove_current(&session.paths.state_home, &source).map_err(|error| {
         format!(
-            "tap {source} was unregistered, but removing its active \
-             generation failed: {error}"
+            "Partial: tap {source} was unregistered, but its active catalog could not be removed: {error}"
         )
     })?;
-    println!("Removed tap {source}; installed packages are kept.");
+    println!("Removed tap: {source}. Installed packages stayed installed.");
     Ok(())
 }
 

@@ -65,13 +65,16 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
         );
     }
     let before = installed_entries(&session)?;
+    eprintln!("Installing: {}", ids.join(", "));
     session
         .nix
         .profile_add(&session.paths.profile, &installables)
-        .map_err(|error| mutation_failed(&session, "install", &error))?;
+        .map_err(|error| mutation_failed(&session, "install", &error, Some(&before)))?;
     let after = installed_entries(&session)?;
-    report_names("installed", &added_names(&before, &after));
-    apps_refresh_after_mutation(&session)
+    let names = changed_names(&before, &after);
+    apps_refresh_after_mutation(&session, "install", &names)?;
+    report_names("Installed", &names);
+    Ok(())
 }
 
 /// Refuse cask installs the generated or saved catalog excludes or does not
@@ -132,20 +135,20 @@ fn short_name(name: &str) -> String {
 /// Report one completed transaction: one line, only what changed.
 fn report_names(verb: &str, names: &[String]) {
     match names {
-        [] => println!("{verb}: profile unchanged"),
-        [one] => println!("{verb} {}", one),
-        many => println!("{verb} {}: {}", many.len(), many.join(", ")),
+        [] => println!("Unchanged: profile did not change."),
+        [one] => println!("{verb}: {one}"),
+        many => println!("{verb}: {}", many.join(", ")),
     }
 }
 
-/// The names of the entries that exist only in the second profile.
-fn added_names(
+/// The names of entries that were added or changed in the second profile.
+fn changed_names(
     before: &BTreeMap<String, ProfileEntry>,
     after: &BTreeMap<String, ProfileEntry>,
 ) -> Vec<String> {
     after
         .keys()
-        .filter(|id| !before.contains_key(*id))
+        .filter(|id| before.get(*id) != after.get(*id))
         .map(|id| short_name(&after[id].name()))
         .collect()
 }
@@ -164,16 +167,20 @@ pub(super) fn remove(cli: &Cli, entries: &[String]) -> Result<(), CommandError> 
             .into());
         }
     }
+    eprintln!("Removing: {}", entries.join(", "));
     session
         .nix
         .profile_remove(&session.paths.profile, entries)
-        .map_err(|error| mutation_failed(&session, "remove", &error))?;
+        .map_err(|error| mutation_failed(&session, "remove", &error, Some(&installed)))?;
+    let after = installed_entries(&session)?;
     let names: Vec<String> = entries
         .iter()
+        .filter(|entry| !after.contains_key(*entry))
         .map(|entry| short_name(&installed[entry].name()))
         .collect();
-    report_names("removed", &names);
-    apps_refresh_after_mutation(&session)
+    apps_refresh_after_mutation(&session, "remove", &names)?;
+    report_names("Removed", &names);
+    Ok(())
 }
 
 pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
@@ -182,6 +189,7 @@ pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
     // reported as current, then drop the discovery cache. Both sources are
     // refreshed on every system: source metadata is not per-system, and the
     // catalog decides per-system reach from its own target list.
+    eprintln!("Refreshing package search data…");
     for (_kind, source) in configured_sources(&session.config) {
         match session.nix.refresh_source_identity(source) {
             Ok(identity) => {
@@ -189,16 +197,24 @@ pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
                     .revision
                     .as_deref()
                     .unwrap_or("moving, no revision");
-                println!("{source} -> {revision}");
+                if cli.verbose {
+                    eprintln!("pkg: {source} -> {revision}");
+                }
             }
             Err(error) => {
-                eprintln!("pkg: source failure for {source}: {error}");
+                eprintln!("Failed: Could not refresh package search data.");
+                eprintln!("Source: {}", crate::output::short_source(source));
+                super::report_cause(&error.to_string());
+                eprintln!("Installed packages did not change.");
                 return Err(CommandError::Reported(ExitCode::from(super::FAILURE)));
             }
         }
     }
     let removed = catalog::invalidate_cache(&session.paths.cache_dir)?;
-    println!("Discovery cache refreshed ({removed} dropped); profile unchanged.");
+    if cli.verbose {
+        eprintln!("pkg: removed {removed} discovery cache entries");
+    }
+    println!("Updated: package search data. Installed packages did not change.");
     Ok(())
 }
 
@@ -256,7 +272,7 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
         remaining.retain(|entry| match removed_source(entry) {
             None => true,
             Some(source) => {
-                println!("pkg: {entry}: tap {source} removed; keeping locked outputs");
+                println!("Skipped: {entry} (tap {source} was removed; keeping locked outputs).");
                 false
             }
         });
@@ -272,30 +288,35 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
     let mut movable: Vec<String> = Vec::new();
     for entry in &targets {
         if nix::is_fixed_reference(installed[entry].original_url.as_str()) {
-            println!("pkg: {entry} is pinned to a full commit; skipping");
+            println!("Skipped: {entry} (fixed source reference).");
         } else {
             movable.push(entry.clone());
         }
     }
     if !all && movable.is_empty() {
-        return Err(String::from("nothing to upgrade").into());
+        println!("Unchanged: selected entries use fixed source references.");
+        return Ok(());
     }
-    // With `--all`, eligibility stays with Nix for the entries that remain:
-    // fixed references re-lock to the same commit and path sources
-    // re-evaluate natively. The remaining IDs are passed explicitly so a
-    // removed tap's locked outputs are never followed.
-    let target = if all {
-        Some(targets.as_slice())
-    } else {
-        Some(movable.as_slice())
-    };
+    if movable.is_empty() {
+        println!("Unchanged: no movable entries to upgrade.");
+        return Ok(());
+    }
+    // The remaining IDs are passed explicitly so fixed sources and removed
+    // taps are never followed.
+    eprintln!("Upgrading: {}", movable.join(", "));
     session
         .nix
-        .profile_upgrade(&session.paths.profile, target)
-        .map_err(|error| mutation_failed(&session, "upgrade", &error))?;
-    let names: Vec<String> = targets.iter().map(|t| short_name(t)).collect();
-    report_names("upgraded", &names);
-    apps_refresh_after_mutation(&session)
+        .profile_upgrade(&session.paths.profile, Some(&movable))
+        .map_err(|error| mutation_failed(&session, "upgrade", &error, Some(&installed)))?;
+    let after = installed_entries(&session)?;
+    let names: Vec<String> = movable
+        .iter()
+        .filter(|entry| after.get(*entry) != installed.get(*entry))
+        .map(|entry| short_name(entry))
+        .collect();
+    apps_refresh_after_mutation(&session, "upgrade", &names)?;
+    report_names("Upgraded", &names);
+    Ok(())
 }
 
 pub(super) fn history(cli: &Cli) -> Result<(), CommandError> {
@@ -308,33 +329,152 @@ pub(super) fn history(cli: &Cli) -> Result<(), CommandError> {
     } else {
         text
     };
-    print!("{text}");
+    if cli.verbose {
+        print!("{text}");
+    } else {
+        print!(
+            "{}",
+            render_history(&text, active_generation(&session.paths.profile))
+        );
+    }
     Ok(())
+}
+
+/// Read the active generation from the native profile link when available.
+fn active_generation(profile: &std::path::Path) -> Option<u64> {
+    let link = std::fs::read_link(profile).ok()?;
+    let name = link.file_name()?.to_str()?;
+    name.strip_suffix("-link")?.rsplit('-').next()?.parse().ok()
+}
+
+/// Keep generation numbers and dates; hide per-package native history detail.
+fn render_history(text: &str, active: Option<u64>) -> String {
+    use std::fmt::Write as _;
+    let clean = crate::output::strip_ansi(text);
+    let rows: Vec<(u64, &str)> = clean
+        .lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("Version ")?;
+            let (number, rest) = rest.split_once(" (")?;
+            let (date, _) = rest.split_once(')')?;
+            Some((number.parse().ok()?, date))
+        })
+        .collect();
+    if rows.is_empty() {
+        return clean;
+    }
+    let mut out = String::from("GEN  CREATED  STATUS\n");
+    for (number, date) in rows.iter().rev() {
+        let status = if Some(*number) == active {
+            "current"
+        } else {
+            ""
+        };
+        let _ = writeln!(out, "{number}  {date}  {status}");
+    }
+    if rows.len() == 1 {
+        out.push_str("No earlier generation to restore.\n");
+    }
+    out
 }
 
 pub(super) fn rollback(cli: &Cli, generation: Option<u64>) -> Result<(), CommandError> {
     let session = session(cli)?;
-    session
+    let before = installed_entries(&session)?;
+    let previous_generation = active_generation(&session.paths.profile);
+    match generation {
+        Some(number) => eprintln!("Restoring: generation {number}"),
+        None => eprintln!("Restoring: previous generation"),
+    }
+    if let Err(error) = session
         .nix
         .profile_rollback(&session.paths.profile, generation)
-        .map_err(|error| mutation_failed(&session, "rollback", &error))?;
-    match generation {
-        Some(number) => println!("Rolled back to native generation {number}."),
-        None => println!("Rolled back to the previous native generation."),
+    {
+        let active = active_generation(&session.paths.profile);
+        if let Some(number) = active.filter(|_| active != previous_generation) {
+            eprintln!("Partial: generation {number} is active. App launchers may need an update.");
+            if !matches!(&error, nix::NixError::Interrupted { .. }) {
+                super::report_cause(&error.to_string());
+            }
+            if cfg!(target_os = "macos") {
+                eprintln!("Next: run `pkg apps sync`.");
+            } else {
+                eprintln!("Next: run `pkg history` to inspect generations.");
+            }
+            return Err(CommandError::Reported(ExitCode::from(
+                if matches!(&error, nix::NixError::Interrupted { .. }) {
+                    super::INTERRUPTED
+                } else {
+                    super::FAILURE
+                },
+            )));
+        }
+        return Err(mutation_failed(&session, "rollback", &error, Some(&before)));
     }
-    apps_refresh_after_mutation(&session)
+    let current_generation = active_generation(&session.paths.profile);
+    let destination = match current_generation.or(generation) {
+        Some(number) => format!("generation {number}"),
+        None => String::from("the previous generation"),
+    };
+    let affected = if current_generation.is_some() && current_generation == previous_generation {
+        Vec::new()
+    } else {
+        vec![destination.clone()]
+    };
+    apps_refresh_after_mutation(&session, "rollback", &affected)?;
+    if current_generation.is_some() && current_generation == previous_generation {
+        println!("Unchanged: {destination} is still active.");
+    } else {
+        println!("Restored: {destination}.");
+    }
+    Ok(())
 }
 
 pub(super) fn prune(cli: &Cli, older_than: &str) -> Result<(), CommandError> {
     // The age is validated before the runtime is touched.
     let days = crate::cli::parse_prune_age(older_than)?;
     let session = session(cli)?;
+    let before = session
+        .nix
+        .profile_history(&session.paths.profile)
+        .ok()
+        .map(|text| history_numbers(&text));
+    eprintln!("Pruning: generations older than {days} days");
     session
         .nix
         .profile_wipe_history(&session.paths.profile, &format!("{days}d"))
-        .map_err(|error| mutation_failed(&session, "prune", &error))?;
+        .map_err(|error| mutation_failed(&session, "prune", &error, None))?;
     // Eligibility stays with Nix: which generations are old enough is native
     // behavior and is not assumed by pkg.
-    println!("Requested deletion of generations older than {days} days.");
+    let after = session
+        .nix
+        .profile_history(&session.paths.profile)
+        .ok()
+        .map(|text| history_numbers(&text));
+    match (before, after) {
+        (Some(before), Some(after)) if !before.is_empty() && !after.is_empty() => {
+            let removed = before.difference(&after).count();
+            if removed == 0 {
+                println!("No old generations to prune.");
+            } else {
+                println!("Pruned: {removed} old generation(s). Current generation kept.");
+            }
+        }
+        _ => println!("Prune complete: generations older than {days} days were checked."),
+    }
     Ok(())
+}
+
+/// Parse only Nix's `Version N (DATE)` headers.
+fn history_numbers(text: &str) -> std::collections::BTreeSet<u64> {
+    crate::output::strip_ansi(text)
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("Version ")?
+                .split_once(" (")?
+                .0
+                .parse()
+                .ok()
+        })
+        .collect()
 }

@@ -44,7 +44,17 @@ pub(super) fn completion(shell: Shell) -> Result<(), CommandError> {
 
 pub(super) fn apps_sync(cli: &Cli) -> Result<(), CommandError> {
     let session = session(cli)?;
-    crate::apps::sync(&session.nix, &session.paths).map_err(CommandError::Message)?;
-    println!("App launchers refreshed from the active profile.");
+    if !cfg!(target_os = "macos") {
+        println!("App launchers are available on macOS only.");
+        return Ok(());
+    }
+    eprintln!("Checking installed apps…");
+    crate::apps::sync(&session.nix, &session.paths).map_err(|detail| {
+        eprintln!("Failed: app launchers could not be updated.");
+        super::report_cause(&detail);
+        eprintln!("Installed packages did not change.");
+        CommandError::Reported(std::process::ExitCode::from(super::FAILURE))
+    })?;
+    println!("App launchers synced.");
     Ok(())
 }

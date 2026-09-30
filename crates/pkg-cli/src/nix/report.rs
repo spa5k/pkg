@@ -68,6 +68,19 @@ fn classify(line: &str) -> Kind {
         // text still reaches the failure diagnostic when a run fails.
         return Kind::Hide;
     }
+    if line.starts_with("error:")
+        || line.starts_with("Reason:")
+        || line.starts_with("Output paths:")
+        || line.starts_with("Last ") && line.contains(" log lines:")
+        || line.starts_with("> ")
+        || line.starts_with("For full logs, run:")
+        || line.starts_with("nix log ")
+        || line.starts_with("failed to allocate ")
+    {
+        // The command reports one cause and one log command after Nix
+        // finishes. Printing a nested build chain live repeats it there.
+        return Kind::Hide;
+    }
     if let Some(rest) = line.strip_prefix("fetching Git repository '") {
         let url = rest.strip_suffix('\'').unwrap_or(rest);
         return Kind::Status(format!("fetching {}", short_name(url)));
@@ -102,34 +115,6 @@ fn classify(line: &str) -> Kind {
         return Kind::Status(format!("building {}", short_name(path)));
     }
     Kind::Show
-}
-
-/// The bounded, signal-only tail of one failed run's captured stderr.
-///
-/// Filtered runs keep the raw stream for diagnostics, but echoing all of
-/// it would replay exactly the chatter the filter removed. The tail keeps
-/// only lines the classifier would show live -- warnings, errors, prompts
-/// -- bounded to the last few of them; the complete text stays in the
-/// store log the native nix-log pointer names.
-pub fn diagnostic_tail(stderr: &str, keep: usize) -> String {
-    let signal: Vec<&str> = stderr
-        .lines()
-        .filter(|line| matches!(classify(line), Kind::Show))
-        .collect();
-    if signal.is_empty() {
-        return String::new();
-    }
-    if signal.len() <= keep {
-        let mut tail = signal.join("\n");
-        tail.push('\n');
-        return tail;
-    }
-    let mut tail = String::from(
-        "... earlier native output trimmed; run the reported nix log command for everything ...\n",
-    );
-    tail.push_str(&signal[signal.len() - keep..].join("\n"));
-    tail.push('\n');
-    tail
 }
 
 /// Whether an incomplete line is a Nix trust prompt, which must be shown
@@ -250,22 +235,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn failure_diagnostics_keep_signal_lines_only() {
-        let noisy: String = (0..60)
-            .map(|i| format!("fetching Git repository 'https://example.com/r{}'\n", i))
-            .collect();
-        let stderr = format!(
-            "{noisy}error: Cannot build '/nix/store/aaa-tool.drv'.\nFor full logs, run:\n  nix log /nix/store/aaa-tool.drv\n"
-        );
-        let tail = diagnostic_tail(&stderr, 40);
-        assert!(tail.contains("error: Cannot build"), "{tail}");
-        assert!(tail.contains("nix log /nix/store/aaa-tool.drv"), "{tail}");
-        assert!(!tail.contains("fetching Git repository"), "{tail}");
-        assert_eq!(diagnostic_tail("one\nline\n", 40), "one\nline\n");
-        assert_eq!(diagnostic_tail("fetching Git repository 'x'\n", 40), "");
-    }
-
-    #[test]
     fn fetch_progress_is_shortened_and_transfer_chatter_is_hidden() {
         assert_eq!(
             classify("fetching Git repository 'https://gitlab.com/gabmus/tree-sitter-blueprint'"),
@@ -290,14 +259,21 @@ mod tests {
     }
 
     #[test]
-    fn warnings_errors_and_prompts_stay_visible() {
+    fn warnings_and_prompts_stay_visible_but_errors_wait_for_summary() {
         for line in [
             "warning: ignoring untrusted substituter 'https://helix.cachix.org'",
-            "error: Cannot build the requested derivation.",
             "do you want to permanently mark this value as trusted (y/N)?",
         ] {
             assert_eq!(classify(line), Kind::Show, "{line}");
         }
+        assert_eq!(
+            classify("error: Cannot build the requested derivation."),
+            Kind::Hide
+        );
+        assert_eq!(
+            classify("failed to allocate 1048576 bytes at 0x300100000"),
+            Kind::Hide
+        );
     }
 
     #[test]
