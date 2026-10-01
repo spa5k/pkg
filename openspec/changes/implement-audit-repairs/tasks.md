@@ -38,11 +38,20 @@ checked only when its branch is complete and its checks ran.
 
 ## 3. Typed catalog target decision
 
-- [ ] 3.1 Internal `TargetDecision` (eligible with plan vs excluded
+- [x] 3.1 Internal `TargetDecision` (eligible with plan vs excluded
       with reason and detail, common version/homepage outside the
       variants, kind derived from the plan); classify/capture/emit and
       all consumers/tests adapted; emitted JSON contract, deterministic
       bytes, and the committed catalog unchanged.
+      Done on `feat/catalog-target-decision`: `ExclusionReason` closed
+      vocabulary (one `as_str` per code), `TargetOutcome`
+      eligible/excluded, manual `Serialize` reproducing the exact
+      `pkg-cask-catalog/4` per-target field order and null behavior,
+      `kind` derived from the plan at emission, emit counts read the
+      typed outcome (the invented `unknown` bucket is unrepresentable).
+      Verified: crate tests 114+2, workspace build/test/clippy/fmt/doc
+      green; regenerated catalog from the pinned snapshot is
+      byte-identical (`e069bfcc…`, `cmp` exit 0).
 
 ## 4. One isolated Nix environment constructor
 

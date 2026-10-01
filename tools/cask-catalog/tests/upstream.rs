@@ -9,7 +9,7 @@
 
 use cask_catalog::MACOS_BASELINE;
 use cask_catalog::TARGETS;
-use cask_catalog::classify::{self, TargetStatus};
+use cask_catalog::classify::{self, TargetDecision};
 use cask_catalog::effective::RawRecord;
 use serde_json::Value;
 
@@ -35,7 +35,7 @@ fn assert_field(actual: &Value, expected: &Value, field: &str, token: &str, syst
     );
 }
 
-fn status_json(status: &TargetStatus) -> Value {
+fn status_json(status: &TargetDecision) -> Value {
     serde_json::to_value(status).expect("status serializes")
 }
 
@@ -82,7 +82,7 @@ fn fixture_records_match_manual_expectations_on_both_targets() {
             // Plans: present exactly when the expectation lists artifacts.
             match exp.get("planArtifacts") {
                 Some(want) => {
-                    let plan = status.plan.as_ref().unwrap_or_else(|| {
+                    let plan = status.plan().unwrap_or_else(|| {
                         panic!("{token} / {system}: expected an eligible plan, got none")
                     });
                     for (i, want_artifact) in
@@ -128,7 +128,7 @@ fn fixture_records_match_manual_expectations_on_both_targets() {
                 }
                 None => {
                     assert!(
-                        status.plan.is_none(),
+                        status.plan().is_none(),
                         "{token} / {system}: excluded entry must have no plan"
                     );
                 }
