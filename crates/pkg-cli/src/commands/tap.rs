@@ -81,15 +81,7 @@ fn stage_import_with_setup(
     origin: &str,
     revision: Option<&str>,
     now_unix: u64,
-) -> Result<
-    (
-        store::SourceStore,
-        std::path::PathBuf,
-        store::StagingGuard,
-        StagedImport,
-    ),
-    CommandError,
-> {
+) -> Result<(store::SourceStore, store::StagedGeneration, StagedImport), CommandError> {
     match stage_import(session, source, origin, revision, now_unix) {
         Ok(staged) => Ok(staged),
         Err(StageError::Other(error)) => Err(error),
@@ -171,7 +163,7 @@ fn targets(
 }
 
 /// Run one import into a fresh staging directory and return the validated
-/// result together with the staging path and guard.
+/// result together with the owned staged generation.
 struct StagedImport {
     result: cask_catalog::tap::ImportResult,
     index: crate::nix::CatalogIndex,
@@ -195,18 +187,10 @@ fn stage_import(
     origin: &str,
     revision: Option<&str>,
     now_unix: u64,
-) -> Result<
-    (
-        store::SourceStore,
-        std::path::PathBuf,
-        store::StagingGuard,
-        StagedImport,
-    ),
-    StageError,
-> {
+) -> Result<(store::SourceStore, store::StagedGeneration, StagedImport), StageError> {
     let locked = store::SourceStore::lock(&session.paths.state_home, source)
         .map_err(|error| StageError::Other(error.into()))?;
-    let (staging, guard) = locked
+    let staged = locked
         .new_staging()
         .map_err(|error| StageError::Other(error.into()))?;
     let system = session
@@ -224,7 +208,7 @@ fn stage_import(
         revision: revision.map(ToString::to_string),
         system: system.clone(),
         nix: session.nix.executable().to_path_buf(),
-        output_dir: staging.clone(),
+        output_dir: staged.path().to_path_buf(),
     };
     let result = cask_catalog::tap::import(&request)
         .map_err(|error| stage_error_for_import_error(source, error))?;
@@ -243,7 +227,7 @@ fn stage_import(
     // untrusted checkout and the captures beside it never become the
     // active flake root.
     let flake_path =
-        validated_flake_path(&staging, &result.flake_path).map_err(StageError::Other)?;
+        validated_flake_path(staged.path(), &result.flake_path).map_err(StageError::Other)?;
     let provenance = store::Provenance {
         source: String::from(source),
         origin: String::from(origin),
@@ -258,8 +242,7 @@ fn stage_import(
     check_staged_index(&index, &provenance, &system).map_err(StageError::Other)?;
     Ok((
         locked,
-        flake_path,
-        guard,
+        staged,
         StagedImport {
             result,
             index,
@@ -403,10 +386,9 @@ pub(super) fn add(
 
     // Only now do the runtime and the importer run.
     let session = super::session(cli)?;
-    let (locked, flake, guard, staged) =
+    let (locked, staged_generation, staged) =
         stage_import_with_setup(&session, &source, &origin, revision.as_deref(), now_unix())?;
-    let published = locked.publish(&flake, &staged.provenance, &staged.index)?;
-    settle_staging_guard(&published, guard);
+    let mut publication = locked.publish(staged_generation, &staged.provenance, &staged.index)?;
 
     // One prepared rename records consent. A failure triggers a rollback
     // of the publication — first or replacing — so the previous generation
@@ -418,20 +400,21 @@ pub(super) fn add(
         && let Err(error) = registry::commit_prepared(prepared, &registry_path)
     {
         return Err(undo_publication_after_registry_failure(
-            &source, &locked, &published, &error,
+            &source,
+            &locked,
+            publication,
+            &error,
         ));
     }
-    // The publication and its registry commit both succeeded: the staging
-    // parent now holds only the preserved old generation and this run's
-    // fetch scratch. Remove the scratch best effort; the preserved old
-    // flake is never touched and a failure is only a warning.
-    if let store::Published::Replaced { saved_generation } = &published
-        && let Some(parent) = flake.parent()
-    {
-        cleanup_replaced_staging(parent, saved_generation);
+    // The publication and its registry commit both succeeded: finish the
+    // publication by clearing this run's fetch scratch best effort; the
+    // preserved old flake is never touched and a failure is only a
+    // warning.
+    for warning in publication.finish() {
+        eprintln!("pkg: warning: {warning}");
     }
     drop(global);
-    report_publication(&source, &staged, &published, cli.verbose);
+    report_publication(&source, &staged, publication.kind(), cli.verbose);
     Ok(())
 }
 
@@ -464,57 +447,6 @@ fn recheck_consent(
     }
 }
 
-/// Dispose of the staging guard right after a committed publication.
-///
-/// A first publication renamed the inner flake root to `current`, so the
-/// armed guard deletes only the disposable staging parent (the raw
-/// checkout and captures). A replacing publication left the preserved
-/// old generation inside the staging parent, so the guard is disarmed
-/// immediately and the old generation stays retained; its scratch
-/// siblings are cleaned up separately after the run fully succeeds.
-fn settle_staging_guard(published: &store::Published, guard: store::StagingGuard) {
-    match published {
-        store::Published::First => drop(guard),
-        store::Published::Replaced { .. } => guard.keep(),
-    }
-}
-
-/// Best-effort cleanup of a replaced generation's staging parent.
-///
-/// After a successful publication (and, for `add`, its registry commit)
-/// the staging parent holds the preserved old generation at `preserved`
-/// and this run's fetch scratch (raw checkout, captures) beside it. Only
-/// the immediate scratch children are removed; the preserved old flake is
-/// never touched. Failure is a warning and never changes the command's
-/// success, and nothing is cleaned up when the run failed or rolled back.
-fn cleanup_replaced_staging(staging: &std::path::Path, preserved: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(staging) else {
-        eprintln!(
-            "pkg: warning: cannot inspect the staging directory {} to clean \
-             up its fetch scratch",
-            staging.display()
-        );
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path == preserved {
-            continue;
-        }
-        let removed = if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir()) {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        };
-        if let Err(error) = removed {
-            eprintln!(
-                "pkg: warning: cannot remove the staging scratch at {}: {error}",
-                path.display()
-            );
-        }
-    }
-}
-
 /// Build the honest error for a registry commit failure after a committed
 /// publication, undoing the publication when that is possible.
 ///
@@ -525,11 +457,12 @@ fn cleanup_replaced_staging(staging: &std::path::Path, preserved: &std::path::Pa
 fn undo_publication_after_registry_failure(
     source: &str,
     locked: &store::SourceStore,
-    published: &store::Published,
+    publication: store::Publication,
     registry_error: &str,
 ) -> CommandError {
-    match published {
-        store::Published::First => match locked.undo_first_publication() {
+    let published = publication.kind().clone();
+    match &published {
+        store::Published::First => match publication.undo(locked) {
             Ok(()) => format!(
                 "cannot record consent for {source}; the first publication was \
                  undone: {registry_error}"
@@ -542,23 +475,21 @@ fn undo_publication_after_registry_failure(
             )
             .into(),
         },
-        store::Published::Replaced { saved_generation } => {
-            match locked.undo_replaced_publication(saved_generation) {
-                Ok(()) => format!(
-                    "cannot record consent for {source}; the previous generation \
-                     was restored: {registry_error}"
-                )
-                .into(),
-                Err(undo) => format!(
-                    "cannot record consent for {source}, and restoring the \
-                     previous generation failed: {undo}; the previous generation \
-                     stays preserved at {} and the withdrawn generation may \
-                     still be active",
-                    saved_generation.display()
-                )
-                .into(),
-            }
-        }
+        store::Published::Replaced { saved_generation } => match publication.undo(locked) {
+            Ok(()) => format!(
+                "cannot record consent for {source}; the previous generation \
+                 was restored: {registry_error}"
+            )
+            .into(),
+            Err(undo) => format!(
+                "cannot record consent for {source}, and restoring the \
+                 previous generation failed: {undo}; the previous generation \
+                 stays preserved at {} and the withdrawn generation may \
+                 still be active",
+                saved_generation.display()
+            )
+            .into(),
+        },
     }
 }
 
@@ -607,24 +538,21 @@ pub(super) fn update(
             )
             .into());
         }
-        let (locked, flake, guard, staged) = stage_import_with_setup(
+        let (locked, staged_generation, staged) = stage_import_with_setup(
             &session,
             &target.source,
             &target.origin,
             revision.as_deref(),
             now_unix(),
         )?;
-        let published = locked.publish(&flake, &staged.provenance, &staged.index)?;
-        settle_staging_guard(&published, guard);
-        // An update has no registry write: after the successful exchange
-        // only the preserved old generation and this run's fetch scratch
-        // remain in the staging parent. Clean the scratch best effort.
-        if let store::Published::Replaced { saved_generation } = &published
-            && let Some(parent) = flake.parent()
-        {
-            cleanup_replaced_staging(parent, saved_generation);
+        let mut publication =
+            locked.publish(staged_generation, &staged.provenance, &staged.index)?;
+        // An update has no registry write: finish the publication by
+        // clearing this run's fetch scratch best effort.
+        for warning in publication.finish() {
+            eprintln!("pkg: warning: {warning}");
         }
-        report_publication(&target.source, &staged, &published, cli.verbose);
+        report_publication(&target.source, &staged, publication.kind(), cli.verbose);
     }
     drop(global);
     println!("Installed packages did not change.");

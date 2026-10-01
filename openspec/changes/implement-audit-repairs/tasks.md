@@ -27,7 +27,7 @@ checked only when its branch is complete and its checks ran.
 
 ## 2. Tap staging and publication ownership
 
-- [ ] 2.1 `new_staging` returns one owned `StagedGeneration`; consuming
+- [x] 2.1 `new_staging` returns one owned `StagedGeneration`; consuming
       `publish` settles the guard internally and returns a `Publication`
       owning the retained/scratch state with explicit `finish` and
       `undo`; no fallible rollback from `Drop`; a staged generation from
