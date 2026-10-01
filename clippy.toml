@@ -4,11 +4,12 @@
 # rust-version = "1.96" and the exact repo toolchain (rust-toolchain.toml
 # channel "1.96.1").
 #
-# The strict complexity budgets from ADR 0005 (50 lines, 5 arguments, 10
-# cognitive, 150 type complexity) are NOT configured here: once configured,
-# these thresholds fire at deny level inside the crates that already deny
-# clippy::pedantic, breaking every historical violation at once. The budgets
-# are applied by the G-QUALITY gate instead — tools/quality/quality-gate.sh
-# swaps in a strict config for the check and restores this one afterwards.
+# Nothing else is configured: the complexity budgets of the superseded
+# ADR 0005 (function length, argument count, cognitive complexity, type
+# complexity) are deliberately absent. No gate enforces them today, and
+# configuring them here would deny a large historical backlog at once.
+# Which lints run is decided in Cargo.toml ([workspace.lints]); it
+# selects individual lints, never blanket restriction/pedantic/nursery
+# groups.
 
 msrv = "1.96"

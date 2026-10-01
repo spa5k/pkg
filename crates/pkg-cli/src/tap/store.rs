@@ -72,10 +72,13 @@ fn checked_source(source: &str) -> Result<(String, String), String> {
     if !crate::nix::valid_catalog_source(source) {
         return Err(format!("`{source}` is not a valid owner/tap source"));
     }
-    let (owner, tap) = source
-        .split_once('/')
-        .expect("a validated source is exactly owner/tap");
-    Ok((owner.to_string(), tap.to_string()))
+    // The guard above already proved the exact `owner/tap` shape, so the
+    // split cannot fail on validated input; an impossible shape flows
+    // back through the same error channel instead of a panic.
+    match source.split_once('/') {
+        Some((owner, tap)) => Ok((owner.to_string(), tap.to_string())),
+        None => Err(format!("`{source}` is not a valid owner/tap source")),
+    }
 }
 
 /// The per-source directory of one canonical `owner/tap` source.

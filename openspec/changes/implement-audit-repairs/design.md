@@ -156,18 +156,26 @@ half identical. Cost exceeds benefit: rejected.
 
 ## 6. Quality and CI
 
-Only obsolete comments that reference deleted gates are corrected;
-ADR 0005 stays superseded and unrestored. `unwrap_used`, `expect_used`,
-and `panic` are added as individually selected restriction lints at
-deny level; test modules carry one reasoned, narrowly scoped allow each
-(tests may fail fast on broken fixtures; production may not panic).
-The two real production sites are replaced on domain evidence: the
-`checked_source` split becomes an explicit fallible path (no validated
-source can lack a separator — now the code shows it), and the two
-`unreachable`/`expect` sites in the lifecycle command become explicit
-error returns that state the impossible state instead of panicking.
-The macOS smoke job installs the Clippy component and lints all targets
-so `cfg(macos)` code is checked; the installer smoke check gains the
-ShellCheck run CONTRIBUTING already requires. `let _` for infallible
-formatting, best-effort cleanup, and optional cache writes stays
-allowed; no advisory fetching is added.
+Only obsolete comments that reference deleted gates are corrected — in
+`clippy.toml`, `rust-toolchain.toml`, and the lint-policy header of
+`Cargo.toml`; ADR 0005 stays superseded and unrestored. `unwrap_used`,
+`expect_used`, and `panic` are added as individually selected
+restriction lints at deny level in the inherited workspace policy; test
+builds opt out once per crate root with a reasoned
+`cfg_attr(test, allow(...))` (tests may fail fast on broken fixtures;
+production may not panic), and the three integration-test crates, which
+compile without `cfg(test)`, declare the same reasoned header allow
+once each. The real production sites are replaced on domain evidence:
+the `checked_source` split becomes an explicit fallible path (no
+validated source can lack a separator — now the code shows it), the
+boundless arm of the range refusal returns explicitly instead of
+`unreachable!` (a record with no bound declares no range), and the
+`expect` on the lazily loaded tap state disappears by restructuring the
+lazy load as a match that uses and caches the loaded state in the same
+arm, so no impossible state is left to assert. The macOS smoke job
+installs the Clippy component and lints all targets so `cfg(macos)`
+code is checked; the installer smoke check gains the ShellCheck run
+CONTRIBUTING already requires, on both matrix legs, with the runner's
+own ShellCheck and an on-demand install fallback. `let _` for
+infallible formatting, best-effort cleanup, and optional cache writes
+stays allowed; no advisory fetching is added.

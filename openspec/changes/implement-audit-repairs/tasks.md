@@ -101,16 +101,47 @@ checked only when its branch is complete and its checks ran.
 
 ## 6. Quality and CI
 
-- [ ] 6.1 Correct only the obsolete `clippy.toml` and
+- [x] 6.1 Correct only the obsolete `clippy.toml` and
       `rust-toolchain.toml` comments referencing deleted gates; ADR 0005
       stays superseded.
-- [ ] 6.2 Add individually selected `unwrap_used`/`expect_used`/`panic`
+      Done on `feat/quality-ci-repair`: `clippy.toml` no longer claims a
+      G-QUALITY gate swaps strict configs; it states that the ADR 0005
+      complexity budgets are deliberately absent and that lint selection
+      lives in `Cargo.toml`. `rust-toolchain.toml` names the real
+      consumers (the ci `rust` job and the macOS smoke Clippy step)
+      instead of the deleted G-LINT job. The `Cargo.toml` lint-policy
+      header now describes the current inherited policy (same honesty
+      fix; it no longer cites ADR 0005 as the active policy).
+- [x] 6.2 Add individually selected `unwrap_used`/`expect_used`/`panic`
       deny lints for production with reasoned, narrowly scoped test
       exceptions; replace the two actual production sites on domain
       evidence.
-- [ ] 6.3 macOS smoke job installs and runs Clippy on all targets; the
+      Done on `feat/quality-ci-repair`: the three lints are denied in
+      `[workspace.lints.clippy]` (individual restriction lints, no
+      groups). Each crate root (`pkg-cli` lib, `cask-catalog` lib and
+      bin) carries one reasoned `cfg_attr(test, allow(...))`; the three
+      integration-test crates (`pkg-cli` cli/no_shell, `cask-catalog`
+      upstream), which compile without `cfg(test)`, carry the same
+      reasoned header allow once each. `tap/store.rs` `checked_source`
+      now maps an impossible shape back into its own error channel
+      instead of `expect`; `commands/lifecycle.rs` loads the tap state
+      through a lazy match that uses and caches the state in the same
+      arm (no `expect`), and the boundless arm of the macOS range
+      refusal returns `Ok` explicitly instead of `unreachable!`.
+      `capture_cases.rs` is `cfg(test)` and counts as tests. Best-effort
+      cleanup, optional cache writes, and infallible `String`
+      formatting (`unwrap_or_else` on `Option<String>`) are untouched.
+- [x] 6.3 macOS smoke job installs and runs Clippy on all targets; the
       installer smoke check runs ShellCheck with runner-provided
       binaries; no advisory fetching added.
+      Done on `feat/quality-ci-repair`: the smoke matrix installs the
+      clippy component on the macOS leg only and runs
+      `cargo clippy --locked --all-targets -- -D warnings` on macOS only
+      (Linux lint coverage stays in the `rust` job); a new
+      `Installer shellcheck` step runs `shellcheck install.sh` on both
+      legs, using the runner's ShellCheck and installing on demand only
+      if an image drops it. No new job or framework; no advisory
+      fetching.
 
 ## 7. Delivery
 

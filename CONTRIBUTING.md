@@ -21,9 +21,14 @@ The accepted audit repairs are
 
 ## 1. Before you open a PR
 
-- **Map your PR to a task.** Name the `NN-xx` task number in the PR
-  description. If your change is not covered by a task, propose a design
-  change in OpenSpec first.
+- **Map your PR to a task.** Name the task ID of the relevant active
+  OpenSpec change in the PR description. Use each change's own IDs as
+  written in its `tasks.md`: `NN-xx` for
+  [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/tasks.md)
+  and the numbered sections (`1.1`, `2.1`, …) for
+  [Implement the accepted pkg audit repairs](openspec/changes/implement-audit-repairs/tasks.md).
+  If your change is not covered by a task, propose a design change in
+  OpenSpec first.
 - **One purpose per PR.** A reviewer must be able to hold the whole change
   in their head.
 - **Do not resurrect removed machinery.** The broker, root helper, package

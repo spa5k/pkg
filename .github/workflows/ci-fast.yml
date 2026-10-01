@@ -94,19 +94,53 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned Rust toolchain
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml, so rustup does not
+      # auto-install the file's components. The Linux `rust` job already
+      # lints; the macOS Clippy step below needs the component, so only
+      # that matrix leg installs it.
+      - name: Install pinned Rust toolchain (clippy on macOS)
+        run: |
+          components=""
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            components="--component clippy"
+          fi
+          # shellcheck disable=SC2086 -- intentional word splitting of an empty-or-flag list
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal $components
+
+      # The `rust` job lints on Linux only, so cfg(target_os = "macos")
+      # code (APFS cloning, launcher sync) is never linted there. Lint
+      # the same all-targets set on macOS so that code is checked too.
+      - name: Clippy (all targets, deny warnings)
+        if: matrix.os == 'macos-15'
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Build release client
         run: cargo build --locked --release -p pkg-cli
 
       # Installer checks run after the build so a broken install.sh is
-      # caught in CI, not on a user machine. sh -n is a pure syntax check
-      # (POSIX sh, no shellcheck dependency); the unittest suite runs the
-      # real script against fake downloads in temporary homes. Tests that
-      # need Linux-only isolation (unshare) skip themselves on macOS.
+      # caught in CI, not on a user machine. sh -n is a pure POSIX syntax
+      # check; ShellCheck adds the semantic pass CONTRIBUTING requires;
+      # the unittest suite runs the real script against fake downloads in
+      # temporary homes. Tests that need Linux-only isolation (unshare)
+      # skip themselves on macOS.
       - name: Installer script syntax check
         run: sh -n install.sh
+
+      # Runner images for both matrix legs ship ShellCheck; the install
+      # branch keeps the check deterministic if an image ever drops it.
+      - name: Installer shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            echo "ShellCheck missing from the runner image; installing it"
+            if [ "${{ runner.os }}" = "macOS" ]; then
+              brew install shellcheck
+            else
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq shellcheck
+            fi
+          fi
+          shellcheck --version | sed -n '2p'
+          shellcheck install.sh
 
       - name: Installer unit tests
         run: python3 -m unittest discover -s docs/tests -v

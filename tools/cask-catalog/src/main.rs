@@ -1,5 +1,18 @@
 //! Catalog CLI: fetch pinned snapshots, generate catalogs, and import public taps as Nix flakes.
 
+// Tests may abort on broken fixtures or failed setup; production code
+// must not panic (clippy::unwrap_used/expect_used/panic are denied by
+// the workspace for every non-test target).
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        reason = "tests abort on broken fixtures; production never panics"
+    )
+)]
+
 use cask_catalog::{
     CACHE_DIR, Pin, emit, load_pin, read_verified_input, valid_repo, valid_revision, valid_sha256,
     verify_sha256,

@@ -16,9 +16,16 @@ rust-version = "1.96"
 license = "Apache-2.0"
 publish = false
 
-# Strict lint policy (ADR 0005): the deny set here is clean in every target on
-# every supported platform. Suppressions are expensive: every allow/expect
-# must carry a `reason` (clippy::allow_attributes_without_reason).
+# Lint policy: every crate in the workspace inherits these levels
+# through its `[lints]` table, and CI holds them at
+# `cargo clippy --locked --all-targets -- -D warnings` on Linux plus the
+# macOS smoke Clippy step. The deny set is clean in every target on
+# every supported platform. `unwrap_used`, `expect_used`, and `panic`
+# are individually selected restriction lints (not group enables):
+# production code must not panic; each crate root opts test builds out
+# once with a reasoned `cfg_attr(test, allow(...))`. Suppressions stay
+# expensive: every `allow` must carry a `reason`
+# (clippy::allow_attributes_without_reason).
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "deny"
@@ -44,3 +51,6 @@ redundant_closure_for_method_calls = "deny"
 redundant_pub_crate = "deny"
 suspicious_operation_groupings = "deny"
 too_long_first_doc_paragraph = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

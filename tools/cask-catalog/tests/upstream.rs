@@ -7,6 +7,16 @@
 //! must carry no plan. No classifier logic is copied here: the test only
 //! reads data and asserts outcomes.
 
+// This integration-test crate is built without `cfg(test)`, so the
+// crate-root test opt-out does not apply; the same reasoned exception
+// is declared here once.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests abort on broken fixtures; production never panics"
+)]
+
 use cask_catalog::MACOS_BASELINE;
 use cask_catalog::TARGETS;
 use cask_catalog::classify::{self, TargetDecision};

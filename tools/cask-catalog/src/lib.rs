@@ -5,6 +5,19 @@
 //! `fetch` and `import-tap` commands do bounded network access (see
 //! main.rs and `tap`).
 
+// Tests may abort on broken fixtures or failed setup; production code
+// must not panic (clippy::unwrap_used/expect_used/panic are denied by
+// the workspace for every non-test target).
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        reason = "tests abort on broken fixtures; production never panics"
+    )
+)]
+
 pub mod classify;
 pub mod effective;
 pub mod emit;
