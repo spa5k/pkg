@@ -41,16 +41,65 @@ use crate::net::{GITHUB_HOSTS, SafeClient};
 use crate::{valid_repo, valid_revision};
 use archive::{MAX_ARCHIVE_BYTES, extract_tar_gz, tree_inventory};
 use capture::{Capture, MAX_EXPORT_BYTES, convert_capture, validate_export};
-use config::nix_config_gate;
+use config::{GateError, nix_config_gate};
 use runtime::{run_nix_export, setup_canary};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use url::Url;
 
 /// Envelope schema of the raw-export runtime output we consume.
 pub const EXPORT_SCHEMA: &str = "pkg-tap-raw-export/1";
+
+/// The typed failure of one raw tap import.
+///
+/// The category is produced by construction at the one refusal source
+/// (the local effective-config gate), never by matching message text;
+/// callers format the message at their boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportError {
+    /// The effective local nix config refuses the raw tap import (weak
+    /// sandbox settings, added host paths, impure dependencies). The
+    /// client may offer its one-time consent-gated administrator setup
+    /// and retry once; the message carries the concrete setup advice.
+    SandboxRefused(String),
+    /// Any other failure: canonicalization, identity, network, archive,
+    /// build, or conversion. Setup cannot fix these.
+    Failed(String),
+}
+
+impl ImportError {
+    /// The full detail message, whatever the category.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::SandboxRefused(detail) | Self::Failed(detail) => detail,
+        }
+    }
+
+    /// Whether this failure is the typed sandbox refusal.
+    #[must_use]
+    pub fn is_sandbox_refusal(&self) -> bool {
+        matches!(self, Self::SandboxRefused(_))
+    }
+}
+
+impl fmt::Display for ImportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
+impl std::error::Error for ImportError {}
+
+impl From<String> for ImportError {
+    /// Every ordinary string failure is an ordinary import failure.
+    fn from(detail: String) -> Self {
+        Self::Failed(detail)
+    }
+}
 
 /// One import job: the tap, the optional exact revision, the native
 /// target, the Nix executable to drive, and where the self-contained
@@ -296,7 +345,7 @@ fn prepare_output_dir(output_dir: &Path) -> Result<(), String> {
 /// canary/listener positive controls, sandboxed Nix raw-export build,
 /// envelope validation, and flake tree generation into
 /// `request.output_dir/flake/`.
-pub fn import(request: &ImportRequest) -> Result<ImportResult, String> {
+pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
     let source = canonicalize_source(&request.source)?;
     let origin = source_origin(&source)?;
     let native = native_target()?;
@@ -305,14 +354,15 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, String> {
             "requested system {:?} does not match this build host's native target \
              {native:?}; raw exports are native-host-only",
             request.system
-        ));
+        )
+        .into());
     }
     let revision = match &request.revision {
         Some(revision) => {
             if !valid_revision(revision) {
-                return Err(format!(
-                    "revision {revision:?} is not an exact 40-hex commit id"
-                ));
+                return Err(
+                    format!("revision {revision:?} is not an exact 40-hex commit id").into(),
+                );
             }
             revision.to_ascii_lowercase()
         }
@@ -320,21 +370,27 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, String> {
     };
     prepare_output_dir(&request.output_dir)?;
     let staging = tempfile::TempDir::new_in(&request.output_dir).map_err(|e| {
-        format!(
+        ImportError::Failed(format!(
             "cannot create staging in {}: {e}",
             request.output_dir.display()
-        )
+        ))
     })?;
 
     // 2. Security gate: the EFFECTIVE local nix config must already be
     // fail-closed before the raw-export build starts. This is not a
     // substitute for the in-build probe; the fresh probe remains
-    // mandatory and authoritative.
-    nix_config_gate(&request.nix, staging.path())?;
+    // mandatory and authoritative. Only an actually OBSERVED refusal
+    // becomes the typed `SandboxRefused`; a settings query that could
+    // not run at all stays an ordinary failure the client must not
+    // answer with setup.
+    nix_config_gate(&request.nix, staging.path()).map_err(|error| match error {
+        GateError::Refused(detail) => ImportError::SandboxRefused(detail),
+        GateError::Unverifiable(detail) => ImportError::Failed(detail),
+    })?;
 
     // 3. GitHub API identity verification and revision resolution.
     let Some((owner, tap)) = source.split_once('/') else {
-        return Err(format!("canonical source {source:?} is not owner/tap"));
+        return Err(format!("canonical source {source:?} is not owner/tap").into());
     };
     let repo = format!("homebrew-{tap}");
     let client = SafeClient::new(&GITHUB_HOSTS)?;
@@ -360,7 +416,8 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, String> {
         return Err(format!(
             "codeload archive is {} bytes; limit is {MAX_ARCHIVE_BYTES}",
             archive_bytes.len()
-        ));
+        )
+        .into());
     }
     let archive_sha256 = sha256_hex(&archive_bytes);
     let tap_tree = staging.path().join("tap-tree");
@@ -526,7 +583,7 @@ mod tests {
         };
         let error = import(&request).unwrap_err();
         assert!(
-            error.contains("native") || error.contains("40-hex"),
+            error.message().contains("native") || error.message().contains("40-hex"),
             "unexpected error: {error}"
         );
     }
@@ -543,6 +600,32 @@ mod tests {
             output_dir: dir.path().to_path_buf(),
         };
         let error = import(&request).unwrap_err();
-        assert!(error.contains("not empty"), "unexpected error: {error}");
+        assert!(
+            error.message().contains("not empty"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            !error.is_sandbox_refusal(),
+            "an unusable output dir is no refusal"
+        );
+    }
+
+    #[test]
+    fn import_errors_are_typed_not_textual() {
+        // The typed refusal is the only category the client may answer
+        // with setup — by construction, never by message text.
+        let refused = ImportError::SandboxRefused(String::from("refuses the raw tap import"));
+        assert!(refused.is_sandbox_refusal());
+        assert_eq!(refused.message(), "refuses the raw tap import");
+        // An ordinary failure whose text happens to contain the refusal
+        // phrase stays an ordinary failure.
+        let lookalike = ImportError::Failed(String::from(
+            "importing x failed: effective local nix config refuses the raw \
+             tap import: sandbox is false",
+        ));
+        assert!(!lookalike.is_sandbox_refusal());
+        // Ordinary string failures convert to the ordinary category.
+        let converted: ImportError = String::from("network down").into();
+        assert_eq!(converted, ImportError::Failed(String::from("network down")));
     }
 }

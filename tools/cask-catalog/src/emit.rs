@@ -10,7 +10,7 @@
 //! fields. The official driver reads the pinned JSON snapshot; the raw
 //! tap driver lives in `tap.rs` and feeds the same entry shape.
 
-use crate::classify::TargetStatus;
+use crate::classify::{TargetDecision, TargetOutcome};
 use crate::effective::{self, RawRecord};
 use crate::{
     CATALOG_SCHEMA, GENERATOR_NAME, GENERATOR_VERSION, MACOS_BASELINE, OFFICIAL_SOURCE, Pin,
@@ -79,7 +79,7 @@ pub struct Entry {
     /// Source file provenance when known, else null.
     pub origin: Option<Origin>,
     /// Per-target decisions keyed by target system.
-    pub targets: BTreeMap<String, TargetStatus>,
+    pub targets: BTreeMap<String, TargetDecision>,
 }
 
 /// The single committed document plus its printable coverage summary.
@@ -234,7 +234,7 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
     }
 
     let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
-    let mut counts: BTreeMap<&str, BTreeMap<String, usize>> = TARGETS
+    let mut counts: BTreeMap<&str, BTreeMap<&'static str, usize>> = TARGETS
         .iter()
         .map(|system| (*system, BTreeMap::new()))
         .collect();
@@ -242,21 +242,25 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
         TARGETS.iter().map(|system| (*system, 0)).collect();
 
     for (token, record) in &by_token {
-        let mut targets: BTreeMap<String, TargetStatus> = BTreeMap::new();
+        let mut targets: BTreeMap<String, TargetDecision> = BTreeMap::new();
         for system in TARGETS {
-            let status = crate::classify::classify_target(record, system, MACOS_BASELINE);
-            if status.status == "eligible" {
-                if let Some(count) = eligible_counts.get_mut(system) {
-                    *count += 1;
+            let decision = crate::classify::classify_target(record, system, MACOS_BASELINE);
+            // The eligible/reason counts read the typed outcome: an
+            // excluded decision always carries its reason code, so the
+            // coverage can no longer invent an "unknown" bucket.
+            match &decision.outcome {
+                TargetOutcome::Eligible { .. } => {
+                    if let Some(count) = eligible_counts.get_mut(system) {
+                        *count += 1;
+                    }
                 }
-            } else if let Some(reasons) = counts.get_mut(system) {
-                let reason = status
-                    .reason
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string());
-                *reasons.entry(reason).or_insert(0) += 1;
+                TargetOutcome::Excluded { reason, .. } => {
+                    if let Some(reasons) = counts.get_mut(system) {
+                        *reasons.entry(reason.as_str()).or_insert(0) += 1;
+                    }
+                }
             }
-            targets.insert((*system).to_string(), status);
+            targets.insert((*system).to_string(), decision);
         }
         entries.insert(
             qualified_id(OFFICIAL_SOURCE, token),

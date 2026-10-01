@@ -1,5 +1,15 @@
 //! Direct checks for the reduced client grammar and path rules.
 
+// This integration-test crate is built without `cfg(test)`, so the
+// crate-root test opt-out does not apply; the same reasoned exception
+// is declared here once.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests may use unwrap, expect, and panic to fail on broken fixtures"
+)]
+
 use std::process::Command;
 
 fn pkg(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {

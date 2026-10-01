@@ -26,7 +26,7 @@ pub use registry::{
     GlobalLock, REGISTRY_SCHEMA, Registry, RegistryEntry, commit_prepared, registry_path,
 };
 pub use saved::{SavedCatalog, SavedCatalogs, load_all, validate_binding};
-pub use store::{Provenance, Published, SourceStore, current_ref};
+pub use store::{Provenance, Publication, Published, SourceStore, StagedGeneration, current_ref};
 
 /// Validate one staged import by native evaluation of the staging flake.
 ///

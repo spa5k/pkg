@@ -8,52 +8,225 @@
 
 use crate::effective::{self, RawRecord};
 use crate::plan::{self, Plan};
-use serde::Serialize;
+use serde::ser::SerializeStruct as _;
+use serde::{Serialize, Serializer};
 use serde_json::Value;
 use std::net::IpAddr;
 
+/// Why one target is excluded.
+///
+/// One closed vocabulary shared by the official classifier and the raw
+/// tap capture; [`ExclusionReason::as_str`] is the emitted `reason`
+/// code. A typed reason keeps the code and the counting in emit from
+/// ever disagreeing about a spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExclusionReason {
+    /// `disabled` flag set on the effective record.
+    Disabled,
+    /// `deprecated` flag set on the effective record.
+    Deprecated,
+    /// Target system is outside the record's platform scope.
+    UnsupportedPlatform,
+    /// `depends_on arch` excludes the target architecture.
+    ArchUnsupported,
+    /// Active `url_specs` the generator cannot honor.
+    UnsupportedDownloadSpec,
+    /// Nonempty `depends_on formula` list.
+    FormulaDependency,
+    /// Nonempty `depends_on cask` list.
+    CaskDependencyIntegration,
+    /// No fetchable `url` on the effective record.
+    MissingUrl,
+    /// `url` fails the safe-fetch destination policy.
+    UnsupportedUrl,
+    /// Missing or unusable `sha256`.
+    MissingChecksum,
+    /// Declared macOS range excludes the pinned baseline.
+    MinimumOs,
+    /// A shape the generator cannot evaluate safely.
+    MalformedRecord,
+    /// Artifact kinds the plan builder does not install.
+    UnsupportedArtifact,
+    /// Container shape the plan builder does not unpack.
+    UnsupportedContainer,
+    /// `installer script` stanza.
+    InstallerScript,
+    /// No installable artifact at all.
+    NoInstallableArtifact,
+    /// The upstream Ruby loader failed on this cask (raw taps).
+    RubyLoadError,
+    /// An eligible raw-tap entry lacked provenance (raw taps).
+    OriginMissing,
+    /// Raw-tap provenance failed validation against the source tree.
+    OriginMismatch,
+}
+
+impl ExclusionReason {
+    /// The emitted `reason` code (stable `pkg-cask-catalog/4` string).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Deprecated => "deprecated",
+            Self::UnsupportedPlatform => "unsupported-platform",
+            Self::ArchUnsupported => "arch-unsupported",
+            Self::UnsupportedDownloadSpec => "unsupported-download-spec",
+            Self::FormulaDependency => "formula-dependency",
+            Self::CaskDependencyIntegration => "cask-dependency-integration",
+            Self::MissingUrl => "missing-url",
+            Self::UnsupportedUrl => "unsupported-url",
+            Self::MissingChecksum => "missing-checksum",
+            Self::MinimumOs => "minimum-os",
+            Self::MalformedRecord => "malformed-record",
+            Self::UnsupportedArtifact => "unsupported-artifact",
+            Self::UnsupportedContainer => "unsupported-container",
+            Self::InstallerScript => "installer-script",
+            Self::NoInstallableArtifact => "no-installable-artifact",
+            Self::RubyLoadError => "ruby-load-error",
+            Self::OriginMissing => "origin-missing",
+            Self::OriginMismatch => "origin-mismatch",
+        }
+    }
+}
+
+/// The one outcome for a target: an eligible typed plan, or an
+/// exclusion owning its reason and optional detail.
+///
+/// This replaces the old flat `TargetStatus` whose `status` string plus
+/// optional `kind`/`reason`/`detail`/`plan` fields could disagree. Now
+/// eligibility IS the variant, an exclusion always carries a typed
+/// reason, and the summary kind is derived from the plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TargetOutcome {
+    /// Eligible for this target; owns the typed plan.
+    Eligible {
+        /// The install plan for this target.
+        plan: Plan,
+    },
+    /// Excluded for this target; owns the reason code and detail.
+    Excluded {
+        /// Why the target is excluded.
+        reason: ExclusionReason,
+        /// Optional human-readable detail line.
+        detail: Option<String>,
+    },
+}
+
 /// One target's published decision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TargetStatus {
-    /// `eligible` or `excluded`.
-    pub status: &'static str,
-    /// Summary kind (app, app+cli, binary, pkg, appimage) or null.
-    pub kind: Option<String>,
-    /// Exclusion reason code, or null when eligible.
-    pub reason: Option<String>,
-    /// Human-readable exclusion detail, or null.
-    pub detail: Option<String>,
+///
+/// The effective version and homepage are shared display metadata kept
+/// outside the outcome (excluded tokens keep their known version and
+/// homepage); the outcome owns everything eligibility-specific.
+///
+/// Renamed from `TargetStatus` when the invalid string/optional
+/// combinations were made unrepresentable; every in-repo consumer is
+/// in this workspace (emit, tap capture, tests). External users of the
+/// maintainer tool's Rust API, if any exist, are unknown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetDecision {
     /// Effective merged version for this target, or null.
     pub version: Option<String>,
     /// Effective merged homepage for this target, or null.
     pub homepage: Option<String>,
-    /// The typed plan, present only when eligible.
-    pub plan: Option<Plan>,
+    /// The decision outcome for this target.
+    pub outcome: TargetOutcome,
 }
 
-/// Exclude with a reason and no detail.
-fn excluded(reason: &str) -> TargetStatus {
-    TargetStatus {
-        status: "excluded",
-        kind: None,
-        reason: Some(reason.to_string()),
+impl TargetDecision {
+    /// An excluded decision with no display metadata and a detail line.
+    pub(crate) fn bare_with_detail(reason: ExclusionReason, detail: String) -> Self {
+        Self {
+            version: None,
+            homepage: None,
+            outcome: TargetOutcome::Excluded {
+                reason,
+                detail: Some(detail),
+            },
+        }
+    }
+
+    /// Whether this decision carries an eligible plan.
+    #[must_use]
+    pub fn is_eligible(&self) -> bool {
+        matches!(self.outcome, TargetOutcome::Eligible { .. })
+    }
+
+    /// The typed plan, present only when eligible.
+    #[must_use]
+    pub fn plan(&self) -> Option<&Plan> {
+        match &self.outcome {
+            TargetOutcome::Eligible { plan } => Some(plan),
+            TargetOutcome::Excluded { .. } => None,
+        }
+    }
+
+    /// The emitted exclusion reason code, or `None` when eligible.
+    #[must_use]
+    pub fn reason_code(&self) -> Option<&'static str> {
+        match &self.outcome {
+            TargetOutcome::Eligible { .. } => None,
+            TargetOutcome::Excluded { reason, .. } => Some(reason.as_str()),
+        }
+    }
+
+    /// The exclusion detail line, or `None` when eligible or absent.
+    #[must_use]
+    pub fn detail(&self) -> Option<&str> {
+        match &self.outcome {
+            TargetOutcome::Eligible { .. } => None,
+            TargetOutcome::Excluded { detail, .. } => detail.as_deref(),
+        }
+    }
+}
+
+impl Serialize for TargetDecision {
+    /// Manual implementation: the per-target object keeps the exact
+    /// field names, order, and null behavior of `pkg-cask-catalog/4`
+    /// (`status`, `kind`, `reason`, `detail`, `version`, `homepage`,
+    /// `plan`). The summary `kind` is derived from the plan here, never
+    /// stored, so it can never disagree with the plan it summarizes.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut object = serializer.serialize_struct("TargetDecision", 7)?;
+        match &self.outcome {
+            TargetOutcome::Eligible { plan } => {
+                object.serialize_field("status", "eligible")?;
+                object.serialize_field("kind", &Some(summary_kind(plan)))?;
+                object.serialize_field("reason", &None::<&str>)?;
+                object.serialize_field("detail", &None::<String>)?;
+            }
+            TargetOutcome::Excluded { reason, detail } => {
+                object.serialize_field("status", "excluded")?;
+                object.serialize_field("kind", &None::<&str>)?;
+                object.serialize_field("reason", &Some(reason.as_str()))?;
+                object.serialize_field("detail", detail)?;
+            }
+        }
+        object.serialize_field("version", &self.version)?;
+        object.serialize_field("homepage", &self.homepage)?;
+        object.serialize_field("plan", &self.plan())?;
+        object.end()
+    }
+}
+
+/// Exclude with a reason and no detail (outcome level).
+fn excluded(reason: ExclusionReason) -> TargetOutcome {
+    TargetOutcome::Excluded {
+        reason,
         detail: None,
-        version: None,
-        homepage: None,
-        plan: None,
     }
 }
 
 /// Exclude as a malformed record with detail text.
-fn excluded_malformed(detail: &str) -> TargetStatus {
-    excluded_with_detail("malformed-record", detail)
+fn excluded_malformed(detail: String) -> TargetOutcome {
+    excluded_with_detail(ExclusionReason::MalformedRecord, detail)
 }
 
 /// Exclude with a reason and a detail line.
-fn excluded_with_detail(reason: &str, detail: &str) -> TargetStatus {
-    let mut status = excluded(reason);
-    status.detail = Some(detail.to_string());
-    status
+fn excluded_with_detail(reason: ExclusionReason, detail: String) -> TargetOutcome {
+    TargetOutcome::Excluded {
+        reason,
+        detail: Some(detail),
+    }
 }
 
 /// Whether `supported_platforms` admits the target system.
@@ -119,7 +292,7 @@ fn macos_constraints(
     eff: &Value,
     system: &str,
     baseline: &str,
-) -> Result<MacosBounds, (&'static str, String)> {
+) -> Result<MacosBounds, (ExclusionReason, String)> {
     let Some(depends) = eff.get("depends_on").filter(|v| !v.is_null()) else {
         return Ok((None, None));
     };
@@ -131,26 +304,26 @@ fn macos_constraints(
         };
         let Some(field) = field.as_object() else {
             return Err((
-                "malformed-record",
+                ExclusionReason::MalformedRecord,
                 format!("{key} constraint is not an object"),
             ));
         };
         for (op, values) in field {
             let Some([value]) = values.as_array().map(std::vec::Vec::as_slice) else {
                 return Err((
-                    "malformed-record",
+                    ExclusionReason::MalformedRecord,
                     format!("{key} {op:?} is not a one-element array"),
                 ));
             };
             let Some(value) = value.as_str() else {
                 return Err((
-                    "malformed-record",
+                    ExclusionReason::MalformedRecord,
                     format!("{key} {op:?} value is not a string"),
                 ));
             };
             if version_parts(value).is_none() {
                 return Err((
-                    "malformed-record",
+                    ExclusionReason::MalformedRecord,
                     format!("non-numeric {key} version {value:?}"),
                 ));
             }
@@ -163,7 +336,7 @@ fn macos_constraints(
                 }
                 _ => {
                     return Err((
-                        "malformed-record",
+                        ExclusionReason::MalformedRecord,
                         format!("unsupported {key} operator {op:?}"),
                     ));
                 }
@@ -176,7 +349,7 @@ fn macos_constraints(
         && version_lt(max, min) == Some(true)
     {
         return Err((
-            "malformed-record",
+            ExclusionReason::MalformedRecord,
             format!("macOS range is inverted: >= {min} and <= {max}"),
         ));
     }
@@ -189,7 +362,7 @@ fn macos_constraints(
             && version_lt(baseline, min) == Some(true)
         {
             return Err((
-                "minimum-os",
+                ExclusionReason::MinimumOs,
                 format!("requires macOS >= {min}; baseline is {baseline}"),
             ));
         }
@@ -197,7 +370,7 @@ fn macos_constraints(
             && version_lt(max, baseline) == Some(true)
         {
             return Err((
-                "minimum-os",
+                ExclusionReason::MinimumOs,
                 format!("requires macOS <= {max}; baseline is {baseline}"),
             ));
         }
@@ -241,23 +414,19 @@ fn arch_detail(eff: &Value, system: &str) -> Option<String> {
 }
 
 /// The summary kind string for an eligible plan.
-fn summary_kind(plan: &Plan) -> String {
+fn summary_kind(plan: &Plan) -> &'static str {
     let kinds: Vec<&str> = plan.artifacts.iter().map(|a| a.kind).collect();
     let has = |k: &str| kinds.contains(&k);
     if has("app") {
-        return if has("binary") {
-            "app+cli".into()
-        } else {
-            "app".into()
-        };
+        return if has("binary") { "app+cli" } else { "app" };
     }
     if has("pkg") {
-        return "pkg".into();
+        return "pkg";
     }
     if has("appimage") {
-        return "appimage".into();
+        return "appimage";
     }
-    "binary".into()
+    "binary"
 }
 
 /// How the classifier learns whether the target platform is supported.
@@ -382,7 +551,7 @@ pub fn destination_allowed(url: &str) -> Result<(), String> {
 /// reads the effective record. Display fields are attached last so
 /// excluded tokens keep their known version and homepage.
 #[must_use]
-pub fn classify_target(record: &RawRecord, system: &str, baseline: &str) -> TargetStatus {
+pub fn classify_target(record: &RawRecord, system: &str, baseline: &str) -> TargetDecision {
     classify_gated(record, system, baseline, PlatformGate::Tags)
 }
 
@@ -397,7 +566,7 @@ pub fn classify_tap_target(
     system: &str,
     baseline: &str,
     upstream_supported: bool,
-) -> TargetStatus {
+) -> TargetDecision {
     classify_gated(
         record,
         system,
@@ -411,14 +580,21 @@ fn classify_gated(
     system: &str,
     baseline: &str,
     gate: PlatformGate,
-) -> TargetStatus {
+) -> TargetDecision {
     let Ok(eff) = effective::effective_for(record, system) else {
-        return excluded_malformed("variation is not an object");
+        return TargetDecision::bare_with_detail(
+            ExclusionReason::MalformedRecord,
+            "variation is not an object".to_string(),
+        );
     };
-    let mut status = classify_effective(&eff, system, baseline, gate);
-    status.version = effective::str_field(&eff, "version");
-    status.homepage = effective::str_field(&eff, "homepage");
-    status
+    let outcome = classify_effective(&eff, system, baseline, gate);
+    // Display metadata is attached last, from the effective record, so
+    // an excluded token keeps its known version and homepage.
+    TargetDecision {
+        version: effective::str_field(&eff, "version"),
+        homepage: effective::str_field(&eff, "homepage"),
+        outcome,
+    }
 }
 
 fn classify_effective(
@@ -426,7 +602,7 @@ fn classify_effective(
     system: &str,
     baseline: &str,
     gate: PlatformGate,
-) -> TargetStatus {
+) -> TargetOutcome {
     // Effective flags: a variation can set or clear them. Any non-null
     // value that is not exactly `false` (a string reason, a number) still
     // means the flag is set; such records are never silently eligible.
@@ -435,26 +611,28 @@ fn classify_effective(
             .is_some_and(|v| v != &Value::Null && v != &Value::Bool(false))
     };
     if flagged("disabled") {
-        return excluded("disabled");
+        return excluded(ExclusionReason::Disabled);
     }
     if flagged("deprecated") {
-        return excluded("deprecated");
+        return excluded(ExclusionReason::Deprecated);
     }
     match gate {
         PlatformGate::Tags => {
             let Some(tags) = eff.get("supported_platforms").and_then(Value::as_array) else {
-                return excluded_malformed("no supported_platforms");
+                return excluded_malformed("no supported_platforms".to_string());
             };
             if tags.iter().any(|tag| !tag.is_string()) {
-                return excluded_malformed("supported_platforms has a non-string entry");
+                return excluded_malformed(
+                    "supported_platforms has a non-string entry".to_string(),
+                );
             }
             if !platform_supported(tags, system) {
-                return excluded("unsupported-platform");
+                return excluded(ExclusionReason::UnsupportedPlatform);
             }
         }
         PlatformGate::Bool(upstream_supported) => {
             if !upstream_supported {
-                return excluded("unsupported-platform");
+                return excluded(ExclusionReason::UnsupportedPlatform);
             }
         }
     }
@@ -465,15 +643,15 @@ fn classify_effective(
             .get("depends_on")
             .is_some_and(|d| d.get("linux").is_some_and(|v| !v.is_null()))
     {
-        return excluded("unsupported-platform");
+        return excluded(ExclusionReason::UnsupportedPlatform);
     }
     if let Some(detail) = arch_detail(eff, system) {
-        return excluded_with_detail("arch-unsupported", &detail);
+        return excluded_with_detail(ExclusionReason::ArchUnsupported, detail);
     }
     // Download specs: inert `verified` only; malformed shapes exclude.
     if let Some(specs) = eff.get("url_specs").filter(|v| !v.is_null()) {
         let Some(map) = specs.as_object() else {
-            return excluded_malformed("url_specs is not an object");
+            return excluded_malformed("url_specs is not an object".to_string());
         };
         let active: Vec<&str> = map
             .keys()
@@ -482,8 +660,8 @@ fn classify_effective(
             .collect();
         if !active.is_empty() {
             return excluded_with_detail(
-                "unsupported-download-spec",
-                &format!("url_specs: {}", active.join(", ")),
+                ExclusionReason::UnsupportedDownloadSpec,
+                format!("url_specs: {}", active.join(", ")),
             );
         }
     }
@@ -494,27 +672,27 @@ fn classify_effective(
     // non-string formula/cask lists are malformed shapes, not "no deps".
     if let Some(depends) = eff.get("depends_on").filter(|v| !v.is_null()) {
         let Some(depends) = depends.as_object() else {
-            return excluded_malformed("depends_on is not an object");
+            return excluded_malformed("depends_on is not an object".to_string());
         };
         const KNOWN_KEYS: [&str; 6] =
             ["formula", "cask", "macos", "maximum_macos", "arch", "linux"];
         for key in depends.keys() {
             if !KNOWN_KEYS.contains(&key.as_str()) {
-                return excluded_malformed(&format!("unhandled depends_on key {key:?}"));
+                return excluded_malformed(format!("unhandled depends_on key {key:?}"));
             }
         }
         for (key, reason) in [
-            ("formula", "formula-dependency"),
-            ("cask", "cask-dependency-integration"),
+            ("formula", ExclusionReason::FormulaDependency),
+            ("cask", ExclusionReason::CaskDependencyIntegration),
         ] {
             let Some(list) = depends.get(key).filter(|v| !v.is_null()) else {
                 continue;
             };
             let Some(items) = list.as_array() else {
-                return excluded_malformed(&format!("depends_on.{key} is not an array"));
+                return excluded_malformed(format!("depends_on.{key} is not an array"));
             };
             if items.iter().any(|item| !item.is_string()) {
-                return excluded_malformed(&format!("depends_on.{key} has a non-string entry"));
+                return excluded_malformed(format!("depends_on.{key} has a non-string entry"));
             }
             if !items.is_empty() {
                 return excluded(reason);
@@ -523,13 +701,13 @@ fn classify_effective(
     }
     let url = eff.get("url").and_then(Value::as_str).unwrap_or("");
     if url.is_empty() {
-        return excluded("missing-url");
+        return excluded(ExclusionReason::MissingUrl);
     }
     // Destination policy mirrors safe-fetch exactly (https/443 to a
     // public destination, no credentials or ambiguous characters), so
     // no plan can advertise a URL the fetcher would refuse.
     if let Err(detail) = destination_allowed(url) {
-        return excluded_with_detail("unsupported-url", &detail);
+        return excluded_with_detail(ExclusionReason::UnsupportedUrl, detail);
     }
     let sha = eff.get("sha256").and_then(Value::as_str).unwrap_or("");
     if sha.is_empty()
@@ -537,44 +715,33 @@ fn classify_effective(
         || sha.len() != 64
         || !sha.chars().all(|c| c.is_ascii_hexdigit())
     {
-        return excluded("missing-checksum");
+        return excluded(ExclusionReason::MissingChecksum);
     }
     let (min_macos, max_macos) = match macos_constraints(eff, system, baseline) {
         Ok(bounds) => bounds,
-        Err((reason, detail)) => return excluded_with_detail(reason, &detail),
+        Err((reason, detail)) => return excluded_with_detail(reason, detail),
     };
     match plan::build_plan(eff, system) {
         Ok(mut plan) => {
             plan.min_macos = min_macos;
             plan.max_macos = max_macos;
-            let kind = summary_kind(&plan);
-            TargetStatus {
-                status: "eligible",
-                kind: Some(kind),
-                reason: None,
-                detail: None,
-                version: None,
-                homepage: None,
-                plan: Some(plan),
-            }
+            TargetOutcome::Eligible { plan }
         }
-        Err(plan::PlanError::UnsupportedKinds(kinds)) => {
-            let mut status = excluded("unsupported-artifact");
-            status.detail = Some(format!("artifact kinds: {}", kinds.join(", ")));
-            status
-        }
+        Err(plan::PlanError::UnsupportedKinds(kinds)) => excluded_with_detail(
+            ExclusionReason::UnsupportedArtifact,
+            format!("artifact kinds: {}", kinds.join(", ")),
+        ),
         Err(plan::PlanError::UnsupportedContainer(detail)) => {
-            let mut status = excluded("unsupported-container");
-            status.detail = Some(detail);
-            status
+            excluded_with_detail(ExclusionReason::UnsupportedContainer, detail)
         }
-        Err(plan::PlanError::InstallerScript(stanza)) => {
-            let mut status = excluded("installer-script");
-            status.detail = Some(format!("stanza: {stanza}"));
-            status
+        Err(plan::PlanError::InstallerScript(stanza)) => excluded_with_detail(
+            ExclusionReason::InstallerScript,
+            format!("stanza: {stanza}"),
+        ),
+        Err(plan::PlanError::NoInstallableArtifact) => {
+            excluded(ExclusionReason::NoInstallableArtifact)
         }
-        Err(plan::PlanError::NoInstallableArtifact) => excluded("no-installable-artifact"),
-        Err(plan::PlanError::Malformed(detail)) => excluded_malformed(&detail),
+        Err(plan::PlanError::Malformed(detail)) => excluded_malformed(detail),
     }
 }
 
@@ -605,22 +772,15 @@ mod tests {
     #[test]
     fn platform_scope_comes_only_from_supported_platforms() {
         let both = ["arm64_sequoia", "x86_64_linux"];
-        assert_eq!(
-            classify_target(&record(&both, &json!({})), "aarch64-darwin", BASE).status,
-            "eligible"
-        );
-        assert_eq!(
-            classify_target(&record(&both, &json!({})), "x86_64-linux", BASE).status,
-            "eligible"
-        );
+        assert!(classify_target(&record(&both, &json!({})), "aarch64-darwin", BASE).is_eligible());
+        assert!(classify_target(&record(&both, &json!({})), "x86_64-linux", BASE).is_eligible());
         let mac_only = ["arm64_sequoia"];
         let linux_status = classify_target(&record(&mac_only, &json!({})), "x86_64-linux", BASE);
-        assert_eq!(linux_status.reason.as_deref(), Some("unsupported-platform"));
+        assert_eq!(linux_status.reason_code(), Some("unsupported-platform"));
         let arm_linux_only = ["arm64_linux"];
         assert_eq!(
             classify_target(&record(&arm_linux_only, &json!({})), "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+                .reason_code(),
             Some("unsupported-platform")
         );
     }
@@ -632,9 +792,7 @@ mod tests {
             &json!({"depends_on": {"formula": ["neovim"]}}),
         );
         assert_eq!(
-            classify_target(&formula, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&formula, "aarch64-darwin", BASE).reason_code(),
             Some("formula-dependency")
         );
         let cask = record(
@@ -642,17 +800,12 @@ mod tests {
             &json!({"depends_on": {"cask": ["docker"]}}),
         );
         assert_eq!(
-            classify_target(&cask, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&cask, "aarch64-darwin", BASE).reason_code(),
             Some("cask-dependency-integration")
         );
         // Empty dependency lists do not exclude.
         let none = record(&["arm64_sequoia"], &json!({"depends_on": {"formula": []}}));
-        assert_eq!(
-            classify_target(&none, "aarch64-darwin", BASE).status,
-            "eligible"
-        );
+        assert!(classify_target(&none, "aarch64-darwin", BASE).is_eligible());
     }
 
     #[test]
@@ -661,25 +814,20 @@ mod tests {
             &["arm64_sequoia"],
             &json!({"depends_on": {"macos": {">=": ["15"]}}}),
         );
-        assert_eq!(
-            classify_target(&ok, "aarch64-darwin", BASE).status,
-            "eligible"
-        );
+        assert!(classify_target(&ok, "aarch64-darwin", BASE).is_eligible());
         let too_new = record(
             &["arm64_sequoia"],
             &json!({"depends_on": {"macos": {">=": ["26"]}}}),
         );
         let status = classify_target(&too_new, "aarch64-darwin", BASE);
-        assert_eq!(status.reason.as_deref(), Some("minimum-os"));
-        assert!(status.detail.as_deref().unwrap().contains("26"));
+        assert_eq!(status.reason_code(), Some("minimum-os"));
+        assert!(status.detail().unwrap().contains("26"));
         let capped = record(
             &["arm64_sequoia"],
             &json!({"depends_on": {"maximum_macos": {"<=": ["14.9"]}}}),
         );
         assert_eq!(
-            classify_target(&capped, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&capped, "aarch64-darwin", BASE).reason_code(),
             Some("minimum-os")
         );
         let unknown_op = record(
@@ -687,9 +835,7 @@ mod tests {
             &json!({"depends_on": {"macos": {"~>": ["12"]}}}),
         );
         assert_eq!(
-            classify_target(&unknown_op, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&unknown_op, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
         // An operator the generator cannot evaluate (here `==` with a
@@ -699,9 +845,7 @@ mod tests {
             &json!({"depends_on": {"macos": {"==": ["15", "26"]}}}),
         );
         assert_eq!(
-            classify_target(&exact_list, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&exact_list, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
     }
@@ -714,9 +858,7 @@ mod tests {
             &json!({"depends_on": {"macos": ">= 12"}}),
         );
         assert_eq!(
-            classify_target(&not_object, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&not_object, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
         let multi = record(
@@ -724,9 +866,7 @@ mod tests {
             &json!({"depends_on": {"macos": {">=": ["13", "14"]}}}),
         );
         assert_eq!(
-            classify_target(&multi, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&multi, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
         // The satisfied minimum is still carried in the plan.
@@ -735,7 +875,10 @@ mod tests {
             &json!({"depends_on": {"macos": {">=": ["12"]}}}),
         );
         let status = classify_target(&ok, "aarch64-darwin", BASE);
-        assert_eq!(status.plan.expect("plan").min_macos.as_deref(), Some("12"));
+        assert_eq!(
+            status.plan().expect("plan").min_macos.as_deref(),
+            Some("12")
+        );
     }
 
     #[test]
@@ -746,31 +889,24 @@ mod tests {
         let both = ["arm64_sequoia", "x86_64_linux"];
         let rec = record(&both, &json!({"depends_on": {"macos": {">=": ["26"]}}}));
         let darwin = classify_target(&rec, "aarch64-darwin", BASE);
-        assert_eq!(darwin.reason.as_deref(), Some("minimum-os"));
+        assert_eq!(darwin.reason_code(), Some("minimum-os"));
         let linux = classify_target(&rec, "x86_64-linux", BASE);
-        assert_eq!(linux.status, "eligible");
-        assert_eq!(linux.plan.expect("plan").min_macos, None);
+        assert!(linux.is_eligible());
+        assert_eq!(linux.plan().cloned().expect("plan").min_macos, None);
         // maximum_macos limits nothing on linux either.
         let capped = record(
             &both,
             &json!({"depends_on": {"maximum_macos": {"<=": ["14.9"]}}}),
         );
         assert_eq!(
-            classify_target(&capped, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&capped, "aarch64-darwin", BASE).reason_code(),
             Some("minimum-os")
         );
-        assert_eq!(
-            classify_target(&capped, "x86_64-linux", BASE).status,
-            "eligible"
-        );
+        assert!(classify_target(&capped, "x86_64-linux", BASE).is_eligible());
         // Malformed shapes still exclude on linux.
         let junk = record(&both, &json!({"depends_on": {"macos": ">= 12"}}));
         assert_eq!(
-            classify_target(&junk, "x86_64-linux", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&junk, "x86_64-linux", BASE).reason_code(),
             Some("malformed-record")
         );
     }
@@ -785,8 +921,8 @@ mod tests {
             &json!({"depends_on": {"maximum_macos": {"<=": ["15.9"]}}}),
         );
         let darwin = classify_target(&rec, "aarch64-darwin", BASE);
-        assert_eq!(darwin.status, "eligible");
-        let plan = darwin.plan.clone().expect("plan");
+        assert!(darwin.is_eligible());
+        let plan = darwin.plan().cloned().expect("plan");
         assert_eq!(plan.min_macos, None);
         assert_eq!(plan.max_macos.as_deref(), Some("15.9"));
         // The same record serializes the bound into the emitted index
@@ -795,8 +931,8 @@ mod tests {
         assert_eq!(emitted["plan"]["maxMacos"].as_str(), Some("15.9"));
         // Linux stays eligible with null bounds.
         let linux = classify_target(&rec, "x86_64-linux", BASE);
-        assert_eq!(linux.status, "eligible");
-        let linux_plan = linux.plan.expect("plan");
+        assert!(linux.is_eligible());
+        let linux_plan = linux.plan().cloned().expect("plan");
         assert_eq!(linux_plan.min_macos, None);
         assert_eq!(linux_plan.max_macos, None);
     }
@@ -817,15 +953,11 @@ mod tests {
         // Darwin refuses it as malformed too: the range is validated
         // whole before any baseline comparison runs.
         assert_eq!(
-            classify_target(&rec, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&rec, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
         assert_eq!(
-            classify_target(&rec, "x86_64-linux", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&rec, "x86_64-linux", BASE).reason_code(),
             Some("malformed-record")
         );
     }
@@ -838,15 +970,11 @@ mod tests {
             &json!({"depends_on": {"macos": {">=": ["99999999999999999999"]}}}),
         );
         assert_eq!(
-            classify_target(&rec, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&rec, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
         assert_eq!(
-            classify_target(&rec, "x86_64-linux", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&rec, "x86_64-linux", BASE).reason_code(),
             Some("malformed-record")
         );
     }
@@ -859,25 +987,19 @@ mod tests {
             &json!({"depends_on": {"formula": "neovim"}}),
         );
         assert_eq!(
-            classify_target(&string_dep, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&string_dep, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
         // An unknown requirement key is never silently ignored.
         let unknown = record(&["arm64_sequoia"], &json!({"depends_on": {"x11": true}}));
         assert_eq!(
-            classify_target(&unknown, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&unknown, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
         // A non-string dependency entry is malformed too.
         let junk = record(&["arm64_sequoia"], &json!({"depends_on": {"cask": [42]}}));
         assert_eq!(
-            classify_target(&junk, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&junk, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
     }
@@ -889,16 +1011,12 @@ mod tests {
             &json!({"disabled": "discontinued upstream"}),
         );
         assert_eq!(
-            classify_target(&string_disabled, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&string_disabled, "aarch64-darwin", BASE).reason_code(),
             Some("disabled")
         );
         let string_deprecated = record(&["arm64_sequoia"], &json!({"deprecated": "yes"}));
         assert_eq!(
-            classify_target(&string_deprecated, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&string_deprecated, "aarch64-darwin", BASE).reason_code(),
             Some("deprecated")
         );
         let junk_tag = record(
@@ -906,9 +1024,7 @@ mod tests {
             &json!({"supported_platforms": ["arm64_sequoia", 42]}),
         );
         assert_eq!(
-            classify_target(&junk_tag, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&junk_tag, "aarch64-darwin", BASE).reason_code(),
             Some("malformed-record")
         );
     }
@@ -917,16 +1033,12 @@ mod tests {
     fn missing_checksum_or_url_excludes() {
         let no_sha = record(&["arm64_sequoia"], &json!({"sha256": "no_check"}));
         assert_eq!(
-            classify_target(&no_sha, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&no_sha, "aarch64-darwin", BASE).reason_code(),
             Some("missing-checksum")
         );
         let no_url = record(&["arm64_sequoia"], &json!({"url": null}));
         assert_eq!(
-            classify_target(&no_url, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&no_url, "aarch64-darwin", BASE).reason_code(),
             Some("missing-url")
         );
     }
@@ -947,8 +1059,8 @@ mod tests {
             }}
         });
         let status = classify_target(&RawRecord::new(raw.clone()), "x86_64-linux", BASE);
-        assert_eq!(status.status, "eligible");
-        let plan = status.plan.expect("plan");
+        assert!(status.is_eligible());
+        let plan = status.plan().expect("plan");
         assert_eq!(plan.source.url, "https://example.com/linux.zip");
         assert_eq!(plan.artifacts[0].source, "op-linux");
         // Darwin keeps the base record.
@@ -957,7 +1069,7 @@ mod tests {
             .insert("artifacts".into(), json!([{"binary": ["op"]}]));
         let darwin = classify_target(&RawRecord::new(raw), "aarch64-darwin", BASE);
         assert_eq!(
-            darwin.plan.expect("plan").source.url,
+            darwin.plan().expect("plan").source.url,
             "https://example.com/mac.zip"
         );
     }
@@ -993,11 +1105,11 @@ mod tests {
             ("nested-target", nested_target),
         ] {
             let status = classify_target(&rec, "x86_64-linux", BASE);
-            assert_eq!(status.status, "excluded", "{name} must be excluded");
+            assert!(!status.is_eligible(), "{name} must be excluded");
             match name {
-                "wrong-arch" => assert_eq!(status.reason.as_deref(), Some("arch-unsupported")),
+                "wrong-arch" => assert_eq!(status.reason_code(), Some("arch-unsupported")),
                 "partial-malformed" | "nested-target" => {
-                    assert_eq!(status.reason.as_deref(), Some("malformed-record"));
+                    assert_eq!(status.reason_code(), Some("malformed-record"));
                 }
                 _ => unreachable!(),
             }
@@ -1010,16 +1122,11 @@ mod tests {
         // reader; a null linux requirement must not scope darwin away.
         let both = ["arm64_sequoia", "x86_64_linux"];
         let rec = record(&both, &json!({"depends_on": {"linux": null}}));
-        assert_eq!(
-            classify_target(&rec, "aarch64-darwin", BASE).status,
-            "eligible"
-        );
+        assert!(classify_target(&rec, "aarch64-darwin", BASE).is_eligible());
         // A non-null linux requirement still excludes darwin.
         let linux_req = record(&both, &json!({"depends_on": {"linux": "true"}}));
         assert_eq!(
-            classify_target(&linux_req, "aarch64-darwin", BASE)
-                .reason
-                .as_deref(),
+            classify_target(&linux_req, "aarch64-darwin", BASE).reason_code(),
             Some("unsupported-platform")
         );
     }
@@ -1080,7 +1187,7 @@ mod tests {
             let rec = record(&["arm64_sequoia"], &json!({"url": bad}));
             let status = classify_target(&rec, "aarch64-darwin", BASE);
             assert_eq!(
-                status.reason.as_deref(),
+                status.reason_code(),
                 Some("unsupported-url"),
                 "{bad:?} must not become a fetchable plan URL"
             );
@@ -1089,25 +1196,77 @@ mod tests {
 
     #[test]
     fn summary_kinds_follow_artifacts() {
+        // The kind is derived from the plan at emission, so the check
+        // reads the serialized decision (the exact client shape).
         let app = record(
             &["arm64_sequoia"],
             &json!({"artifacts": [{"app": ["A.app"]}]}),
         );
-        assert_eq!(
-            classify_target(&app, "aarch64-darwin", BASE)
-                .kind
-                .as_deref(),
-            Some("app")
-        );
+        let app = serde_json::to_value(classify_target(&app, "aarch64-darwin", BASE))
+            .expect("serializes");
+        assert_eq!(app["kind"], "app");
+        assert_eq!(app["status"], "eligible");
         let pkg = record(
             &["arm64_sequoia"],
             &json!({"artifacts": [{"pkg": ["A.pkg"]}]}),
         );
-        assert_eq!(
-            classify_target(&pkg, "aarch64-darwin", BASE)
-                .kind
-                .as_deref(),
-            Some("pkg")
+        let pkg = serde_json::to_value(classify_target(&pkg, "aarch64-darwin", BASE))
+            .expect("serializes");
+        assert_eq!(pkg["kind"], "pkg");
+        // An excluded decision always carries a null kind and never a plan.
+        let bad = record(
+            &["arm64_sequoia"],
+            &json!({"depends_on": {"formula": ["neovim"]}}),
         );
+        let bad = serde_json::to_value(classify_target(&bad, "aarch64-darwin", BASE))
+            .expect("serializes");
+        assert_eq!(bad["status"], "excluded");
+        assert!(bad["kind"].is_null());
+        assert!(bad["plan"].is_null());
+        assert_eq!(bad["reason"], "formula-dependency");
+    }
+
+    #[test]
+    fn serialized_field_order_and_nulls_match_the_catalog_contract() {
+        // Exact byte contract of the per-target object: status, kind,
+        // reason, detail, version, homepage, plan, with nulls where the
+        // flat status emitted them.
+        let both = ["arm64_sequoia", "x86_64_linux"];
+        let rec = record(
+            &both,
+            &json!({"artifacts": [{"app": ["A.app"], "binary": ["t"]}]}),
+        );
+        let eligible = serde_json::to_value(classify_target(&rec, "aarch64-darwin", BASE))
+            .expect("serializes");
+        // Exact field ORDER comes from the serialized string (to_value
+        // sorts keys); the prefix pins the contract order.
+        let expected_prefix = concat!(
+            "{\"status\":\"eligible\",\"kind\":\"app+cli\",",
+            "\"reason\":null,\"detail\":null,",
+            "\"version\":\"1\",\"homepage\":null,\"plan\":"
+        );
+        let eligible_text = serde_json::to_string(&classify_target(&rec, "aarch64-darwin", BASE))
+            .expect("serializes");
+        assert!(eligible_text.starts_with(expected_prefix));
+        assert_eq!(eligible["status"], "eligible");
+        assert_eq!(eligible["kind"], "app+cli");
+        assert!(eligible["reason"].is_null());
+        assert!(eligible["detail"].is_null());
+        assert_eq!(eligible["version"], "1");
+        assert!(eligible["plan"].is_object());
+        let excluded = serde_json::to_value(classify_target(
+            &record(
+                &["arm64_sequoia"],
+                &json!({"depends_on": {"macos": {">=": ["26"]}}}),
+            ),
+            "aarch64-darwin",
+            BASE,
+        ))
+        .expect("serializes");
+        assert_eq!(excluded["status"], "excluded");
+        assert!(excluded["kind"].is_null());
+        assert_eq!(excluded["reason"], "minimum-os");
+        assert!(excluded["detail"].is_string());
+        assert!(excluded["plan"].is_null());
     }
 }

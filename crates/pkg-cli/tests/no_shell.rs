@@ -7,6 +7,16 @@
 //! helpers must not enable shell mode. Test code is exempt; tests may
 //! legitimately drive real shells.
 
+// This integration-test crate is built without `cfg(test)`, so the
+// crate-root test opt-out does not apply; the same reasoned exception
+// is declared here once.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests may use unwrap, expect, and panic to fail on broken fixtures"
+)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

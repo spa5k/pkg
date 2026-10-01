@@ -184,7 +184,10 @@ fn gate_host_macos_range(
             (Some(min), Some(max)) => format!("macOS >= {min} and <= {max}"),
             (Some(min), None) => format!("macOS >= {min}"),
             (None, Some(max)) => format!("macOS <= {max}"),
-            (None, None) => unreachable!("at least one bound is declared"),
+            // The no-bounds case returned above. An index entry that
+            // somehow reaches here without a bound declares no range,
+            // so the host is inside it; never panic on index data.
+            (None, None) => return Ok(()),
         };
         return Err(format!(
             "cask:{source}/{token} requires {range}; this host runs macOS {host}"
@@ -463,18 +466,24 @@ fn gate_upgrade_macos_range(
         let saved_source = store::source_of_reference(&session.paths.state_home, &original);
         let view = if saved_source.as_deref() == Some(source.as_str()) {
             // The saved tap reads exactly its selected saved generation.
-            if tap_state.is_none() {
-                tap_state = Some(super::TapState::load(session).map_err(|error| match error {
-                    super::CommandError::Message(message) => message,
-                    super::CommandError::Reported(_) => {
-                        String::from("tap state could not be loaded for the upgrade gate")
-                    }
-                })?);
-            }
-            let saved = tap_state
-                .as_ref()
-                .expect("tap state was loaded above")
-                .saved_one(&source)?;
+            // The tap state loads lazily, once, on the first saved-tap
+            // entry; the match keeps that invariant local: the loaded
+            // state is used and cached in the same arm, with no
+            // impossible state left to assert.
+            let saved = match tap_state.as_ref() {
+                Some(state) => state.saved_one(&source)?,
+                None => {
+                    let state = super::TapState::load(session).map_err(|error| match error {
+                        super::CommandError::Message(message) => message,
+                        super::CommandError::Reported(_) => {
+                            String::from("tap state could not be loaded for the upgrade gate")
+                        }
+                    })?;
+                    let saved = state.saved_one(&source)?;
+                    tap_state = Some(state);
+                    saved
+                }
+            };
             views.insert(source.clone(), catalog::CatalogView::from_saved(&saved));
             &views[&source]
         } else {

@@ -39,6 +39,6 @@ regex = "=1.13.1"
 # library owns fetching, sandboxed Ruby, and catalog/flake generation.
 cask-catalog = { path = "../../tools/cask-catalog" }
 
-# Opt into the workspace-wide lint policy (ADR 0005).
+# Opt into the workspace lint policy.
 [lints]
 workspace = true

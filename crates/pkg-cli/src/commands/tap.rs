@@ -38,36 +38,68 @@ fn validate_revision(revision: Option<&str>) -> Result<Option<String>, CommandEr
     }
 }
 
-/// Stage one import; on the daemon sandbox refusal, offer the one-time
-/// consent-gated setup and retry the import exactly once when it
-/// verified. A declined or failed setup keeps the refusal short instead
-/// of replaying the importer's full setup paragraph.
+/// The typed failure of one staging attempt.
+///
+/// Only the importer's typed sandbox refusal is carried as a category;
+/// every other failure is already formatted for the CLI boundary.
+enum StageError {
+    /// The importer refused the import because the effective local nix
+    /// config is not fail-closed; the setup offer may answer this.
+    SandboxRefused(String),
+    /// Any other failure, already a command error.
+    Other(CommandError),
+}
+
+/// Classify one importer failure for the staging path.
+///
+/// The category is the importer's typed one: an ordinary failure whose
+/// text merely contains the refusal phrase is an ordinary failure.
+fn stage_error_for_import_error(source: &str, error: cask_catalog::tap::ImportError) -> StageError {
+    match error {
+        cask_catalog::tap::ImportError::SandboxRefused(detail) => {
+            StageError::SandboxRefused(detail)
+        }
+        cask_catalog::tap::ImportError::Failed(detail) => StageError::Other(
+            format!(
+                "importing {source} failed; the published generation and the \
+                 registry are unchanged: {detail}"
+            )
+            .into(),
+        ),
+    }
+}
+
+/// Stage one import; on the importer's TYPED sandbox refusal, offer the
+/// one-time consent-gated setup and retry the import exactly once when
+/// it verified. A declined or failed setup keeps the refusal short
+/// instead of replaying the importer's full setup paragraph. An
+/// ordinary failure — even one whose text contains the refusal phrase —
+/// never triggers the setup offer.
 fn stage_import_with_setup(
     session: &Session,
     source: &str,
     origin: &str,
     revision: Option<&str>,
     now_unix: u64,
-) -> Result<
-    (
-        store::SourceStore,
-        std::path::PathBuf,
-        store::StagingGuard,
-        StagedImport,
-    ),
-    CommandError,
-> {
+) -> Result<(store::SourceStore, store::StagedGeneration, StagedImport), CommandError> {
     match stage_import(session, source, origin, revision, now_unix) {
         Ok(staged) => Ok(staged),
-        Err(error) => {
-            let is_refusal =
-                matches!(&error, CommandError::Message(text) if setup::is_sandbox_refusal(text));
-            if !is_refusal {
-                return Err(error);
-            }
+        Err(StageError::Other(error)) => Err(error),
+        Err(StageError::SandboxRefused(_)) => {
             eprintln!("pkg: tap import refused: the Nix daemon is not proven sandboxed");
             match setup::offer_and_apply(&session.nix) {
-                Ok(true) => stage_import(session, source, origin, revision, now_unix),
+                Ok(true) => {
+                    stage_import(session, source, origin, revision, now_unix).map_err(|error| {
+                        match error {
+                            StageError::SandboxRefused(detail) => format!(
+                                "the tap import was refused again after the sandbox \
+                             setup: {detail}"
+                            )
+                            .into(),
+                            StageError::Other(error) => error,
+                        }
+                    })
+                }
                 Ok(false) => Err(String::from(
                     "the tap import needs the one-time sandbox setup; nothing was imported",
                 )
@@ -131,7 +163,7 @@ fn targets(
 }
 
 /// Run one import into a fresh staging directory and return the validated
-/// result together with the staging path and guard.
+/// result together with the owned staged generation.
 struct StagedImport {
     result: cask_catalog::tap::ImportResult,
     index: crate::nix::CatalogIndex,
@@ -155,18 +187,16 @@ fn stage_import(
     origin: &str,
     revision: Option<&str>,
     now_unix: u64,
-) -> Result<
-    (
-        store::SourceStore,
-        std::path::PathBuf,
-        store::StagingGuard,
-        StagedImport,
-    ),
-    CommandError,
-> {
-    let locked = store::SourceStore::lock(&session.paths.state_home, source)?;
-    let (staging, guard) = locked.new_staging()?;
-    let system = session.nix.system()?;
+) -> Result<(store::SourceStore, store::StagedGeneration, StagedImport), StageError> {
+    let locked = store::SourceStore::lock(&session.paths.state_home, source)
+        .map_err(|error| StageError::Other(error.into()))?;
+    let staged = locked
+        .new_staging()
+        .map_err(|error| StageError::Other(error.into()))?;
+    let system = session
+        .nix
+        .system()
+        .map_err(|error| StageError::Other(error.into()))?;
     // The stage boundary: everything above is local state only; from here
     // the approved source's data is fetched and its Ruby runs under the
     // sandboxed Nix build. Name the approved source, origin, and scope
@@ -178,27 +208,26 @@ fn stage_import(
         revision: revision.map(ToString::to_string),
         system: system.clone(),
         nix: session.nix.executable().to_path_buf(),
-        output_dir: staging.clone(),
+        output_dir: staged.path().to_path_buf(),
     };
-    let result = cask_catalog::tap::import(&request).map_err(|error| {
-        format!(
-            "importing {source} failed; the published generation and the \
-             registry are unchanged: {error}"
-        )
-    })?;
+    let result = cask_catalog::tap::import(&request)
+        .map_err(|error| stage_error_for_import_error(source, error))?;
     if result.source != source || result.origin != origin {
-        return Err(format!(
-            "the importer returned identity {}/{} for source {source}; \
-             refusing to publish",
-            result.source, result.origin
-        )
-        .into());
+        return Err(StageError::Other(
+            format!(
+                "the importer returned identity {}/{} for source {source}; \
+                 refusing to publish",
+                result.source, result.origin
+            )
+            .into(),
+        ));
     }
     // Only the importer's generated flake root — exactly the canonical
     // `staging/flake` directory — is returned for publication. The
     // untrusted checkout and the captures beside it never become the
     // active flake root.
-    let flake_path = validated_flake_path(&staging, &result.flake_path)?;
+    let flake_path =
+        validated_flake_path(staged.path(), &result.flake_path).map_err(StageError::Other)?;
     let provenance = store::Provenance {
         source: String::from(source),
         origin: String::from(origin),
@@ -208,12 +237,12 @@ fn stage_import(
         excluded: result.excluded,
         published_unix: now_unix,
     };
-    let index = tap::validate_staging(&session.nix, &flake_path)?;
-    check_staged_index(&index, &provenance, &system)?;
+    let index = tap::validate_staging(&session.nix, &flake_path)
+        .map_err(|error| StageError::Other(error.into()))?;
+    check_staged_index(&index, &provenance, &system).map_err(StageError::Other)?;
     Ok((
         locked,
-        flake_path,
-        guard,
+        staged,
         StagedImport {
             result,
             index,
@@ -357,10 +386,9 @@ pub(super) fn add(
 
     // Only now do the runtime and the importer run.
     let session = super::session(cli)?;
-    let (locked, flake, guard, staged) =
+    let (locked, staged_generation, staged) =
         stage_import_with_setup(&session, &source, &origin, revision.as_deref(), now_unix())?;
-    let published = locked.publish(&flake, &staged.provenance, &staged.index)?;
-    settle_staging_guard(&published, guard);
+    let mut publication = locked.publish(staged_generation, &staged.provenance, &staged.index)?;
 
     // One prepared rename records consent. A failure triggers a rollback
     // of the publication — first or replacing — so the previous generation
@@ -372,20 +400,20 @@ pub(super) fn add(
         && let Err(error) = registry::commit_prepared(prepared, &registry_path)
     {
         return Err(undo_publication_after_registry_failure(
-            &source, &locked, &published, &error,
+            &source,
+            publication,
+            &error,
         ));
     }
-    // The publication and its registry commit both succeeded: the staging
-    // parent now holds only the preserved old generation and this run's
-    // fetch scratch. Remove the scratch best effort; the preserved old
-    // flake is never touched and a failure is only a warning.
-    if let store::Published::Replaced { saved_generation } = &published
-        && let Some(parent) = flake.parent()
-    {
-        cleanup_replaced_staging(parent, saved_generation);
+    // The publication and its registry commit both succeeded: finish the
+    // publication by clearing this run's fetch scratch best effort; the
+    // preserved old flake is never touched and a failure is only a
+    // warning.
+    for warning in publication.finish() {
+        eprintln!("pkg: warning: {warning}");
     }
     drop(global);
-    report_publication(&source, &staged, &published, cli.verbose);
+    report_publication(&source, &staged, publication.kind(), cli.verbose);
     Ok(())
 }
 
@@ -418,57 +446,6 @@ fn recheck_consent(
     }
 }
 
-/// Dispose of the staging guard right after a committed publication.
-///
-/// A first publication renamed the inner flake root to `current`, so the
-/// armed guard deletes only the disposable staging parent (the raw
-/// checkout and captures). A replacing publication left the preserved
-/// old generation inside the staging parent, so the guard is disarmed
-/// immediately and the old generation stays retained; its scratch
-/// siblings are cleaned up separately after the run fully succeeds.
-fn settle_staging_guard(published: &store::Published, guard: store::StagingGuard) {
-    match published {
-        store::Published::First => drop(guard),
-        store::Published::Replaced { .. } => guard.keep(),
-    }
-}
-
-/// Best-effort cleanup of a replaced generation's staging parent.
-///
-/// After a successful publication (and, for `add`, its registry commit)
-/// the staging parent holds the preserved old generation at `preserved`
-/// and this run's fetch scratch (raw checkout, captures) beside it. Only
-/// the immediate scratch children are removed; the preserved old flake is
-/// never touched. Failure is a warning and never changes the command's
-/// success, and nothing is cleaned up when the run failed or rolled back.
-fn cleanup_replaced_staging(staging: &std::path::Path, preserved: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(staging) else {
-        eprintln!(
-            "pkg: warning: cannot inspect the staging directory {} to clean \
-             up its fetch scratch",
-            staging.display()
-        );
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path == preserved {
-            continue;
-        }
-        let removed = if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir()) {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        };
-        if let Err(error) = removed {
-            eprintln!(
-                "pkg: warning: cannot remove the staging scratch at {}: {error}",
-                path.display()
-            );
-        }
-    }
-}
-
 /// Build the honest error for a registry commit failure after a committed
 /// publication, undoing the publication when that is possible.
 ///
@@ -478,12 +455,12 @@ fn cleanup_replaced_staging(staging: &std::path::Path, preserved: &std::path::Pa
 /// immutable path). Nothing is ever claimed undone when it was not.
 fn undo_publication_after_registry_failure(
     source: &str,
-    locked: &store::SourceStore,
-    published: &store::Published,
+    publication: store::Publication<'_>,
     registry_error: &str,
 ) -> CommandError {
-    match published {
-        store::Published::First => match locked.undo_first_publication() {
+    let published = publication.kind().clone();
+    match &published {
+        store::Published::First => match publication.undo() {
             Ok(()) => format!(
                 "cannot record consent for {source}; the first publication was \
                  undone: {registry_error}"
@@ -496,23 +473,21 @@ fn undo_publication_after_registry_failure(
             )
             .into(),
         },
-        store::Published::Replaced { saved_generation } => {
-            match locked.undo_replaced_publication(saved_generation) {
-                Ok(()) => format!(
-                    "cannot record consent for {source}; the previous generation \
-                     was restored: {registry_error}"
-                )
-                .into(),
-                Err(undo) => format!(
-                    "cannot record consent for {source}, and restoring the \
-                     previous generation failed: {undo}; the previous generation \
-                     stays preserved at {} and the withdrawn generation may \
-                     still be active",
-                    saved_generation.display()
-                )
-                .into(),
-            }
-        }
+        store::Published::Replaced { saved_generation } => match publication.undo() {
+            Ok(()) => format!(
+                "cannot record consent for {source}; the previous generation \
+                 was restored: {registry_error}"
+            )
+            .into(),
+            Err(undo) => format!(
+                "cannot record consent for {source}, and restoring the \
+                 previous generation failed: {undo}; the previous generation \
+                 stays preserved at {} and the withdrawn generation may \
+                 still be active",
+                saved_generation.display()
+            )
+            .into(),
+        },
     }
 }
 
@@ -561,24 +536,21 @@ pub(super) fn update(
             )
             .into());
         }
-        let (locked, flake, guard, staged) = stage_import_with_setup(
+        let (locked, staged_generation, staged) = stage_import_with_setup(
             &session,
             &target.source,
             &target.origin,
             revision.as_deref(),
             now_unix(),
         )?;
-        let published = locked.publish(&flake, &staged.provenance, &staged.index)?;
-        settle_staging_guard(&published, guard);
-        // An update has no registry write: after the successful exchange
-        // only the preserved old generation and this run's fetch scratch
-        // remain in the staging parent. Clean the scratch best effort.
-        if let store::Published::Replaced { saved_generation } = &published
-            && let Some(parent) = flake.parent()
-        {
-            cleanup_replaced_staging(parent, saved_generation);
+        let mut publication =
+            locked.publish(staged_generation, &staged.provenance, &staged.index)?;
+        // An update has no registry write: finish the publication by
+        // clearing this run's fetch scratch best effort.
+        for warning in publication.finish() {
+            eprintln!("pkg: warning: {warning}");
         }
-        report_publication(&target.source, &staged, &published, cli.verbose);
+        report_publication(&target.source, &staged, publication.kind(), cli.verbose);
     }
     drop(global);
     println!("Installed packages did not change.");
@@ -746,6 +718,42 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_refusal_category_survives_text_lookalikes() {
+        use cask_catalog::tap::ImportError;
+        // Only the typed refusal is carried as a category.
+        let refused = stage_error_for_import_error(
+            "somebody/apps",
+            ImportError::SandboxRefused(String::from("sandbox is false")),
+        );
+        assert!(matches!(refused, StageError::SandboxRefused(_)));
+        // An ordinary failure whose text contains the refusal phrase is
+        // an ordinary failure: the setup offer must never trigger.
+        let lookalike = stage_error_for_import_error(
+            "somebody/apps",
+            ImportError::Failed(String::from(
+                "effective local nix config refuses the raw tap import: \
+                 the settings could not be verified",
+            )),
+        );
+        let StageError::Other(error) = lookalike else {
+            panic!("a coincidental refusal phrase must not become a refusal");
+        };
+        let CommandError::Message(text) = error else {
+            panic!("the ordinary failure is a message");
+        };
+        assert!(text.contains("importing somebody/apps failed"), "{text}");
+        assert!(text.contains("could not be verified"), "{text}");
+        // The refusal detail stays available for the retry path.
+        let StageError::SandboxRefused(detail) = stage_error_for_import_error(
+            "somebody/apps",
+            ImportError::SandboxRefused(String::from("added host path /etc")),
+        ) else {
+            panic!("the typed refusal is carried");
+        };
+        assert_eq!(detail, "added host path /etc");
+    }
 
     #[test]
     fn revision_pins_must_be_bare_full_commits() {

@@ -300,6 +300,66 @@ pub(super) fn write_asset(path: &Path, contents: &str) -> Result<(), String> {
     }
     Ok(())
 }
+/// The fixed child `PATH` whitelist: the resolved nix executable's
+/// own bin directory first, then the system default. Nothing else —
+/// no caller-controlled directories, no ambient PATH entries survive
+/// `env_clear`.
+fn isolated_path_value(nix_exe: &Path) -> String {
+    let mut path = String::new();
+    if let Some(bin) = nix_exe.parent() {
+        path.push_str(&bin.display().to_string());
+        path.push(':');
+    }
+    path.push_str("/usr/bin:/bin:/usr/sbin:/sbin");
+    path
+}
+
+/// The ONE shared constructor of the isolated Nix child environment,
+/// used by BOTH nix child callers (the early local config gate and
+/// the fresh authoritative raw-export build). It creates the CALLER'S
+/// private roots (each caller passes its own `home` and `tmp`
+/// directories — there is no shared or reused home/session state)
+/// and returns a `Command` already carrying the complete process
+/// setup the two callers previously duplicated:
+/// - cleared environment (`env_clear`: no ambient `NIX_CONFIG`, no
+///   proxies, no credentials, no inherited HOME),
+/// - the exact whitelist `PATH` (nix bin dir + system default),
+/// - `LC_ALL=C`,
+/// - a private `HOME` with a `.config` directory and an empty
+///   `NIX_USER_CONF_FILES` (with no HOME at all Nix infers the REAL
+///   user home and its credentials),
+/// - a private `TMPDIR`,
+/// - null stdin and piped stdout/stderr.
+///
+/// Arguments, deadlines, log caps, labels, sandbox/fallback flags,
+/// and process ownership stay with the callers: this constructor owns
+/// environment/process setup ONLY.
+pub(super) fn isolated_nix_command(
+    nix_exe: &Path,
+    home: &Path,
+    tmp: &Path,
+) -> Result<std::process::Command, String> {
+    let config = home.join(".config");
+    std::fs::create_dir_all(&config)
+        .map_err(|e| format!("cannot create {}: {e}", config.display()))?;
+    let user_conf = home.join("empty-nix.conf");
+    write_asset(&user_conf, "")?;
+    std::fs::create_dir_all(tmp).map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
+    let mut command = std::process::Command::new(nix_exe);
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .env_clear()
+        .env("PATH", isolated_path_value(nix_exe))
+        .env("TMPDIR", tmp)
+        .env("LC_ALL", "C")
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", &config)
+        .env("NIX_USER_CONF_FILES", &user_conf);
+    Ok(command)
+}
+
 /// Write the trusted embedded runtime assets into `runtime/` and build
 /// the raw-export derivation with the configured Nix executable.
 pub(super) fn run_nix_export(
@@ -596,19 +656,13 @@ fn run_nix_export_with_limits(
 
     let nix_exe = resolve_nix_exe(&request.nix)?;
     let out_link = staging.join("export-out");
+    // Isolated per-build roots (distinct from the config gate's): the
+    // shared constructor creates them and owns the environment/process
+    // setup; the build keeps its own args, deadline, label, and
+    // sandbox/fallback demands below.
     let nix_build_dir = staging.join("nix-tmp");
-    std::fs::create_dir_all(&nix_build_dir)
-        .map_err(|e| format!("cannot create {}: {e}", nix_build_dir.display()))?;
-    // Isolated HOME: with no HOME at all Nix infers the REAL user home
-    // (and its credentials/config); give it an empty private one.
     let nix_home = staging.join("nix-home");
-    let nix_config = nix_home.join(".config");
-    std::fs::create_dir_all(&nix_config)
-        .map_err(|e| format!("cannot create {}: {e}", nix_config.display()))?;
-    let nix_user_conf = nix_home.join("empty-nix.conf");
-    write_asset(&nix_user_conf, "")?;
-
-    let mut command = std::process::Command::new(&nix_exe);
+    let mut command = isolated_nix_command(&nix_exe, &nix_home, &nix_build_dir)?;
     command
         .arg("build")
         .arg("--file")
@@ -650,26 +704,7 @@ fn run_nix_export_with_limits(
         .arg("max-build-log-size")
         .arg("1048576")
         .arg("--out-link")
-        .arg(&out_link)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        // Clear EVERYTHING inherited: no NIX_CONFIG, no proxies, no
-        // HOME credentials, no model keys. The minimal variables the
-        // Nix CLI needs are set below, pointed at isolated paths.
-        .env_clear();
-    let mut path_value = String::new();
-    if let Some(bin) = nix_exe.parent() {
-        path_value.push_str(&bin.display().to_string());
-        path_value.push(':');
-    }
-    path_value.push_str("/usr/bin:/bin:/usr/sbin:/sbin");
-    command.env("PATH", &path_value);
-    command.env("TMPDIR", &nix_build_dir);
-    command.env("LC_ALL", "C");
-    command.env("HOME", &nix_home);
-    command.env("XDG_CONFIG_HOME", &nix_config);
-    command.env("NIX_USER_CONF_FILES", &nix_user_conf);
+        .arg(&out_link);
 
     let bounded = run_bounded_child(&mut command, walltime, "nix raw-export build")?;
     let status = bounded.status;
@@ -814,6 +849,108 @@ mod tests {
             "the overflow flag + group kill must abort within 5 s, took {:?}",
             started.elapsed()
         );
+    }
+
+    /// The raw-export build child must see EXACTLY the same shared
+    /// constructor whitelist as the config gate (plus shell bookkeeping):
+    /// the fake nix dumps its environment and exits
+    /// 0 without producing export.json, so the run fails at the
+    /// out-link check — AFTER the child ran — and the dump can be
+    /// compared exactly. A separate test process carries only controlled
+    /// sentinels, so an isolation failure cannot dump host credentials.
+    #[cfg(unix)]
+    #[test]
+    fn nix_export_child_environment_is_exactly_the_whitelist() {
+        if std::env::var_os("PKG_TAP_EXPORT_ENV_CHILD_MODE").is_none() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let status =
+                std::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .arg("nix_export_child_environment_is_exactly_the_whitelist")
+                    .env_clear()
+                    .env("PKG_TAP_EXPORT_ENV_CHILD_MODE", "1")
+                    .env("PKG_TAP_EXPORT_ENV_DIR", dir.path())
+                    .env("NIX_CONFIG", "sentinel-nix-config")
+                    .env("http_proxy", "http://127.0.0.1:9")
+                    .env("https_proxy", "http://127.0.0.1:9")
+                    .env("no_proxy", "sentinel-no-proxy")
+                    .env("PKG_TAP_FAKE_CREDENTIAL", "sentinel-fake-token")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                    .expect("child test process reaped");
+            assert!(status.success(), "child environment checks must pass");
+            return;
+        }
+        let dir = PathBuf::from(std::env::var("PKG_TAP_EXPORT_ENV_DIR").expect("export env dir"));
+        let dump = dir.join("export-child-env");
+        let nix = fake_nix(
+            &dir,
+            &format!("/usr/bin/env > {d}\nexit 0", d = dump.display()),
+        );
+        let canary = setup_canary().expect("canary");
+        let err = run_nix_export_with_limits(
+            &fake_request(&dir, nix),
+            &dir,
+            &dir,
+            "example/foo",
+            REVISION,
+            &canary,
+            Duration::from_secs(60),
+        )
+        .expect_err("no export.json");
+        drop(canary);
+        assert!(
+            err.contains("missing export.json"),
+            "unexpected error: {err}"
+        );
+        let dumped = std::fs::read_to_string(&dump).expect("export child env dump");
+        let mut seen: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for line in dumped.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            seen.insert(key.to_string(), value.to_string());
+        }
+        let home = dir.join("nix-home");
+        let mut expected: std::collections::BTreeMap<String, String> = [
+            ("HOME", home.display().to_string()),
+            (
+                "XDG_CONFIG_HOME",
+                home.join(".config").display().to_string(),
+            ),
+            (
+                "NIX_USER_CONF_FILES",
+                home.join("empty-nix.conf").display().to_string(),
+            ),
+            ("TMPDIR", dir.join("nix-tmp").display().to_string()),
+            ("LC_ALL", "C".to_string()),
+            (
+                "PATH",
+                format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", dir.display()),
+            ),
+            // Added by /bin/sh itself (cwd bookkeeping), not by the
+            // constructor; its presence is not a leak.
+            (
+                "PWD",
+                std::env::current_dir().expect("cwd").display().to_string(),
+            ),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect();
+        if cfg!(target_os = "macos") {
+            expected.insert("SHLVL".to_string(), "1".to_string());
+            expected.insert("_".to_string(), "/usr/bin/env".to_string());
+        }
+        assert_eq!(
+            seen.keys().collect::<Vec<_>>(),
+            expected.keys().collect::<Vec<_>>()
+        );
+        for (key, value) in expected {
+            assert_eq!(seen.get(&key), Some(&value), "wrong value for {key}");
+        }
     }
 
     // The spawned Nix child runs in its OWN process group; the group

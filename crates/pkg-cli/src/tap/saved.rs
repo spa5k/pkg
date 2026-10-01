@@ -322,17 +322,16 @@ mod tests {
                 excluded: 0,
                 published_unix: 1,
             };
-            let (staging, guard) = store.new_staging().expect("stages");
-            let flake = staging.join("flake");
+            let staged = store.new_staging().expect("stages");
+            let flake = staged.path().join("flake");
             std::fs::create_dir(&flake).expect("flake dir");
             store
                 .publish(
-                    &flake,
+                    staged,
                     &provenance,
                     &index_for("0a56ceb53d69f3e0eaea0f9f4d5b8cf5b9b9d1a"),
                 )
                 .expect("publishes");
-            guard.keep();
         }
         let error = SavedCatalogs::load(&registry, state.path())
             .expect_err("one broken source still fails the whole load");
@@ -384,17 +383,16 @@ mod tests {
             excluded: 0,
             published_unix: 1,
         };
-        let (staging, guard) = store.new_staging().expect("stages");
-        let flake = staging.join("flake");
+        let staged = store.new_staging().expect("stages");
+        let flake = staged.path().join("flake");
         std::fs::create_dir(&flake).expect("flake dir");
         store
             .publish(
-                &flake,
+                staged,
                 &provenance,
                 &index_for("0a56ceb53d69f3e0eaea0f9f4d5b8cf5b9b9d1a"),
             )
             .expect("publishes");
-        guard.keep();
     }
 
     /// A qualified read of one source is isolated from an unrelated
@@ -485,13 +483,12 @@ mod tests {
         let index = crate::nix::decode_catalog_index(&raw).expect("decodes");
         {
             let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
-            let (staging, guard) = store.new_staging().expect("stages");
-            let flake = staging.join("flake");
+            let staged = store.new_staging().expect("stages");
+            let flake = staged.path().join("flake");
             std::fs::create_dir(&flake).expect("flake dir");
             store
-                .publish(&flake, &provenance, &index)
+                .publish(staged, &provenance, &index)
                 .expect("publishes");
-            guard.keep();
         }
         let saved = SavedCatalogs::load(&registry, state.path()).expect("loads");
         // An excluded entry still answers token presence.
@@ -603,11 +600,10 @@ mod tests {
             );
             {
                 let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
-                let (staging, guard) = store.new_staging().expect("stages");
-                let flake = staging.join("flake");
+                let staged = store.new_staging().expect("stages");
+                let flake = staged.path().join("flake");
                 std::fs::create_dir(&flake).expect("flake dir");
-                store.publish(&flake, &prov, &index).expect("publishes");
-                drop(guard);
+                store.publish(staged, &prov, &index).expect("publishes");
             }
             SavedCatalogs::load_one(&registry, state.path(), "somebody/apps")
                 .err()
@@ -648,17 +644,16 @@ mod tests {
         );
         {
             let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
-            let (staging, guard) = store.new_staging().expect("stages");
-            let flake = staging.join("flake");
+            let staged = store.new_staging().expect("stages");
+            let flake = staged.path().join("flake");
             std::fs::create_dir(&flake).expect("flake dir");
             store
                 .publish(
-                    &flake,
+                    staged,
                     &provenance(REV, CAPTURE),
                     &index_variant(REV, CAPTURE, false, 1),
                 )
                 .expect("publishes");
-            drop(guard);
         }
         assert!(SavedCatalogs::load_one(&registry, state.path(), "somebody/apps").is_ok());
     }

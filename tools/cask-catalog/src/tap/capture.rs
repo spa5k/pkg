@@ -3,7 +3,7 @@
 
 use super::runtime::write_asset;
 use super::{EXPORT_SCHEMA, ImportResult, safe_segment, sha256_hex};
-use crate::classify::{self, TargetStatus};
+use crate::classify::{self, ExclusionReason, TargetDecision};
 use crate::effective::{self, RawRecord};
 use crate::emit::{self, Entry, InputProvenance, Origin};
 use crate::{MACOS_BASELINE, valid_sha256};
@@ -181,20 +181,15 @@ pub(super) fn validate_export(
 }
 
 /// Classify one raw-exported cask for the single native target.
-fn tap_status(cask: &Value, system: &str) -> TargetStatus {
+fn tap_status(cask: &Value, system: &str) -> TargetDecision {
     let Some(supported) = cask
         .get("upstreamPlatformSupported")
         .and_then(Value::as_bool)
     else {
-        return TargetStatus {
-            status: "excluded",
-            kind: None,
-            reason: Some("malformed-record".to_string()),
-            detail: Some("no upstreamPlatformSupported boolean".to_string()),
-            version: None,
-            homepage: None,
-            plan: None,
-        };
+        return TargetDecision::bare_with_detail(
+            ExclusionReason::MalformedRecord,
+            "no upstreamPlatformSupported boolean".to_string(),
+        );
     };
     // Flat upstream metadata: the exporter emits every field
     // (name/version/url/...) directly on the cask record.
@@ -202,16 +197,8 @@ fn tap_status(cask: &Value, system: &str) -> TargetStatus {
     classify::classify_tap_target(&record, system, MACOS_BASELINE, supported)
 }
 
-fn excluded_status(reason: &str, detail: &str) -> TargetStatus {
-    TargetStatus {
-        status: "excluded",
-        kind: None,
-        reason: Some(reason.to_string()),
-        detail: Some(detail.chars().take(200).collect::<String>()),
-        version: None,
-        homepage: None,
-        plan: None,
-    }
+fn excluded_status(reason: ExclusionReason, detail: &str) -> TargetDecision {
+    TargetDecision::bare_with_detail(reason, detail.chars().take(200).collect::<String>())
 }
 
 /// Convert a VALIDATED raw-export envelope into the self-contained
@@ -259,50 +246,52 @@ pub(super) fn convert_capture(
     let mut eligible = 0usize;
     let mut excluded = 0usize;
 
-    let mut record_for =
-        |token: String, status: TargetStatus, origin_field: Option<Origin>, raw: Option<&Value>| {
-            let raw = raw.filter(|v| v.is_object());
-            if !crate::token::is_valid_token(&token) {
-                return Err(format!(
-                    "integrity: exported token {token:?} is not a usable catalog key"
-                ));
-            }
-            let id = emit::qualified_id(source, &token);
-            if entries.contains_key(&id) {
-                return Err(format!("integrity: duplicate token {token} in export"));
-            }
-            let record = raw.cloned().map(RawRecord::new);
-            let (name, description, version, homepage) = match &record {
-                Some(record) => (
-                    effective::name_field(&record.raw),
-                    effective::str_field(&record.raw, "desc"),
-                    effective::str_field(&record.raw, "version"),
-                    effective::str_field(&record.raw, "homepage"),
-                ),
-                None => (None, None, None, None),
-            };
-            if status.status == "eligible" {
-                eligible += 1;
-            } else {
-                excluded += 1;
-            }
-            let mut targets = BTreeMap::new();
-            targets.insert(system.to_string(), status);
-            entries.insert(
-                id,
-                Entry {
-                    source: source.to_string(),
-                    token,
-                    name,
-                    description,
-                    version,
-                    homepage,
-                    origin: origin_field,
-                    targets,
-                },
-            );
-            Ok(())
+    let mut record_for = |token: String,
+                          status: TargetDecision,
+                          origin_field: Option<Origin>,
+                          raw: Option<&Value>| {
+        let raw = raw.filter(|v| v.is_object());
+        if !crate::token::is_valid_token(&token) {
+            return Err(format!(
+                "integrity: exported token {token:?} is not a usable catalog key"
+            ));
+        }
+        let id = emit::qualified_id(source, &token);
+        if entries.contains_key(&id) {
+            return Err(format!("integrity: duplicate token {token} in export"));
+        }
+        let record = raw.cloned().map(RawRecord::new);
+        let (name, description, version, homepage) = match &record {
+            Some(record) => (
+                effective::name_field(&record.raw),
+                effective::str_field(&record.raw, "desc"),
+                effective::str_field(&record.raw, "version"),
+                effective::str_field(&record.raw, "homepage"),
+            ),
+            None => (None, None, None, None),
         };
+        if status.is_eligible() {
+            eligible += 1;
+        } else {
+            excluded += 1;
+        }
+        let mut targets = BTreeMap::new();
+        targets.insert(system.to_string(), status);
+        entries.insert(
+            id,
+            Entry {
+                source: source.to_string(),
+                token,
+                name,
+                description,
+                version,
+                homepage,
+                origin: origin_field,
+                targets,
+            },
+        );
+        Ok(())
+    };
 
     for cask in &casks {
         let token = cask
@@ -330,15 +319,10 @@ pub(super) fn convert_capture(
                     .map_err(|reason| format!("integrity: pkg_error record {token:?}: {reason}"))?,
             };
             (
-                TargetStatus {
-                    status: "excluded",
-                    kind: None,
-                    reason: Some("ruby-load-error".to_string()),
-                    detail: Some(error.chars().take(200).collect::<String>()),
-                    version: None,
-                    homepage: None,
-                    plan: None,
-                },
+                TargetDecision::bare_with_detail(
+                    ExclusionReason::RubyLoadError,
+                    error.chars().take(200).collect::<String>(),
+                ),
                 Some(origin),
                 None,
             )
@@ -349,9 +333,9 @@ pub(super) fn convert_capture(
             // origin; any hash/token mismatch downgrades the entry.
             let origin_field = match cask.get("pkg_origin") {
                 None | Some(Value::Null) => {
-                    if status.status == "eligible" {
+                    if status.is_eligible() {
                         status = excluded_status(
-                            "origin-missing",
+                            ExclusionReason::OriginMissing,
                             "the export carries no pkg_origin provenance",
                         );
                     }
@@ -360,7 +344,7 @@ pub(super) fn convert_capture(
                 Some(origin) => match validate_pkg_origin(origin, tree, &token) {
                     Ok(origin) => Some(origin),
                     Err(reason) => {
-                        status = excluded_status("origin-mismatch", &reason);
+                        status = excluded_status(ExclusionReason::OriginMismatch, &reason);
                         None
                     }
                 },

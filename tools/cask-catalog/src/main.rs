@@ -1,5 +1,18 @@
 //! Catalog CLI: fetch pinned snapshots, generate catalogs, and import public taps as Nix flakes.
 
+// Tests may abort on broken fixtures or failed setup; production code
+// denies explicit unwrap/expect/panic (these Clippy lints are denied by
+// the workspace for every non-test target).
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        reason = "tests may use unwrap, expect, and panic to fail on broken fixtures"
+    )
+)]
+
 use cask_catalog::{
     CACHE_DIR, Pin, emit, load_pin, read_verified_input, valid_repo, valid_revision, valid_sha256,
     verify_sha256,
@@ -224,7 +237,8 @@ fn import_tap(
         nix: nix.to_path_buf(),
         output_dir: out.to_path_buf(),
     };
-    let result = cask_catalog::tap::import(&request)?;
+    let result =
+        cask_catalog::tap::import(&request).map_err(|error| error.message().to_string())?;
     // Machine-readable single-line result on stdout; the client parses
     // this after validating the catalog index. Serialized directly from
     // the `Serialize` derive: snake_case field names
