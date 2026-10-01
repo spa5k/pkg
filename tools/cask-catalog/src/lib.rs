@@ -6,7 +6,7 @@
 //! main.rs and `tap`).
 
 // Tests may abort on broken fixtures or failed setup; production code
-// must not panic (clippy::unwrap_used/expect_used/panic are denied by
+// denies explicit unwrap/expect/panic (these Clippy lints are denied by
 // the workspace for every non-test target).
 #![cfg_attr(
     test,
@@ -14,7 +14,7 @@
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::panic,
-        reason = "tests abort on broken fixtures; production never panics"
+        reason = "tests may use unwrap, expect, and panic to fail on broken fixtures"
     )
 )]
 

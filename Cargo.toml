@@ -22,8 +22,8 @@ publish = false
 # macOS smoke Clippy step. The deny set is clean in every target on
 # every supported platform. `unwrap_used`, `expect_used`, and `panic`
 # are individually selected restriction lints (not group enables):
-# production code must not panic; each crate root opts test builds out
-# once with a reasoned `cfg_attr(test, allow(...))`. Suppressions stay
+# production code denies explicit unwrap/expect/panic; each crate root
+# opts test builds out once with a reasoned `cfg_attr(test, allow(...))`. Suppressions stay
 # expensive: every `allow` must carry a `reason`
 # (clippy::allow_attributes_without_reason).
 [workspace.lints.rust]

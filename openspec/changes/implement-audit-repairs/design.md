@@ -29,9 +29,11 @@ Setup inspection returns a typed world. A missing custom config plans
 the append step; an unreadable or malformed (non-UTF-8) custom config
 fails the setup with the cause preserved — the append decision depends
 on the inspection, so an inspection failure must not become "append
-anyway". A required piped-stdin write failure in `run_step` surfaces as
-an error; best-effort cleanup and infallible formatting keep ignoring
-results.
+anyway". Global config metadata errors, non-files, and failed Nix settings
+queries also stop automatic repair and retain the cause. Only a metadata
+`NotFound` result is treated as a missing file. A required piped-stdin write
+failure in `run_step` stops and reaps the child before returning the cause;
+best-effort cleanup and infallible formatting keep ignoring results.
 
 The importer seam returns a small public `ImportError`:
 `SandboxRefused(String)` versus `Failed(String)`. The category is
@@ -53,13 +55,15 @@ command error taxonomy.
 **Decision.** `SourceStore::new_staging` returns one owned
 `StagedGeneration` (path plus guard) whose consuming `publish` settles
 the guard internally before returning. `publish` returns a `Publication`
-that owns the retained and scratch state and exposes exactly `finish`
+that borrows its originating locked store, owns the retained and scratch
+state, and exposes exactly `finish`
 (best-effort scratch cleanup) and `undo` (registry-failure rollback of
 the first or replacing publication). `Drop` performs no fallible
 rollback: an unfinished publication conservatively retains the old
 generation and its scratch. The publication is refused if the staged
 generation was created by another source's store (path containment and
-provenance source are checked under the lock).
+provenance source are checked under the lock). `undo` takes no store
+argument; its lifetime keeps the source lock alive through settlement.
 
 Choices weighed: (A) keep the `(PathBuf, StagingGuard)` pair and move
 the three command-layer helpers into the store as free functions;
@@ -112,10 +116,11 @@ caller applies to its own child. (A) adds a mutable shared abstraction
 the audit explicitly rules out. (B) removes the duplicated
 environment table with no shared state. (B) wins.
 
-A sentinel test spawns a child test process carrying ambient
-`NIX_CONFIG`, proxy, and fake credential variables, runs the gate with
-a fake nix that dumps its environment, and asserts the child saw
-exactly the whitelisted variables.
+Each sentinel test starts a child test process with a cleared environment
+and controlled `NIX_CONFIG`, proxy, and fake credential variables. A fake
+Nix dumps its environment for the gate and the export build. The tests
+check keys before values and account for shell bookkeeping on each host.
+An isolation failure cannot dump host credentials.
 
 ## 5. Snapshot lane loading
 
@@ -163,8 +168,8 @@ Only obsolete comments that reference deleted gates are corrected — in
 restriction lints at deny level in the inherited workspace policy; test
 builds opt out once per crate root with a reasoned
 `cfg_attr(test, allow(...))` (tests may fail fast on broken fixtures;
-production may not panic), and the three integration-test crates, which
-compile without `cfg(test)`, declare the same reasoned header allow
+production denies explicit unwrap/expect/panic), and the three
+integration-test crates, which compile without `cfg(test)`, declare the same reasoned header allow
 once each. The real production sites are replaced on domain evidence:
 the `checked_source` split becomes an explicit fallible path (no
 validated source can lack a separator — now the code shows it), the

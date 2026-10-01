@@ -126,8 +126,7 @@ jobs:
       - name: Installer script syntax check
         run: sh -n install.sh
 
-      # Runner images for both matrix legs ship ShellCheck; the install
-      # branch keeps the check deterministic if an image ever drops it.
+      # Use the runner's ShellCheck if present; install it when missing.
       - name: Installer shellcheck
         run: |
           if ! command -v shellcheck >/dev/null 2>&1; then

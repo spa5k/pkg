@@ -14,7 +14,7 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "tests abort on broken fixtures; production never panics"
+    reason = "tests may use unwrap, expect, and panic to fail on broken fixtures"
 )]
 
 use std::fs;

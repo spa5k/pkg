@@ -14,7 +14,8 @@ checked only when its branch is complete and its checks ran.
 - [x] 1.2 Setup inspection distinguishes missing, unreadable, and
       malformed configuration files and preserves the cause when the
       inspection decides control flow; a required piped-stdin write
-      failure in `run_step` surfaces.
+      failure in `run_step` surfaces after stopping and reaping the child;
+      global config metadata and Nix settings query failures retain the cause.
 - [x] 1.3 Typed public `ImportError` (`SandboxRefused` vs ordinary
       failure) at the `cask_catalog::tap` seam, produced by
       construction at the config gate; ordinary text containing the
@@ -23,7 +24,9 @@ checked only when its branch is complete and its checks ran.
       the CLI boundary.
 - [x] 1.4 Tests: failure cannot reach chmod; unreadable vs missing vs
       malformed config; typed category versus coincidental text;
-      required stdin write failure.
+      required stdin write failure and reaping; metadata errors and
+      non-files cannot become missing configuration; Nix query failures
+      remain visible in verification and doctor.
 
 ## 2. Tap staging and publication ownership
 
@@ -34,7 +37,9 @@ checked only when its branch is complete and its checks ran.
       another source is refused; registry-then-source lock ordering,
       lock scope through commit/undo, the two-rename crash gap, error
       fidelity, and cleanup warnings are preserved; validation, consent,
-      registry, and output stay in the command layer.
+      registry, and output stay in the command layer. `Publication` borrows
+      its originating locked store; `undo` takes no foreign store argument.
+      Tests cover first/replacing rollback with another source root present.
 
 ## 3. Typed catalog target decision
 
@@ -72,14 +77,15 @@ checked only when its branch is complete and its checks ran.
       child; no ambient `NIX_CONFIG`, proxy, or fake credential
       sentinel leakage.
       `config_gate_child_environment_is_exactly_the_whitelist` spawns a
-      child TEST PROCESS carrying ambient `NIX_CONFIG`, `http(s)_proxy`,
+      child test process with a cleared environment carrying controlled `NIX_CONFIG`, `http(s)_proxy`,
       `no_proxy`, and a fake-credential sentinel; the child runs the
       gate with a fake nix that dumps its environment; the dump must
-      equal exactly the six whitelist variables plus `PWD` (added by
-      `/bin/sh` itself, value = cwd, not inherited host state).
+      equal exactly the six whitelist variables plus shell bookkeeping
+      (`PWD`, plus macOS `SHLVL` and `_`); keys are checked before values.
       `nix_export_child_environment_is_exactly_the_whitelist` pins the
-      same whitelist for the build child (env dump before the expected
-      missing-export.json failure). No global env changes, no
+      same whitelist in a separate controlled test process for the build
+      child (env dump before the expected missing-export.json failure).
+      Neither failure path can dump host credentials. No global env changes, no
       recursive test framework.
 
 ## 5. Snapshot lane loading (only if a small helper pays)
@@ -114,7 +120,7 @@ checked only when its branch is complete and its checks ran.
       fix; it no longer cites ADR 0005 as the active policy).
 - [x] 6.2 Add individually selected `unwrap_used`/`expect_used`/`panic`
       deny lints for production with reasoned, narrowly scoped test
-      exceptions; replace the two actual production sites on domain
+      exceptions; replace the three actual production sites on domain
       evidence.
       Done on `feat/quality-ci-repair`: the three lints are denied in
       `[workspace.lints.clippy]` (individual restriction lints, no
@@ -140,7 +146,7 @@ checked only when its branch is complete and its checks ran.
       (Linux lint coverage stays in the `rust` job); a new
       `Installer shellcheck` step runs `shellcheck install.sh` on both
       legs, using the runner's ShellCheck and installing on demand only
-      if an image drops it. No new job or framework; no advisory
+      when it is missing. No new job or framework; no advisory
       fetching.
 
 ## 7. Delivery

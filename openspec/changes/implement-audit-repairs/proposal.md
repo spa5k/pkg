@@ -27,7 +27,9 @@ stale lint/CI comments plus missing panic protection.
    Setup inspection distinguishes a missing, unreadable, and malformed
    configuration file and preserves the cause when inspection decides
    control flow. A required piped-stdin write failure in a setup step
-   surfaces instead of being ignored. The importer seam
+   surfaces instead of being ignored, and the child is stopped and reaped.
+   Metadata and Nix settings query failures preserve their cause.
+   The importer seam
    `cask_catalog::tap::import` returns a small typed `ImportError`
    (`SandboxRefused` versus ordinary failure); the client offers its
    existing single setup retry only for the typed refusal, never for
@@ -36,7 +38,9 @@ stale lint/CI comments plus missing panic protection.
    staged generation tied to its source; consuming `publish` settles the
    staging guard internally and returns a publication that owns the
    retained and scratch state with explicit `finish` and `undo`
-   operations. No fallible rollback runs from `Drop`; an unfinished
+   operations. The publication borrows its originating locked store;
+   rollback cannot target another store or outlive that lock.
+   No fallible rollback runs from `Drop`; an unfinished
    publication conservatively retains the old generation. Validation,
    consent, registry, and output stay in the command layer; storage
    cleanup moves into the store. The global registry then source-lock
@@ -70,8 +74,8 @@ stale lint/CI comments plus missing panic protection.
    and G-LINT gates are corrected. Focused production
    `unwrap_used`/`expect_used`/`panic` protection is added as
    individually selected restriction lints with reasoned, narrowly
-   scoped test exceptions; the two actual production `expect`/`
-   unreachable` sites are replaced on real domain evidence. The macOS
+   scoped test exceptions; the three production `expect`/`unreachable`
+   sites are replaced on real domain evidence. The macOS
    smoke job lints its `cfg(macos)` code with Clippy, and the installer
    smoke check runs ShellCheck as CONTRIBUTING already requires. No
    advisory fetching is added; the offline bans/licenses/sources check
