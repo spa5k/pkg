@@ -320,7 +320,7 @@ impl SourceStore {
         staged: StagedGeneration,
         provenance: &Provenance,
         index: &CatalogIndex,
-    ) -> Result<Publication, String> {
+    ) -> Result<Publication<'_>, String> {
         let StagedGeneration { guard, source } = staged;
         if source != self.source || guard.path.strip_prefix(self.generations()).is_err() {
             return Err(format!(
@@ -347,6 +347,7 @@ impl SourceStore {
                 // returned.
                 drop(guard);
                 Ok(Publication {
+                    store: self,
                     published,
                     staging: None,
                 })
@@ -357,6 +358,7 @@ impl SourceStore {
                 // the retained state to the publication.
                 let staging = guard.keep();
                 Ok(Publication {
+                    store: self,
                     published,
                     staging: Some(staging),
                 })
@@ -603,7 +605,8 @@ impl Drop for StagingGuard {
 /// unfinished publication performs NO fallible rollback: the preserved
 /// old generation and the scratch are conservatively retained, so a
 /// drop can never report a rollback it did not verify.
-pub struct Publication {
+pub struct Publication<'store> {
+    store: &'store SourceStore,
     published: Published,
     /// The retained staging parent of a replacing publication (the
     /// preserved old generation plus this run's fetch scratch); `None`
@@ -611,7 +614,7 @@ pub struct Publication {
     staging: Option<PathBuf>,
 }
 
-impl Publication {
+impl Publication<'_> {
     /// What this publication did.
     #[must_use]
     pub fn kind(&self) -> &Published {
@@ -668,18 +671,18 @@ impl Publication {
 
     /// Undo the publication after a registry write failure.
     ///
-    /// This is only correct immediately after the publication under the
-    /// same store lock, before any install could name the reference. The
+    /// The publication borrows its originating store and lock, so undo
+    /// cannot target another source or run after that lock is released. The
     /// registry state is untouched: the previous disabled state stays
     /// exactly as it was, including the re-add case. Undo errors are
     /// reported, never swallowed: the caller must know when the new
     /// generation may still be active instead of being told it was
     /// undone.
-    pub fn undo(self, store: &SourceStore) -> Result<(), String> {
+    pub fn undo(self) -> Result<(), String> {
         match self.published {
-            Published::First => store.undo_first_publication(),
+            Published::First => self.store.undo_first_publication(),
             Published::Replaced { saved_generation } => {
-                store.undo_replaced_publication(&saved_generation)
+                self.store.undo_replaced_publication(&saved_generation)
             }
         }
     }
@@ -771,7 +774,7 @@ mod tests {
         assert!(!store.current().join("captures").exists());
 
         // Undo removes the first publication and nothing else.
-        publication.undo(&store).expect("undoes");
+        publication.undo().expect("undoes");
         assert!(!store.is_published());
     }
 
@@ -837,7 +840,7 @@ mod tests {
         // Undoing the replacement restores the old active generation; the
         // withdrawn new one is removed best effort (normally succeeds in
         // tests) or retained — never a claim of a failed restoration.
-        publication.undo(&store).expect("undoes");
+        publication.undo().expect("undoes");
         assert_eq!(std::fs::read_to_string(&marker).expect("read"), "old");
         assert_eq!(
             store.read_provenance().expect("provenance").revision,
@@ -851,6 +854,49 @@ mod tests {
     /// provenance naming another source is refused before any mutation,
     /// and dropping an unfinished publication retains the old generation
     /// instead of attempting a fallible rollback from `Drop`.
+    #[test]
+    fn undo_targets_its_locked_store_and_keeps_other_roots_intact() {
+        let state = tempfile::tempdir().expect("tempdir");
+        let other_state = tempfile::tempdir().expect("other tempdir");
+        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
+        let other = SourceStore::lock(other_state.path(), "somebody/apps").expect("other locks");
+        let revision = "0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a";
+        let unrelated = other.new_staging().expect("other staging");
+        std::fs::create_dir(unrelated.path().join("flake")).expect("other flake");
+        std::fs::write(unrelated.path().join("flake/flake.nix"), "unrelated")
+            .expect("other content");
+        other
+            .publish(unrelated, &provenance(revision), &index(revision))
+            .expect("other publication")
+            .finish();
+        for (content, undo) in [("first", true), ("old", false), ("new", true)] {
+            let staged = store.new_staging().expect("staging");
+            std::fs::create_dir(staged.path().join("flake")).expect("flake");
+            std::fs::write(staged.path().join("flake/flake.nix"), content).expect("content");
+            let mut publication = store
+                .publish(staged, &provenance(revision), &index(revision))
+                .expect("publication");
+            if undo {
+                publication.undo().expect("undo bound to origin");
+            } else {
+                assert!(publication.finish().is_empty());
+            }
+            assert_eq!(
+                std::fs::read_to_string(other.current().join("flake.nix")).expect("other content"),
+                "unrelated"
+            );
+            if content == "first" {
+                assert!(!store.is_published());
+            } else {
+                assert_eq!(
+                    std::fs::read_to_string(store.current().join("flake.nix"))
+                        .expect("restored content"),
+                    "old"
+                );
+            }
+        }
+    }
+
     #[test]
     fn ownership_refuses_foreign_generations_and_drop_retains() {
         let state = tempfile::tempdir().expect("tempdir");

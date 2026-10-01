@@ -401,7 +401,6 @@ pub(super) fn add(
     {
         return Err(undo_publication_after_registry_failure(
             &source,
-            &locked,
             publication,
             &error,
         ));
@@ -456,13 +455,12 @@ fn recheck_consent(
 /// immutable path). Nothing is ever claimed undone when it was not.
 fn undo_publication_after_registry_failure(
     source: &str,
-    locked: &store::SourceStore,
-    publication: store::Publication,
+    publication: store::Publication<'_>,
     registry_error: &str,
 ) -> CommandError {
     let published = publication.kind().clone();
     match &published {
-        store::Published::First => match publication.undo(locked) {
+        store::Published::First => match publication.undo() {
             Ok(()) => format!(
                 "cannot record consent for {source}; the first publication was \
                  undone: {registry_error}"
@@ -475,7 +473,7 @@ fn undo_publication_after_registry_failure(
             )
             .into(),
         },
-        store::Published::Replaced { saved_generation } => match publication.undo(locked) {
+        store::Published::Replaced { saved_generation } => match publication.undo() {
             Ok(()) => format!(
                 "cannot record consent for {source}; the previous generation \
                  was restored: {registry_error}"
