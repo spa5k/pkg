@@ -55,12 +55,32 @@ checked only when its branch is complete and its checks ran.
 
 ## 4. One isolated Nix environment constructor
 
-- [ ] 4.1 One private constructor for the shared environment/process
+- [x] 4.1 One private constructor for the shared environment/process
       setup of the config gate and the raw-export build; caller roots,
       args, deadlines, log caps, labels, and gates stay separate.
-- [ ] 4.2 Environment sentinel test: exact whitelist in the isolated
+      Done on `feat/isolated-nix-env`: `runtime::isolated_nix_command`
+      (private to the tap module) creates each caller's OWN `home`/`tmp`
+      roots and returns the `Command` with env_clear, whitelist PATH
+      (nix bin + system default), `LC_ALL=C`, private HOME with
+      `.config` + empty `NIX_USER_CONF_FILES`, private `TMPDIR`, null
+      stdin, piped stdout/stderr. The gate keeps `staging/gate/{home,tmp}`
+      and `config show --json` (no sandbox override, 120 s); the build
+      keeps `staging/{nix-home,nix-tmp}`, its argv, sandbox/fallback
+      `--option`s, 45 min walltime, and its own label/tails. No shared
+      or mutable HOME, no session object.
+- [x] 4.2 Environment sentinel test: exact whitelist in the isolated
       child; no ambient `NIX_CONFIG`, proxy, or fake credential
       sentinel leakage.
+      `config_gate_child_environment_is_exactly_the_whitelist` spawns a
+      child TEST PROCESS carrying ambient `NIX_CONFIG`, `http(s)_proxy`,
+      `no_proxy`, and a fake-credential sentinel; the child runs the
+      gate with a fake nix that dumps its environment; the dump must
+      equal exactly the six whitelist variables plus `PWD` (added by
+      `/bin/sh` itself, value = cwd, not inherited host state).
+      `nix_export_child_environment_is_exactly_the_whitelist` pins the
+      same whitelist for the build child (env dump before the expected
+      missing-export.json failure). No global env changes, no
+      recursive test framework.
 
 ## 5. Snapshot lane loading (only if a small helper pays)
 

@@ -7,7 +7,7 @@
 //! hold the real state. Actual sandbox behavior is proven by the fresh
 //! in-build probe, which stays mandatory and authoritative.
 
-use super::runtime::{resolve_nix_exe, run_bounded_child, write_asset};
+use super::runtime::{isolated_nix_command, resolve_nix_exe, run_bounded_child};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -300,38 +300,15 @@ fn nix_config_gate_with_limits(
     walltime: Duration,
 ) -> Result<(), GateError> {
     let nix_exe = resolve_nix_exe(nix)?;
+    // Private per-gate roots (distinct from the build's): the shared
+    // constructor creates them and owns the environment/process setup;
+    // the gate keeps its own args, deadline, label, and NO sandbox
+    // override (client --options are ignored for untrusted users).
     let gate = staging.join("gate");
     let nix_home = gate.join("home");
-    let nix_config = nix_home.join(".config");
-    std::fs::create_dir_all(&nix_config)
-        .map_err(|e| format!("cannot create {}: {e}", nix_config.display()))?;
-    let nix_user_conf = nix_home.join("empty-nix.conf");
-    write_asset(&nix_user_conf, "")?;
     let nix_tmp = gate.join("tmp");
-    std::fs::create_dir_all(&nix_tmp)
-        .map_err(|e| format!("cannot create {}: {e}", nix_tmp.display()))?;
-
-    let mut command = std::process::Command::new(&nix_exe);
-    command
-        .arg("config")
-        .arg("show")
-        .arg("--json")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .env_clear();
-    let mut path_value = String::new();
-    if let Some(bin) = nix_exe.parent() {
-        path_value.push_str(&bin.display().to_string());
-        path_value.push(':');
-    }
-    path_value.push_str("/usr/bin:/bin:/usr/sbin:/sbin");
-    command.env("PATH", &path_value);
-    command.env("TMPDIR", &nix_tmp);
-    command.env("LC_ALL", "C");
-    command.env("HOME", &nix_home);
-    command.env("XDG_CONFIG_HOME", &nix_config);
-    command.env("NIX_USER_CONF_FILES", &nix_user_conf);
+    let mut command = isolated_nix_command(&nix_exe, &nix_home, &nix_tmp)?;
+    command.arg("config").arg("show").arg("--json");
 
     let bounded = run_bounded_child(&mut command, walltime, "nix config show")?;
     if !bounded.status.success() {
@@ -682,6 +659,112 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "the group kill + bounded joins must return promptly"
+        );
+    }
+
+    /// Environment sentinel: a CHILD TEST PROCESS carries ambient
+    /// `NIX_CONFIG`, proxy, and fake-credential sentinels and runs the
+    /// gate with a fake nix that dumps its own environment. The nix
+    /// child must see EXACTLY the constructor whitelist (plus `PWD`,
+    /// which `/bin/sh` adds itself from the cwd — it is not inherited
+    /// host state): no ambient variable may leak through `env_clear`.
+    #[cfg(unix)]
+    #[test]
+    fn config_gate_child_environment_is_exactly_the_whitelist() {
+        if std::env::var_os("PKG_TAP_GATE_ENV_CHILD_MODE").is_some() {
+            let dir =
+                PathBuf::from(std::env::var("PKG_TAP_GATE_ENV_DIR").expect("gate env dir env"));
+            let fixture = strong_effective_config(std::env::consts::OS).to_string();
+            let dump = dir.join("child-env");
+            let nix = fake_nix(
+                &dir,
+                &format!(
+                    "env > {d}\necho '{fixture}'",
+                    d = dump.display(),
+                    fixture = fixture.replace('\'', "'\\''")
+                ),
+            );
+            nix_config_gate_with_limits(&nix, &dir, Duration::from_secs(30))
+                .expect("gate passes with a strong fixture");
+            let dumped = std::fs::read_to_string(&dump).expect("child env dump readable");
+            let mut seen: BTreeMap<String, String> = BTreeMap::new();
+            for line in dumped.lines() {
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                seen.insert(key.to_string(), value.to_string());
+            }
+            let gate = dir.join("gate");
+            let home = gate.join("home");
+            let expected: BTreeMap<String, String> = [
+                ("HOME", home.display().to_string()),
+                (
+                    "XDG_CONFIG_HOME",
+                    home.join(".config").display().to_string(),
+                ),
+                (
+                    "NIX_USER_CONF_FILES",
+                    home.join("empty-nix.conf").display().to_string(),
+                ),
+                ("TMPDIR", gate.join("tmp").display().to_string()),
+                ("LC_ALL", "C".to_string()),
+                (
+                    "PATH",
+                    format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", dir.display()),
+                ),
+                // Added by /bin/sh itself (cwd bookkeeping), never by
+                // the constructor; its presence is not a leak.
+                (
+                    "PWD",
+                    std::env::current_dir().expect("cwd").display().to_string(),
+                ),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect();
+            assert_eq!(
+                seen, expected,
+                "the nix child must see exactly the whitelist"
+            );
+            // Explicit diagnosis for the classic leaks; the exact map
+            // equality above already covers them.
+            for banned in [
+                "NIX_CONFIG",
+                "http_proxy",
+                "https_proxy",
+                "no_proxy",
+                "PKG_TAP_FAKE_CREDENTIAL",
+            ] {
+                assert!(
+                    !seen.contains_key(banned),
+                    "{banned} leaked into the child env"
+                );
+            }
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("config_gate_child_environment_is_exactly_the_whitelist")
+            .env("PKG_TAP_GATE_ENV_CHILD_MODE", "1")
+            .env("PKG_TAP_GATE_ENV_DIR", dir.path())
+            // Ambient hostiles this child test process carries: a
+            // NIX_CONFIG override, proxies, and a FAKE credential.
+            // None may reach the nix child. (Sentinel values only;
+            // nothing real is copied or printed.)
+            .env("NIX_CONFIG", "sentinel-nix-config")
+            .env("http_proxy", "http://127.0.0.1:9")
+            .env("https_proxy", "http://127.0.0.1:9")
+            .env("no_proxy", "sentinel-no-proxy")
+            .env("PKG_TAP_FAKE_CREDENTIAL", "sentinel-fake-token")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .expect("child test process spawns");
+        let status = child.wait().expect("child test process reaped");
+        assert!(
+            status.success(),
+            "the child test process must pass the whitelist checks"
         );
     }
 }
