@@ -29,11 +29,11 @@ The current reliability work follows
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.10 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.10):
+   [v0.2.0-alpha.11 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.11):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.10/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.11/install.sh
    sh pkg-install.sh
    ```
 

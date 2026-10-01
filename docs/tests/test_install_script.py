@@ -24,7 +24,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "install.sh"
-VERSION = "0.2.0-alpha.10"
+VERSION = "0.2.0-alpha.11"
 TAG = f"v{VERSION}"
 SYSTEM = "x86_64-linux"
 ARCHIVE = f"pkg-{VERSION}-{SYSTEM}.tar.gz"
