@@ -852,27 +852,47 @@ mod tests {
     }
 
     /// The raw-export build child must see EXACTLY the same shared
-    /// constructor whitelist as the config gate (plus `PWD`, added by
-    /// `/bin/sh` itself): the fake nix dumps its environment and exits
+    /// constructor whitelist as the config gate (plus shell bookkeeping):
+    /// the fake nix dumps its environment and exits
     /// 0 without producing export.json, so the run fails at the
     /// out-link check — AFTER the child ran — and the dump can be
-    /// compared exactly. If `env_clear` ever regressed, the ambient
-    /// test-process variables (TMPDIR, cargo/test bookkeeping) would
-    /// appear here and fail this test.
+    /// compared exactly. A separate test process carries only controlled
+    /// sentinels, so an isolation failure cannot dump host credentials.
     #[cfg(unix)]
     #[test]
     fn nix_export_child_environment_is_exactly_the_whitelist() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let dump = dir.path().join("export-child-env");
+        if std::env::var_os("PKG_TAP_EXPORT_ENV_CHILD_MODE").is_none() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let status =
+                std::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .arg("nix_export_child_environment_is_exactly_the_whitelist")
+                    .env_clear()
+                    .env("PKG_TAP_EXPORT_ENV_CHILD_MODE", "1")
+                    .env("PKG_TAP_EXPORT_ENV_DIR", dir.path())
+                    .env("NIX_CONFIG", "sentinel-nix-config")
+                    .env("http_proxy", "http://127.0.0.1:9")
+                    .env("https_proxy", "http://127.0.0.1:9")
+                    .env("no_proxy", "sentinel-no-proxy")
+                    .env("PKG_TAP_FAKE_CREDENTIAL", "sentinel-fake-token")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                    .expect("child test process reaped");
+            assert!(status.success(), "child environment checks must pass");
+            return;
+        }
+        let dir = PathBuf::from(std::env::var("PKG_TAP_EXPORT_ENV_DIR").expect("export env dir"));
+        let dump = dir.join("export-child-env");
         let nix = fake_nix(
-            dir.path(),
-            &format!("env > {d}\nexit 0", d = dump.display()),
+            &dir,
+            &format!("/usr/bin/env > {d}\nexit 0", d = dump.display()),
         );
         let canary = setup_canary().expect("canary");
         let err = run_nix_export_with_limits(
-            &fake_request(dir.path(), nix),
-            dir.path(),
-            dir.path(),
+            &fake_request(&dir, nix),
+            &dir,
+            &dir,
             "example/foo",
             REVISION,
             &canary,
@@ -893,8 +913,8 @@ mod tests {
             };
             seen.insert(key.to_string(), value.to_string());
         }
-        let home = dir.path().join("nix-home");
-        let expected: std::collections::BTreeMap<String, String> = [
+        let home = dir.join("nix-home");
+        let mut expected: std::collections::BTreeMap<String, String> = [
             ("HOME", home.display().to_string()),
             (
                 "XDG_CONFIG_HOME",
@@ -904,11 +924,11 @@ mod tests {
                 "NIX_USER_CONF_FILES",
                 home.join("empty-nix.conf").display().to_string(),
             ),
-            ("TMPDIR", dir.path().join("nix-tmp").display().to_string()),
+            ("TMPDIR", dir.join("nix-tmp").display().to_string()),
             ("LC_ALL", "C".to_string()),
             (
                 "PATH",
-                format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", dir.path().display()),
+                format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", dir.display()),
             ),
             // Added by /bin/sh itself (cwd bookkeeping), not by the
             // constructor; its presence is not a leak.
@@ -920,10 +940,17 @@ mod tests {
         .into_iter()
         .map(|(key, value)| (key.to_string(), value))
         .collect();
+        if cfg!(target_os = "macos") {
+            expected.insert("SHLVL".to_string(), "1".to_string());
+            expected.insert("_".to_string(), "/usr/bin/env".to_string());
+        }
         assert_eq!(
-            seen, expected,
-            "the nix build child must see exactly the whitelist"
+            seen.keys().collect::<Vec<_>>(),
+            expected.keys().collect::<Vec<_>>()
         );
+        for (key, value) in expected {
+            assert_eq!(seen.get(&key), Some(&value), "wrong value for {key}");
+        }
     }
 
     // The spawned Nix child runs in its OWN process group; the group

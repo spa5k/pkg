@@ -665,9 +665,8 @@ mod tests {
     /// Environment sentinel: a CHILD TEST PROCESS carries ambient
     /// `NIX_CONFIG`, proxy, and fake-credential sentinels and runs the
     /// gate with a fake nix that dumps its own environment. The nix
-    /// child must see EXACTLY the constructor whitelist (plus `PWD`,
-    /// which `/bin/sh` adds itself from the cwd — it is not inherited
-    /// host state): no ambient variable may leak through `env_clear`.
+    /// child must see exactly the constructor whitelist plus shell
+    /// bookkeeping: no ambient variable may leak through `env_clear`.
     #[cfg(unix)]
     #[test]
     fn config_gate_child_environment_is_exactly_the_whitelist() {
@@ -679,7 +678,7 @@ mod tests {
             let nix = fake_nix(
                 &dir,
                 &format!(
-                    "env > {d}\necho '{fixture}'",
+                    "/usr/bin/env > {d}\necho '{fixture}'",
                     d = dump.display(),
                     fixture = fixture.replace('\'', "'\\''")
                 ),
@@ -696,7 +695,7 @@ mod tests {
             }
             let gate = dir.join("gate");
             let home = gate.join("home");
-            let expected: BTreeMap<String, String> = [
+            let mut expected: BTreeMap<String, String> = [
                 ("HOME", home.display().to_string()),
                 (
                     "XDG_CONFIG_HOME",
@@ -722,29 +721,23 @@ mod tests {
             .into_iter()
             .map(|(key, value)| (key.to_string(), value))
             .collect();
+            if cfg!(target_os = "macos") {
+                expected.insert("SHLVL".to_string(), "1".to_string());
+                expected.insert("_".to_string(), "/usr/bin/env".to_string());
+            }
             assert_eq!(
-                seen, expected,
-                "the nix child must see exactly the whitelist"
+                seen.keys().collect::<Vec<_>>(),
+                expected.keys().collect::<Vec<_>>()
             );
-            // Explicit diagnosis for the classic leaks; the exact map
-            // equality above already covers them.
-            for banned in [
-                "NIX_CONFIG",
-                "http_proxy",
-                "https_proxy",
-                "no_proxy",
-                "PKG_TAP_FAKE_CREDENTIAL",
-            ] {
-                assert!(
-                    !seen.contains_key(banned),
-                    "{banned} leaked into the child env"
-                );
+            for (key, value) in expected {
+                assert_eq!(seen.get(&key), Some(&value), "wrong value for {key}");
             }
             return;
         }
         let dir = tempfile::tempdir().expect("tempdir");
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .arg("config_gate_child_environment_is_exactly_the_whitelist")
+            .env_clear()
             .env("PKG_TAP_GATE_ENV_CHILD_MODE", "1")
             .env("PKG_TAP_GATE_ENV_DIR", dir.path())
             // Ambient hostiles this child test process carries: a
@@ -757,7 +750,7 @@ mod tests {
             .env("no_proxy", "sentinel-no-proxy")
             .env("PKG_TAP_FAKE_CREDENTIAL", "sentinel-fake-token")
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
+            .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
             .spawn()
             .expect("child test process spawns");
