@@ -115,16 +115,26 @@ usable cache exists, `search` exits nonzero instead of reporting an empty
 success. Rows reused from cache after a live failure carry
 `"stale": true`.
 
-The first query at a new locked revision of the Nixpkgs source performs
-one full native evaluation (`nix search <locked> ^ --json`, tens of
-seconds cold); the complete metadata snapshot it produces then answers
-every later query — same or different — locally, and is atomically
-replaced when the revision moves.
+`pkg update` prepares the complete discovery cache before search. A first
+search without a current cache prepares it in the foreground. Progress goes
+to stderr. Ctrl-C cancels preparation and retains the previous complete cache.
+
+Nix evaluates metadata in batches of 256 attributes, with one evaluator at
+a time. Each evaluator has a 512 MiB RSS budget. The memory guard stops
+at 480 MiB to allow growth between samples. A stopped batch is split and
+retried. An entry that still exceeds the budget fails
+the refresh. The cache includes names and descriptions, without evaluating
+build dependencies. A failed refresh keeps the previous complete snapshot.
+
+SQLite holds one complete snapshot per source and system, with its locked
+revision. Queries use an 8 MiB page cache and read rows through the Rust
+regex filter. Matched rows are spooled to disk before output. Installed
+state and history remain in the native Nix profile.
 
 Search pattern grammar, per lane:
 
-- The `nixpkgs` lane evaluates the complete catalog once per locked
-  revision (`nix search <locked> ^ --json`) and filters locally: the
+- The `nixpkgs` lane evaluates the complete catalog in bounded batches per locked
+  revision and filters locally: the
   pattern is a Rust regex (the `regex` crate), compiled
   case-insensitively and matched against the same three strings native
   `nix search` matches — the full attribute path (for example
@@ -306,3 +316,13 @@ blocks. Old views can keep space until removed. There is no automatic cleanup
 of old views in this change.
 Update apps through `pkg upgrade`. If a copy is missing or damaged,
 `pkg apps sync` recreates it from its Nix payload.
+
+Profile mutations and explicit app sync hold one process lock per pkg
+profile. The lock covers inventory checks, mutation, verification, and app
+sync. Direct Nix commands do not use this lock. Repeating an install skips
+an active entry with the same source, attribute, and output set.
+
+Default rollback selects Nix's previous retained generation. After a
+branched history, that generation can contain an older package set.
+The command prints the destination generation. Use `pkg history` and
+`pkg rollback N` to choose a specific retained generation.

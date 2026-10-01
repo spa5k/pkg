@@ -211,6 +211,15 @@ pub fn setup_storage() -> Result<(), String> {
 /// stale launchers to remove; an unowned folder is never touched then.
 pub fn sync(nix: &Nix, paths: &Paths) -> Result<(), String> {
     if !cfg!(target_os = "macos") {
+        return sync_locked(nix, paths);
+    }
+    let _profile_lock = crate::profile_lock::ProfileLock::acquire(&paths.profile)?;
+    sync_locked(nix, paths)
+}
+
+/// Refresh launchers while the caller holds the profile lock.
+pub(crate) fn sync_locked(nix: &Nix, paths: &Paths) -> Result<(), String> {
+    if !cfg!(target_os = "macos") {
         let _ = (nix.executable(), &paths.helper_profile);
         return Err(
             "pkg apps sync supports macOS only; .app bundles are not exposed on this platform"
@@ -556,7 +565,16 @@ fn scan_apps(
 
 /// Read generated app data without executing vendor code or writing state.
 fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
-    let path = output.join(CASK_APP_MANIFEST);
+    let namespace = output
+        .join("libexec/pkg-casks")
+        .join(output.file_name().ok_or("app output has no name")?);
+    let current = namespace.join("apps.json");
+    let modern = current.exists();
+    let path = if modern {
+        current
+    } else {
+        output.join(CASK_APP_MANIFEST)
+    };
     let metadata = match fs::symlink_metadata(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
         Err(e) => return Err(format!("could not inspect {}: {e}", path.display())),
@@ -578,7 +596,26 @@ fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, PathBuf>, Stri
         &fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?,
     )
     .map_err(|e| format!("invalid cask app data {}: {e}", path.display()))?;
-    if data.schema != "pkg-cask-apps/1" || !output.join("libexec/pkg-cask-app").is_file() {
+    let (schema, helper, source_dir) = if modern {
+        (
+            "pkg-cask-apps/2",
+            namespace.join("prepare"),
+            format!(
+                "libexec/pkg-casks/{}/app-sources",
+                output
+                    .file_name()
+                    .ok_or("app output has no name")?
+                    .to_string_lossy()
+            ),
+        )
+    } else {
+        (
+            "pkg-cask-apps/1",
+            output.join("libexec/pkg-cask-app"),
+            String::from("libexec/pkg/app-sources"),
+        )
+    };
+    if data.schema != schema || !helper.is_file() {
         return Err(format!("unsupported cask app data: {}", path.display()));
     }
     let mut apps = BTreeMap::new();
@@ -586,7 +623,7 @@ fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, PathBuf>, Stri
         if name == ".app"
             || !name.ends_with(".app")
             || name.contains(['/', '\0', '\n', '\r'])
-            || entry.source != format!("libexec/pkg/app-sources/{name}")
+            || entry.source != format!("{source_dir}/{name}")
         {
             return Err(format!("invalid cask app payload: {name}"));
         }
@@ -606,6 +643,14 @@ fn app_output(bundle: &Path) -> Option<&Path> {
     let sources = bundle.parent()?;
     let pkg = sources.parent()?;
     let libexec = pkg.parent()?;
+    if sources.file_name()? == "app-sources" && libexec.file_name()? == "pkg-casks" {
+        let directory = libexec.parent()?;
+        let output = directory.parent()?;
+        if directory.file_name()? == "libexec" && pkg.file_name()? == output.file_name()? {
+            return Some(output);
+        }
+        return None;
+    }
     if sources.file_name()? != "app-sources"
         || pkg.file_name()? != "pkg"
         || libexec.file_name()? != "libexec"
@@ -633,7 +678,20 @@ fn prepare_bundle(bundle: &Path) -> Result<PathBuf, String> {
         return Ok(bundle.to_path_buf());
     };
     let output = app_output(bundle).ok_or("missing cask app output")?;
-    let helper = output.join("libexec/pkg-cask-app");
+    let helper = if bundle
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        == Some(std::ffi::OsStr::new("pkg"))
+    {
+        output.join("libexec/pkg-cask-app")
+    } else {
+        bundle
+            .parent()
+            .and_then(Path::parent)
+            .ok_or("missing cask namespace")?
+            .join("prepare")
+    };
     let name = bundle
         .file_name()
         .ok_or("missing cask app name")?

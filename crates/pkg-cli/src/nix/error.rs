@@ -23,6 +23,8 @@ pub enum NixError {
     },
     /// A native command could not be started.
     Spawn(String),
+    /// A discovery evaluator was stopped before exceeding its resource budget.
+    ResourceLimit(String),
     /// A native command failed. Upstream diagnostics are preserved.
     Failed {
         /// The argument vector pkg ran.
@@ -86,6 +88,7 @@ impl fmt::Display for NixError {
                 )
             }
             Self::Spawn(detail) => write!(f, "could not start the Nix command: {detail}"),
+            Self::ResourceLimit(detail) => write!(f, "discovery evaluation stopped: {detail}"),
             Self::Failed {
                 args,
                 status,

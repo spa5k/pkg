@@ -28,11 +28,9 @@ toml = "=0.9.8"
 libc = "=0.2.189"
 # Scratch directories for temporary discovery and sync views.
 tempfile = "=3.27.0"
-# Local filtering for the cask catalog index lane only. The grammar is
-# Rust regex, matched case-insensitively against token, name, and
-# description; the Nixpkgs lane keeps passing patterns to `nix search`
-# unchanged. Semantics are documented in docs/commands.md and docs/casks.md.
+# Shared local search filtering.
 regex = "=1.13.1"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 # Local public tap imports run through the backend library seam
 # `cask_catalog::tap` (openspec/changes/import-public-cask-taps). The
 # client owns consent, the tap registry, publishing, and routing; the

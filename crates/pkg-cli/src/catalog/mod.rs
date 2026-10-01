@@ -16,6 +16,7 @@
 mod cache;
 mod cask;
 mod id;
+mod native;
 mod routing;
 mod search;
 
@@ -32,13 +33,15 @@ pub use id::{CatalogId, ParsedId, canonical_source, escape_regex, parse_id};
 pub use routing::Routing;
 pub use search::{
     ExactMatch, SearchResult, SourceKind, SourceReport, SourceStatus, SupportBadge, catalog_meta,
-    exact_lookup, exact_lookup_in, exposed_attribute, report_for, resolve_bare, resolve_bare_cask,
-    search_catalog, search_saved_catalog, search_source,
+    exact_lookup, exact_lookup_in, exposed_attribute, prepare_source, report_for, resolve_bare,
+    resolve_bare_cask, search_catalog, search_saved_catalog, search_source, search_source_into,
 };
 
 /// A catalog routing error.
 #[derive(Debug)]
 pub enum CatalogError {
+    /// Discovery was cancelled by a signal.
+    Interrupted(i32),
     /// A name or attribute matched nothing in the queried source.
     NotFound(String),
     /// A name matched more than one supported output.
@@ -57,6 +60,7 @@ pub enum CatalogError {
 impl fmt::Display for CatalogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Interrupted(signal) => write!(f, "discovery cancelled by signal {signal}"),
             Self::NotFound(name) => write!(f, "no supported exact match for `{name}`"),
             Self::Ambiguous { name, choices } => write!(
                 f,
@@ -73,6 +77,9 @@ impl std::error::Error for CatalogError {}
 
 impl From<NixError> for CatalogError {
     fn from(error: NixError) -> Self {
-        Self::Source(error.to_string())
+        match error {
+            NixError::Interrupted { signal, .. } => Self::Interrupted(signal),
+            error => Self::Source(error.to_string()),
+        }
     }
 }

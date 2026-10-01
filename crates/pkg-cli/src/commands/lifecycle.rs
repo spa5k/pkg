@@ -46,6 +46,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                 let saved = tap_state.saved_all()?;
                 catalog::resolve_bare(
                     &session.nix,
+                    &session.paths.cache_dir,
                     &tap_state.routing,
                     &saved,
                     &name,
@@ -74,17 +75,72 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                 .map_err(CommandError::Message)?,
         );
     }
+    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
     let before = installed_entries(&session)?;
+    let mut selected = std::collections::BTreeSet::new();
+    installables.retain(|installable| selected.insert(installable.clone()));
+    let mut pending = Vec::new();
+    for installable in installables {
+        if already_installed(&session.nix, &before, &installable, &system)? {
+            println!("Already installed: {installable}");
+        } else {
+            pending.push(installable);
+        }
+    }
+    if pending.is_empty() {
+        return Ok(());
+    }
     eprintln!("Installing: {}", ids.join(", "));
     session
         .nix
-        .profile_add(&session.paths.profile, &installables)
+        .profile_add(&session.paths.profile, &pending)
         .map_err(|error| mutation_failed(&session, "install", &error, Some(&before)))?;
     let after = installed_entries(&session)?;
     let names = changed_names(&before, &after);
     apps_refresh_after_mutation(&session, "install", &names)?;
     report_names("Installed", &names);
     Ok(())
+}
+
+fn already_installed(
+    nix: &nix::Nix,
+    installed: &BTreeMap<String, ProfileEntry>,
+    installable: &str,
+    system: &str,
+) -> Result<bool, nix::NixError> {
+    let Some((reference, attribute)) = installable.split_once('#') else {
+        return Ok(false);
+    };
+    let attribute = attribute
+        .split_once('^')
+        .map_or(attribute, |(base, _)| base)
+        .replace('"', "");
+    let candidates: Vec<_> = installed
+        .values()
+        .filter(|entry| {
+            entry.active
+                && entry.original_url == reference
+                && (entry.attr_path == attribute
+                    || catalog::exposed_attribute(&entry.attr_path, system) == attribute)
+        })
+        .collect();
+    if candidates.is_empty() {
+        return Ok(false);
+    }
+    let selected = installable
+        .split_once('^')
+        .map_or(installable, |(base, _)| base);
+    let exact = nix.search(selected, ".")?;
+    if exact.len() != 1 {
+        return Ok(false);
+    }
+    let mut paths = nix.default_output_paths(installable)?;
+    paths.sort();
+    Ok(candidates.iter().any(|entry| {
+        let mut existing = entry.store_paths.clone();
+        existing.sort();
+        exact.contains_key(&entry.attr_path) && existing == paths
+    }))
 }
 
 /// Refuse cask installs the generated or saved catalog excludes or does not
@@ -227,6 +283,7 @@ pub(super) fn remove(cli: &Cli, entries: &[String]) -> Result<(), CommandError> 
     if entries.is_empty() {
         return Err(String::from("remove needs at least one installed entry ID").into());
     }
+    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
     let installed = installed_entries(&session)?;
     for entry in entries {
         if !installed.contains_key(entry) {
@@ -254,34 +311,38 @@ pub(super) fn remove(cli: &Cli, entries: &[String]) -> Result<(), CommandError> 
 
 pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
     let session = session(cli)?;
-    // Refresh metadata natively (--refresh) so TTL-cached metadata is not
-    // reported as current, then drop the discovery cache. Both sources are
-    // refreshed on every system: source metadata is not per-system, and the
-    // catalog decides per-system reach from its own target list.
+    let system = session.nix.system()?;
     eprintln!("Refreshing package search data…");
-    for (_kind, source) in configured_sources(&session.config) {
-        match session.nix.refresh_source_identity(source) {
-            Ok(identity) => {
-                let revision = identity
-                    .revision
-                    .as_deref()
-                    .unwrap_or("moving, no revision");
-                if cli.verbose {
-                    eprintln!("pkg: {source} -> {revision}");
+    for (kind, source) in configured_sources(&session.config) {
+        let identity = session.nix.refresh_source_identity(source)?;
+        match kind {
+            catalog::SourceKind::Nixpkgs => catalog::prepare_source(
+                &session.nix,
+                &session.paths.cache_dir,
+                source,
+                &system,
+                &identity,
+            )?,
+            catalog::SourceKind::Cask => {
+                let (_, report) = catalog::search_catalog(
+                    &session.nix,
+                    &session.paths.cache_dir,
+                    source,
+                    "^",
+                    &system,
+                )?;
+                if !matches!(
+                    report.status,
+                    catalog::SourceStatus::Fresh | catalog::SourceStatus::SkippedPlatform
+                ) {
+                    return Err(CommandError::Message(
+                        report
+                            .detail
+                            .unwrap_or_else(|| String::from("cask cache preparation failed")),
+                    ));
                 }
             }
-            Err(error) => {
-                eprintln!("Failed: Could not refresh package search data.");
-                eprintln!("Source: {}", crate::output::short_source(source));
-                super::report_cause(&error.to_string());
-                eprintln!("Installed packages did not change.");
-                return Err(CommandError::Reported(ExitCode::from(super::FAILURE)));
-            }
         }
-    }
-    let removed = catalog::invalidate_cache(&session.paths.cache_dir)?;
-    if cli.verbose {
-        eprintln!("pkg: removed {removed} discovery cache entries");
     }
     println!("Updated: package search data. Installed packages did not change.");
     Ok(())
@@ -289,6 +350,7 @@ pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
 
 pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), CommandError> {
     let session = session(cli)?;
+    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
     let installed = installed_entries(&session)?;
     // `--all` combined with entry names is a usage error rejected by the
     // parser; here the target set is either explicit names or everything.
@@ -588,11 +650,29 @@ fn render_history(text: &str, active: Option<u64>) -> String {
 
 pub(super) fn rollback(cli: &Cli, generation: Option<u64>) -> Result<(), CommandError> {
     let session = session(cli)?;
+    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
     let before = installed_entries(&session)?;
     let previous_generation = active_generation(&session.paths.profile);
     match generation {
         Some(number) => eprintln!("Restoring: generation {number}"),
-        None => eprintln!("Restoring: previous generation"),
+        None => {
+            let destination = session
+                .nix
+                .profile_history(&session.paths.profile)
+                .ok()
+                .and_then(|text| {
+                    let current = previous_generation?;
+                    history_numbers(&text)
+                        .into_iter()
+                        .filter(|number| *number < current)
+                        .max()
+                });
+            if let Some(number) = destination {
+                eprintln!("Restoring: generation {number} (native previous generation)");
+            } else {
+                eprintln!("Restoring: native previous generation");
+            }
+        }
     }
     if let Err(error) = session
         .nix
@@ -642,6 +722,7 @@ pub(super) fn prune(cli: &Cli, older_than: &str) -> Result<(), CommandError> {
     // The age is validated before the runtime is touched.
     let days = crate::cli::parse_prune_age(older_than)?;
     let session = session(cli)?;
+    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
     let before = session
         .nix
         .profile_history(&session.paths.profile)

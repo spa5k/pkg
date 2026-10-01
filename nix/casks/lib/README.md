@@ -53,7 +53,7 @@ for verified formats, regressions, and remaining limits.
 
 Nix does not retain macOS signature attributes. The builder stores supported
 signatures in `share/pkg/cask-apps.json` and keeps the app payload under
-`libexec/pkg/app-sources/`. It does not expose the incomplete bundle in
+`libexec/pkg-casks/<store-output>/app-sources/`. It does not expose the incomplete bundle in
 `Applications`. Malformed, unknown, orphaned, and symlinked signing streams
 are refused. Native signing attributes are also captured before copying.
 

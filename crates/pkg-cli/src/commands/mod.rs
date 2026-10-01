@@ -60,13 +60,26 @@ impl From<String> for CommandError {
 
 impl From<NixError> for CommandError {
     fn from(error: NixError) -> Self {
-        Self::Message(error.to_string())
+        match error {
+            NixError::Interrupted { signal, .. } => Self::Reported(ExitCode::from(
+                u8::try_from(128 + signal).unwrap_or(FAILURE),
+            )),
+            error => Self::Message(error.to_string()),
+        }
     }
 }
 
 impl From<catalog::CatalogError> for CommandError {
     fn from(error: catalog::CatalogError) -> Self {
-        Self::Message(error.to_string())
+        match error {
+            catalog::CatalogError::Interrupted(signal) => {
+                eprintln!("Discovery cancelled. The previous complete cache was retained.");
+                Self::Reported(ExitCode::from(
+                    u8::try_from(128 + signal).unwrap_or(FAILURE),
+                ))
+            }
+            error => Self::Message(error.to_string()),
+        }
     }
 }
 
@@ -431,7 +444,7 @@ fn apps_refresh_after_mutation(
     if !cfg!(target_os = "macos") {
         return Ok(());
     }
-    match crate::apps::sync(&session.nix, &session.paths) {
+    match crate::apps::sync_locked(&session.nix, &session.paths) {
         Ok(()) => Ok(()),
         Err(detail) => {
             if names.is_empty() {

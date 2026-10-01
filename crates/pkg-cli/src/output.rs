@@ -169,24 +169,33 @@ pub fn render_search(rows: &[crate::catalog::SearchResult], query: &str) -> Stri
         .max(2);
     let _ = writeln!(out, "{:<width$}  VERSION  DESCRIPTION", "ID");
     for row in rows {
-        let stale = if row.stale { " [cached]" } else { "" };
-        let support = match &row.support {
-            Some(crate::catalog::SupportBadge::Eligible) => "",
-            Some(crate::catalog::SupportBadge::Excluded { reason, .. }) => {
-                &format!(" [excluded: {reason}]")
-            }
-            None => "",
-        };
-        let _ = writeln!(
-            out,
-            "{:<width$}  {}  {}{}{}",
-            row.id,
-            row.version,
-            truncate(&row.description, 80),
-            stale,
-            support
-        );
+        out.push_str(&render_search_row(row, width));
     }
+    out
+}
+
+/// Render one search row at the shared column width.
+#[must_use]
+pub fn render_search_row(row: &crate::catalog::SearchResult, width: usize) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let stale = if row.stale { " [cached]" } else { "" };
+    let support = match &row.support {
+        Some(crate::catalog::SupportBadge::Eligible) => "",
+        Some(crate::catalog::SupportBadge::Excluded { reason, .. }) => {
+            &format!(" [excluded: {reason}]")
+        }
+        None => "",
+    };
+    let _ = writeln!(
+        out,
+        "{:<width$}  {}  {}{}{}",
+        row.id,
+        row.version,
+        truncate(&row.description, 80),
+        stale,
+        support
+    );
     out
 }
 

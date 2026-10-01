@@ -10,6 +10,9 @@ and roots. `pkg` owns names, commands, output, and desktop app launchers.
 repair, or remove Nix. Install Determinate Nix from
 [the vendor](https://docs.determinate.systems/determinate-nix/) first.
 
+The current reliability work follows
+[Repair faults found through real package use](openspec/changes/repair-realistic-use-faults/proposal.md).
+
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.
 > [v0.2.0-alpha.3](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.3)

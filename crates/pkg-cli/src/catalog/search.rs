@@ -14,7 +14,7 @@ use crate::tap::SavedCatalog;
 use super::CatalogError;
 use super::cache;
 use super::cask::{self, CatalogOnce};
-use super::id::{CatalogId, escape_regex};
+use super::id::CatalogId;
 use super::routing::Routing;
 
 /// One resolved row set for a lane: the metadata map it supplies, the
@@ -115,7 +115,7 @@ impl SourceStatus {
 }
 
 /// Support badge for a cask row in discovery results.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum SupportBadge {
     /// The token is eligible on this system.
@@ -133,7 +133,7 @@ pub enum SupportBadge {
 }
 
 /// One search result row after routing, with provenance.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SearchResult {
     /// The source-qualified ID, for example `nixpkgs:fd` or `cask:raycast`.
     ///
@@ -269,13 +269,21 @@ fn unique_exposed_forms<'a>(attrs: &[&'a str], system: Option<&str>) -> Vec<&'a 
 /// choices at all, so it can never be a fatal requirement there.
 pub fn resolve_bare(
     nix: &Nix,
+    cache_dir: &Path,
     routing: &Routing,
     saved: &crate::tap::SavedCatalogs,
     name: &str,
     system: &str,
     catalog: &mut CatalogOnce<'_>,
 ) -> Result<CatalogId, CatalogError> {
-    resolve_inner(nix, Some(&routing.nixpkgs), saved, name, system, catalog)
+    resolve_inner(
+        nix,
+        Some((&routing.nixpkgs, cache_dir)),
+        saved,
+        name,
+        system,
+        catalog,
+    )
 }
 
 /// Resolve one bare cask token (`cask:token`) across every cask source.
@@ -300,24 +308,56 @@ pub fn resolve_bare_cask(
 /// `None` for the cask-only form.
 fn resolve_inner(
     nix: &Nix,
-    nixpkgs: Option<&str>,
+    nixpkgs: Option<(&str, &Path)>,
     saved: &crate::tap::SavedCatalogs,
     name: &str,
     system: &str,
     catalog: &mut CatalogOnce<'_>,
 ) -> Result<CatalogId, CatalogError> {
     let mut choices = Vec::new();
-    if let Some(nixpkgs) = nixpkgs {
-        let pattern = format!("^{}$", escape_regex(name));
-        let nixpkgs = nix.search(nixpkgs, &pattern).map_err(CatalogError::from)?;
-        let matches = exact_attribute_matches(&nixpkgs, name);
-        let attrs: Vec<&str> = matches.iter().map(|(attr, _)| attr.as_str()).collect();
-        // Choices are exposed as the normalized suffix when that suffix
-        // is unique, and as the full native attribute when `packages` and
-        // `legacyPackages` expose the same short name; either form
-        // round-trips through info and install.
-        for attr in unique_exposed_forms(&attrs, Some(system)) {
-            choices.push(CatalogId::Nixpkgs(attr.to_string()));
+    if let Some((source, cache_dir)) = nixpkgs {
+        let identity = nix.source_identity(source).map_err(CatalogError::from)?;
+        let reference = identity.locked_url.as_deref().unwrap_or(source);
+        let mut exact = BTreeMap::new();
+        for root in ["packages", "legacyPackages"] {
+            let mut path = vec![root.to_string(), system.to_string()];
+            path.extend(name.split('.').map(str::to_string));
+            if name.starts_with("packages.") || name.starts_with("legacyPackages.") {
+                path = name.split('.').map(str::to_string).collect();
+                if path.first().is_none_or(|prefix| prefix != root)
+                    || path.get(1).is_none_or(|target| target != system)
+                {
+                    continue;
+                }
+            }
+            match nix.metadata_batch(reference, system, root, &[path]) {
+                Ok(nodes) => {
+                    for node in nodes {
+                        if let Some(meta) = node.meta {
+                            exact.insert(node.path.join("."), meta);
+                        }
+                    }
+                }
+                Err(crate::nix::NixError::Failed { stderr, .. })
+                    if stderr.contains("does not provide attribute")
+                        || stderr.contains("missing") && stderr.contains("attribute") => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if exact.is_empty() {
+            let snapshot =
+                super::native::Snapshot::current(nix, cache_dir, source, system, &identity)?;
+            snapshot.visit(|attr, exposed, meta| {
+                if attr.rsplit('.').next() == Some(name) || meta.pname == name {
+                    choices.push(CatalogId::Nixpkgs(exposed));
+                }
+                Ok(())
+            })?;
+        } else {
+            let attrs: Vec<&str> = exact.keys().map(String::as_str).collect();
+            for attr in unique_exposed_forms(&attrs, Some(system)) {
+                choices.push(CatalogId::Nixpkgs(attr.to_string()));
+            }
         }
     }
     // The cask lane: the official index is evaluated (fail closed) and
@@ -415,20 +455,9 @@ fn matches_native(pattern: &regex::Regex, attr: &str, meta: &SearchMeta) -> bool
     pattern.is_match(attr) || pattern.is_match(&meta.pname) || pattern.is_match(&meta.description)
 }
 
-/// Query one source for `query`, using and refreshing the revision snapshot.
+/// Query one native source and collect matching rows.
 ///
-/// Discovery resolves the moving source to a locked reference first. The
-/// complete metadata map for (source, system) is read from the one latest
-/// snapshot — fetched once with `nix search <locked> ^ --json` on a miss,
-/// and atomically replaced whenever the locked revision moves — and
-/// filtered locally: the pattern is matched case-insensitively against
-/// each entry's full attribute path, pname, and description, the three
-/// strings native `nix search` matches. A
-/// snapshot is reused only when the freshly resolved revision and locked
-/// reference equal the snapshot's recorded identity; a failed metadata
-/// fetch is never treated as proof of freshness. On a live failure, the
-/// latest readable snapshot is returned flagged stale with the failure
-/// recorded.
+/// The command uses [`search_source_into`] to stream matches instead.
 #[must_use]
 pub fn search_source(
     nix: &Nix,
@@ -438,188 +467,101 @@ pub fn search_source(
     system: &str,
     kind: SourceKind,
 ) -> (Vec<SearchResult>, SourceReport) {
-    // The pattern is compiled first: an invalid regex is a cheap, honest
-    // failure before any child runs.
-    let pattern = match compile_pattern(query) {
-        Ok(pattern) => pattern,
-        Err(error) => {
-            return (
-                Vec::new(),
-                SourceReport {
-                    source: moving_source.to_string(),
-                    display: None,
-                    locked_reference: None,
-                    revision: None,
-                    status: SourceStatus::Failed,
-                    detail: Some(error.to_string()),
-                    support_detail: None,
-                },
-            );
-        }
-    };
-    let (outcome, report) = native_lane(nix, cache_dir, moving_source, system);
-    match outcome {
-        Some(lane) => {
-            // Rows are built straight from the borrowed map: only matched
-            // rows are cloned, never the whole catalog.
-            let matched = lane
-                .results
-                .iter()
-                .filter(|(attr, meta)| matches_native(&pattern, attr, meta));
-            // The universe for ID claims is the complete snapshot: every
-            // attribute of the locked revision, not only the matches.
-            let universe: Vec<&str> = lane.results.keys().map(String::as_str).collect();
-            (
-                rows_from(
-                    matched,
-                    &universe,
-                    kind,
-                    &lane.reference,
-                    &lane.revision,
-                    system,
-                    lane.stale,
-                ),
-                report,
-            )
-        }
-        None => (Vec::new(), report),
+    let mut rows = Vec::new();
+    let report = search_source_into(nix, cache_dir, moving_source, query, system, kind, |row| {
+        rows.push(row);
+        Ok(())
+    });
+    match report {
+        Ok(report) => (rows, report),
+        Err(error) => (Vec::new(), failed_report(moving_source, error.to_string())),
     }
 }
 
-/// Supply the complete nixpkgs metadata map for one source and system.
-///
-/// The moving source resolves to a locked reference first; report and rows
-/// describe that identity, and a metadata failure keeps its detail. A
-/// snapshot is reused only when the freshly resolved revision and locked
-/// reference equal the snapshot's recorded identity — proven freshness;
-/// `None == None` is not proof. On a miss the complete map is fetched once
-/// with `nix search <locked> ^ --json` and atomically replaces the one
-/// latest snapshot (only when the revision is immutable; local path
-/// sources query live every time). Any live or metadata failure reuses
-/// the latest readable snapshot of the source flagged stale, or fails
-/// honestly.
-fn native_lane(
+/// Stream matching rows from a complete SQLite snapshot through the Rust regex filter.
+pub fn search_source_into(
     nix: &Nix,
     cache_dir: &Path,
     moving_source: &str,
+    query: &str,
     system: &str,
-) -> (Option<LaneOutcome>, SourceReport) {
-    let mut report = SourceReport {
-        source: moving_source.to_string(),
+    kind: SourceKind,
+    mut sink: impl FnMut(SearchResult) -> Result<(), CatalogError>,
+) -> Result<SourceReport, CatalogError> {
+    let pattern = compile_pattern(query).map_err(CatalogError::from)?;
+    let (snapshot, report) = native_lane(nix, cache_dir, moving_source, system)?;
+    if let Some(snapshot) = snapshot {
+        snapshot.visit(|attribute, exposed, meta| {
+            if matches_native(&pattern, &attribute, &meta) {
+                sink(SearchResult {
+                    id: format!("{}:{exposed}", kind.label()),
+                    attribute,
+                    name: meta.pname,
+                    version: meta.version,
+                    description: meta.description,
+                    source: kind.label().to_string(),
+                    reference: Some(snapshot.header.reference.clone()),
+                    revision: snapshot.header.revision.clone(),
+                    system: system.to_string(),
+                    stale: report.status == SourceStatus::Stale,
+                    support: None,
+                })?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(report)
+}
+
+/// Prepare a complete current snapshot before reporting update success.
+pub fn prepare_source(
+    nix: &Nix,
+    cache_dir: &Path,
+    source: &str,
+    system: &str,
+    identity: &crate::nix::SourceIdentity,
+) -> Result<(), CatalogError> {
+    super::native::Snapshot::current(nix, cache_dir, source, system, identity).map(|_| ())
+}
+
+fn failed_report(source: &str, detail: String) -> SourceReport {
+    SourceReport {
+        source: source.to_string(),
         display: None,
         locked_reference: None,
         revision: None,
-        status: SourceStatus::Fresh,
-        detail: None,
+        status: SourceStatus::Failed,
+        detail: Some(detail),
         support_detail: None,
-    };
-    let identity = nix.source_identity(moving_source);
-    let id = match identity {
-        Ok(id) => id,
-        Err(error) => {
-            report.detail = Some(format!("metadata fetch failed: {error}"));
-            return native_stale(cache_dir, moving_source, system, report);
-        }
-    };
-    report.locked_reference = id.locked_url.clone();
-    report.revision = id.revision.clone();
-    report.display = Some(id.display.clone());
-    if let Some(revision) = &id.revision
-        && let Some(snapshot) =
-            cache::read_native_snapshot(cache_dir, moving_source, system, Some(revision))
-        && snapshot.locked_reference == id.locked_url
-    {
-        return (
-            Some(LaneOutcome {
-                results: snapshot.payload,
-                reference: snapshot
-                    .locked_reference
-                    .unwrap_or_else(|| moving_source.to_string()),
-                revision: Some(revision.clone()),
-                stale: false,
-            }),
-            report,
-        );
-    }
-    let eval_ref = id
-        .locked_url
-        .clone()
-        .unwrap_or_else(|| moving_source.to_string());
-    match nix.search(&eval_ref, "^") {
-        Ok(results) => {
-            // The owned map is serialized by reference into the snapshot,
-            // then consumed for filtering: no full-catalog clone.
-            let results = if id.revision.is_some() {
-                let snap = cache::NativeSnapshot {
-                    schema: cache::SNAPSHOT_SCHEMA,
-                    kind: String::from(cache::KIND_NATIVE),
-                    source: moving_source.to_string(),
-                    locked_reference: id.locked_url.clone(),
-                    revision: id.revision.clone(),
-                    system: system.to_string(),
-                    saved_unix: cache::now_unix(),
-                    payload: results,
-                };
-                let _ = cache::write_snapshot(cache_dir, &snap);
-                snap.payload
-            } else {
-                results
-            };
-            (
-                Some(LaneOutcome {
-                    results,
-                    reference: eval_ref,
-                    revision: id.revision.clone(),
-                    stale: false,
-                }),
-                report,
-            )
-        }
-        Err(error) => {
-            report.detail = Some(format!("live query failed: {error}"));
-            native_stale(cache_dir, moving_source, system, report)
-        }
     }
 }
 
-/// The stale/failed fallback of the native lane.
-///
-/// The current revision is unknown here, so the one latest snapshot of
-/// the same source and system is read (revision unchecked); its own locked
-/// reference and revision label the reused rows. A corrupt or missing
-/// snapshot is a failure.
-fn native_stale(
+fn native_lane(
+    nix: &Nix,
     cache_dir: &Path,
-    moving_source: &str,
+    source: &str,
     system: &str,
-    mut report: SourceReport,
-) -> (Option<LaneOutcome>, SourceReport) {
-    let detail = report
-        .detail
-        .clone()
-        .unwrap_or_else(|| String::from("live query failed"));
-    match cache::read_native_snapshot(cache_dir, moving_source, system, None) {
-        Some(snapshot) => {
-            report.status = SourceStatus::Stale;
-            report.detail = Some(detail);
-            report.locked_reference = snapshot.locked_reference.clone();
-            report.revision = snapshot.revision.clone();
-            (
-                Some(LaneOutcome {
-                    reference: snapshot
-                        .locked_reference
-                        .unwrap_or_else(|| moving_source.to_string()),
-                    revision: snapshot.revision,
-                    results: snapshot.payload,
-                    stale: true,
-                }),
-                report,
-            )
-        }
-        None => {
-            report.status = SourceStatus::Failed;
-            report.detail = Some(detail);
-            (None, report)
+) -> Result<(Option<super::native::Snapshot>, SourceReport), CatalogError> {
+    let result = nix
+        .source_identity(source)
+        .map_err(CatalogError::from)
+        .and_then(|identity| {
+            let report = report_for(source, &identity);
+            super::native::Snapshot::current(nix, cache_dir, source, system, &identity)
+                .map(|snapshot| (snapshot, report))
+        });
+    match result {
+        Ok((snapshot, report)) => Ok((Some(snapshot), report)),
+        Err(error @ CatalogError::Interrupted(_)) => Err(error),
+        Err(error) => {
+            let mut report = failed_report(source, error.to_string());
+            let snapshot = super::native::Snapshot::read(cache_dir, source, system);
+            if let Some(snapshot) = &snapshot {
+                report.status = SourceStatus::Stale;
+                report.locked_reference = Some(snapshot.header.reference.clone());
+                report.revision = snapshot.header.revision.clone();
+            }
+            Ok((snapshot, report))
         }
     }
 }
@@ -639,17 +581,16 @@ fn native_stale(
 /// The platform rule is read from the envelope: a system outside `targets`
 /// is skipped with the target list shown, and an index failure is a
 /// failure — never a platform skip.
-#[must_use]
 pub fn search_catalog(
     nix: &Nix,
     cache_dir: &Path,
     moving_source: &str,
     query: &str,
     system: &str,
-) -> (Vec<SearchResult>, SourceReport) {
+) -> Result<(Vec<SearchResult>, SourceReport), CatalogError> {
     // Compiled first, so an invalid pattern fails before any evaluation.
     if let Err(error) = compile_pattern(query) {
-        return (
+        return Ok((
             Vec::new(),
             SourceReport {
                 source: moving_source.to_string(),
@@ -660,10 +601,10 @@ pub fn search_catalog(
                 detail: Some(error.to_string()),
                 support_detail: None,
             },
-        );
+        ));
     }
-    let (outcome, report) = index_lane(nix, cache_dir, moving_source, query, system);
-    match outcome {
+    let (outcome, report) = index_lane(nix, cache_dir, moving_source, query, system)?;
+    Ok(match outcome {
         Some(lane) => (
             catalog_rows_from(
                 &lane.results,
@@ -675,7 +616,7 @@ pub fn search_catalog(
             report,
         ),
         None => (Vec::new(), report),
-    }
+    })
 }
 
 /// Run the cask index lane end to end.
@@ -690,7 +631,7 @@ fn index_lane(
     moving_source: &str,
     query: &str,
     system: &str,
-) -> (Option<LaneOutcome>, SourceReport) {
+) -> Result<(Option<LaneOutcome>, SourceReport), CatalogError> {
     let mut report = SourceReport {
         source: moving_source.to_string(),
         display: None,
@@ -702,9 +643,12 @@ fn index_lane(
     };
     let id = match nix.source_identity(moving_source) {
         Ok(id) => id,
+        Err(crate::nix::NixError::Interrupted { signal, .. }) => {
+            return Err(CatalogError::Interrupted(signal));
+        }
         Err(error) => {
             report.detail = Some(format!("metadata fetch failed: {error}"));
-            return index_stale(cache_dir, moving_source, query, system, report);
+            return Ok(index_stale(cache_dir, moving_source, query, system, report));
         }
     };
     report.locked_reference = id.locked_url.clone();
@@ -715,7 +659,7 @@ fn index_lane(
             cache::read_index_snapshot(cache_dir, moving_source, system, Some(revision))
         && snapshot.locked_reference == id.locked_url
     {
-        return index_apply(
+        return Ok(index_apply(
             &snapshot.payload,
             query,
             system,
@@ -725,13 +669,13 @@ fn index_lane(
             snapshot.revision,
             false,
             report,
-        );
+        ));
     }
     let eval_ref = id
         .locked_url
         .clone()
         .unwrap_or_else(|| moving_source.to_string());
-    match nix.catalog_index(&eval_ref) {
+    Ok(match nix.catalog_index(&eval_ref) {
         Ok(index) => {
             // Serialized by reference, then consumed: no envelope clone.
             let index = if id.revision.is_some() {
@@ -752,11 +696,14 @@ fn index_lane(
             };
             index_apply(&index, query, system, eval_ref, id.revision, false, report)
         }
+        Err(crate::nix::NixError::Interrupted { signal, .. }) => {
+            return Err(CatalogError::Interrupted(signal));
+        }
         Err(error) => {
             report.detail = Some(format!("live index query failed: {error}"));
             index_stale(cache_dir, moving_source, query, system, report)
         }
-    }
+    })
 }
 
 /// Turn one index into a lane outcome: platform skip or filtered rows.
@@ -904,6 +851,7 @@ pub fn catalog_meta(token: &str, entry: &CatalogEntry) -> SearchMeta {
     }
 }
 
+#[cfg(test)]
 pub(super) fn rows_from<'a>(
     results: impl Iterator<Item = (&'a String, &'a SearchMeta)>,
     universe: &[&str],
