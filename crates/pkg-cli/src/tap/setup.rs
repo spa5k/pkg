@@ -31,17 +31,9 @@ const NIX_CONF: &str = "/etc/nix/nix.conf";
 /// The Determinate daemon LaunchDaemon on macOS.
 const DETERMINATE_PLIST: &str = "/Library/LaunchDaemons/systems.determinate.nix-daemon.plist";
 
-/// How one planned step runs.
-#[derive(Debug, PartialEq, Eq)]
-enum StepKind {
-    /// Run through sudo; any nonzero exit fails the setup.
-    Apply,
-}
-
 /// One administrator step, printed to the user before anything runs.
 #[derive(Debug, PartialEq, Eq)]
 struct Step {
-    kind: StepKind,
     summary: String,
     argv: Vec<String>,
     stdin: Option<String>,
@@ -58,10 +50,8 @@ enum GlobalConf {
     Missing,
     /// Present and readable by every account.
     Readable,
-    /// Present but this account cannot stat or read it. Automatic
-    /// administrator setup is refused: the file may hold secret
-    /// settings, and pkg will not widen access to content it cannot
-    /// inspect.
+    /// Present but not readable by every account. Automatic setup is
+    /// refused because the file may hold secret settings.
     Unreadable,
 }
 
@@ -76,19 +66,38 @@ struct World {
     determinate_plist: Option<PathBuf>,
 }
 
-/// Whether one metadata record grants read to other users.
-///
-/// An unreadable or unstattable metadata record is NOT world-readable:
-/// this account cannot prove readability, so the caller fails closed.
-#[cfg(unix)]
-fn world_readable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
-    std::fs::metadata(path).is_ok_and(|meta| meta.permissions().mode() & 0o004 != 0)
-}
-
-#[cfg(not(unix))]
-fn world_readable(_path: &Path) -> bool {
-    std::fs::metadata(_path).is_ok()
+/// Inspect the global config without reading its contents.
+fn inspect_global_conf(path: &Path) -> Result<GlobalConf, String> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(GlobalConf::Missing);
+        }
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect {}: {error}; an administrator must review it before setup runs",
+                path.display()
+            ));
+        }
+    };
+    if !metadata.is_file() {
+        return Err(format!(
+            "{} is not a file; an administrator must review it before setup runs",
+            path.display()
+        ));
+    }
+    #[cfg(unix)]
+    let readable = {
+        use std::os::unix::fs::PermissionsExt as _;
+        metadata.permissions().mode() & 0o004 != 0
+    };
+    #[cfg(not(unix))]
+    let readable = true;
+    Ok(if readable {
+        GlobalConf::Readable
+    } else {
+        GlobalConf::Unreadable
+    })
 }
 
 /// How one settings file looks: missing, readable (with its content), or
@@ -153,13 +162,7 @@ fn inspect_at(custom_conf: &Path, nix_conf: &Path) -> Result<World, String> {
             ));
         }
     };
-    let nix_conf = if !nix_conf.exists() {
-        GlobalConf::Missing
-    } else if world_readable(nix_conf) {
-        GlobalConf::Readable
-    } else {
-        GlobalConf::Unreadable
-    };
+    let nix_conf = inspect_global_conf(nix_conf)?;
     Ok(World {
         builds_dir_ready: Path::new(BUILDS_DIR).is_dir(),
         custom_conf_settings,
@@ -173,7 +176,6 @@ fn inspect_at(custom_conf: &Path, nix_conf: &Path) -> Result<World, String> {
 /// One sudo step with a fixed argument vector.
 fn step(summary: &str, argv: &[&str]) -> Step {
     Step {
-        kind: StepKind::Apply,
         summary: String::from(summary),
         argv: argv.iter().map(|arg| (*arg).to_string()).collect(),
         stdin: None,
@@ -183,7 +185,6 @@ fn step(summary: &str, argv: &[&str]) -> Step {
 /// Build one Step from string parts for the stdin-fed case.
 fn custom_step(summary: &str, parts: &[String], stdin: Option<String>) -> Step {
     Step {
-        kind: StepKind::Apply,
         summary: String::from(summary),
         argv: parts.to_vec(),
         stdin,
@@ -207,7 +208,7 @@ enum PlanOutcome {
 /// The manual review instruction for an uninspectable global config.
 fn manual_review(nix_conf: &str) -> String {
     format!(
-        "{nix_conf} exists but this account cannot read it, so pkg will not \
+        "{nix_conf} is not readable by every account, so pkg will not \
          run administrator steps it cannot verify: the file may hold \
          access-tokens or other secret settings. Ask an administrator to \
          review it (sudo cat {nix_conf}), remove any secrets, and only then \
@@ -292,13 +293,24 @@ fn run_step(step: &Step) -> Result<bool, String> {
     let mut child = command
         .spawn()
         .map_err(|error| format!("could not run {}: {error}", step.argv.join(" ")))?;
-    if let Some(text) = &step.stdin
-        && let Some(mut stdin) = child.stdin.take()
-    {
-        stdin
-            .write_all(text.as_bytes())
-            .and_then(|()| stdin.flush())
-            .map_err(|error| format!("could not feed input to {}: {error}", step.argv.join(" ")))?;
+    if let Some(text) = &step.stdin {
+        let input = match child.stdin.take() {
+            Some(mut stdin) => stdin
+                .write_all(text.as_bytes())
+                .and_then(|()| stdin.flush()),
+            None => Err(std::io::Error::other("the child has no piped stdin")),
+        };
+        if let Err(error) = input {
+            let _ = child.kill();
+            let waited = child.wait();
+            let mut message = format!("could not feed input to {}: {error}", step.argv.join(" "));
+            if let Err(error) = waited {
+                message.push_str(&format!(
+                    "; waiting for the failed child also failed: {error}"
+                ));
+            }
+            return Err(message);
+        }
     }
     let status = child
         .wait()
@@ -306,10 +318,15 @@ fn run_step(step: &Step) -> Result<bool, String> {
     Ok(status.success())
 }
 
+/// Read the effective sandbox settings without hiding query failures.
+fn sandbox_settings(nix: &Nix) -> Result<(String, String), crate::nix::NixError> {
+    Ok((nix.setting("sandbox")?, nix.setting("sandbox-fallback")?))
+}
+
 /// Verify the sandbox settings as seen from this account.
 fn verify(nix: &Nix) -> Result<bool, String> {
-    let sandbox = nix.setting("sandbox").unwrap_or_default();
-    let fallback = nix.setting("sandbox-fallback").unwrap_or_default();
+    let (sandbox, fallback) = sandbox_settings(nix)
+        .map_err(|error| format!("cannot verify the Nix sandbox settings: {error}"))?;
     if sandbox == "true" && fallback == "false" {
         println!("pkg: sandbox settings verified");
         return Ok(true);
@@ -362,12 +379,8 @@ fn apply(nix: &Nix, steps: &[Step]) -> Result<bool, String> {
         return Ok(false);
     }
     for step in steps {
-        let ok = run_step(step)?;
-        match step.kind {
-            StepKind::Apply if !ok => {
-                return Err(format!("this step failed: {}", step.summary));
-            }
-            StepKind::Apply => {}
+        if !run_step(step)? {
+            return Err(format!("this step failed: {}", step.summary));
         }
     }
     verify(nix)
@@ -375,8 +388,15 @@ fn apply(nix: &Nix, steps: &[Step]) -> Result<bool, String> {
 
 /// One doctor observation for the tap sandbox gate; read-only.
 pub(crate) fn doctor_status(nix: &Nix) -> (String, String) {
-    let sandbox = nix.setting("sandbox").unwrap_or_default();
-    let fallback = nix.setting("sandbox-fallback").unwrap_or_default();
+    let (sandbox, fallback) = match sandbox_settings(nix) {
+        Ok(settings) => settings,
+        Err(error) => {
+            return (
+                String::from("blocked"),
+                format!("cannot inspect the Nix sandbox settings: {error}"),
+            );
+        }
+    };
     if sandbox == "true" && fallback == "false" {
         return (
             String::from("ok"),
@@ -385,14 +405,10 @@ pub(crate) fn doctor_status(nix: &Nix) -> (String, String) {
     }
     let mut detail =
         format!("this account reports sandbox={sandbox:?} and sandbox-fallback={fallback:?}");
-    if Path::new(NIX_CONF).exists() && !world_readable(Path::new(NIX_CONF)) {
-        detail.push_str(&format!(
-            "; {} is unreadable here, so the client view cannot see the \
-             daemon settings; an administrator must review it before it is \
-             made readable ({})",
-            NIX_CONF,
-            manual_review(NIX_CONF)
-        ));
+    match inspect_global_conf(Path::new(NIX_CONF)) {
+        Ok(GlobalConf::Unreadable) => detail.push_str(&format!("; {}", manual_review(NIX_CONF))),
+        Err(error) => detail.push_str(&format!("; {error}")),
+        Ok(GlobalConf::Missing | GlobalConf::Readable) => {}
     }
     (String::from("blocked"), detail)
 }
@@ -470,7 +486,10 @@ mod tests {
         let PlanOutcome::ManualReview(instruction) = plan(&world) else {
             panic!("an unreadable global config refuses automatic setup");
         };
-        assert!(instruction.contains("cannot read it"), "{instruction}");
+        assert!(
+            instruction.contains("not readable by every account"),
+            "{instruction}"
+        );
         assert!(instruction.contains("access-tokens"), "{instruction}");
         assert!(instruction.contains("review"), "{instruction}");
         // The instruction names the manual chmod only after review; the
@@ -556,13 +575,75 @@ mod tests {
         // larger than the pipe buffer: the required piped write must fail
         // loudly (EPIPE once the read end is gone), never count as a
         // delivered step.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pid_file = dir.path().join("child-pid");
         let payload = format!("{}\n", "x".repeat(256 * 1024));
         let step = custom_step(
             "feed a child that refuses input",
-            &owned(&["/bin/sh", "-c", "exec 0<&-; sleep 2"]),
+            &owned(&[
+                "/bin/sh",
+                "-c",
+                "echo $$ > \"$1\"; exec 0<&-; exec sleep 30",
+                "test-child",
+                pid_file.to_str().expect("pid path"),
+            ]),
             Some(payload),
         );
         let error = run_step(&step).expect_err("a closed stdin must fail the step");
         assert!(error.contains("could not feed input"), "{error}");
+        let pid: libc::pid_t = std::fs::read_to_string(pid_file)
+            .expect("child pid")
+            .trim()
+            .parse()
+            .expect("pid number");
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "the failed child must be reaped"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_settings_queries_keep_their_cause() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let executable = dir.path().join("nix");
+        std::fs::write(&executable, "#!/bin/sh\ncase \"$*\" in *--version*) echo 'nix (Nix) 2.35.2'; exit 0;; esac\necho 'fixture settings query failed' >&2\nexit 1\n").expect("fake nix");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+            .expect("executable");
+        let nix = crate::nix::discover(Some(executable.to_str().expect("nix path")))
+            .expect("discover fake nix");
+        assert!(
+            verify(&nix)
+                .expect_err("failed query must not become an empty setting")
+                .contains("fixture settings query failed")
+        );
+        let (status, detail) = doctor_status(&nix);
+        assert_eq!(status, "blocked");
+        assert!(detail.contains("fixture settings query failed"), "{detail}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn global_config_metadata_failure_stops_inspection() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let global = dir.path().join("nix.conf");
+        std::os::unix::fs::symlink("nix.conf", &global).expect("symlink loop");
+        let error = inspect_at(&dir.path().join("missing.custom.conf"), &global)
+            .expect_err("failed metadata must not mean missing");
+        assert!(error.contains("cannot inspect"), "{error}");
+        assert!(error.contains("administrator must review"), "{error}");
+        std::fs::remove_file(&global).expect("remove symlink");
+        std::fs::create_dir(&global).expect("directory at config path");
+        assert!(
+            inspect_at(&dir.path().join("missing.custom.conf"), &global)
+                .expect_err("config must be a file")
+                .contains("not a file")
+        );
     }
 }
