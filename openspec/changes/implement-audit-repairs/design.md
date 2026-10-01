@@ -129,6 +129,31 @@ duplication without callbacks, traits, codecs, or registries. If the
 resulting helper turns out larger than the duplication it removes, the
 rejection is recorded here and the code stays.
 
+**Decision (stage 5, evaluated read-only on 2026-10-01): REJECTED,
+the code stays.** A closer read shows the shareable part is only the
+head (identity → freshness predicate → eval_ref → live fetch →
+conditional persistence); the tails are structurally different, not
+just payload-different: the native stale fallback builds the lane
+outcome directly, while the index stale and fresh paths both pass
+through `index_apply`, whose platform rule distinguishes fresh
+(skipped_platform, clean skip) from stale (Stale report with the
+original failure) and whose `filter_catalog` has its own error path.
+Sharing the head requires injecting at least three operations
+(typed `read_native_snapshot`/`read_index_snapshot`, the
+`nix.search`/`nix.catalog_index` fetch, and the distinct
+`NativeSnapshot`/`IndexSnapshot` constructors) because the snapshot
+structs are concrete types with distinct kind tags — i.e. the
+callback-heavy shape the assignment rules out, for a saving of only
+~40–50 lines per lane. It would also hide the freshness, persistence,
+and provenance invariants (revision AND locked reference must match,
+`None == None` is not proof, unversioned local sources never cached,
+stale reuse labeled by the snapshot's own provenance) that each lane
+currently states visibly and that tests pin, with a nonzero risk of
+drifting the pinned report semantics. `cache.rs` already is the
+intentional generic reuse point (`read_snapshot<P>`,
+`write_snapshot<P: Serialize>`); the lanes are policy and only about
+half identical. Cost exceeds benefit: rejected.
+
 ## 6. Quality and CI
 
 Only obsolete comments that reference deleted gates are corrected;

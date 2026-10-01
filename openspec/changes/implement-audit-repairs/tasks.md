@@ -84,11 +84,20 @@ checked only when its branch is complete and its checks ran.
 
 ## 5. Snapshot lane loading (only if a small helper pays)
 
-- [ ] 5.1 Share one private payload loader across the discovery lanes
+- [x] 5.1 Share one private payload loader across the discovery lanes
       (identity, freshness, persistence, stale fallback) accepting the
       two concrete fetch operations, with row/filter/platform/query
       semantics kept in the lanes — or record the rejection here and
       leave the code.
+      REJECTED (2026-10-01, evaluated read-only; rationale in
+      design.md section 5): only the lane heads are shareable; the
+      tails differ structurally (index platform-skip/filter/error path
+      via `index_apply` vs direct map pass-through), and sharing the
+      head needs three injected operations (typed snapshot read, fetch,
+      snapshot constructor) — the callback-heavy shape ruled out —
+      to save ~40–50 lines per lane while hiding the pinned
+      freshness/persistence/provenance invariants. `cache.rs` stays
+      the intentional generic reuse point; the code is unchanged.
 
 ## 6. Quality and CI
 
