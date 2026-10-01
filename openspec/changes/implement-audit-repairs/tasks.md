@@ -151,6 +151,10 @@ checked only when its branch is complete and its checks ran.
 
 ## 7. Delivery
 
-- [ ] 7.1 Stacked branch series on baseline `120e9ed`, one purpose per
+- [x] 7.1 Stacked branch series on baseline `120e9ed`, one purpose per
       branch; stack record, bundle, and honest report prepared outside
       git; final checks run on the pinned Rust 1.96.1.
+      Five branches deliver tasks 1, 2, 3, 4, and 6. Task 5 was rejected.
+      The parent completed the review fixes and ran the full checks on
+      macOS and Linux. The Linux native lifecycle and catalog-byte checks
+      also passed. See the [verification record](../../../docs/verification/2026-10-01-audit-repairs.md).
