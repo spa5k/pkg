@@ -18,6 +18,8 @@ The native lifecycle reliability repair is
 [Harden native package lifecycle](openspec/changes/harden-native-package-lifecycle/proposal.md).
 The accepted audit repairs are
 [Implement the accepted pkg audit repairs](openspec/changes/implement-audit-repairs/proposal.md).
+The real-use repairs are
+[Repair faults found through real package use](openspec/changes/repair-realistic-use-faults/proposal.md).
 
 ## 1. Before you open a PR
 

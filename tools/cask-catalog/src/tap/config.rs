@@ -105,12 +105,13 @@ fn config_bool(config: &Value, name: &str) -> Option<bool> {
 
 /// Validate one EFFECTIVE `nix config show --json` document (the
 /// effective document: every setting object carries `.value`).
+///
 /// Fail-closed: `sandbox` must be exactly `true`, `sandbox-fallback`
 /// exactly `false`, and the merged `sandbox-paths` +
 /// `extra-sandbox-paths` mappings must be mandatory (optional = false)
 /// and limited to the OS-specific allowlist. `allowed-impure-host-deps`
 /// must be empty on Linux and a subset of the mac allowlist on macOS.
-fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
+pub fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
     let mac = os == "macos";
     match config_bool(config, "sandbox") {
         Some(true) => {}
@@ -274,6 +275,45 @@ fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Settings that repair known macOS defaults without removing custom grants.
+/// Unknown grants require an administrator's manual review.
+pub fn mac_setup_settings(config: &Value) -> Result<Option<String>, String> {
+    let mut normalized = config.clone();
+    normalized["sandbox"] = serde_json::json!({"value": true});
+    normalized["sandbox-fallback"] = serde_json::json!({"value": false});
+    let mut removed_tmp = false;
+    for key in ["sandbox-paths", "extra-sandbox-paths"] {
+        let Some(paths) = normalized
+            .get_mut(key)
+            .and_then(|setting| setting.get_mut("value"))
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        for path in ["/private/tmp", "/private/var/tmp"] {
+            let Some(grant) = paths.get(path) else {
+                continue;
+            };
+            if grant.get("source").and_then(Value::as_str) != Some(path)
+                || grant.get("optional").and_then(Value::as_bool) != Some(false)
+            {
+                return Err(format!(
+                    "Review the custom {path} mapping in sandbox-paths and extra-sandbox-paths by hand.",
+                ));
+            }
+            paths.remove(path);
+            removed_tmp = true;
+        }
+    }
+    verify_effective_config(&normalized, "macos")?;
+    Ok(removed_tmp.then(|| {
+        format!(
+            "sandbox-paths = {}\nextra-sandbox-paths =\n",
+            MAC_ALLOWED_SANDBOX_PATHS.join(" ")
+        )
+    }))
+}
+
 impl From<String> for GateError {
     /// Environment, executable, and bounded-run failures mean the
     /// effective settings could not be observed; they are never a
@@ -422,6 +462,34 @@ mod tests {
                 .expect("macos fixture json parses");
         verify_effective_config(&config, "macos")
             .unwrap_or_else(|e| panic!("actual macos config must pass: {e}"));
+    }
+
+    #[test]
+    fn mac_setup_repairs_default_temp_grants_but_refuses_custom_grants() {
+        let mut config = strong_effective_config("macos");
+        for path in ["/private/tmp", "/private/var/tmp"] {
+            config["sandbox-paths"]["value"][path] = json!({"source": path, "optional": false});
+        }
+        let settings = mac_setup_settings(&config).unwrap().unwrap();
+        assert!(!settings.contains("/private/tmp"));
+        assert!(!settings.contains("/private/var/tmp"));
+        config["sandbox-paths"]["value"]["/Users/admin"] =
+            json!({"source": "/Users/admin", "optional": false});
+        assert!(
+            mac_setup_settings(&config)
+                .unwrap_err()
+                .contains("/Users/admin")
+        );
+        config["sandbox-paths"]["value"]
+            .as_object_mut()
+            .unwrap()
+            .remove("/Users/admin");
+        config["sandbox-paths"]["value"]["/private/tmp"]["optional"] = json!(true);
+        assert!(
+            mac_setup_settings(&config)
+                .unwrap_err()
+                .contains("custom /private/tmp")
+        );
     }
 
     #[test]

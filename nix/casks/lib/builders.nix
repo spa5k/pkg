@@ -230,6 +230,9 @@ let
         else
           t;
       pkg = "cask-${token}${pnameSuffix}";
+      fontsConf = pkgs.makeFontsConf {
+        fontDirectories = [ pkgs.dejavu_fonts ];
+      };
     in
     if others != [ ] then
       throw "cask-${token}: appimage plans support only the appimage artifact (got ${
@@ -243,6 +246,10 @@ let
           url = plan.source.url;
           sha256 = plan.source.sha256;
         };
+        extraPkgs = p: [ p.dejavu_fonts p.fontconfig ];
+        profile = ''
+          export FONTCONFIG_FILE=${fontsConf}
+        '';
         # rename the helper launcher to the exact metadata target; both
         # operands are single-quoted shell words (never double-quoted
         # interpolation, which would allow injection from the name)

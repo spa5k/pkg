@@ -26,32 +26,38 @@ pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
     let system = session.nix.system()?;
     let tap_state = super::TapState::load(&session)?;
     let mut reports = Vec::new();
-    let mut rows = Vec::new();
+    let mut rows = SearchSpool::new()?;
     for (kind, moving) in super::configured_sources(&session.config) {
         // The Nixpkgs lane filters a cached native snapshot locally.
         // The cask lane reads the generated catalog index once and filters
         // locally; a system outside the catalog targets is skipped from the
         // envelope alone inside that lane, and an index failure is a
         // failure, never a skip.
-        let (source_rows, report) = match kind {
-            catalog::SourceKind::Nixpkgs => catalog::search_source(
+        let report = match kind {
+            catalog::SourceKind::Nixpkgs => catalog::search_source_into(
                 &session.nix,
                 &session.paths.cache_dir,
                 moving,
                 query,
                 &system,
                 kind,
-            ),
-            catalog::SourceKind::Cask => catalog::search_catalog(
-                &session.nix,
-                &session.paths.cache_dir,
-                moving,
-                query,
-                &system,
-            ),
+                |row| rows.push(&row),
+            )?,
+            catalog::SourceKind::Cask => {
+                let (source_rows, report) = catalog::search_catalog(
+                    &session.nix,
+                    &session.paths.cache_dir,
+                    moving,
+                    query,
+                    &system,
+                )?;
+                for row in source_rows {
+                    rows.push(&row)?;
+                }
+                report
+            }
         };
         reports.push(report);
-        rows.extend(source_rows);
     }
     // Every registered tap answers from its saved catalog capture: no tap
     // Ruby runs, no source is contacted, and a malformed capture fails the
@@ -61,22 +67,19 @@ pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
     for saved in saved_all.iter() {
         let (source_rows, report) = catalog::search_saved_catalog(saved, query, &system);
         reports.push(report);
-        rows.extend(source_rows);
+        for row in source_rows {
+            rows.push(&row)?;
+        }
     }
     let failed: Vec<&catalog::SourceReport> = reports
         .iter()
         .filter(|report| report.status == catalog::SourceStatus::Failed)
         .collect();
     if cli.json {
-        let result = serde_json::json!({
-            "system": system,
-            "sources": reports,
-            "results": rows,
-        });
-        print_json(&output::envelope("search", &result))?;
+        rows.json(&system, &reports)?;
     } else {
         if !rows.is_empty() || failed.is_empty() {
-            print!("{}", output::render_search(&rows, query));
+            rows.text(query)?;
         }
         print!("{}", output::render_source_reports(&reports, cli.verbose));
     }
@@ -96,6 +99,103 @@ pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
         eprintln!("Results may be incomplete. Cached rows may be old.");
     }
     Ok(())
+}
+
+struct SearchSpool {
+    file: tempfile::NamedTempFile,
+    count: usize,
+    width: usize,
+}
+
+impl SearchSpool {
+    fn new() -> Result<Self, CommandError> {
+        Ok(Self {
+            file: tempfile::NamedTempFile::new().map_err(|error| error.to_string())?,
+            count: 0,
+            width: 2,
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    fn push(&mut self, row: &catalog::SearchResult) -> Result<(), catalog::CatalogError> {
+        use std::io::Write as _;
+        serde_json::to_writer(self.file.as_file_mut(), row)
+            .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+        self.file
+            .write_all(b"\n")
+            .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+        self.count += 1;
+        self.width = self.width.max(row.id.len());
+        Ok(())
+    }
+
+    fn visit(
+        &mut self,
+        mut sink: impl FnMut(&str) -> std::io::Result<()>,
+    ) -> Result<(), CommandError> {
+        use std::io::{BufRead as _, Seek as _};
+        self.file
+            .as_file_mut()
+            .rewind()
+            .map_err(|error| error.to_string())?;
+        let mut input = std::io::BufReader::new(self.file.as_file_mut());
+        let mut line = String::new();
+        while input
+            .read_line(&mut line)
+            .map_err(|error| error.to_string())?
+            > 0
+        {
+            sink(line.trim_end()).map_err(|error| error.to_string())?;
+            line.clear();
+        }
+        Ok(())
+    }
+
+    fn json(
+        &mut self,
+        system: &str,
+        reports: &[catalog::SourceReport],
+    ) -> Result<(), CommandError> {
+        use std::io::Write as _;
+        let stdout = std::io::stdout();
+        let mut out = std::io::BufWriter::new(stdout.lock());
+        write!(out, "{{\"schema\":1,\"command\":\"search\",\"result\":{{\"system\":{},\"sources\":{},\"results\":[", serde_json::to_string(system).map_err(|error| error.to_string())?, serde_json::to_string(reports).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        let mut first = true;
+        self.visit(|line| {
+            if !first {
+                out.write_all(b",")?;
+            }
+            first = false;
+            out.write_all(line.as_bytes())
+        })?;
+        out.write_all(b"]}}\n")
+            .and_then(|()| out.flush())
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn text(&mut self, query: &str) -> Result<(), CommandError> {
+        use std::io::Write as _;
+        if self.is_empty() {
+            print!("{}", output::render_search(&[], query));
+            return Ok(());
+        }
+        let stdout = std::io::stdout();
+        let mut out = std::io::BufWriter::new(stdout.lock());
+        let width = self.width;
+        writeln!(out, "{:<width$}  VERSION  DESCRIPTION", "ID")
+            .map_err(|error| error.to_string())?;
+        self.visit(|line| {
+            let row: catalog::SearchResult =
+                serde_json::from_str(line).map_err(std::io::Error::other)?;
+            out.write_all(output::render_search_row(&row, width).as_bytes())
+        })?;
+        out.flush().map_err(|error| error.to_string())?;
+        Ok(())
+    }
 }
 
 /// Collected data for one info result.
@@ -130,6 +230,7 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
             let saved = tap_state.saved_all()?;
             catalog::resolve_bare(
                 &session.nix,
+                &session.paths.cache_dir,
                 &tap_state.routing,
                 &saved,
                 &name,

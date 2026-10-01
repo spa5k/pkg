@@ -14,6 +14,7 @@
 //! native output shapes, and the `reference` module the pure reference
 //! rules.
 
+mod discovery;
 mod error;
 mod host;
 mod manifest;
@@ -25,6 +26,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub use discovery::MetadataNode;
 pub use error::NixError;
 pub use host::{in_range, macos_product_version};
 pub use manifest::OFFICIAL_CASK_SOURCE;
@@ -274,6 +276,15 @@ impl Nix {
     /// Streamed children report no captured stderr (their streams went to
     /// the user's terminal); captured children keep theirs.
     fn finish(&self, args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
+        if let Some(signal) = reaped.cancelled {
+            return Err(NixError::Interrupted {
+                args: args.iter().map(ToString::to_string).collect(),
+                signal,
+            });
+        }
+        if let Some(limit) = reaped.resource_limit {
+            return Err(NixError::ResourceLimit(limit.to_string()));
+        }
         match reaped.classify() {
             Outcome::Success => Ok(()),
             Outcome::Interrupted { signal } => Err(NixError::Interrupted {
@@ -303,10 +314,12 @@ impl Nix {
     /// stays captured for failure diagnostics. The verbose flag keeps
     /// the unfiltered stream.
     fn run_filtered(&self, args: &[&str]) -> Result<(), NixError> {
-        if self.verbose {
-            return self.run_streamed(args);
-        }
-        let mut reporter = report::mutation_reporter();
+        let profile = args
+            .iter()
+            .position(|arg| *arg == "--profile")
+            .and_then(|index| args.get(index + 1))
+            .copied();
+        let mut reporter = report::mutation_reporter().scoped(profile, self.verbose);
         let reaped = self.execute_with(args, IoMode::Filtered, Some(&mut reporter))?;
         // Keep raw stderr for the command's compact cause selection. It is
         // never replayed as a block in normal output.
@@ -526,9 +539,30 @@ impl Nix {
         reference: &str,
         pattern: &str,
     ) -> Result<BTreeMap<String, SearchMeta>, NixError> {
-        self.json::<BTreeMap<String, SearchMeta>>(
-            "search results",
-            &["search", reference, pattern, "--json"],
+        let args = ["search", reference, pattern, "--json"];
+        match self.discovery_json("search results", &args, "20") {
+            Err(NixError::ResourceLimit(_)) => self.discovery_json("search results", &args, "100"),
+            result => result,
+        }
+    }
+
+    /// Evaluate the default installation outputs without realizing them.
+    pub fn default_output_paths(&self, installable: &str) -> Result<Vec<String>, NixError> {
+        let (installable, selection) = installable
+            .split_once('^')
+            .map_or((installable, None), |(base, outputs)| (base, Some(outputs)));
+        let outputs = match selection {
+            None => String::from("p.meta.outputsToInstall or [ (p.outputName or \"out\") ]"),
+            Some("*") => String::from("p.outputs or [ (p.outputName or \"out\") ]"),
+            Some(names) => {
+                let values: Vec<_> = names.split(',').collect();
+                format!("builtins.fromJSON {}", discovery::nix_json(&values)?)
+            }
+        };
+        let apply = format!("p: map (n: p.${{n}}.outPath) ({outputs})");
+        self.json(
+            "installable outputs",
+            &["eval", "--json", installable, "--apply", &apply],
         )
     }
 
@@ -542,6 +576,11 @@ impl Nix {
     /// Read one effective client-side setting, such as the sandbox flag.
     pub fn setting(&self, name: &str) -> Result<String, NixError> {
         Ok(self.capture(&["config", "show", name])?.trim().to_string())
+    }
+
+    /// Read effective client settings without printing the config document.
+    pub fn effective_config(&self) -> Result<serde_json::Value, NixError> {
+        self.json("effective config", &["config", "show", "--json"])
     }
 
     /// Resolve source identity for a flake reference.

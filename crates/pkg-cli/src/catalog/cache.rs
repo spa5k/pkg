@@ -7,15 +7,13 @@
 //! record is reused fresh only when its revision equals the freshly
 //! resolved one, and a new revision atomically replaces the previous
 //! snapshot, so the cache never grows per revision. Legacy per-query
-//! `search-*.json` files (the old released cache) are never read and are
-//! removed by `pkg update`.
+//! `search-*.json` files are never read by the current discovery path.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::CatalogError;
-use crate::nix::{CatalogIndex, SearchMeta};
+use crate::nix::CatalogIndex;
 
 /// The snapshot cache schema version.
 ///
@@ -24,18 +22,14 @@ use crate::nix::{CatalogIndex, SearchMeta};
 /// `search-*.json` file can never be read as a snapshot.
 pub const SNAPSHOT_SCHEMA: u32 = 4;
 
-/// The nixpkgs snapshot kind: the complete native search map.
-pub const KIND_NATIVE: &str = "nixpkgs-snapshot";
-
 /// The cask snapshot kind: the complete generated index envelope.
 pub const KIND_INDEX: &str = "cask-index";
 
 /// One complete metadata snapshot with full provenance.
 ///
-/// `payload` is the complete derived data for the source, system, and
-/// kind — the full `nix search <locked> ^ --json` map for native
-/// snapshots, or the complete generated index envelope for cask
-/// snapshots — never a filtered subset; queries filter it locally.
+/// `payload` is the complete generated index envelope for the cask
+/// source and system. Queries filter it locally. Native discovery rows
+/// use the separate SQLite snapshot module.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot<P> {
     /// The snapshot schema version.
@@ -55,9 +49,6 @@ pub struct Snapshot<P> {
     /// The complete derived payload.
     pub payload: P,
 }
-
-/// The latest native snapshot shape: the complete search map.
-pub type NativeSnapshot = Snapshot<BTreeMap<String, SearchMeta>>;
 
 /// The latest cask index snapshot shape: the complete index envelope.
 pub type IndexSnapshot = Snapshot<CatalogIndex>;
@@ -102,17 +93,6 @@ where
         && provenance
         && revision.is_none_or(|expected| snap.revision.as_deref() == Some(expected)))
     .then_some(snap)
-}
-
-/// Read the latest native snapshot (see [`read_snapshot`]).
-#[must_use]
-pub fn read_native_snapshot(
-    cache_dir: &Path,
-    source: &str,
-    system: &str,
-    revision: Option<&str>,
-) -> Option<NativeSnapshot> {
-    read_snapshot(cache_dir, KIND_NATIVE, source, system, revision)
 }
 
 /// Read the latest cask index snapshot (see [`read_snapshot`]).
@@ -209,7 +189,7 @@ pub(super) fn now_unix() -> u64 {
         .unwrap_or_default()
 }
 
-fn cache_key(kind: &str, source: &str, system: &str) -> String {
+pub(super) fn cache_key(kind: &str, source: &str, system: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in kind.bytes().chain(source.bytes()).chain(system.bytes()) {
         hash ^= u64::from(byte);
@@ -222,6 +202,18 @@ fn cache_key(kind: &str, source: &str, system: &str) -> String {
 mod tests {
     use super::*;
 
+    const KIND_NATIVE: &str = "fixture-json";
+    type NativeSnapshot = Snapshot<std::collections::BTreeMap<String, String>>;
+
+    fn read_native_snapshot(
+        cache_dir: &Path,
+        source: &str,
+        system: &str,
+        revision: Option<&str>,
+    ) -> Option<NativeSnapshot> {
+        read_snapshot(cache_dir, KIND_NATIVE, source, system, revision)
+    }
+
     fn native(source: &str, revision: &str) -> NativeSnapshot {
         Snapshot {
             schema: SNAPSHOT_SCHEMA,
@@ -231,7 +223,7 @@ mod tests {
             revision: Some(String::from(revision)),
             system: String::from("x86_64-linux"),
             saved_unix: 1,
-            payload: BTreeMap::new(),
+            payload: std::collections::BTreeMap::new(),
         }
     }
 

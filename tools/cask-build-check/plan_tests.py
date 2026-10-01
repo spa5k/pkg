@@ -1098,7 +1098,7 @@ def main():
         config = os.path.join(d, "plan.json")
         put(config, json.dumps(context))
         plan.cmd_install(config, dest, output)
-        metadata = json.loads(get(os.path.join(output, "share/pkg/cask-apps.json")))
+        metadata = json.loads(get(os.path.join(output, "libexec/pkg-casks", os.path.basename(output), "apps.json")))
         entry = metadata["apps"]["Renamed.app"]
         resource = "Contents/Frameworks/plugins/python-lib.bypy.frozen"
         assert entry["signatures"][resource] == {a: v.hex() for a, v in signature_values.items()}

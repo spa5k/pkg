@@ -906,26 +906,25 @@ def pack_signed_apps(ctx, out, signed):
     if not signed:
         return
     runtime = ctx["appRuntime"]
-    base = os.path.join(out, "libexec", "pkg")
+    namespace = "libexec/pkg-casks/" + os.path.basename(out)
+    base = os.path.join(out, namespace)
     source_dir = os.path.join(base, "app-sources")
     os.makedirs(source_dir, exist_ok=True)
-    manifest = {"schema": "pkg-cask-apps/1", "apps": {}}
+    manifest = {"schema": "pkg-cask-apps/2", "apps": {}}
     for name, signatures in sorted(signed.items()):
         os.rename(os.path.join(out, "Applications", name), os.path.join(source_dir, name))
         manifest["apps"][name] = {
-            "source": f"libexec/pkg/app-sources/{name}",
+            "source": f"{namespace}/app-sources/{name}",
             "signatures": signatures,
         }
-    data_dir = os.path.join(out, "share", "pkg")
-    os.makedirs(data_dir, exist_ok=True)
-    with open(os.path.join(data_dir, "cask-apps.json"), "w") as f:
+    with open(os.path.join(base, "apps.json"), "w") as f:
         encoded = json.dumps(manifest, sort_keys=True)
         if len(encoded.encode()) > 8 * 1024 * 1024:
             die("external-signature manifest is too large")
         f.write(encoded)
     script = os.path.join(base, "cask-app.py")
     shutil.copyfile(runtime["source"], script)
-    helper = os.path.join(out, "libexec", "pkg-cask-app")
+    helper = os.path.join(base, "prepare")
     with open(helper, "w") as f:
         f.write("#!/bin/sh\nexec " + shlex.quote(runtime["python"]) + " " + shlex.quote(script) + ' "$@"\n')
     os.chmod(helper, 0o555)
@@ -1114,7 +1113,7 @@ def cmd_install(plan_file, staging, out):
                     die(f"$APPDIR binary points at a missing file: {src}")
                 if installed in signed:
                     runtime = ctx["appRuntime"]
-                    script = os.path.join(out, "libexec", "pkg", "cask-app.py")
+                    script = os.path.join(out, "libexec", "pkg-casks", os.path.basename(out), "cask-app.py")
                     with open(dest, "w") as f:
                         f.write("#!/bin/sh\nexec " + " ".join(shlex.quote(v) for v in
                             (runtime["python"], script, "exec", installed, inner)) + ' "$@"\n')

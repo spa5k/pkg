@@ -64,6 +64,9 @@ struct World {
     custom_conf_settings: Option<bool>,
     nix_conf: GlobalConf,
     determinate_plist: Option<PathBuf>,
+    grant_settings: Option<String>,
+    plist_has_environment: bool,
+    plist_has_tmpdir: bool,
 }
 
 /// Inspect the global config without reading its contents.
@@ -170,6 +173,9 @@ fn inspect_at(custom_conf: &Path, nix_conf: &Path) -> Result<World, String> {
         determinate_plist: Path::new(DETERMINATE_PLIST)
             .exists()
             .then(|| PathBuf::from(DETERMINATE_PLIST)),
+        grant_settings: None,
+        plist_has_environment: false,
+        plist_has_tmpdir: false,
     })
 }
 
@@ -250,29 +256,57 @@ fn plan(world: &World) -> PlanOutcome {
             Some(String::from("sandbox = true\nsandbox-fallback = false\n")),
         ));
     }
+    if let Some(settings) = &world.grant_settings {
+        steps.push(custom_step(
+            "remove the known global /private/tmp and /private/var/tmp sandbox grants",
+            &owned(&["sudo", "tee", "-a", CUSTOM_CONF]),
+            Some(settings.clone()),
+        ));
+    }
     if let Some(plist) = &world.determinate_plist {
         let plist_text = plist.display().to_string();
+        if !world.plist_has_environment {
+            steps.push(step(
+                "create the daemon environment dictionary",
+                &[
+                    "sudo",
+                    "plutil",
+                    "-insert",
+                    "EnvironmentVariables",
+                    "-json",
+                    "{}",
+                    &plist_text,
+                ],
+            ));
+        }
         steps.push(step(
             "point the daemon TMPDIR at /nix/var/nix/builds (sudo plutil)",
             &[
                 "sudo",
                 "plutil",
-                "-replace",
-                "EnvironmentVariables",
-                "-json",
-                "{\"TMPDIR\":\"/nix/var/nix/builds\"}",
+                if world.plist_has_tmpdir {
+                    "-replace"
+                } else {
+                    "-insert"
+                },
+                "EnvironmentVariables.TMPDIR",
+                "-string",
+                BUILDS_DIR,
                 &plist_text,
             ],
         ));
         steps.push(step(
-            "restart the Nix daemon (sudo launchctl kickstart)",
+            "unload the old daemon service definition",
             &[
                 "sudo",
                 "launchctl",
-                "kickstart",
-                "-k",
+                "bootout",
                 "system/systems.determinate.nix-daemon",
             ],
+        ));
+        steps.push(step(
+            "load the changed daemon service definition",
+            &["sudo", "launchctl", "bootstrap", "system", &plist_text],
         ));
     }
     PlanOutcome::Steps(steps)
@@ -312,30 +346,59 @@ fn run_step(step: &Step) -> Result<bool, String> {
             return Err(message);
         }
     }
-    let status = child
+    let mut status = child
         .wait()
         .map_err(|error| format!("waiting for {} failed: {error}", step.argv.join(" ")))?;
+    if step.argv
+        == owned(&[
+            "sudo",
+            "launchctl",
+            "bootstrap",
+            "system",
+            DETERMINATE_PLIST,
+        ])
+    {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        if status.code() == Some(5) {
+            eprintln!("Waiting for launchd to finish removing the old daemon…");
+        }
+        while status.code() == Some(5) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            status = command.status().map_err(|error| error.to_string())?;
+        }
+    }
     Ok(status.success())
 }
 
-/// Read the effective sandbox settings without hiding query failures.
-fn sandbox_settings(nix: &Nix) -> Result<(String, String), crate::nix::NixError> {
-    Ok((nix.setting("sandbox")?, nix.setting("sandbox-fallback")?))
+/// Verify the sandbox settings as seen from this account.
+fn readiness(nix: &Nix) -> Result<(), String> {
+    let config = nix.effective_config().map_err(|error| error.to_string())?;
+    cask_catalog::tap::verify_effective_config(&config, std::env::consts::OS)?;
+    if cfg!(target_os = "macos") {
+        let output = Command::new("/bin/launchctl")
+            .args(["print", "system/systems.determinate.nix-daemon"])
+            .output()
+            .map_err(|error| error.to_string())?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success()
+            || !text
+                .lines()
+                .any(|line| line.trim() == "TMPDIR => /nix/var/nix/builds")
+        {
+            return Err(String::from(
+                "The live daemon does not report TMPDIR=/nix/var/nix/builds. Reload its service with sudo launchctl bootout system/systems.determinate.nix-daemon, then sudo launchctl bootstrap system /Library/LaunchDaemons/systems.determinate.nix-daemon.plist.",
+            ));
+        }
+    }
+    Ok(())
 }
 
-/// Verify the sandbox settings as seen from this account.
 fn verify(nix: &Nix) -> Result<bool, String> {
-    let (sandbox, fallback) = sandbox_settings(nix)
-        .map_err(|error| format!("cannot verify the Nix sandbox settings: {error}"))?;
-    if sandbox == "true" && fallback == "false" {
-        println!("pkg: sandbox settings verified");
-        return Ok(true);
-    }
+    readiness(nix)?;
     println!(
-        "pkg: this account still reports sandbox={sandbox:?} and sandbox-fallback={fallback:?}; \
-         the in-build probe stays authoritative"
+        "pkg: effective grants and live daemon environment verified. The fresh build probe remains required."
     );
-    Ok(false)
+    Ok(true)
 }
 
 /// Print the cause and the exact steps, ask once, apply, and verify.
@@ -349,7 +412,45 @@ pub(crate) fn offer_and_apply(nix: &Nix) -> Result<bool, String> {
         println!("pkg: run from a terminal to apply the one-time sandbox setup");
         return Ok(false);
     }
-    let world = inspect()?;
+    let mut world = inspect()?;
+    if world.nix_conf != GlobalConf::Unreadable {
+        let config = nix.effective_config().map_err(|error| error.to_string())?;
+        world.custom_conf_settings = Some(
+            config
+                .pointer("/sandbox/value")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+                && config
+                    .pointer("/sandbox-fallback/value")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(false),
+        );
+        if cfg!(target_os = "macos") {
+            world.grant_settings = cask_catalog::tap::mac_setup_settings(&config).map_err(|error| format!("Automatic setup stopped. Review sandbox-paths, extra-sandbox-paths, and allowed-impure-host-deps in the daemon config by hand. {error}"))?;
+            if let Some(plist) = &world.determinate_plist {
+                let result = Command::new("/usr/bin/plutil")
+                    .args(["-extract", "EnvironmentVariables", "json", "-o", "-"])
+                    .arg(plist)
+                    .output()
+                    .map_err(|error| error.to_string())?;
+                if result.status.success() {
+                    let value: serde_json::Value =
+                        serde_json::from_slice(&result.stdout).map_err(|_| {
+                            String::from("Cannot inspect the daemon environment dictionary.")
+                        })?;
+                    let environment = value
+                        .as_object()
+                        .ok_or("The daemon environment is not a dictionary.")?;
+                    world.plist_has_environment = true;
+                    world.plist_has_tmpdir = environment.contains_key("TMPDIR");
+                }
+            } else {
+                return Err(String::from(
+                    "The Determinate daemon plist was not found. Set its TMPDIR to /nix/var/nix/builds and reload your custom service by hand.",
+                ));
+            }
+        }
+    }
     match plan(&world) {
         PlanOutcome::ManualReview(instruction) => {
             println!("pkg: {instruction}");
@@ -368,6 +469,12 @@ fn apply(nix: &Nix, steps: &[Step]) -> Result<bool, String> {
         "pkg can apply {} one-time sudo fixes for the Nix sandbox",
         steps.len()
     );
+    for step in steps {
+        println!("  {}", step.argv.join(" "));
+        if let Some(input) = &step.stdin {
+            println!("  Settings:\n{input}");
+        }
+    }
     print!("apply now? [y/N] ");
     let _ = std::io::stdout().flush();
     let mut answer = String::new();
@@ -379,8 +486,12 @@ fn apply(nix: &Nix, steps: &[Step]) -> Result<bool, String> {
         return Ok(false);
     }
     for step in steps {
+        println!("pkg: {}", step.summary);
         if !run_step(step)? {
-            return Err(format!("this step failed: {}", step.summary));
+            return Err(format!(
+                "this step failed: {}. To restore the service, run sudo launchctl bootstrap system {DETERMINATE_PLIST}",
+                step.summary
+            ));
         }
     }
     verify(nix)
@@ -388,29 +499,15 @@ fn apply(nix: &Nix, steps: &[Step]) -> Result<bool, String> {
 
 /// One doctor observation for the tap sandbox gate; read-only.
 pub(crate) fn doctor_status(nix: &Nix) -> (String, String) {
-    let (sandbox, fallback) = match sandbox_settings(nix) {
-        Ok(settings) => settings,
-        Err(error) => {
-            return (
-                String::from("blocked"),
-                format!("cannot inspect the Nix sandbox settings: {error}"),
-            );
-        }
-    };
-    if sandbox == "true" && fallback == "false" {
-        return (
+    match readiness(nix) {
+        Ok(()) => (
             String::from("ok"),
-            String::from("tap imports may run; the in-build probe stays authoritative"),
-        );
+            String::from(
+                "effective grants and live daemon environment pass; the fresh build probe remains required",
+            ),
+        ),
+        Err(error) => (String::from("blocked"), error),
     }
-    let mut detail =
-        format!("this account reports sandbox={sandbox:?} and sandbox-fallback={fallback:?}");
-    match inspect_global_conf(Path::new(NIX_CONF)) {
-        Ok(GlobalConf::Unreadable) => detail.push_str(&format!("; {}", manual_review(NIX_CONF))),
-        Err(error) => detail.push_str(&format!("; {error}")),
-        Ok(GlobalConf::Missing | GlobalConf::Readable) => {}
-    }
-    (String::from("blocked"), detail)
 }
 
 #[cfg(test)]
@@ -423,6 +520,9 @@ mod tests {
             custom_conf_settings: None,
             nix_conf: GlobalConf::Readable,
             determinate_plist: Some(PathBuf::from(DETERMINATE_PLIST)),
+            grant_settings: None,
+            plist_has_environment: true,
+            plist_has_tmpdir: true,
         }
     }
 
@@ -431,15 +531,14 @@ mod tests {
         let PlanOutcome::Steps(steps) = plan(&unconfigured()) else {
             panic!("an inspectable host plans steps");
         };
-        assert_eq!(steps.len(), 6, "3 dir + 1 conf + 2 daemon");
+        assert_eq!(steps.len(), 7, "3 dir + 1 conf + 3 daemon");
         assert_eq!(steps[3].argv[1..4], ["tee", "-a", CUSTOM_CONF]);
         assert_eq!(
             steps[5].argv,
             [
                 "sudo",
                 "launchctl",
-                "kickstart",
-                "-k",
+                "bootout",
                 "system/systems.determinate.nix-daemon",
             ]
         );
@@ -452,6 +551,9 @@ mod tests {
             custom_conf_settings: Some(true),
             nix_conf: GlobalConf::Readable,
             determinate_plist: None,
+            grant_settings: None,
+            plist_has_environment: false,
+            plist_has_tmpdir: false,
         };
         assert_eq!(plan(&world), PlanOutcome::Steps(Vec::new()));
     }
@@ -482,6 +584,9 @@ mod tests {
             custom_conf_settings: None,
             nix_conf: GlobalConf::Unreadable,
             determinate_plist: Some(PathBuf::from(DETERMINATE_PLIST)),
+            grant_settings: None,
+            plist_has_environment: true,
+            plist_has_tmpdir: true,
         };
         let PlanOutcome::ManualReview(instruction) = plan(&world) else {
             panic!("an unreadable global config refuses automatic setup");

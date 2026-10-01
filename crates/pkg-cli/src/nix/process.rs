@@ -36,6 +36,7 @@ pub(super) struct Reaped {
     /// alone cannot prove cancellation: the verified runtime handles SIGINT
     /// itself and then exits with a plain code 1.
     pub(super) cancelled: Option<i32>,
+    pub(super) resource_limit: Option<&'static str>,
 }
 
 impl Reaped {
@@ -292,9 +293,22 @@ fn read_filtered(
 /// commands: termination signals sent only to pkg are forwarded to the
 /// child, the child is reaped, and pkg stays alive.
 pub(super) fn run_child(
+    command: Command,
+    mode: IoMode,
+    sink: Option<&mut dyn StderrSink>,
+) -> Result<Reaped, String> {
+    run_child_with_limit(command, mode, sink, None)
+}
+
+pub(super) fn run_child_bounded(command: Command, bytes: u64) -> Result<Reaped, String> {
+    run_child_with_limit(command, IoMode::Capture, None, Some(bytes))
+}
+
+fn run_child_with_limit(
     mut command: Command,
     mode: IoMode,
     sink: Option<&mut dyn StderrSink>,
+    memory_limit: Option<u64>,
 ) -> Result<Reaped, String> {
     #[cfg(unix)]
     let _run = forward::lock();
@@ -302,6 +316,11 @@ pub(super) fn run_child(
     let guard = forward::install();
     #[cfg(unix)]
     forward::block();
+    #[cfg(unix)]
+    if memory_limit.is_some() {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
     let filtered = mode == IoMode::Filtered;
     let spawn = command
         .stdin(if mode == IoMode::Capture {
@@ -337,7 +356,12 @@ pub(super) fn run_child(
     forward::unblock();
     // Unfiltered children wait through wait_with_output; filtered ones
     // drain stderr through the sink while the child runs.
-    let waited = if filtered {
+    let mut resource_limit = None;
+    let waited = if let Some(bytes) = memory_limit {
+        let (output, limit) = read_bounded(child, bytes);
+        resource_limit = limit;
+        output
+    } else if filtered {
         read_filtered(child, sink)
     } else {
         child.wait_with_output()
@@ -354,8 +378,152 @@ pub(super) fn run_child(
         guard.restore();
     }
     waited
-        .map(|output| Reaped { output, cancelled })
+        .map(|output| Reaped {
+            output,
+            cancelled,
+            resource_limit,
+        })
         .map_err(|error| error.to_string())
+}
+
+fn read_bounded(
+    mut child: Child,
+    limit: u64,
+) -> (Result<Output, std::io::Error>, Option<&'static str>) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+    let overflow = AtomicBool::new(false);
+    let stop_at = limit.saturating_sub(32 * 1024 * 1024);
+    let mut stopped = None;
+    let output = std::thread::scope(|scope| {
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let out = scope.spawn(|| capped_read(stdout, &overflow));
+        let err = scope.spawn(|| capped_read(stderr, &overflow));
+        let pid = child.id();
+        let start = Instant::now();
+        let mut unmeasured_since = None;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(error);
+                }
+                Ok(None) => {}
+            }
+            let reason = if overflow.load(Ordering::Relaxed) {
+                Some("metadata output exceeded 16 MiB")
+            } else if start.elapsed() > Duration::from_secs(120) {
+                Some("metadata batch exceeded 120 seconds")
+            } else {
+                match resident_bytes(child.id()) {
+                    Some(bytes) if bytes > stop_at => Some("evaluator approached 512 MiB RSS"),
+                    Some(_) => {
+                        unmeasured_since = None;
+                        None
+                    }
+                    None => match child.try_wait() {
+                        Ok(Some(status)) => break Ok(status),
+                        _ => {
+                            let since = unmeasured_since.get_or_insert_with(Instant::now);
+                            (since.elapsed() > Duration::from_millis(200))
+                                .then_some("cannot measure evaluator memory")
+                        }
+                    },
+                }
+            };
+            if let Some(reason) = reason {
+                stopped = Some(reason);
+                kill_group(pid);
+                let _ = child.kill();
+                break child.wait();
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        kill_group(pid);
+        let stdout = out
+            .join()
+            .map_err(|_| std::io::Error::other("stdout reader stopped"))??;
+        let stderr = err
+            .join()
+            .map_err(|_| std::io::Error::other("stderr reader stopped"))??;
+        Ok(Output {
+            status: status?,
+            stdout,
+            stderr,
+        })
+    });
+    (output, stopped)
+}
+
+fn kill_group(pid: u32) {
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(pid) {
+        // SAFETY: bounded children own a separate process group.
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    }
+}
+
+fn capped_read<R: std::io::Read>(
+    pipe: Option<R>,
+    overflow: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<u8>, std::io::Error> {
+    use std::sync::atomic::Ordering;
+    let mut result = Vec::new();
+    if let Some(mut pipe) = pipe {
+        let mut buffer = [0u8; 8192];
+        loop {
+            let count = match pipe.read(&mut buffer) {
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                result => result?,
+            };
+            if count == 0 {
+                break;
+            }
+            if result.len() + count > 16 * 1024 * 1024 {
+                overflow.store(true, Ordering::Relaxed);
+            } else {
+                result.extend_from_slice(&buffer[..count]);
+            }
+        }
+    }
+    Ok(result)
+}
+
+#[cfg(target_os = "linux")]
+fn resident_bytes(pid: u32) -> Option<u64> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    status
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("VmRSS:")?
+                .split_whitespace()
+                .next()?
+                .parse::<u64>()
+                .ok()
+        })
+        .map(|kib| kib * 1024)
+}
+
+#[cfg(target_os = "macos")]
+fn resident_bytes(pid: u32) -> Option<u64> {
+    // SAFETY: proc_pidinfo writes at most the size of this initialized buffer.
+    let mut task: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = i32::try_from(std::mem::size_of_val(&task)).ok()?;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            i32::try_from(pid).ok()?,
+            libc::PROC_PIDTASKINFO,
+            0,
+            std::ptr::from_mut(&mut task).cast(),
+            size,
+        )
+    };
+    (read == size).then_some(task.pti_resident_size)
 }
 
 /// Run one direct external command through the shared signal forward/reap

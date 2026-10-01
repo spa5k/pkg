@@ -21,9 +21,11 @@ import sys
 import tempfile
 import shutil
 
-SCHEMA = "pkg-cask-apps/1"
-MANIFEST = "share/pkg/cask-apps.json"
-SOURCE_DIR = "libexec/pkg/app-sources"
+SCHEMA = "pkg-cask-apps/2"
+
+
+def namespace(output):
+    return "libexec/pkg-casks/" + output.name
 ATTRS = frozenset(
     "com.apple.cs." + name
     for name in (
@@ -102,14 +104,14 @@ def contained(root, name):
 
 def load(output, name):
     app_name(name)
-    manifest = output / MANIFEST
+    manifest = output / namespace(output) / "apps.json"
     if manifest.is_symlink() or manifest.stat().st_size > 8 * 1024 * 1024:
         raise ValueError("invalid external-signature manifest")
     data = json.loads(manifest.read_text())
     if data.get("schema") != SCHEMA or not isinstance(data.get("apps"), dict):
         raise ValueError("unsupported external-signature manifest")
     entry = data["apps"][name]
-    if entry["source"] != SOURCE_DIR + "/" + name:
+    if entry["source"] != namespace(output) + "/app-sources/" + name:
         raise ValueError("invalid app payload location")
     source = contained(output, entry["source"])
     if source.is_symlink() or not source.is_dir() or not (source / "Contents").is_dir():
@@ -313,7 +315,7 @@ def interrupted(sig, _frame):
 
 def main():
     signal.signal(signal.SIGTERM, interrupted)
-    output = Path(__file__).resolve().parents[2]
+    output = Path(__file__).resolve().parents[3]
     try:
         mode, name = sys.argv[1:3]
         if mode == "path":

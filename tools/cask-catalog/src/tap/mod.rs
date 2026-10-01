@@ -42,6 +42,7 @@ use crate::{valid_repo, valid_revision};
 use archive::{MAX_ARCHIVE_BYTES, extract_tar_gz, tree_inventory};
 use capture::{Capture, MAX_EXPORT_BYTES, convert_capture, validate_export};
 use config::{GateError, nix_config_gate};
+pub use config::{mac_setup_settings, verify_effective_config};
 use runtime::{run_nix_export, setup_canary};
 use serde::Serialize;
 use sha2::{Digest, Sha256};

@@ -619,7 +619,7 @@ fn cask_flows_read_the_generated_index() {
 }
 
 /// The nixpkgs lane amortizes evaluation with a revision snapshot: the
-/// first search fetches the complete map once (`nix search <ref> ^`), a
+/// first search builds the complete database in bounded batches, a
 /// different query at the same revision answers from the snapshot without
 /// a second native search or index evaluation, and an invalid pattern
 /// fails before any child runs. Proven by a fake Nix runtime that logs
@@ -630,14 +630,30 @@ fn search_snapshots_amortize_new_queries() {
     let home = tempfile::tempdir().expect("tempdir");
     let nix = bin.path().join("nix");
     let log = bin.path().join("calls.log");
-    std::fs::write(
-        &nix,
-        format!(
-            "#!/bin/sh\nargs=\"$*\"\ncase \"$args\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*nixpkgs*) echo '{{\"url\":\"github:NixOS/nixpkgs/nixpkgs-unstable\",\"locked\":{{\"type\":\"github\",\"owner\":\"NixOS\",\"repo\":\"nixpkgs\",\"rev\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}}}';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}}}';;\n  *'search'*) echo \"search $args\" >> {log}; echo '{{\"legacyPackages.x86_64-linux.ripgrep\":{{\"pname\":\"ripgrep\",\"version\":\"15.2.0\",\"description\":\"grep-like searcher\"}},\"legacyPackages.x86_64-linux.gnugrep\":{{\"pname\":\"grep\",\"version\":\"3.11\",\"description\":\"search tool\"}},\"legacyPackages.x86_64-linux.zzz-empty\":{{\"pname\":\"zzz-empty\",\"version\":\"1.0\",\"description\":\"\"}}}}';;\n  *'eval --json'*) echo \"eval $args\" >> {log}; echo '{{\"schema\":\"pkg-cask-catalog/4\",\"generator\":{{\"name\":\"cask-catalog\",\"version\":\"0.1.0\"}},\"inputs\":{{\"homebrew/cask\":{{\"url\":\"https://example.com/cask.json\",\"revision\":\"245947c0\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"license\":\"Homebrew license\"}}}},\"targets\":[\"x86_64-linux\"],\"macosBaseline\":\"15.7.7\",\"systems\":{{\"x86_64-linux\":{{\"entries\":{{}}}}}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n",
-            log = log.display()
-        ),
-    )
-    .expect("write fake nix");
+    std::fs::write(&nix, format!(r#"#!/usr/bin/python3
+import json,re,sys
+args=sys.argv[1:];text=" ".join(args)
+if "--version" in args: print("nix (Nix) 2.35.2")
+elif "config show system" in text: print("x86_64-linux")
+elif "flake metadata" in text:
+ owner,repo,rev=("NixOS","nixpkgs","a"*40) if "nixpkgs" in text else ("spa5k","pkg","b"*40)
+ print(json.dumps({{"url":"github:"+owner+"/"+repo,"locked":{{"type":"github","owner":owner,"repo":repo,"rev":rev}}}}))
+elif "eval" in args and "--apply" in args:
+ with open({log},"a") as log: log.write("batch\n")
+ paths=json.loads(json.loads(re.search(r'paths = builtins.fromJSON (.+?);',args[args.index("--apply")+1]).group(1)))
+ metadata={{"ripgrep":("ripgrep","15.2.0","grep-like searcher"),"gnugrep":("grep","3.11","search tool"),"zzz-empty":("zzz-empty","1.0","")}}
+ rows=[]
+ for path in paths:
+  if len(path)==2: rows.append({{"path":path,"kind":"children","children":list(metadata) if path[0]=="legacyPackages" else []}})
+  else:
+   name,version,description=metadata[path[-1]]
+   rows.append({{"path":path,"kind":"package","meta":{{"pname":name,"version":version,"description":description}}}})
+ print(json.dumps(rows))
+elif "eval" in args:
+ with open({log},"a") as log: log.write("index\n")
+ print(json.dumps({{"schema":"pkg-cask-catalog/4","generator":{{"name":"cask-catalog","version":"0.1.0"}},"inputs":{{"homebrew/cask":{{"url":"https://example.com/cask.json","revision":"245947c0","sha256":"0"*64,"license":"Homebrew license"}}}},"targets":["x86_64-linux"],"macosBaseline":"15.7.7","systems":{{"x86_64-linux":{{"entries":{{}}}}}}}}))
+else: sys.exit(9)
+"#, log = format!("{:?}", log))).expect("write fake nix");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -664,20 +680,27 @@ fn search_snapshots_amortize_new_queries() {
         )
     };
 
-    // First query: one full native search (pattern `^`) and one index eval.
+    // First query: two root checks, one metadata batch, and one index eval.
     let (code, stdout, stderr) = run(&["search", "ripgrep"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");
 
     let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 2, "one search + one eval: {calls}");
-    assert!(calls.contains("search "), "{calls}");
+    assert_eq!(
+        calls.lines().count(),
+        4,
+        "three batches + one index eval: {calls}"
+    );
+    assert!(calls.contains("batch"), "{calls}");
     // A snapshot file was written for both sources.
     let pkg_cache = cache.join("pkg");
     let snapshots = std::fs::read_dir(&pkg_cache)
         .expect("cache dir")
         .flatten()
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("catalog-"))
+        .filter(|entry| {
+            entry.file_name().to_string_lossy().starts_with("catalog-")
+                && !entry.file_name().to_string_lossy().ends_with(".pkg-lock")
+        })
         .count();
     assert_eq!(snapshots, 2, "one snapshot per source");
 
@@ -687,7 +710,7 @@ fn search_snapshots_amortize_new_queries() {
     assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");
     assert!(stdout.contains("nixpkgs:gnugrep"), "{stdout}");
     let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 2, "snapshot reused: {calls}");
+    assert_eq!(calls.lines().count(), 4, "snapshot reused: {calls}");
 
     // The zzz-empty fixture stays hidden here: its name and description
     // (empty) do not match `grep|searcher`.
@@ -700,7 +723,7 @@ fn search_snapshots_amortize_new_queries() {
     assert!(stdout.contains("nixpkgs:zzz-empty"), "{stdout}");
     assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");
     let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 2, "no new calls: {calls}");
+    assert_eq!(calls.lines().count(), 4, "no new calls: {calls}");
 
     // `^$` matches an empty description natively; it is not skipped.
     let (code, stdout, stderr) = run(&["search", "^$"]);
@@ -709,14 +732,14 @@ fn search_snapshots_amortize_new_queries() {
     assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");
     assert!(!stdout.contains("nixpkgs:gnugrep"), "{stdout}");
     let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 2, "no new calls: {calls}");
+    assert_eq!(calls.lines().count(), 4, "no new calls: {calls}");
 
     // An invalid pattern fails before any child runs.
     let (code, _, stderr) = run(&["search", "("]);
     assert_eq!(code, 2);
     assert!(stderr.contains("Invalid search pattern"), "{stderr}");
     let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 2, "no new calls: {calls}");
+    assert_eq!(calls.lines().count(), 4, "no new calls: {calls}");
 }
 
 /// Percent-encode one path the way a `path:` flake reference is encoded.

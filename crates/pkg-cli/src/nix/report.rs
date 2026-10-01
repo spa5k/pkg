@@ -136,6 +136,8 @@ pub struct MutationReporter {
     status_active: bool,
     /// Nix is printing the informational diff for an input override.
     lock_diff: bool,
+    profile: Option<String>,
+    verbose: bool,
 }
 
 impl MutationReporter {
@@ -147,7 +149,16 @@ impl MutationReporter {
             passthrough: false,
             status_active: false,
             lock_diff: false,
+            profile: None,
+            verbose: false,
         }
+    }
+
+    /// Scope native recovery instructions and select verbose output.
+    pub fn scoped(mut self, profile: Option<&str>, verbose: bool) -> Self {
+        self.profile = profile.map(ToString::to_string);
+        self.verbose = verbose;
+        self
     }
 
     /// Print one line, clearing any active status line first.
@@ -184,6 +195,16 @@ impl MutationReporter {
     /// Report one complete line.
     fn line(&mut self, text: &str) {
         let line = text.trim();
+        if let Some(profile) = &self.profile
+            && let Some(scoped) = scoped_hint(line, profile)
+        {
+            self.show(&scoped);
+            return;
+        }
+        if self.verbose {
+            self.show(text);
+            return;
+        }
         if line.starts_with("warning: not writing modified lock file of flake ") {
             // Input overrides deliberately do not write the upstream lock.
             // This warning and its diff are expected setup detail; verbose
@@ -203,6 +224,25 @@ impl MutationReporter {
             Kind::Status(text) => self.status(&text),
         }
     }
+}
+
+fn scoped_hint(line: &str, profile: &str) -> Option<String> {
+    let plain = crate::output::strip_ansi(line);
+    let line = plain.trim();
+    let rest = line.strip_prefix("nix profile ")?;
+    let (command, arguments) = rest.split_once(' ')?;
+    if !matches!(command, "remove" | "add" | "install" | "upgrade") {
+        return None;
+    }
+    let profile = format!("'{}'", profile.replace('\'', "'\\''"));
+    if arguments.contains("--profile") {
+        return Some(format!(
+            "  nix profile list --profile {profile}\n  Use pkg remove with the conflicting entry ID."
+        ));
+    }
+    Some(format!(
+        "  nix profile {command} --profile {profile} {arguments}"
+    ))
 }
 
 impl StderrSink for MutationReporter {
