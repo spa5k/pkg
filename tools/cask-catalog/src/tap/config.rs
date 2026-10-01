@@ -35,6 +35,21 @@ const MAC_ALLOWED_SANDBOX_PATHS: [&str; 5] = [
 /// including empty, is fine).
 const MAC_ALLOWED_IMPURE_DEPS: [&str; 4] = ["/System/Library", "/bin/sh", "/dev", "/usr/lib"];
 
+/// The fail-closed outcome of the local effective-config gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum GateError {
+    /// The observed effective settings refuse the raw tap import: weak
+    /// sandbox settings, added host paths, or impure dependencies. This
+    /// is the refusal the client may answer with its one-time
+    /// administrator setup; the message carries the concrete setup
+    /// advice.
+    Refused(String),
+    /// The effective settings could not be observed at all (query
+    /// failure or malformed JSON). The client must not offer setup for
+    /// this: no setting was shown to be wrong.
+    Unverifiable(String),
+}
+
 /// Concrete fail-closed setup advice. NEVER prints the config dump
 /// (it may contain secret settings); only the offending detail.
 fn config_setup_error(detail: &str, mac: bool) -> String {
@@ -259,6 +274,15 @@ fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
     Ok(())
 }
 
+impl From<String> for GateError {
+    /// Environment, executable, and bounded-run failures mean the
+    /// effective settings could not be observed; they are never a
+    /// refusal.
+    fn from(detail: String) -> Self {
+        Self::Unverifiable(detail)
+    }
+}
+
 /// Query the LOCAL effective Nix settings and verify they are
 /// fail-closed BEFORE any Ruby runs. The query uses the exact isolated
 /// environment of the build (private HOME and XDG_CONFIG_HOME, empty
@@ -274,7 +298,7 @@ fn nix_config_gate_with_limits(
     nix: &Path,
     staging: &Path,
     walltime: Duration,
-) -> Result<(), String> {
+) -> Result<(), GateError> {
     let nix_exe = resolve_nix_exe(nix)?;
     let gate = staging.join("gate");
     let nix_home = gate.join("home");
@@ -313,18 +337,21 @@ fn nix_config_gate_with_limits(
     if !bounded.status.success() {
         let tail =
             String::from_utf8_lossy(&bounded.stderr[bounded.stderr.len().saturating_sub(2000)..]);
-        return Err(format!(
+        return Err(GateError::Unverifiable(format!(
             "nix config show --json failed ({}); the effective local config \
              cannot be verified. tail: {tail}",
             bounded.status
-        ));
+        )));
     }
-    let config: Value = serde_json::from_slice(&bounded.stdout)
-        .map_err(|e| format!("nix config show --json emitted malformed JSON: {e}"))?;
-    verify_effective_config(&config, std::env::consts::OS)
+    let config: Value = serde_json::from_slice(&bounded.stdout).map_err(|e| {
+        GateError::Unverifiable(format!(
+            "nix config show --json emitted malformed JSON: {e}"
+        ))
+    })?;
+    verify_effective_config(&config, std::env::consts::OS).map_err(GateError::Refused)
 }
 
-pub(super) fn nix_config_gate(nix: &Path, staging: &Path) -> Result<(), String> {
+pub(super) fn nix_config_gate(nix: &Path, staging: &Path) -> Result<(), GateError> {
     nix_config_gate_with_limits(nix, staging, NIX_CONFIG_WALLTIME)
 }
 
@@ -608,7 +635,7 @@ mod tests {
         let fixture = strong_effective_config(std::env::consts::OS).to_string();
         let nix = fake_nix(dir.path(), &format!("echo '{fixture}'"));
         nix_config_gate_with_limits(&nix, dir.path(), Duration::from_secs(30))
-            .unwrap_or_else(|e| panic!("gate must pass with a strong fixture: {e}"));
+            .unwrap_or_else(|e| panic!("gate must pass with a strong fixture: {e:?}"));
     }
 
     #[cfg(unix)]
@@ -621,7 +648,10 @@ mod tests {
         );
         let err = nix_config_gate_with_limits(&nix, dir.path(), Duration::from_secs(30))
             .expect_err("weak config");
-        assert!(err.contains("sandbox is false"), "{err}");
+        let GateError::Refused(detail) = &err else {
+            panic!("an observed weak config is the typed refusal: {err:?}");
+        };
+        assert!(detail.contains("sandbox is false"), "{detail}");
     }
 
     #[cfg(unix)]
@@ -631,7 +661,10 @@ mod tests {
         let nix = fake_nix(dir.path(), "yes 0123456789abcdef | head -c 4194304; exit 0");
         let err = nix_config_gate_with_limits(&nix, dir.path(), Duration::from_secs(60))
             .expect_err("flood");
-        assert!(err.contains("log cap"), "{err}");
+        let GateError::Unverifiable(detail) = &err else {
+            panic!("the settings were never observed: {err:?}");
+        };
+        assert!(detail.contains("log cap"), "{detail}");
     }
 
     #[cfg(unix)]
@@ -642,7 +675,10 @@ mod tests {
         let started = std::time::Instant::now();
         let err = nix_config_gate_with_limits(&nix, dir.path(), Duration::from_secs(2))
             .expect_err("hang");
-        assert!(err.contains("wall limit"), "{err}");
+        let GateError::Unverifiable(detail) = &err else {
+            panic!("a hung query observed nothing: {err:?}");
+        };
+        assert!(detail.contains("wall limit"), "{detail}");
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "the group kill + bounded joins must return promptly"

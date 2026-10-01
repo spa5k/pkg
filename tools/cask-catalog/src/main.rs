@@ -224,7 +224,8 @@ fn import_tap(
         nix: nix.to_path_buf(),
         output_dir: out.to_path_buf(),
     };
-    let result = cask_catalog::tap::import(&request)?;
+    let result =
+        cask_catalog::tap::import(&request).map_err(|error| error.message().to_string())?;
     // Machine-readable single-line result on stdout; the client parses
     // this after validating the catalog index. Serialized directly from
     // the `Serialize` derive: snake_case field names

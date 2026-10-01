@@ -115,6 +115,8 @@ The Cask extension is
 [import of public taps](openspec/changes/import-public-cask-taps/design.md).
 Native lifecycle and archive repairs are specified in
 [harden native package lifecycle](openspec/changes/harden-native-package-lifecycle/proposal.md).
+The accepted audit repairs are
+[implement audit repairs](openspec/changes/implement-audit-repairs/proposal.md).
 
 ## License
 

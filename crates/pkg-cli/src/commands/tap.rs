@@ -38,10 +38,43 @@ fn validate_revision(revision: Option<&str>) -> Result<Option<String>, CommandEr
     }
 }
 
-/// Stage one import; on the daemon sandbox refusal, offer the one-time
-/// consent-gated setup and retry the import exactly once when it
-/// verified. A declined or failed setup keeps the refusal short instead
-/// of replaying the importer's full setup paragraph.
+/// The typed failure of one staging attempt.
+///
+/// Only the importer's typed sandbox refusal is carried as a category;
+/// every other failure is already formatted for the CLI boundary.
+enum StageError {
+    /// The importer refused the import because the effective local nix
+    /// config is not fail-closed; the setup offer may answer this.
+    SandboxRefused(String),
+    /// Any other failure, already a command error.
+    Other(CommandError),
+}
+
+/// Classify one importer failure for the staging path.
+///
+/// The category is the importer's typed one: an ordinary failure whose
+/// text merely contains the refusal phrase is an ordinary failure.
+fn stage_error_for_import_error(source: &str, error: cask_catalog::tap::ImportError) -> StageError {
+    match error {
+        cask_catalog::tap::ImportError::SandboxRefused(detail) => {
+            StageError::SandboxRefused(detail)
+        }
+        cask_catalog::tap::ImportError::Failed(detail) => StageError::Other(
+            format!(
+                "importing {source} failed; the published generation and the \
+                 registry are unchanged: {detail}"
+            )
+            .into(),
+        ),
+    }
+}
+
+/// Stage one import; on the importer's TYPED sandbox refusal, offer the
+/// one-time consent-gated setup and retry the import exactly once when
+/// it verified. A declined or failed setup keeps the refusal short
+/// instead of replaying the importer's full setup paragraph. An
+/// ordinary failure — even one whose text contains the refusal phrase —
+/// never triggers the setup offer.
 fn stage_import_with_setup(
     session: &Session,
     source: &str,
@@ -59,15 +92,22 @@ fn stage_import_with_setup(
 > {
     match stage_import(session, source, origin, revision, now_unix) {
         Ok(staged) => Ok(staged),
-        Err(error) => {
-            let is_refusal =
-                matches!(&error, CommandError::Message(text) if setup::is_sandbox_refusal(text));
-            if !is_refusal {
-                return Err(error);
-            }
+        Err(StageError::Other(error)) => Err(error),
+        Err(StageError::SandboxRefused(_)) => {
             eprintln!("pkg: tap import refused: the Nix daemon is not proven sandboxed");
             match setup::offer_and_apply(&session.nix) {
-                Ok(true) => stage_import(session, source, origin, revision, now_unix),
+                Ok(true) => {
+                    stage_import(session, source, origin, revision, now_unix).map_err(|error| {
+                        match error {
+                            StageError::SandboxRefused(detail) => format!(
+                                "the tap import was refused again after the sandbox \
+                             setup: {detail}"
+                            )
+                            .into(),
+                            StageError::Other(error) => error,
+                        }
+                    })
+                }
                 Ok(false) => Err(String::from(
                     "the tap import needs the one-time sandbox setup; nothing was imported",
                 )
@@ -162,11 +202,17 @@ fn stage_import(
         store::StagingGuard,
         StagedImport,
     ),
-    CommandError,
+    StageError,
 > {
-    let locked = store::SourceStore::lock(&session.paths.state_home, source)?;
-    let (staging, guard) = locked.new_staging()?;
-    let system = session.nix.system()?;
+    let locked = store::SourceStore::lock(&session.paths.state_home, source)
+        .map_err(|error| StageError::Other(error.into()))?;
+    let (staging, guard) = locked
+        .new_staging()
+        .map_err(|error| StageError::Other(error.into()))?;
+    let system = session
+        .nix
+        .system()
+        .map_err(|error| StageError::Other(error.into()))?;
     // The stage boundary: everything above is local state only; from here
     // the approved source's data is fetched and its Ruby runs under the
     // sandboxed Nix build. Name the approved source, origin, and scope
@@ -180,25 +226,24 @@ fn stage_import(
         nix: session.nix.executable().to_path_buf(),
         output_dir: staging.clone(),
     };
-    let result = cask_catalog::tap::import(&request).map_err(|error| {
-        format!(
-            "importing {source} failed; the published generation and the \
-             registry are unchanged: {error}"
-        )
-    })?;
+    let result = cask_catalog::tap::import(&request)
+        .map_err(|error| stage_error_for_import_error(source, error))?;
     if result.source != source || result.origin != origin {
-        return Err(format!(
-            "the importer returned identity {}/{} for source {source}; \
-             refusing to publish",
-            result.source, result.origin
-        )
-        .into());
+        return Err(StageError::Other(
+            format!(
+                "the importer returned identity {}/{} for source {source}; \
+                 refusing to publish",
+                result.source, result.origin
+            )
+            .into(),
+        ));
     }
     // Only the importer's generated flake root — exactly the canonical
     // `staging/flake` directory — is returned for publication. The
     // untrusted checkout and the captures beside it never become the
     // active flake root.
-    let flake_path = validated_flake_path(&staging, &result.flake_path)?;
+    let flake_path =
+        validated_flake_path(&staging, &result.flake_path).map_err(StageError::Other)?;
     let provenance = store::Provenance {
         source: String::from(source),
         origin: String::from(origin),
@@ -208,8 +253,9 @@ fn stage_import(
         excluded: result.excluded,
         published_unix: now_unix,
     };
-    let index = tap::validate_staging(&session.nix, &flake_path)?;
-    check_staged_index(&index, &provenance, &system)?;
+    let index = tap::validate_staging(&session.nix, &flake_path)
+        .map_err(|error| StageError::Other(error.into()))?;
+    check_staged_index(&index, &provenance, &system).map_err(StageError::Other)?;
     Ok((
         locked,
         flake_path,
@@ -746,6 +792,42 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_refusal_category_survives_text_lookalikes() {
+        use cask_catalog::tap::ImportError;
+        // Only the typed refusal is carried as a category.
+        let refused = stage_error_for_import_error(
+            "somebody/apps",
+            ImportError::SandboxRefused(String::from("sandbox is false")),
+        );
+        assert!(matches!(refused, StageError::SandboxRefused(_)));
+        // An ordinary failure whose text contains the refusal phrase is
+        // an ordinary failure: the setup offer must never trigger.
+        let lookalike = stage_error_for_import_error(
+            "somebody/apps",
+            ImportError::Failed(String::from(
+                "effective local nix config refuses the raw tap import: \
+                 the settings could not be verified",
+            )),
+        );
+        let StageError::Other(error) = lookalike else {
+            panic!("a coincidental refusal phrase must not become a refusal");
+        };
+        let CommandError::Message(text) = error else {
+            panic!("the ordinary failure is a message");
+        };
+        assert!(text.contains("importing somebody/apps failed"), "{text}");
+        assert!(text.contains("could not be verified"), "{text}");
+        // The refusal detail stays available for the retry path.
+        let StageError::SandboxRefused(detail) = stage_error_for_import_error(
+            "somebody/apps",
+            ImportError::SandboxRefused(String::from("added host path /etc")),
+        ) else {
+            panic!("the typed refusal is carried");
+        };
+        assert_eq!(detail, "added host path /etc");
+    }
 
     #[test]
     fn revision_pins_must_be_bare_full_commits() {
