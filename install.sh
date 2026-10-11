@@ -9,6 +9,9 @@
 # small managed block into Bash and Zsh startup files. The block covers
 # the pkg client bin, the detected Nix bin, and the pkg package profile
 # bin. Set PKG_INSTALL_SHELL_SETUP=0 to skip all startup file changes.
+# With Nix present, prepare local search and enable daily user refresh.
+# Set PKG_INSTALL_PREPARE=0 to skip both steps.
+# Set PKG_INSTALL_BACKGROUND=0 to prepare without a scheduled user job.
 #
 # The downloader detects an existing Nix runtime without trusting the
 # inherited PATH. The detected Nix bin directory is always written into
@@ -19,8 +22,7 @@
 #   - uses sudo or installs privileged helpers or services;
 #   - changes Nix trust settings or accepts new substituters or keys;
 #   - removes or migrates old pkg installations;
-#   - writes any file outside the install targets and the user's own
-#     Bash/Zsh startup files described above.
+# Catalog setup writes the user's pkg cache and a user job file.
 #
 # Nix must be installed separately, by you, from the vendor:
 #   https://docs.determinate.systems/determinate-nix/
@@ -35,7 +37,7 @@ set -eu
 # the version from pkg-cli Cargo metadata, and the client-release workflow
 # rejects a tag that disagrees with that version.
 repo="spa5k/pkg"
-version="0.2.0-alpha.11"
+version="0.2.0-alpha.12"
 tag="v${version}"
 
 if [ "$#" -ne 0 ]; then
@@ -564,6 +566,28 @@ fi
 # Report. The downloader cannot change the shell that ran it. Say plainly
 # what worked, what did not, and what remains.
 # ---------------------------------------------------------------------------
+if [ "${PKG_INSTALL_PREPARE:-1}" = "0" ]; then
+  echo "Search setup skipped: PKG_INSTALL_PREPARE=0 is set."
+  echo "Prepare it later with: pkg setup"
+elif [ -n "$nix_bin" ]; then
+  echo "Preparing local search. The first run can take several minutes."
+  if [ "${PKG_INSTALL_BACKGROUND:-1}" = "0" ]; then
+    if PATH="$nix_dir:$PATH" "$bindir/pkg" setup --no-background; then
+      echo "Search setup: complete. Background refresh is disabled."
+    else
+      echo "Search setup: incomplete. The client is installed. Retry with: pkg setup --no-background" >&2
+      setup_hard_error=1
+    fi
+  elif PATH="$nix_dir:$PATH" "$bindir/pkg" setup; then
+    echo "Search setup: complete. Daily background refresh is enabled."
+  else
+    echo "Search setup: incomplete. The client is installed. Retry with: pkg setup" >&2
+    setup_hard_error=1
+  fi
+else
+  echo "Search setup needs Nix. After you install Nix, run: pkg setup"
+fi
+
 echo ""
 echo "Client: $bindir/pkg"
 if [ -n "$nix_bin" ]; then

@@ -75,26 +75,26 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
             let (sandbox_status, sandbox_detail) = crate::tap::setup::doctor_status(&runtime);
             rows.push(observed("tap sandbox", &sandbox_status, sandbox_detail));
 
-            if paths.profile.exists() {
-                match runtime.profile_list(&paths.profile) {
-                    Ok(entries) => rows.push(observed(
-                        "pkg profile",
-                        "ok",
-                        format!("{} ({} entries)", paths.profile.display(), entries.len()),
-                    )),
-                    Err(error) => {
-                        rows.push(observed("pkg profile", "unreadable", error.to_string()));
-                    }
-                }
-            } else {
-                rows.push(observed(
+            match std::fs::symlink_metadata(&paths.profile) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => rows.push(observed(
                     "pkg profile",
                     "fresh",
                     format!(
                         "{} not created yet; the first install creates it",
                         paths.profile.display()
                     ),
-                ));
+                )),
+                Err(error) => rows.push(observed("pkg profile", "unreadable", error.to_string())),
+                Ok(_) => match runtime.profile_list(&paths.profile) {
+                    Ok(entries) => rows.push(observed(
+                        "pkg profile",
+                        "ok",
+                        format!("{} ({} entries)", paths.profile.display(), entries.len()),
+                    )),
+                    Err(error) => {
+                        rows.push(observed("pkg profile", "unreadable", error.to_string()))
+                    }
+                },
             }
             // App launcher drift is read through the apps module; doctor
             // reports it and never fixes it (design D7). Auto-skipped on

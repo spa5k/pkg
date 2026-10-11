@@ -21,6 +21,8 @@ pub(super) struct Header {
     pub(super) reference: String,
     pub(super) revision: Option<String>,
     complete: bool,
+    #[serde(default)]
+    pub(super) saved_unix: u64,
 }
 
 pub(super) struct Snapshot {
@@ -86,6 +88,15 @@ impl Snapshot {
         identity.revision.is_some()
             && self.header.revision == identity.revision
             && Some(&self.header.reference) == identity.locked_url.as_ref()
+    }
+
+    pub(super) fn prepared(
+        cache_dir: &Path,
+        source: &str,
+        system: &str,
+        identity: &SourceIdentity,
+    ) -> Option<Self> {
+        Self::read(cache_dir, source, system).filter(|snapshot| snapshot.matches(identity))
     }
 
     pub(super) fn current(
@@ -180,6 +191,7 @@ impl Snapshot {
             reference: reference.to_string(),
             revision: identity.revision.clone(),
             complete: true,
+            saved_unix: cache::now_unix(),
         };
         let transaction = connection.transaction().map_err(cache_error)?;
         transaction.execute_batch("INSERT INTO claims SELECT exposed, count(*) FROM packages GROUP BY exposed; DROP TABLE pending;").map_err(cache_error)?;

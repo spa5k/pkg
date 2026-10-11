@@ -24,7 +24,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "install.sh"
-VERSION = "0.2.0-alpha.11"
+VERSION = "0.2.0-alpha.12"
 TAG = f"v{VERSION}"
 SYSTEM = "x86_64-linux"
 ARCHIVE = f"pkg-{VERSION}-{SYSTEM}.tar.gz"
@@ -379,7 +379,7 @@ class DownloaderArchiveTests(unittest.TestCase):
         fixtures = sandbox / "fixtures"
         fixtures.mkdir()
         build_release(fixtures, **build_kwargs)
-        return run_installer(fixtures, sandbox), sandbox
+        return run_installer(fixtures, sandbox, env_extra={"PKG_INSTALL_PREPARE": "0"}), sandbox
 
     def test_installs_client_and_completions(self) -> None:
         result, sandbox = self.run_once()
@@ -484,6 +484,31 @@ class DownloaderArchiveTests(unittest.TestCase):
         self.assertFalse((sandbox / "tmp" / evil).exists())
         self.assertFalse(list(sandbox.rglob(evil)))
         self.assertTrue(no_tree_extracted(sandbox))
+
+
+class CatalogSetupTests(unittest.TestCase):
+    def test_preparation_background_opt_out_and_failure_are_reported(self) -> None:
+        for extra, expected, code in [
+            ({}, "setup", 0),
+            ({"PKG_INSTALL_BACKGROUND": "0"}, "setup --no-background", 0),
+            ({"PKG_INSTALL_PREPARE": "0"}, None, 0),
+            ({"PKG_TEST_SETUP_FAIL": "1"}, "setup", 1),
+        ]:
+            with self.subTest(extra=extra), Sandbox() as sandbox:
+                build_release(sandbox.fixtures, client_bytes=b'#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/setup-args"\nif [ "${PKG_TEST_SETUP_FAIL:-0}" = "1" ]; then exit 1; fi\n')
+                nix_dir = sandbox.path / "nix bin"
+                make_fake_nix(nix_dir)
+                result = run_installer(sandbox.fixtures, sandbox.path,
+                                       path_prepend=(str(nix_dir),), env_extra=extra)
+                self.assertEqual(result.returncode, code, result.combined)
+                args = sandbox.home / "setup-args"
+                if expected is None:
+                    self.assertFalse(args.exists())
+                else:
+                    self.assertEqual(args.read_text().strip(), expected)
+                if code:
+                    self.assertIn("Search setup: incomplete", result.combined)
+                    self.assertTrue((sandbox.path / "bin-target/pkg").exists())
 
 
 class ShellSetupTests(unittest.TestCase):

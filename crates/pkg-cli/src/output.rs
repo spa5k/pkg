@@ -116,20 +116,13 @@ pub fn render_list(rows: &[ListRow]) -> String {
     }
     let width = rows
         .iter()
-        .map(|row| row.entry_id.len())
+        .map(|row| row.package_id.len())
         .max()
-        .unwrap_or(8)
-        .max(8);
-    let _ = writeln!(out, "{:<width$}  PACKAGE  SOURCE", "ENTRY ID");
+        .unwrap_or(7)
+        .max(7);
+    let _ = writeln!(out, "{:<width$}  ENTRY ID", "PACKAGE");
     for row in rows {
-        let is_cask = row.name.contains('/');
-        let name = row.name.rsplit('/').next().unwrap_or(&row.name);
-        let source = if is_cask {
-            String::from("cask")
-        } else {
-            short_source(&row.source)
-        };
-        let _ = writeln!(out, "{:<width$}  {}  {}", row.entry_id, name, source);
+        let _ = writeln!(out, "{:<width$}  {}", row.package_id, row.entry_id);
     }
     out
 }
@@ -139,6 +132,8 @@ pub fn render_list(rows: &[ListRow]) -> String {
 pub struct ListRow {
     /// The exact native entry ID.
     pub entry_id: String,
+    /// The package ID accepted by info, install, remove, and upgrade.
+    pub package_id: String,
     /// The final attribute name.
     pub name: String,
     /// The original moving reference the entry was installed from.
@@ -158,7 +153,7 @@ pub fn render_search(rows: &[crate::catalog::SearchResult], query: &str) -> Stri
     let mut out = String::new();
     if rows.is_empty() {
         let _ = writeln!(out, "No matches for \"{query}\".");
-        let _ = writeln!(out, "Next: Try a shorter search term.");
+        let _ = writeln!(out, "Next: Try fewer search words or use --broad.");
         return out;
     }
     let width = rows
@@ -167,21 +162,38 @@ pub fn render_search(rows: &[crate::catalog::SearchResult], query: &str) -> Stri
         .max()
         .unwrap_or(2)
         .max(2);
-    let _ = writeln!(out, "{:<width$}  VERSION  DESCRIPTION", "ID");
+    let version_width = rows
+        .iter()
+        .map(|row| row.version.len())
+        .max()
+        .unwrap_or(7)
+        .max(7);
+    let _ = writeln!(
+        out,
+        "{:<width$}  {:<version_width$}  DESCRIPTION",
+        "ID", "VERSION"
+    );
     for row in rows {
-        out.push_str(&render_search_row(row, width));
+        out.push_str(&render_search_row(row, width, version_width));
     }
     out
 }
 
 /// Render one search row at the shared column width.
 #[must_use]
-pub fn render_search_row(row: &crate::catalog::SearchResult, width: usize) -> String {
+pub fn render_search_row(
+    row: &crate::catalog::SearchResult,
+    width: usize,
+    version_width: usize,
+) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     let stale = if row.stale { " [cached]" } else { "" };
     let support = match &row.support {
         Some(crate::catalog::SupportBadge::Eligible) => "",
+        Some(crate::catalog::SupportBadge::Unknown { reason }) => {
+            &format!(" [availability unknown: {reason}]")
+        }
         Some(crate::catalog::SupportBadge::Excluded { reason, .. }) => {
             &format!(" [excluded: {reason}]")
         }
@@ -189,9 +201,13 @@ pub fn render_search_row(row: &crate::catalog::SearchResult, width: usize) -> St
     };
     let _ = writeln!(
         out,
-        "{:<width$}  {}  {}{}{}",
+        "{:<width$}  {:<version_width$}  {}{}{}",
         row.id,
-        row.version,
+        if row.version.is_empty() {
+            "-"
+        } else {
+            &row.version
+        },
         truncate(&row.description, 80),
         stale,
         support
@@ -205,7 +221,12 @@ pub fn render_source_reports(reports: &[crate::catalog::SourceReport], verbose: 
     use std::fmt::Write as _;
     let mut out = String::new();
     for report in reports {
-        if !verbose && report.status.label() != "stale" {
+        if !verbose
+            && !matches!(
+                report.status,
+                crate::catalog::SourceStatus::Stale | crate::catalog::SourceStatus::SkippedPlatform
+            )
+        {
             continue;
         }
         let label = report.display.as_deref().unwrap_or(report.source.as_str());
@@ -217,7 +238,20 @@ pub fn render_source_reports(reports: &[crate::catalog::SourceReport], verbose: 
                 report.status.label()
             );
         } else {
-            let _ = writeln!(out, "Warning: {label} uses cached results.");
+            let _ = writeln!(
+                out,
+                "{}: {}: {}",
+                if report.status == crate::catalog::SourceStatus::SkippedPlatform {
+                    "Skipped"
+                } else {
+                    "Warning"
+                },
+                short_source(label),
+                report
+                    .detail
+                    .as_deref()
+                    .unwrap_or("catalog may be old; run `pkg update`")
+            );
         }
         if !verbose {
             continue;
@@ -273,6 +307,7 @@ mod tests {
         let json = serde_json::to_value(envelope(
             "list",
             vec![ListRow {
+                package_id: String::from("nixpkgs:ripgrep"),
                 entry_id: String::from("ripgrep"),
                 name: String::from("ripgrep"),
                 source: String::from("github:NixOS/nixpkgs/nixpkgs-unstable"),

@@ -14,8 +14,7 @@ use crate::nix::{self, ProfileEntry};
 use crate::tap::{registry, store};
 
 use super::{
-    CommandError, apps_refresh_after_mutation, configured_sources, installed_entries,
-    mutation_failed, session,
+    CommandError, apps_refresh_after_mutation, installed_entries, mutation_failed, session,
 };
 
 pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
@@ -35,6 +34,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     // cask gate in this command run.
     let mut catalog_handle = catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks);
     let mut installables = Vec::new();
+    let mut resolved_names = BTreeMap::new();
     for parsed in parsed_ids {
         // Qualified IDs resolve without reading any saved tap: an
         // unrelated broken tap cannot block a request that names its
@@ -52,7 +52,10 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                     &name,
                     &system,
                     &mut catalog_handle,
-                )?
+                )
+                .map_err(|error| {
+                    super::query::install_resolution_error(&session, &name, None, error)
+                })?
             }
             ParsedId::BareCask(token) => {
                 let saved = tap_state.saved_all()?;
@@ -62,18 +65,21 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                     &token,
                     &system,
                     &mut catalog_handle,
-                )?
+                )
+                .map_err(|error| {
+                    super::query::install_resolution_error(&session, &token, Some("cask"), error)
+                })?
             }
         };
         if let catalog::CatalogId::Cask { source, token } = &resolved {
             gate_cask(&mut catalog_handle, &tap_state, &system, source, token)
                 .map_err(CommandError::Message)?;
         }
-        installables.push(
-            resolved
-                .installable(&tap_state.routing, &system)
-                .map_err(CommandError::Message)?,
-        );
+        let installable = resolved
+            .installable(&tap_state.routing, &system)
+            .map_err(CommandError::Message)?;
+        resolved_names.insert(installable.clone(), resolved.qualified());
+        installables.push(installable);
     }
     let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
     let before = installed_entries(&session)?;
@@ -82,7 +88,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     let mut pending = Vec::new();
     for installable in installables {
         if already_installed(&session.nix, &before, &installable, &system)? {
-            println!("Already installed: {installable}");
+            println!("Already installed: {}", resolved_names[&installable]);
         } else {
             pending.push(installable);
         }
@@ -180,76 +186,10 @@ fn gate_view(
     source: &str,
     token: &str,
 ) -> Result<(), String> {
-    if !view.targeted(system) {
-        return Err(format!(
-            "cask:{source}/{token} needs a catalog target system ({}); this system is {system}",
-            view.targets().join(", ")
-        ));
-    }
-    let version = view
-        .record(system, source, token)
-        .and_then(|entry| entry.version.clone())
-        .unwrap_or_else(|| String::from("unknown version"));
-    match view.entry(system, source, token) {
-        catalog::CaskStatus::Eligible => gate_host_macos_range(view, system, source, token),
-        catalog::CaskStatus::Excluded { reason, detail } => Err(format!(
-            "cask:{source}/{token} {version} is excluded on {system}: {reason}: {}",
-            detail.as_deref().unwrap_or("no detail")
-        )),
-        catalog::CaskStatus::Unknown => Err(format!(
-            "cask:{source}/{token} is not in the generated catalog for {system}"
-        )),
-    }
-}
-
-/// Refuse an eligible cask whose declared macOS range excludes the host.
-///
-/// The bounds come from the same decoded index entry: `minMacos` and
-/// `maxMacos` are null on Linux records, so the host version is read only
-/// when a cask actually declares a macOS range on this target — never for
-/// Linux, Nixpkgs, or an untargeted catalog. The read goes through the
-/// absolute `/usr/bin/sw_vers` path and the shared child signal boundary;
-/// a failed read fails the install closed. The refusal happens before any
-/// `profile_add` mutation.
-fn gate_host_macos_range(
-    view: &catalog::CatalogView,
-    system: &str,
-    source: &str,
-    token: &str,
-) -> Result<(), String> {
-    let Some(entry) = view.record(system, source, token) else {
-        return Ok(());
-    };
-    let (min, max) = (&entry.min_macos, &entry.max_macos);
-    if min.is_none() && max.is_none() {
-        return Ok(());
-    }
-    // Explicit platform guard: the host read happens only on macOS
-    // hosts. Even an imported malformed index that carries macOS fields
-    // on a Linux record never triggers `/usr/bin/sw_vers` here.
-    if !system.ends_with("-darwin") {
-        return Ok(());
-    }
-    let host = nix::macos_product_version().map_err(|detail| {
-        format!(
-            "cask:{source}/{token} declares a macOS range, but the host version cannot be read: {detail}"
-        )
-    })?;
-    if !nix::in_range(&host, min.as_deref(), max.as_deref()) {
-        let range = match (min.as_deref(), max.as_deref()) {
-            (Some(min), Some(max)) => format!("macOS >= {min} and <= {max}"),
-            (Some(min), None) => format!("macOS >= {min}"),
-            (None, Some(max)) => format!("macOS <= {max}"),
-            // The no-bounds case returned above. An index entry that
-            // somehow reaches here without a bound declares no range,
-            // so the host is inside it; never panic on index data.
-            (None, None) => return Ok(()),
-        };
-        return Err(format!(
-            "cask:{source}/{token} requires {range}; this host runs macOS {host}"
-        ));
-    }
-    Ok(())
+    catalog::CaskHost::default()
+        .availability(view, system, source, token)
+        .require()
+        .map_err(|reason| format!("cask:{source}/{token} {reason}"))
 }
 
 /// The short display name: the last path segment of the native name.
@@ -278,25 +218,24 @@ fn changed_names(
         .collect()
 }
 
-pub(super) fn remove(cli: &Cli, entries: &[String]) -> Result<(), CommandError> {
+pub(super) fn remove(cli: &Cli, entries: &[String], exact_entry: bool) -> Result<(), CommandError> {
     let session = session(cli)?;
     if entries.is_empty() {
         return Err(String::from("remove needs at least one installed entry ID").into());
     }
     let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
     let installed = installed_entries(&session)?;
-    for entry in entries {
-        if !installed.contains_key(entry) {
-            return Err(format!(
-                "`{entry}` is not an installed entry; run `pkg list` for exact entry IDs"
-            )
-            .into());
-        }
-    }
+    let entries = crate::installed::select(
+        &installed,
+        &session.config,
+        &session.paths.state_home,
+        entries,
+        exact_entry,
+    )?;
     eprintln!("Removing: {}", entries.join(", "));
     session
         .nix
-        .profile_remove(&session.paths.profile, entries)
+        .profile_remove(&session.paths.profile, &entries)
         .map_err(|error| mutation_failed(&session, "remove", &error, Some(&installed)))?;
     let after = installed_entries(&session)?;
     let names: Vec<String> = entries
@@ -309,63 +248,34 @@ pub(super) fn remove(cli: &Cli, entries: &[String]) -> Result<(), CommandError> 
     Ok(())
 }
 
-pub(super) fn update(cli: &Cli) -> Result<(), CommandError> {
-    let session = session(cli)?;
-    let system = session.nix.system()?;
-    eprintln!("Refreshing package search data…");
-    for (kind, source) in configured_sources(&session.config) {
-        let identity = session.nix.refresh_source_identity(source)?;
-        match kind {
-            catalog::SourceKind::Nixpkgs => catalog::prepare_source(
-                &session.nix,
-                &session.paths.cache_dir,
-                source,
-                &system,
-                &identity,
-            )?,
-            catalog::SourceKind::Cask => {
-                let (_, report) = catalog::search_catalog(
-                    &session.nix,
-                    &session.paths.cache_dir,
-                    source,
-                    "^",
-                    &system,
-                )?;
-                if !matches!(
-                    report.status,
-                    catalog::SourceStatus::Fresh | catalog::SourceStatus::SkippedPlatform
-                ) {
-                    return Err(CommandError::Message(
-                        report
-                            .detail
-                            .unwrap_or_else(|| String::from("cask cache preparation failed")),
-                    ));
-                }
-            }
-        }
-    }
-    println!("Updated: package search data. Installed packages did not change.");
-    Ok(())
-}
-
-pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), CommandError> {
+pub(super) fn upgrade(
+    cli: &Cli,
+    entries: &[String],
+    all: bool,
+    exact_entry: bool,
+) -> Result<(), CommandError> {
     let session = session(cli)?;
     let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
     let installed = installed_entries(&session)?;
     // `--all` combined with entry names is a usage error rejected by the
     // parser; here the target set is either explicit names or everything.
     let targets: Vec<String> = if all {
-        installed.keys().cloned().collect()
+        installed
+            .iter()
+            .filter(|(_, entry)| entry.active)
+            .map(|(key, _)| key.clone())
+            .collect()
     } else {
         if entries.is_empty() {
             return Err(String::from("upgrade needs entry IDs or --all").into());
         }
-        for entry in entries {
-            if !installed.contains_key(entry) {
-                return Err(format!("`{entry}` is not an installed entry; run `pkg list`").into());
-            }
-        }
-        entries.to_vec()
+        crate::installed::select(
+            &installed,
+            &session.config,
+            &session.paths.state_home,
+            entries,
+            exact_entry,
+        )?
     };
     if all && targets.is_empty() {
         println!("No installed entries; nothing to upgrade.");
@@ -454,7 +364,7 @@ pub(super) fn upgrade(cli: &Cli, entries: &[String], all: bool) -> Result<(), Co
     let names: Vec<String> = movable
         .iter()
         .filter(|entry| after.get(*entry) != installed.get(*entry))
-        .map(|entry| short_name(entry))
+        .map(|entry| short_name(&installed[entry].name()))
         .collect();
     apps_refresh_after_mutation(&session, "upgrade", &names)?;
     report_names("Upgraded", &names);

@@ -148,14 +148,16 @@ Known scope limits, by design:
 
 ## How the client uses the index
 
-- Search reads `catalogIndex` once per locked revision (a disposable
-  latest snapshot per source) and filters locally with a Rust regex,
-  matched case-insensitively against the token, the name, and the
-  description. The Nixpkgs lane uses the same Rust regex grammar over the
-  full attribute path, name, and description. See [commands](commands.md)
-  for both grammars.
-- Search lists eligible entries only. Excluded tokens stay discoverable
-  through `pkg info`, which shows the recorded reason and detail.
+- Search reads a complete local snapshot of `catalogIndex`. Normal search
+  makes no source request. The installer, `pkg setup`, `pkg update`, and
+  the daily user job prepare official snapshots. Saved tap captures are
+  refreshed by `pkg tap update` or the saved-tap phase of `pkg update`.
+- Search uses literal text by default. `--regex` enables Rust regular
+  expressions. Both forms ignore case and match tokens, names, IDs, and
+  descriptions. See [commands](commands.md) for limits and result order.
+- Exact unavailable cask names show the recorded reason. Use
+  `--unavailable` to include other unavailable matches. Search, info,
+  install, and upgrade share the catalog and host macOS range rules.
 - A bare name resolves to a cask only when it equals one bare token
   exactly and that token is unique across the official catalog and every
   saved tap catalog. Excluded entries count as matches. An ambiguous token

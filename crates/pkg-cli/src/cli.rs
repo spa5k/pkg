@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
     name = "pkg",
     version,
     about = "Find and manage packages.",
-    help_template = "{about}\n\nFind:     search, info, list\nChange:   install, remove, upgrade, rollback\nMaintain: update, history, prune, doctor, apps\nSources:  tap add, tap list, tap update, tap remove\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
+    help_template = "{about}\n\nFind:     search, info, list\nChange:   install, remove, upgrade, rollback\nMaintain: setup, update, background, history, prune, doctor, apps\nSources:  tap add, tap list, tap update, tap remove\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
     disable_help_subcommand = true
 )]
 pub struct Cli {
@@ -35,11 +35,8 @@ pub struct Cli {
 /// The retained command set (design D4).
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Search supported sources.
-    Search {
-        /// Rust regex query, matched locally against names and descriptions.
-        query: String,
-    },
+    /// Search local package catalogs.
+    Search(SearchOptions),
     /// Show source, attribute, revision, and limits for one ID.
     Info {
         /// Catalog ID such as nixpkgs:ripgrep, cask:raycast, or a bare name.
@@ -48,21 +45,43 @@ pub enum Command {
     /// Resolve all IDs, then add them in one native profile operation.
     Install {
         /// Catalog IDs or supported public GitHub flake installables.
+        #[arg(required = true)]
         ids: Vec<String>,
     },
     /// List installed entries from the dedicated native profile.
     List,
-    /// Remove exact installed entries in one native operation.
+    /// Remove installed packages in one native operation.
     Remove {
-        /// Exact native entry IDs as shown by `pkg list`.
+        /// Package IDs, unique names, or native entry IDs from `pkg list`.
+        #[arg(required = true)]
         entries: Vec<String>,
+        /// Select exact native entry IDs instead of package names.
+        #[arg(long)]
+        entry: bool,
     },
     /// Refresh disposable discovery data. Does not change the profile.
-    Update,
+    Update {
+        /// Refresh official catalogs only. Used by the scheduled user job.
+        #[arg(long, hide = true)]
+        catalogs_only: bool,
+    },
+    /// Prepare local search and enable daily background refresh.
+    Setup {
+        /// Prepare catalogs without a scheduled user job.
+        #[arg(long)]
+        no_background: bool,
+    },
+    /// Control the daily user job for official catalog refresh.
+    #[command(subcommand)]
+    Background(BackgroundCommand),
     /// Upgrade installed entries following their original references.
     Upgrade {
-        /// Exact native entry IDs to upgrade.
+        /// Package IDs, unique names, or native entry IDs to upgrade.
+        #[arg(required_unless_present = "all")]
         entries: Vec<String>,
+        /// Select exact native entry IDs instead of package names.
+        #[arg(long, conflicts_with = "all")]
+        entry: bool,
         /// Upgrade every installed entry, reporting fixed ones explicitly.
         #[arg(long, conflicts_with = "entries")]
         all: bool,
@@ -95,6 +114,45 @@ pub enum Command {
     /// Manage local public Homebrew Cask taps.
     #[command(subcommand)]
     Tap(TapCommand),
+}
+
+/// Local search inputs and output controls.
+#[derive(Debug, clap::Args)]
+pub struct SearchOptions {
+    /// Package names or search words. Also accepts nixpkgs: or cask: queries.
+    pub query: String,
+    /// Treat the query as a regular expression.
+    #[arg(long)]
+    pub regex: bool,
+    /// Include libraries, development packages, variants, and substring matches.
+    #[arg(long)]
+    pub broad: bool,
+    /// Disable name typo alternatives when literal results are absent.
+    #[arg(long, conflicts_with = "regex")]
+    pub no_fuzzy: bool,
+    /// Maximum results. Human output defaults to 20; JSON defaults to all.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "all")]
+    pub limit: Option<u32>,
+    /// Show all matching results.
+    #[arg(long)]
+    pub all: bool,
+    /// Search nixpkgs, all casks, homebrew/cask, or a registered owner/tap.
+    #[arg(long)]
+    pub source: Option<String>,
+    /// Include unavailable casks. Exact unavailable names are always shown.
+    #[arg(long)]
+    pub unavailable: bool,
+}
+
+/// Controls for the scheduled official catalog refresh.
+#[derive(Debug, Subcommand)]
+pub enum BackgroundCommand {
+    /// Enable daily refresh for the current user.
+    Enable,
+    /// Disable daily refresh and remove pkg-owned job files.
+    Disable,
+    /// Show whether the user job is enabled.
+    Status,
 }
 
 /// Launcher subcommands. Execution is supplied by the apps module.
