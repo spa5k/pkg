@@ -9,6 +9,7 @@ let
   });
 in
 assert target.kind == "formula-bottle";
+assert pkgs.lib.assertMsg (system == "aarch64-darwin") "Formula bottle importer supports aarch64-darwin only";
 assert builtins.match "https://ghcr.io/v2/homebrew/core/[a-z0-9+./_-]+/blobs/sha256:[0-9a-f]{64}" target.url != null;
 assert builtins.match "[0-9a-f]{64}" target.sha256 != null;
 pkgs.stdenvNoCC.mkDerivation {
@@ -19,14 +20,11 @@ pkgs.stdenvNoCC.mkDerivation {
   dontConfigure = true;
   dontBuild = true;
   dontStrip = true;
-  dontAutoPatchelf = pkgs.stdenv.hostPlatform.isLinux;
-  nativeBuildInputs = [ pkgs.python3 ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.autoPatchelfHook ];
-  buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.stdenv.cc.cc.lib ];
+  nativeBuildInputs = [ pkgs.python3 ];
   installPhase = ''
-    python3 ${./bottle.py} "$src" ${plan} "$out" ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--stage-linux-elf"}
+    python3 ${./bottle.py} "$src" ${plan} "$out"
   '';
   postFixup = ''
-    ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''autoPatchelf "$out"''}
     python3 ${./bottle.py} audit "$out"
   '';
   meta = {

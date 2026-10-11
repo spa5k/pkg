@@ -32,7 +32,9 @@ The generator first selects a Nixpkgs equivalent with a matching name or
 alias, homepage, and numeric version major. It records the native version.
 Otherwise, it permits a dependency-free, non-relocating Core bottle with
 no install hook, service, or special requirement. Disabled and deprecated
-recipes remain excluded. The builder can refuse a metadata-eligible bottle
+recipes remain excluded. Bottles are supported on Apple silicon macOS.
+Linux uses Nixpkgs equivalents and refuses bottles that need Linux relocation.
+The builder can refuse a metadata-eligible bottle
 when its contents fail the checks. Eligible does not mean build-verified.
 
 `nix/casks/lib` owns the common public fetch helpers. Generation copies them

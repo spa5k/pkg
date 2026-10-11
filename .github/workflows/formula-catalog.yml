@@ -40,14 +40,16 @@ jobs:
         run: python3 tools/formula-catalog/generate.py
       - name: Compare generated source
         run: git diff --exit-code -- nix/formulae
-      - name: Linux bottle build and execution
+      - name: Linux equivalent build and execution
         run: |
-          output="$(nix build --no-link --print-out-paths ./nix/formulae#homebrew/core/abnfgen)"
-          actual="$("$output/bin/abnfgen" -x -s root <<'GRAMMAR'
-          root = %s"ok"
-          GRAMMAR
-          )"
-          test "$actual" = ok
+          output="$(nix build --no-link --print-out-paths ./nix/formulae#homebrew/core/fd)"
+          expected="$(python3 -c 'import json; print(json.load(open("nix/formulae/catalog/catalog.json"))["entries"]["fd"]["targets"]["x86_64-linux"]["version"])')"
+          test "$("$output/bin/fd" --version)" = "fd $expected"
+      - name: Linux bottle refusal
+        run: |
+          nix eval --json ./nix/formulae#formulaIndex \
+            --apply 'index: index.systems.x86_64-linux.entries."homebrew/core/abnfgen"' > /tmp/formula-refusal.json
+          python3 -c 'import json; row=json.load(open("/tmp/formula-refusal.json")); assert row["status"] == "excluded" and row["reason"] == "unsupported-bottle-platform", row'
 
   darwin:
     runs-on: macos-15

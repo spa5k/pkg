@@ -62,6 +62,7 @@ class FormulaTests(unittest.TestCase):
     def test_bottle_refuses_dependencies_hooks_relocation_and_wrong_origin(self):
         package = formula()
         self.assertEqual(generator.bottle_target(package, "aarch64-darwin")["kind"], "formula-bottle")
+        self.assertEqual(generator.bottle_target(package, "x86_64-linux")["reason"], "unsupported-bottle-platform")
         for field, value, reason in [("dependencies", ["python"], "formula-dependency"),
                                     ("requirements", None, "malformed-metadata"),
                                     ("post_install_defined", True, "install-hook"),
@@ -148,13 +149,6 @@ class BottleTests(unittest.TestCase):
             bottle.install("probe.tar.gz", self.plan, "output")
         self.assertFalse(pathlib.Path("output").exists())
 
-    def test_staged_linux_elf_requires_a_clean_final_audit(self):
-        self.archive([("probe/2.0/bin/probe", b"\x7fELF@@HOMEBREW_PREFIX@@/lib/ld.so", None)])
-        bottle.install("probe.tar.gz", self.plan, "output", stage_linux_elf=True)
-        with self.assertRaisesRegex(ValueError, "Homebrew paths"):
-            bottle.audit("output")
-        pathlib.Path("output/bin/probe").write_bytes(b"\x7fELF/nix/store/native-loader")
-        bottle.audit("output")
 
 
 if __name__ == "__main__":

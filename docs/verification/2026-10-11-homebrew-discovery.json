@@ -28,14 +28,9 @@
     },
     "x86_64-linux": {
       "nixpkgs-equivalent": 2945,
-      "formula-bottle": 828,
+      "unsupported-bottle-platform": 5235,
       "deprecated": 318,
-      "formula-dependency": 2627,
-      "homebrew-relocation": 774,
-      "no-compatible-bottle": 934,
-      "disabled": 152,
-      "install-hook": 68,
-      "unsupported-bottle-origin": 4
+      "disabled": 152
     }
   },
   "actualPackages": [
@@ -85,7 +80,7 @@
     "clippy": "passed",
     "docs": "passed",
     "dependencyPolicy": "passed with existing duplicate dependency warnings",
-    "formulaBehaviorTests": "10 passed",
+    "formulaBehaviorTests": "9 passed",
     "safeFetchTests": "510 passed",
     "installer": "37 passed, 7 Linux-only skipped",
     "docsLinks": "508 valid"
@@ -93,6 +88,7 @@
   "limitations": [
     "Metadata eligibility is not build verification for all catalog entries.",
     "Linux builds require the Linux CI runner.",
-    "Core metadata refresh is a maintainer operation. User refresh loads the latest published generated source."
+    "Core metadata refresh is a maintainer operation. User refresh loads the latest published generated source.",
+    "Bottle import is limited to Apple silicon macOS. Linux uses verified Nixpkgs equivalents; bottle probes retained Homebrew paths after native ELF fixup and were refused."
   ]
 }

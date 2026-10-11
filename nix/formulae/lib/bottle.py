@@ -11,7 +11,7 @@ import tarfile
 PREFIXES = (b"/opt/homebrew", b"/home/linuxbrew/.linuxbrew", b"/usr/local", b"@@HOMEBREW_")
 
 
-def install(archive, plan, output, stage_linux_elf=False):
+def install(archive, plan, output):
     root = f"{plan['name']}/{plan['cellarVersion']}"
     if "/" in plan["name"] or "/" in plan["cellarVersion"]:
         raise ValueError("invalid bottle root")
@@ -47,13 +47,13 @@ def install(archive, plan, output, stage_linux_elf=False):
     elif recipe.exists():
         shutil.rmtree(recipe)
     (payload / "INSTALL_RECEIPT.json").unlink(missing_ok=True)
-    audit(payload, stage_linux_elf)
+    audit(payload)
     if not any(path.is_file() and os.access(path, os.X_OK) for path in (payload / "bin").glob("*")):
         raise ValueError("bottle has no executable in bin")
     shutil.copytree(payload, output, symlinks=True)
 
 
-def audit(payload, stage_linux_elf=False):
+def audit(payload):
     payload = pathlib.Path(payload)
     for path in payload.rglob("*"):
         if path.is_symlink():
@@ -61,9 +61,6 @@ def audit(payload, stage_linux_elf=False):
                 raise ValueError("bottle has an external or dangling link")
         elif path.is_file():
             with path.open("rb") as stream:
-                if stage_linux_elf and stream.read(4) == b"\x7fELF":
-                    continue
-                stream.seek(0)
                 previous = b""
                 while block := stream.read(1024 * 1024):
                     data = previous + block
@@ -77,7 +74,6 @@ if __name__ == "__main__":
         if sys.argv[1] == "audit":
             audit(sys.argv[2])
         else:
-            install(sys.argv[1], json.loads(pathlib.Path(sys.argv[2]).read_text()), sys.argv[3],
-                    stage_linux_elf=sys.argv[4:] == ["--stage-linux-elf"])
+            install(sys.argv[1], json.loads(pathlib.Path(sys.argv[2]).read_text()), sys.argv[3])
     except (OSError, ValueError, tarfile.TarError) as error:
         sys.exit(f"Formula bottle refused: {error}")

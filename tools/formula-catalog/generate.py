@@ -109,8 +109,10 @@ def excluded(version, reason, detail=None):
 
 def bottle_target(formula, system):
     version = formula.get("versions", {}).get("stable") or ""
+    if system != "aarch64-darwin":
+        return excluded(version, "unsupported-bottle-platform", "Linux bottle relocation is not supported; use a Nixpkgs equivalent")
     files = formula.get("bottle", {}).get("stable", {}).get("files", {})
-    tags = [("arm64_sonoma", "14"), ("arm64_sequoia", "15"), ("arm64_tahoe", "26")] if system == "aarch64-darwin" else [("x86_64_linux", None)]
+    tags = [("arm64_sonoma", "14"), ("arm64_sequoia", "15"), ("arm64_tahoe", "26")]
     for tag, minimum in tags:
         if tag not in files:
             continue
