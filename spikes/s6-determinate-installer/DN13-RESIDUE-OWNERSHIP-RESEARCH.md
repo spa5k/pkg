@@ -330,7 +330,7 @@ The installed helper matched pinned asset SHA-256:
 
 The harness refused any pre-existing `/nix`, `/etc/nix`, or
 `/usr/local/bin/determinate-nixd` before install. See
-[`inside-aarch64-container.sh`](./linux-vm/inside-aarch64-container.sh#L45-L52).
+[`inside-aarch64-container.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s6-determinate-installer/linux-vm/inside-aarch64-container.sh#L45-L52).
 
 Vendor Uninstall returned `0`.
 
@@ -449,9 +449,9 @@ The path, type, mode, uid, gid, and link count stayed equal.
 R10 used device and inode internally to detect a change during each single
 capture. It did not write device or inode into the retained identity record.
 See
-[`macos-vm/inside.sh`](./macos-vm/inside.sh#L33-L46)
+[`macos-vm/inside.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s6-determinate-installer/macos-vm/inside.sh#L33-L46)
 and
-[`macos-vm/inside.sh`](./macos-vm/inside.sh#L220-L238).
+[`macos-vm/inside.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s6-determinate-installer/macos-vm/inside.sh#L220-L238).
 
 Thus, R10 cannot prove that the final log is the same inode that Vendor
 execution created.

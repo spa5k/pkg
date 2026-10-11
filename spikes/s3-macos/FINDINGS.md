@@ -59,7 +59,7 @@ were both `1.96.1` (`rustup run 1.96.1 rustc --version` →
 shims, or `rustup run 1.96.1 …`); a standalone or Homebrew `cargo`/`rustc` on
 `PATH` ignores them, so `RUSTUP_TOOLCHAIN=1.96.1 cargo …` does **not** by itself
 select `1.96.1` unless the `PATH`-resolved `cargo`/`rustc` are rustup shims. The
-[`run.sh`](run.sh) wrapper's only toolchain gate is exact: it runs
+[`run.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/run.sh) wrapper's only toolchain gate is exact: it runs
 `rustc --version` and exits `70` unless it prints exactly `rustc 1.96.1 …`
 (verified this session: a `PATH` resolving to Homebrew `rustc 1.97.1` exits `70`
 even with `RUSTUP_TOOLCHAIN=1.96.1` set, while `PATH=…/.cargo/bin …
@@ -485,7 +485,7 @@ Until that happens, [DR-003](../../plans/archive/2026-08-22-custom-managed-nix-v
   Designed, Complete vs Incomplete vs Pending, prerequisites, effect boundaries,
   exit codes).
 - [`fixtures.json`](fixtures.json) — embedded, validated pin.
-- [`run.sh`](run.sh) — executable wrapper (effect warnings; closed grammar).
+- [`run.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/run.sh) — executable wrapper (effect warnings; closed grammar).
 - [DR-003 in `plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
   — the decision record this evidence feeds.
 - [PR-7 in `plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) — spike owner.

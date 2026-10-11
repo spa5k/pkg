@@ -816,14 +816,16 @@ elif "eval" in args and "--apply" in args:
  paths=json.loads(json.loads(re.search(r'paths = builtins.fromJSON (.+?);',args[args.index("--apply")+1]).group(1)))
  metadata={{"ripgrep":("ripgrep","15.2.0","grep-like searcher"),"gnugrep":("grep","3.11","search tool"),"zzz-empty":("zzz-empty","1.0","")}}
  metadata.update({{"aws-library":("aws","1.0","AWS library"),"aws-c-http":("aws-c-http","0.11.0","C99 implementation of HTTP"),"aws-sdk-cpp":("aws-sdk-cpp","1.0","C++ interface for Amazon Web Services"),"awscli2":("awscli2","2.0","Universal command line interface for AWS"),"claws-mail":("claws-mail","1.0","Email client"),"awscli2-unwrapped":("awscli2","2.0","Universal command line interface for AWS"),"python312Packages.awscli":("awscli","1.0","AWS command line interface")}})
+ metadata["probe"]=("probe","1","probing tool")
  metadata.update({{"tool-"+str(i):("tool-"+str(i),"1.0","grep helper") for i in range(25)}})
  rows=[]
  for path in paths:
-  if len(path)==2: rows.append({{"path":path,"kind":"children","children":[key for key in metadata if "." not in key]+["python312Packages"] if path[0]=="legacyPackages" else []}})
+  if len(path)==2: rows.append({{"path":path,"kind":"children","children":[key for key in metadata if "." not in key]+["python312Packages"] if path[0]=="legacyPackages" else ["probe"]}})
   elif path[-1]=="python312Packages": rows.append({{"path":path,"kind":"children","children":["awscli"]}})
   elif ".".join(path[2:]) not in metadata: rows.append({{"path":path,"kind":"skip"}})
   else:
    name,version,description=metadata[".".join(path[2:])]
+   if path[0]=="legacyPackages" and path[-1]=="probe": description="unrelated"
    rows.append({{"path":path,"kind":"package","meta":{{"pname":name,"version":version,"description":description}}}})
  print(json.dumps(rows))
 elif "eval" in args:
@@ -857,7 +859,7 @@ else: sys.exit(9)
         )
     };
 
-    // Preparation: two roots, two metadata batches, and one index eval.
+    // Preparation: two roots, three metadata batches, and one index eval.
     let (code, _, stderr) = run(&["setup", "--no-background"]);
     assert_eq!(code, 0, "{stderr}");
     publish_search_tap(&home.path().join("state"));
@@ -875,8 +877,8 @@ else: sys.exit(9)
     let calls = std::fs::read_to_string(&log).expect("log written");
     assert_eq!(
         calls.lines().count(),
-        5,
-        "four batches + one index eval: {calls}"
+        6,
+        "five batches + one index eval: {calls}"
     );
     assert!(calls.contains("batch"), "{calls}");
     // A snapshot file was written for both sources.
@@ -897,7 +899,7 @@ else: sys.exit(9)
     assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");
     assert!(stdout.contains("nixpkgs:gnugrep"), "{stdout}");
     let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 5, "snapshot reused: {calls}");
+    assert_eq!(calls.lines().count(), 6, "snapshot reused: {calls}");
 
     // The zzz-empty fixture stays hidden here: its name and description
     // (empty) do not match `grep|searcher`.
@@ -911,7 +913,7 @@ else: sys.exit(9)
     assert!(stdout.contains("nixpkgs:zzz-empty"), "{stdout}");
     assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");
     let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 5, "no new calls: {calls}");
+    assert_eq!(calls.lines().count(), 6, "no new calls: {calls}");
 
     // `^$` matches an empty description natively; it is not skipped.
     let (code, stdout, stderr) = run(&["search", "^$", "--regex"]);
@@ -920,14 +922,14 @@ else: sys.exit(9)
     assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");
     assert!(!stdout.contains("nixpkgs:gnugrep"), "{stdout}");
     let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 5, "no new calls: {calls}");
+    assert_eq!(calls.lines().count(), 6, "no new calls: {calls}");
 
     // An invalid pattern fails before any child runs.
     let (code, _, stderr) = run(&["search", "(", "--regex"]);
     assert_eq!(code, 2);
     assert!(stderr.contains("Invalid search pattern"), "{stderr}");
     let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 5, "no new calls: {calls}");
+    assert_eq!(calls.lines().count(), 6, "no new calls: {calls}");
     let (code, stdout, stderr) = run(&["search", "grep", "--limit", "2", "--source", "nixpkgs"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
@@ -1106,6 +1108,35 @@ else: sys.exit(9)
             value["result"]["results"].as_array().unwrap().len(),
             1,
             "{stdout}"
+        );
+    }
+    for (query, expected) in [("probe", 2), ("probing", 1)] {
+        let (code, stdout, stderr) = run(&["search", query, "--source", "nixpkgs", "--json"]);
+        assert_eq!(code, 0, "{stderr}");
+        let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let rows = value["result"]["results"].as_array().unwrap();
+        assert_eq!(rows.len(), expected, "{stdout}");
+        assert!(
+            rows.iter()
+                .any(|row| row["id"] == "nixpkgs:packages.x86_64-linux.probe"),
+            "{stdout}"
+        );
+        if expected == 2 {
+            assert!(
+                rows.iter()
+                    .any(|row| row["id"] == "nixpkgs:legacyPackages.x86_64-linux.probe"),
+                "{stdout}"
+            );
+        }
+    }
+    for (query, source) in [("cask:aws", "acme/tools"), ("cask:acme/tools/aws", "cask")] {
+        let (code, stdout, stderr) = run(&["search", query, "--source", source, "--json"]);
+        assert_eq!(code, 0, "{stderr}");
+        let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(value["result"]["sources"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            value["result"]["results"][0]["id"],
+            "cask:acme/tools/aws-console"
         );
     }
     let (code, stdout, stderr) = run(&["search", "cask:aws"]);

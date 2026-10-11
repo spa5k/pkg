@@ -484,44 +484,6 @@ pub fn catalog_meta(token: &str, entry: &CatalogEntry) -> SearchMeta {
     }
 }
 
-#[cfg(test)]
-pub(super) fn rows_from<'a>(
-    results: impl Iterator<Item = (&'a String, &'a SearchMeta)>,
-    universe: &[&str],
-    kind: SourceKind,
-    reference: &str,
-    revision: &Option<String>,
-    system: &str,
-    stale: bool,
-) -> Vec<SearchResult> {
-    let collected: Vec<(&'a String, &'a SearchMeta)> = results.collect();
-    // Search IDs never collide: claims are counted against the complete
-    // snapshot (`universe`), so an attribute whose short form is shared
-    // anywhere in the source keeps its full path as the ID suffix even
-    // when the query matched only that one attribute.
-    let claimed = claimed_short_forms(universe, Some(system));
-    collected
-        .into_iter()
-        .map(|(attr, meta)| {
-            let id_suffix = exposed_form(attr, &claimed, Some(system));
-            SearchResult {
-                id: format!("{}:{id_suffix}", kind.label()),
-                attribute: attr.clone(),
-                name: meta.pname.clone(),
-                version: meta.version.clone(),
-                description: meta.description.clone(),
-                source: kind.label().to_string(),
-                reference: Some(reference.to_string()),
-                revision: revision.clone(),
-                system: system.to_string(),
-                stale,
-                support: None,
-                install_command: None,
-            }
-        })
-        .collect()
-}
-
 /// One exact native match for `info` identity.
 ///
 /// `attribute` is the actual full native attribute that matched, such as
@@ -582,7 +544,7 @@ pub fn exact_lookup(
 /// rather than being synthesized as a quiet `NotFound`. `NotFound` remains
 /// the outcome when the native search succeeds but no row is an exact
 /// match for the requested attribute.
-pub fn exact_lookup_in(
+fn exact_lookup_in(
     nix: &Nix,
     moving_source: &str,
     identity: &crate::nix::SourceIdentity,
@@ -751,81 +713,5 @@ mod tests {
                 "cursor",
             ]
         );
-
-        // Search rows never share one ID for the colliding pair, and the
-        // full-path IDs still round-trip through install and info.
-        let meta = SearchMeta {
-            pname: String::from("probe"),
-            version: String::from("1"),
-            description: String::new(),
-        };
-        let results: BTreeMap<String, SearchMeta> = attrs
-            .iter()
-            .map(|attr| (attr.to_string(), meta.clone()))
-            .collect();
-        let rows = rows_from(
-            results.iter(),
-            &attrs,
-            SourceKind::Nixpkgs,
-            "nixpkgs-ref",
-            &None,
-            system,
-            false,
-        );
-        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            vec![
-                "nixpkgs:legacyPackages.x86_64-linux.probe",
-                "nixpkgs:cursor",
-                "nixpkgs:packages.x86_64-linux.probe",
-            ]
-        );
-        for id in &ids {
-            let suffix = id.strip_prefix("nixpkgs:").expect("prefixed");
-            assert!(crate::catalog::parse_id(id).is_ok(), "{id} must parse");
-            let matches = exact_attribute_matches(&results, suffix);
-            assert_eq!(matches.len(), 1, "{id} must resolve to one attribute");
-        }
-    }
-
-    #[test]
-    fn description_only_match_in_a_shared_namespace_keeps_its_full_path() {
-        // One query matches only the `packages` copy through its
-        // description, but the full snapshot still contains the
-        // `legacyPackages` twin: the short form stays claimed by the
-        // universe, so the row ID keeps the full path.
-        let system = "x86_64-linux";
-        let full: BTreeMap<String, SearchMeta> = [
-            ("packages.x86_64-linux.probe", "probing tool"),
-            ("legacyPackages.x86_64-linux.probe", "unrelated"),
-        ]
-        .into_iter()
-        .map(|(attr, description)| {
-            (
-                attr.to_string(),
-                SearchMeta {
-                    pname: String::from("probe"),
-                    version: String::from("1"),
-                    description: String::from(description),
-                },
-            )
-        })
-        .collect();
-        let universe: Vec<&str> = full.keys().map(String::as_str).collect();
-        let matched = full
-            .iter()
-            .filter(|(_, meta)| meta.description.contains("probing"));
-        let rows = rows_from(
-            matched,
-            &universe,
-            SourceKind::Nixpkgs,
-            "nixpkgs-ref",
-            &None,
-            system,
-            false,
-        );
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, "nixpkgs:packages.x86_64-linux.probe");
     }
 }

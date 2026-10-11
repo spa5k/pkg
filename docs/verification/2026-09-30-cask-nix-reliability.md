@@ -103,8 +103,8 @@ existing repair commands.
 
 ### P2 — The generated catalog loses the maximum macOS requirement
 
-Owner: [OS constraint classification](../../tools/cask-catalog/src/classify.rs),
-line 158; [plan fields](../../tools/cask-catalog/src/plan.rs);
+Owner: [OS constraint classification](https://github.com/spa5k/pkg/blob/58d802213be132ed8e78cd72719b8c374da4de3e/tools/cask-catalog/src/classify.rs),
+line 158; [plan fields](https://github.com/spa5k/pkg/blob/58d802213be132ed8e78cd72719b8c374da4de3e/tools/cask-catalog/src/plan.rs);
 [index projection](../../nix/casks/lib/catalog.nix).
 
 Trigger: generate a catalog from a synthetic app record with the supported

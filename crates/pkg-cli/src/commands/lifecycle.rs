@@ -73,7 +73,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                     &mut catalog_handle,
                 )
                 .map_err(|error| {
-                    super::query::install_resolution_error(&session, &name, None, error)
+                    super::search::install_resolution_error(&session, &name, None, error)
                 })?
             }
             ParsedId::BareCask(token) => {
@@ -86,7 +86,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                     &mut catalog_handle,
                 )
                 .map_err(|error| {
-                    super::query::install_resolution_error(&session, &token, Some("cask"), error)
+                    super::search::install_resolution_error(&session, &token, Some("cask"), error)
                 })?
             }
         };
@@ -596,7 +596,7 @@ fn cask_identity(attr_path: &str) -> Option<(String, String, String)> {
     if catalog::native_package_attribute(&system, &id) != attr_path {
         return None;
     }
-    Some((system, source, token))
+    Some((system, source.to_string(), token.to_string()))
 }
 
 pub(super) fn history(cli: &Cli) -> Result<(), CommandError> {

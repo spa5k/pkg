@@ -30,7 +30,7 @@ Owners: [child process boundary](../../crates/pkg-cli/src/nix/process.rs),
 [tap loading](../../crates/pkg-cli/src/commands/mod.rs),
 [namespace resolution](../../crates/pkg-cli/src/catalog/search.rs),
 [lifecycle gates](../../crates/pkg-cli/src/commands/lifecycle.rs),
-[constraint generation](../../tools/cask-catalog/src/classify.rs), and
+[constraint generation](../../tools/cask-catalog/src/classify/mod.rs), and
 [archive extraction](../../nix/casks/lib/plan.py).
 
 The initial [reliability review](2026-09-30-cask-nix-reliability.md) contains

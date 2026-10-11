@@ -7,18 +7,10 @@
 
 use std::path::{Path, PathBuf};
 
-/// A full commit id length in hex characters.
-const FULL_COMMIT_LEN: usize = 40;
-
 /// Flake reference schemes that pin a commit as the final path segment
 /// (`owner/repo/<commit>`): the forge reference syntax shared by GitHub,
 /// GitLab, and SourceHut.
 const FINAL_SEGMENT_COMMIT_SCHEMES: [&str; 3] = ["github", "gitlab", "sourcehut"];
-
-/// Whether `text` is exactly one full commit id.
-fn is_full_commit(text: &str) -> bool {
-    text.len() == FULL_COMMIT_LEN && text.chars().all(|c| c.is_ascii_hexdigit())
-}
 
 /// The reference scheme prefix of `text`, when it starts with one.
 ///
@@ -48,7 +40,7 @@ fn query_commit(query: &str) -> Option<&str> {
         .split('&')
         .filter(|param| !param.is_empty())
         .find_map(|param| param.strip_prefix("rev="))
-        .filter(|value| is_full_commit(value))
+        .filter(|value| cask_catalog::valid_revision(value))
 }
 
 /// The exact full commit a reference or locked URL names, if any.
@@ -86,7 +78,7 @@ fn full_commit_named(text: &str) -> Option<&str> {
 /// The final path segment, when it is exactly one full commit id.
 fn final_segment_commit(base: &str) -> Option<&str> {
     let last = base.rsplit('/').next()?;
-    is_full_commit(last).then_some(last)
+    cask_catalog::valid_revision(last).then_some(last)
 }
 
 /// Detect explicit full-commit semantics in a reference.
@@ -111,7 +103,7 @@ pub fn is_fixed_reference(reference: &str) -> bool {
 /// so a qualified URL passed as a revision pin is refused.
 #[must_use]
 pub fn is_full_commit_id(text: &str) -> bool {
-    is_full_commit(text)
+    cask_catalog::valid_revision(text)
 }
 
 /// Extract a locked full commit from a locked URL, when present.

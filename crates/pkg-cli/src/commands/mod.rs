@@ -4,10 +4,9 @@
 //! progress, and print a short final result. Nothing here retries silently
 //! or writes product state.
 //!
-//! Layout: query commands live in `query`, lifecycle commands in
-//! `lifecycle`, doctor in `doctor`, and the remaining utility commands
-//! in `support`. This module holds the shared session, dispatch, and
-//! failure-reporting rules.
+//! Query commands live in `search`, `info`, and `list`. Package mutations
+//! live in `lifecycle`. This module holds the shared session, dispatch,
+//! and failure-reporting rules.
 //!
 //! Error rule: every handler returns `Result<(), CommandError>` and uses
 //! `?` for ordinary diagnostics; [`run`] converts the result to an exit
@@ -17,9 +16,11 @@
 
 mod conflict;
 mod doctor;
+mod info;
 mod lifecycle;
+mod list;
 mod maintenance;
-mod query;
+mod search;
 mod support;
 mod tap;
 
@@ -137,10 +138,10 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
         return Err(CommandError::Reported(ExitCode::from(USAGE)));
     }
     match &cli.command {
-        Command::Search(options) => query::search(cli, options),
-        Command::Info { id } => query::info(cli, id),
+        Command::Search(options) => search::run(cli, options),
+        Command::Info { id } => info::run(cli, id),
         Command::Install { ids } => lifecycle::install(cli, ids),
-        Command::List => query::list(cli),
+        Command::List => list::run(cli),
         Command::Remove { entries, entry } => lifecycle::remove(cli, entries, *entry),
         Command::Update { catalogs_only } => maintenance::update(cli, *catalogs_only),
         Command::Setup { no_background } => maintenance::setup(cli, *no_background),

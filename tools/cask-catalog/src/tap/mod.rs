@@ -79,12 +79,6 @@ impl ImportError {
             Self::SandboxRefused(detail) | Self::Failed(detail) => detail,
         }
     }
-
-    /// Whether this failure is the typed sandbox refusal.
-    #[must_use]
-    pub fn is_sandbox_refusal(&self) -> bool {
-        matches!(self, Self::SandboxRefused(_))
-    }
 }
 
 impl fmt::Display for ImportError {
@@ -606,7 +600,7 @@ mod tests {
             "unexpected error: {error}"
         );
         assert!(
-            !error.is_sandbox_refusal(),
+            matches!(error, ImportError::Failed(_)),
             "an unusable output dir is no refusal"
         );
     }
@@ -616,7 +610,7 @@ mod tests {
         // The typed refusal is the only category the client may answer
         // with setup — by construction, never by message text.
         let refused = ImportError::SandboxRefused(String::from("refuses the raw tap import"));
-        assert!(refused.is_sandbox_refusal());
+        assert!(matches!(refused, ImportError::SandboxRefused(_)));
         assert_eq!(refused.message(), "refuses the raw tap import");
         // An ordinary failure whose text happens to contain the refusal
         // phrase stays an ordinary failure.
@@ -624,7 +618,7 @@ mod tests {
             "importing x failed: effective local nix config refuses the raw \
              tap import: sandbox is false",
         ));
-        assert!(!lookalike.is_sandbox_refusal());
+        assert!(matches!(lookalike, ImportError::Failed(_)));
         // Ordinary string failures convert to the ordinary category.
         let converted: ImportError = String::from("network down").into();
         assert_eq!(converted, ImportError::Failed(String::from("network down")));

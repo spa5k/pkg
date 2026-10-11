@@ -141,7 +141,10 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
     if let Some(rest) = input.strip_prefix("cask:") {
         if rest.contains('/') {
             return match split_entry_id(rest) {
-                Some((source, token)) => Ok(ParsedId::Qualified(CatalogId::Cask { source, token })),
+                Some((source, token)) => Ok(ParsedId::Qualified(CatalogId::Cask {
+                    source: source.to_string(),
+                    token: token.to_string(),
+                })),
                 None => Err(format!(
                     "`{input}` is not a valid cask entry ID; \
                      the full form is owner/tap/token, for example somebody/apps/tool"
@@ -191,7 +194,10 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
     // instead of becoming a bare name that quietly matches nothing.
     if input.contains('/') {
         return match split_entry_id(input) {
-            Some((source, token)) => Ok(ParsedId::Qualified(CatalogId::Cask { source, token })),
+            Some((source, token)) => Ok(ParsedId::Qualified(CatalogId::Cask {
+                source: source.to_string(),
+                token: token.to_string(),
+            })),
             None => Err(format!(
                 "`{input}` is not a valid catalog ID; \
                  a cask entry ID is owner/tap/token, for example somebody/apps/tool"
@@ -243,26 +249,6 @@ fn validate_attr_path(attr: &str, prefix: &str) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// Escape literal text for use as a regex.
-///
-/// Every regex metacharacter is escaped, so the query matches the literal
-/// text only. Only ASCII punctuation is escaped, which the regex engine
-/// always accepts.
-#[must_use]
-pub fn escape_regex(text: &str) -> String {
-    const META: &[char] = &[
-        '\\', '.', '+', '*', '?', '^', '$', '(', ')', '|', '[', ']', '{', '}', '#', '&', '-', '~',
-    ];
-    let mut escaped = String::with_capacity(text.len() * 2);
-    for c in text.chars() {
-        if META.contains(&c) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
-    escaped
 }
 
 /// Canonical source identity of a reference, for installed matching.
@@ -375,15 +361,6 @@ mod tests {
         ] {
             assert!(parse_id(refused).is_err(), "`{refused}` must be refused");
         }
-    }
-
-    #[test]
-    fn escapes_every_regex_metacharacter() {
-        assert_eq!(escape_regex("ripgrep"), "ripgrep");
-        assert_eq!(
-            escape_regex("a.b+c*d?e(f)g[h]i{j}k^l$m|n#o&p-q~r\\s"),
-            "a\\.b\\+c\\*d\\?e\\(f\\)g\\[h\\]i\\{j\\}k\\^l\\$m\\|n\\#o\\&p\\-q\\~r\\\\s"
-        );
     }
 
     #[test]

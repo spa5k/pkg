@@ -1,10 +1,13 @@
 # Spike S2 — real TUF via `tough` (PR-5 / DR-002)
 
+This is a historical record. The executable experiment was removed.
+Use the [original checkout](https://github.com/spa5k/pkg/tree/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough) to reproduce it.
+
 > Links into the dated plan archive are legacy-plan context. They are not
 > current design authority.
 
 > **Status:** STANDALONE spike. This directory is its own Cargo workspace (see
-> [`Cargo.toml`](Cargo.toml)) and is deliberately **not** part of the production
+> [`Cargo.toml`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/Cargo.toml)) and is deliberately **not** part of the production
 > workspace at the repository root. It is `publish = false`, carries **no**
 > `license` field and **no** SPDX headers (DR-015), and proves nothing about
 > production code. It produces a technical recommendation for **DR-002** only.
@@ -36,7 +39,7 @@ APIs and loading them through `tough`'s **real client verification path**
 `tough::key_source::LocalKeySource`); there is **no** hand-rolled signature or
 verification anywhere. The only hand-assembled metadata is the bootstrap
 `root.json`, built from `tough::schema` types and signed through `Sign` (the
-narrow test-publisher boundary documented in §6 and [`src/keys.rs`](src/keys.rs)).
+narrow test-publisher boundary documented in §6 and [`src/keys.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/src/keys.rs)).
 
 This spike validates DR-002 (channel signing via real TUF). See
 [`findings.md`](findings.md) for the exact pass/fail results and threat-by-threat
@@ -152,7 +155,7 @@ directory.
 
 ## 5. The exact `tough` pin and spike-only transport
 
-- **`tough` is pinned to EXACTLY `=0.24.0`** (not a range) in [`Cargo.toml`](Cargo.toml).
+- **`tough` is pinned to EXACTLY `=0.24.0`** (not a range) in [`Cargo.toml`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/Cargo.toml).
   This is the version every recorded result in [`findings.md`](findings.md) was
   produced against.
 - **`default-features = false`** drops the optional HTTP transport
@@ -180,7 +183,7 @@ publisher boundary is intentionally **narrow**:
   `RepositoryEditor` reads an *already-signed* root from disk. It is built from
   `tough::schema` types and signed through `tough::sign::Sign::sign` (the
   canonical-JSON bytes come from `olpc_cjson`, the same crate tough uses). This
-  exactly mirrors `tough::editor::signed::SignedRole::new`. See [`src/keys.rs`](src/keys.rs).
+  exactly mirrors `tough::editor::signed::SignedRole::new`. See [`src/keys.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/src/keys.rs).
 - **`aws-lc-rs`** is used **only to *generate* ephemeral Ed25519 PKCS#8 test
   material**; it performs no parsing and no signing here. Parsing the PKCS#8,
   signing bytes, and deriving the TUF public `Key` all go through `tough`'s public
@@ -279,7 +282,7 @@ descriptor and the TUF-authenticated target hashes. See §10.
 stream reaches end-of-input. Therefore `pkg` must **fully consume** the stream
 before trusting any bytes — never hand a partially-read stream to a consumer.
 
-The spike provides the helper [`read_target_fully`](src/verify.rs) (`src/verify.rs`)
+The spike provides the helper [`read_target_fully`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/src/verify.rs) (`src/verify.rs`)
 that drains the entire stream into a `Vec<u8>` via `IntoVec` and returns `Err` if
 any chunk fails. Callers never receive partially-verified or tampered bytes. Test
 `one_byte_target_tamper_refused_after_drain_no_bytes_returned` proves a one-byte
@@ -314,9 +317,9 @@ read-back that cross-checks declared hashes against fixture bytes — they add
 
 ## 11. Test matrix — 20 tests and the threat each proves
 
-All 20 tests pass (5 unit in [`src/descriptor.rs`](src/descriptor.rs), 6 in
-[`tests/load_and_targets.rs`](tests/load_and_targets.rs), 9 in
-[`tests/adversarial.rs`](tests/adversarial.rs)). Zero failures.
+All 20 tests pass (5 unit in [`src/descriptor.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/src/descriptor.rs), 6 in
+[`tests/load_and_targets.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/tests/load_and_targets.rs), 9 in
+[`tests/adversarial.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/tests/adversarial.rs)). Zero failures.
 
 ### Happy-path / load & targets (`tests/load_and_targets.rs`)
 

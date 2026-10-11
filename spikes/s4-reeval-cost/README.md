@@ -1,5 +1,8 @@
 # Spike S4 — Nixpkgs re-evaluation cost (PR-6 / DR-004)
 
+This is a historical record. The executable experiment was removed.
+Use the [original checkout](https://github.com/spa5k/pkg/tree/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s4-reeval-cost) to reproduce it.
+
 > Links into the dated plan archive are legacy-plan context. They are not
 > current design authority.
 
@@ -9,7 +12,7 @@ deterministic, fail-closed `s4-runner` binary. It is a standalone Cargo
 workspace (own `Cargo.toml`, `Cargo.lock`, `target/`) and is excluded from the
 repo-root workspace lanes. Pin and sampling constants live in
 [`benchmark.json`](benchmark.json); the harness embeds that file at compile time
-and validates it ([`src/validate.rs`](src/validate.rs)).
+and validates it ([`src/validate.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s4-reeval-cost/src/validate.rs)).
 
 > The harness and its reviewed Complete Real evidence are both preserved here.
 > See [FINDINGS.md](FINDINGS.md) for the accepted measurements and budgets;
@@ -22,7 +25,7 @@ Re-evaluation of one pinned Nixpkgs revision. Specifically:
 - **Single-attribute** re-eval: `…#legacyPackages.<host>.ripgrep.drvPath`.
 - **Index-meta** projection of each of the four systems: a bounded `--apply`
   expression over `…#legacyPackages.<system>` (embedded from
-  [`nix/index-meta.nix`](nix/index-meta.nix), passed as one argv token).
+  [`nix/index-meta.nix`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s4-reeval-cost/nix/index-meta.nix), passed as one argv token).
 
 It runs under a fixed `/usr/bin/time` wrapper to capture wall time and max RSS.
 Each sample is a **fresh** `nix` subprocess (process-cold) over an
@@ -109,7 +112,7 @@ only supported platforms; the host target is fixed at compile time.
 
 ## Running
 
-A shipped executable wrapper, [`run.sh`](run.sh), is the recommended path. It
+A shipped executable wrapper, [`run.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s4-reeval-cost/run.sh), is the recommended path. It
 selects an already-installed rustup 1.96.1 toolchain when available; otherwise
 `rustc` on `PATH` must be exactly 1.96.1. It never installs or downloads a
 toolchain. It then runs the binary with `cargo run --locked --offline

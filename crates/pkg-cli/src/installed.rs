@@ -71,7 +71,7 @@ pub fn package_id(entry: &ProfileEntry, config: &Config, state_home: &std::path:
         && (catalog::canonical_source(&entry.original_url)
             == catalog::canonical_source(&config.sources.casks)
             || crate::tap::store::source_of_reference(state_home, &entry.original_url).as_deref()
-                == Some(source.as_str()))
+                == Some(source))
         && catalog::native_package_attribute(system, &full) == entry.attr_path
     {
         return format!("cask:{full}");

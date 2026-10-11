@@ -1,5 +1,8 @@
 # macOS destructive lifecycle lanes
 
+This is a historical record. The executable experiment was removed.
+Use the [original checkout](https://github.com/spa5k/pkg/tree/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s6-determinate-installer/macos-vm) to reproduce it.
+
 Run the non-destructive static contract from the repository root:
 
 ```sh
