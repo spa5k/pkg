@@ -191,6 +191,7 @@ The second route imports a pinned Homebrew bottle through Nix.
 It accepts only dependency-free bottles that need no Homebrew relocation,
 install hook, service, or special requirement. It checks archive paths,
 links, and remaining Homebrew paths before publishing the Nix output.
+On Linux, the final path check follows Nix's ELF loader and library fixup.
 `formula_kind` is `formula-bottle` for this route. No Formula Ruby runs.
 No Brew command runs. Eligibility is a metadata decision; a build can
 still refuse a bottle whose contents fail the checks.

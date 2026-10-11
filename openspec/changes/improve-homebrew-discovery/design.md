@@ -30,7 +30,9 @@ fixed anonymous registry header is limited to the Core registry request.
 Archive extraction permits only bounded files, directories, and internal
 links in one Cellar root. Ruby recipes and Brew receipts are discarded.
 The builder rejects remaining Homebrew paths, external links, and outputs
-with no executable. Linux uses Nix's ordinary ELF patch hook.
+with no executable. Linux stages ELF files for Nix's ordinary ELF patch hook.
+Every output gets a final path and link audit after fixup. Remaining
+Homebrew paths still refuse the build, including in ELF files.
 Metadata eligibility does not promise a successful build.
 
 Install validates every requested Formula and Cask before a single native
