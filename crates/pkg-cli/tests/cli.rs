@@ -1429,6 +1429,193 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
     assert!(stderr.contains("Updated input"), "{stderr}");
 }
 
+#[test]
+fn file_conflicts_name_verified_owners_without_replacement_commands() {
+    let bin = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let nix = bin.path().join("nix");
+    let profile = home.path().join("state/nix/profiles/pkg");
+    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::fs::write(&profile, "profile stays unchanged").unwrap();
+    let manifest = bin.path().join("manifest.json");
+    let diagnostic = bin.path().join("conflict.txt");
+    let failed = bin.path().join("failed");
+    let unreadable = bin.path().join("unreadable");
+    let formula = bin.path().join("formula.json");
+    let mut index = search_fixture_index(
+        "homebrew/core",
+        &[("bat", "bat", "Cat with syntax highlighting")],
+    );
+    index["schema"] = serde_json::json!("pkg-formula-catalog/1");
+    index["aliases"] = serde_json::json!({});
+    index["executables"] = serde_json::json!({});
+    std::fs::write(&formula, index.to_string()).unwrap();
+    std::fs::write(&diagnostic, concat!(
+        "\x1b[31merror:\x1b[0m An existing package already provides the following file:\n\n",
+        "  \"/nix/store/old-bat/bin/bat\"\n\n",
+        "This is the conflicting file from the new package:\n\n",
+        "  \"/nix/store/new-bat/bin/bat\"\n\n",
+        "To remove the existing package:\n",
+        "  nix profile remove --profile '/tmp/pkg' bat\n",
+        "The new package can also be added next to the existing one by assigning a different priority.\n",
+        "To prioritise the new package:\n",
+        "  nix profile add --profile '/tmp/pkg' github:spa5k/pkg/main?dir=nix/formulae#packages.x86_64-linux.homebrew/core/bat --priority 4\n",
+        "warning: a separate warning\n",
+        "do you want to allow configuration setting 'extra-substituters' (y/N)? \n",
+    )).unwrap();
+    std::fs::write(&nix, format!(r#"#!/bin/sh
+case "$*" in
+  *--version*) echo 'nix (Nix) 2.35.2';;
+  *'config show system'*) echo 'x86_64-linux';;
+  *'flake metadata'*) echo '{{"url":"github:spa5k/pkg/main?dir=nix/formulae","locked":{{"type":"github","owner":"spa5k","repo":"pkg","rev":"1111111111111111111111111111111111111111","dir":"nix/formulae"}}}}';;
+  *'#formulaIndex'*) cat '{formula}';;
+  *'search '*'#bat'*) echo '{{"legacyPackages.x86_64-linux.bat":{{"pname":"bat","version":"0.26.1","description":"Cat with syntax highlighting"}}}}';;
+  *'eval --json'*'#bat'*) echo '["/nix/store/old-bat"]';;
+  *'profile list'*)
+    if [ -f '{failed}' ] && [ -f '{unreadable}' ]; then
+      echo 'error: unreadable profile' >&2; exit 1
+    fi
+    cat '{manifest}';;
+  *'profile add'*) cat '{diagnostic}' >&2; touch '{failed}'; exit 1;;
+  *) echo 'unexpected nix call' >&2; exit 9;;
+esac
+"#, formula=formula.display(), failed=failed.display(), unreadable=unreadable.display(), manifest=manifest.display(), diagnostic=diagnostic.display())).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&nix, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let run = |verbose: bool, id: &str| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+        if verbose {
+            command.arg("--verbose");
+        }
+        command
+            .args(["install", id])
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .output()
+            .unwrap()
+    };
+    let owner = serde_json::json!({
+        "active": true, "attrPath": "legacyPackages.x86_64-linux.bat",
+        "originalUrl": "github:NixOS/nixpkgs/nixpkgs-unstable",
+        "url": "github:NixOS/nixpkgs/1111111111111111111111111111111111111111",
+        "storePaths": ["/nix/store/old-bat"],
+    });
+    for scenario in ["one", "multiple", "unknown", "unmatched"] {
+        let _ = std::fs::remove_file(&failed);
+        let mut entries = serde_json::json!({"bat": owner});
+        if scenario == "multiple" {
+            entries["bat-1"] = owner.clone();
+        } else if scenario == "unknown" {
+            std::fs::write(&unreadable, "").unwrap();
+        } else if scenario == "unmatched" {
+            entries["bat"]["active"] = serde_json::json!(false);
+            entries["lookalike"] = owner.clone();
+            entries["lookalike"]["storePaths"] = serde_json::json!(["/nix/store/old"]);
+        }
+        std::fs::write(
+            &manifest,
+            serde_json::json!({"version":3, "elements":entries}).to_string(),
+        )
+        .unwrap();
+        let output = run(false, "brew:homebrew/core/bat");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{scenario}: {stderr}");
+        assert!(output.stdout.is_empty());
+        assert!(stderr.contains("bin/bat"), "{scenario}: {stderr}");
+        match scenario {
+            "one" => assert!(
+                stderr.contains(
+                    "Cause: nixpkgs:bat (Nixpkgs) is already installed and provides bin/bat."
+                ),
+                "{stderr}"
+            ),
+            "multiple" => {
+                assert!(
+                    stderr.contains("nixpkgs:bat (Nixpkgs) (entry: bat)"),
+                    "{stderr}"
+                );
+                assert!(
+                    stderr.contains("nixpkgs:bat (Nixpkgs) (entry: bat-1)"),
+                    "{stderr}"
+                );
+            }
+            _ => {
+                assert!(
+                    stderr.contains("Cause: two packages provide bin/bat."),
+                    "{stderr}"
+                );
+                assert!(!stderr.contains("nixpkgs:bat"), "{stderr}");
+            }
+        }
+        let state = if scenario == "unknown" {
+            "Package state is unknown."
+        } else {
+            "Installed entries unchanged."
+        };
+        assert!(stderr.contains(state), "{scenario}: {stderr}");
+        assert!(
+            stderr.contains("Requested: brew:homebrew/core/bat (Homebrew Formula)."),
+            "{stderr}"
+        );
+        for hidden in [
+            "/nix/store/",
+            "nix profile",
+            "priority",
+            "To remove",
+            "pkg remove",
+            "pkg install",
+        ] {
+            assert!(
+                !stderr.contains(hidden),
+                "{scenario}: leaked {hidden}: {stderr}"
+            );
+        }
+        assert!(stderr.contains("warning: a separate warning"), "{stderr}");
+        assert!(
+            stderr.contains("do you want to allow configuration"),
+            "{stderr}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&profile).unwrap(),
+            "profile stays unchanged"
+        );
+        let _ = std::fs::remove_file(&unreadable);
+    }
+    let output = run(true, "brew:homebrew/core/bat");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("/nix/store/old-bat/bin/bat"), "{stderr}");
+    assert!(stderr.contains("--priority 4"), "{stderr}");
+    std::fs::remove_file(&failed).unwrap();
+    std::fs::write(
+        &manifest,
+        serde_json::json!({"version":3, "elements":{"bat":owner}}).to_string(),
+    )
+    .unwrap();
+    let output = run(false, "nixpkgs:bat");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "Already installed: nixpkgs:bat"
+    );
+    assert!(output.stderr.is_empty());
+    assert!(
+        !failed.exists(),
+        "an identical installed package must not reach profile add"
+    );
+}
+
 /// A failed install keeps its diagnostics readable: the native error and
 /// its nix-log pointer survive, and the suppressed fetch chatter never
 /// replays inside the failure message, no matter how much of it Nix

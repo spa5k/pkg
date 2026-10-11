@@ -15,6 +15,7 @@
 //! — re-read native state included — and end with the reported variant of
 //! `CommandError`, so diagnostics are never duplicated.
 
+mod conflict;
 mod doctor;
 mod lifecycle;
 mod maintenance;
@@ -315,10 +316,12 @@ fn report_failed_mutation(
     error: &nix::NixError,
     interrupted: bool,
     before: Option<&BTreeMap<String, ProfileEntry>>,
+    requested: Option<&[String]>,
 ) -> CommandError {
-    match installed_entries(session) {
+    let current = installed_entries(session);
+    match &current {
         Ok(entries) => match before {
-            Some(previous) if previous == &entries => {
+            Some(previous) if previous == entries => {
                 if interrupted {
                     eprintln!("Interrupted: {action} stopped.");
                 } else {
@@ -374,7 +377,7 @@ fn report_failed_mutation(
             eprintln!("Package state is unknown. Next: run `pkg doctor`.");
         }
     }
-    if !interrupted {
+    if !interrupted && !conflict::report(session, error, current.as_ref().ok(), requested) {
         report_cause(&error.to_string());
     }
     CommandError::Reported(ExitCode::from(if interrupted {
@@ -391,9 +394,10 @@ fn mutation_failed(
     action: &str,
     error: &nix::NixError,
     before: Option<&BTreeMap<String, ProfileEntry>>,
+    requested: Option<&[String]>,
 ) -> CommandError {
     let interrupted = matches!(error, nix::NixError::Interrupted { .. });
-    report_failed_mutation(session, action, error, interrupted, before)
+    report_failed_mutation(session, action, error, interrupted, before, requested)
 }
 
 /// Report one useful native cause and one log command from a nested error.

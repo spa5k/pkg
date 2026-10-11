@@ -53,6 +53,17 @@ pub enum NixError {
     },
 }
 
+impl NixError {
+    /// Decode a native profile conflict without losing the raw diagnostics.
+    #[must_use]
+    pub fn profile_conflict(&self) -> Option<super::ProfileConflict> {
+        match self {
+            Self::Failed { stderr, .. } => super::conflict::decode(stderr),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for NixError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

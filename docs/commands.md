@@ -13,6 +13,18 @@ launcher refresh fails, it reports `Partial`, the cause, and `pkg apps sync` as
 the next step. Use `--verbose` to see native commands and detailed output.
 Query commands keep JSON output and shell commands keep script-only stdout.
 
+If two packages provide the same file, installation fails. Normal output
+names both sources and the file, for example:
+
+```text
+Cause: nixpkgs:bat (Nixpkgs) is already installed and provides bin/bat.
+Requested: brew:homebrew/core/bat (Homebrew Formula).
+```
+
+An identical installed package reports `Already installed` without a failure.
+The result states whether installed entries changed. Use `--verbose` for the
+native diagnostic. `pkg` does not select a package or change its priority.
+
 | Command | Behavior |
 | --- | --- |
 | `pkg search QUERY` | Search local catalogs. Shows ranked package IDs and availability. |

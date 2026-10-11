@@ -125,7 +125,13 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     session
         .nix
         .profile_add(&session.paths.profile, &pending)
-        .map_err(|error| mutation_failed(&session, "install", &error, Some(&before)))?;
+        .map_err(|error| {
+            let requested: Vec<_> = pending
+                .iter()
+                .map(|installable| resolved_names[installable].clone())
+                .collect();
+            mutation_failed(&session, "install", &error, Some(&before), Some(&requested))
+        })?;
     let after = installed_entries(&session)?;
     let names = changed_names(&before, &after);
     apps_refresh_after_mutation(&session, "install", &names)?;
@@ -261,7 +267,7 @@ pub(super) fn remove(cli: &Cli, entries: &[String], exact_entry: bool) -> Result
     session
         .nix
         .profile_remove(&session.paths.profile, &entries)
-        .map_err(|error| mutation_failed(&session, "remove", &error, Some(&installed)))?;
+        .map_err(|error| mutation_failed(&session, "remove", &error, Some(&installed), None))?;
     let after = installed_entries(&session)?;
     let names: Vec<String> = entries
         .iter()
@@ -385,7 +391,7 @@ pub(super) fn upgrade(
     session
         .nix
         .profile_upgrade(&session.paths.profile, Some(&movable))
-        .map_err(|error| mutation_failed(&session, "upgrade", &error, Some(&installed)))?;
+        .map_err(|error| mutation_failed(&session, "upgrade", &error, Some(&installed), None))?;
     let after = installed_entries(&session)?;
     let names: Vec<String> = movable
         .iter()
@@ -675,7 +681,13 @@ pub(super) fn rollback(cli: &Cli, generation: Option<u64>) -> Result<(), Command
                 },
             )));
         }
-        return Err(mutation_failed(&session, "rollback", &error, Some(&before)));
+        return Err(mutation_failed(
+            &session,
+            "rollback",
+            &error,
+            Some(&before),
+            None,
+        ));
     }
     let current_generation = active_generation(&session.paths.profile);
     let destination = match current_generation.or(generation) {
@@ -710,7 +722,7 @@ pub(super) fn prune(cli: &Cli, older_than: &str) -> Result<(), CommandError> {
     session
         .nix
         .profile_wipe_history(&session.paths.profile, &format!("{days}d"))
-        .map_err(|error| mutation_failed(&session, "prune", &error, None))?;
+        .map_err(|error| mutation_failed(&session, "prune", &error, None, None))?;
     // Eligibility stays with Nix: which generations are old enough is native
     // behavior and is not assumed by pkg.
     let after = session
