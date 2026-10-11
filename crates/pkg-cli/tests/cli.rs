@@ -56,6 +56,16 @@ fn help_lists_d4_commands_and_no_removed_ones() {
             "help must not list {removed}"
         );
     }
+    assert!(stdout.contains("[alias: add]"), "{stdout}");
+    assert!(stdout.contains("[alias: uninstall]"), "{stdout}");
+    for shell in ["bash", "zsh", "fish"] {
+        let (code, completion, stderr) = pkg(&["completion", shell], &[]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            completion.contains("add") && completion.contains("uninstall"),
+            "{shell}: {completion}"
+        );
+    }
 }
 
 #[test]
@@ -1430,6 +1440,106 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
 }
 
 #[test]
+fn removal_filters_ignored_errors_but_preserves_failure_causes() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = tempfile::tempdir().unwrap();
+    let nix = root.path().join("nix");
+    let manifest = root.path().join("manifest.json");
+    let removed = root.path().join("removed");
+    let fail = root.path().join("fail");
+    let profile = root.path().join("state/nix/profiles/pkg");
+    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::fs::write(profile, "fixture").unwrap();
+    std::fs::write(
+        &manifest,
+        serde_json::json!({
+            "version": 3,
+            "elements": { "native-fff": {
+                "active": true,
+                "attrPath": "legacyPackages.x86_64-linux.fff",
+                "originalUrl": "github:NixOS/nixpkgs/nixpkgs-unstable",
+                "url": "github:NixOS/nixpkgs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "storePaths": []
+            }}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &nix,
+        format!(
+            r#"#!/bin/sh
+case "$*" in
+  *--version*) echo 'nix (Nix) 2.35.2';;
+  *'profile list'*)
+    if [ -f '{removed}' ]; then echo '{{"version":3,"elements":{{}}}}'; else cat '{manifest}'; fi;;
+  *'profile remove'*)
+    echo 'error (ignored): opening file "/etc/nix/sentry-endpoint": Permission denied' >&2
+    if [ -f '{fail}' ]; then echo 'error: permission denied while updating profile' >&2; exit 4; fi
+    echo "removing 'github:NixOS/nixpkgs#legacyPackages.x86_64-linux.fff'" >&2
+    echo 'warning: fixture warning' >&2
+    printf 'do you want to continue (y/N)? ' >&2
+    printf '\n' >&2
+    touch '{removed}';;
+  *) echo "unexpected nix call: $*" >&2; exit 9;;
+esac
+"#,
+            removed = removed.display(),
+            manifest = manifest.display(),
+            fail = fail.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&nix, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_pkg"))
+            .args(args)
+            .env("PATH", format!("{}:/usr/bin:/bin", root.path().display()))
+            .env("HOME", root.path())
+            .env("XDG_STATE_HOME", root.path().join("state"))
+            .env("XDG_CACHE_HOME", root.path().join("cache"))
+            .env("XDG_CONFIG_HOME", root.path().join("config"))
+            .output()
+            .unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stdout, stderr) = run(&["uninstall", "fff"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout.trim(), "Removed: nixpkgs:fff");
+    assert!(stderr.contains("Removing: nixpkgs:fff"), "{stderr}");
+    assert!(
+        stderr.contains("fixture warning") && stderr.contains("do you want to continue"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("sentry-endpoint") && !stderr.contains("removing '"),
+        "{stderr}"
+    );
+    std::fs::remove_file(&removed).unwrap();
+    let (code, _, stderr) = run(&["--verbose", "remove", "--entry", "native-fff"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("sentry-endpoint") && stderr.contains("removing '"),
+        "{stderr}"
+    );
+    std::fs::remove_file(&removed).unwrap();
+    std::fs::write(&fail, "fail").unwrap();
+    let (code, stdout, stderr) = run(&["uninstall", "fff"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(!stdout.contains("Removed:"), "{stdout}");
+    assert!(stderr.contains("Installed entries unchanged."), "{stderr}");
+    assert!(
+        stderr.contains("Cause: permission denied while updating profile"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("sentry-endpoint"), "{stderr}");
+}
+
+#[test]
 fn file_conflicts_name_verified_owners_without_replacement_commands() {
     let bin = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
@@ -1609,7 +1719,10 @@ esac
         String::from_utf8_lossy(&output.stdout).trim(),
         "Already installed: nixpkgs:bat"
     );
-    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim(),
+        "Resolving: nixpkgs:bat"
+    );
     assert!(
         !failed.exists(),
         "an identical installed package must not reach profile add"
@@ -1744,7 +1857,7 @@ fn install_reports_partial_state_when_app_setup_fails() {
     assert!(marker.exists(), "package profile changed");
     assert!(!stdout.contains("Installed:"), "stdout: {stdout}");
     assert!(
-        stderr.contains("Partial: install changed Stats"),
+        stderr.contains("Partial: install changed github:owner/repo#packages.aarch64-darwin.Stats"),
         "{stderr}"
     );
     assert!(stderr.contains("Cause: failed to allocate"), "{stderr}");

@@ -217,6 +217,8 @@ mod forward {
 pub(super) trait StderrSink {
     /// One raw chunk in arrival order.
     fn chunk(&mut self, bytes: &[u8]);
+    /// Update terminal progress while the child is quiet.
+    fn tick(&mut self) {}
     /// Called once after the child has exited and stderr reached EOF.
     fn finish(&mut self, success: bool);
 }
@@ -239,11 +241,33 @@ fn read_filtered(
     mut sink: Option<&mut dyn StderrSink>,
 ) -> Result<Output, std::io::Error> {
     use std::io::Read as _;
+    use std::os::fd::AsRawFd as _;
     let mut raw = Vec::new();
     let mut pipe_failed: Option<std::io::Error> = None;
     if let Some(mut pipe) = child.stderr.take() {
         let mut buffer = [0u8; 8192];
         loop {
+            if let Some(sink) = sink.as_deref_mut() {
+                sink.tick();
+            }
+            let mut descriptor = libc::pollfd {
+                fd: pipe.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: the live pipe owns this fd; poll writes one initialized descriptor.
+            let ready = unsafe { libc::poll(&mut descriptor, 1, 250) };
+            if ready == 0 {
+                continue;
+            }
+            if ready < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                pipe_failed = Some(error);
+                break;
+            }
             match pipe.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(read) => {

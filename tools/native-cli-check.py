@@ -129,14 +129,20 @@ def main():
         return json.loads(run(pkg, "--json", "list"))["result"]
 
     flake("1")
-    run(pkg, "install", "nixpkgs:probe")
+    installed = run(pkg, "add", "nixpkgs:probe")
+    assert "Installed: nixpkgs:probe" in installed, installed
+    assert "Commands: probe" in installed, installed
+    assert "Installing: nixpkgs:probe" in results[-1]["stderr"], results[-1]
     assert run(str(profile / "bin/probe")).strip() == "1"
     flake("2")
     run(pkg, "upgrade", "--all")
     assert run(str(profile / "bin/probe")).strip() == "2"
     run(pkg, "rollback")
     assert run(str(profile / "bin/probe")).strip() == "1"
-    run(pkg, "remove", entries()[0]["entry_id"])
+    removed = run(pkg, "uninstall", entries()[0]["entry_id"])
+    assert "Removed: nixpkgs:probe" in removed, removed
+    assert "Removing: nixpkgs:probe" in results[-1]["stderr"], results[-1]
+    assert "error (ignored)" not in results[-1]["stderr"], results[-1]
     assert entries() == []
 
     flake("2", collision=True)
@@ -181,7 +187,7 @@ def main():
                         log.write(chunk)
                         text += chunk
                     log.flush()
-                    if "building " in text:
+                    if "building " in text and (verbose or "(2s)" in text):
                         break
                     assert child.poll() is None, text
                 else:

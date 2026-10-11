@@ -26,6 +26,8 @@ Homebrew formula discovery and source sections follow
 [Show Homebrew formulae and source sections](openspec/changes/improve-homebrew-discovery/proposal.md).
 File conflict reporting follows
 [Explain package file conflicts](openspec/changes/improve-package-conflicts/proposal.md).
+Package command output follows
+[Improve package command output](openspec/changes/improve-package-command-experience/proposal.md).
 
 ## 1. Before you open a PR
 

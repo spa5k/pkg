@@ -451,7 +451,7 @@ impl Nix {
             args.push("--");
             args.extend(entries.iter().map(String::as_str));
         }
-        self.run_streamed(&args)
+        self.run_filtered(&args)
     }
 
     /// Upgrade exact entries, or all entries when `entries` is `None`.
@@ -870,8 +870,7 @@ mod tests {
             "the argument vector is preserved: {args:?}"
         );
 
-        // A streamed child runs to completion with inherited stdio; the
-        // marker proves it ran, and the empty buffers still classify.
+        // A filtered removal child runs to completion and is reaped.
         let marker = tempfile::tempdir()
             .expect("tempdir")
             .keep()
@@ -881,8 +880,8 @@ mod tests {
         let runtime = discover(Some(path.to_str().expect("utf8 path"))).expect("discovers");
         runtime
             .profile_remove(&profile, &[])
-            .expect("streamed child is reaped and classified");
-        assert!(marker.is_file(), "the streamed child must have run");
+            .expect("filtered child is reaped and classified");
+        assert!(marker.is_file(), "the filtered child must have run");
     }
 
     /// Direct helper commands share the boundary and the classification.

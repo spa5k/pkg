@@ -6,12 +6,26 @@ rollback, and roots.
 
 Global options: `--help`, `--version`, `--no-color`, `--verbose`.
 
-Human output shows one work stage and a verified result. A mutation reports
+Human output shows work stages and a verified result. Install first shows
+`Resolving`, then the qualified package ID in `Installing` and `Installed`.
+Terminal progress shows elapsed seconds during native work. A mutation reports
 `Installed`, `Removed`, `Upgraded`, or `Restored` only after the native profile
 operation and macOS launcher refresh finish. If the profile changes but
 launcher refresh fails, it reports `Partial`, the cause, and `pkg apps sync` as
 the next step. Use `--verbose` to see native commands and detailed output.
 Query commands keep JSON output and shell commands keep script-only stdout.
+
+`pkg add` is an alias of `pkg install`. `pkg uninstall` is an alias of
+`pkg remove`. Help and shell completions include both aliases.
+
+After installation, `Commands` lists up to ten visible executable names that the
+package exposes in the profile. It reads local files and adds no network work.
+For example, `nixpkgs:fff` provides the `fff` command. It does not provide `ff`.
+
+Removal uses the same output filter as installation. Native messages marked
+`error (ignored)` are omitted from normal output. They are nonfatal native
+diagnostics. Warnings, trust prompts, and actual failure causes remain visible.
+Use `--verbose` to see all native output.
 
 If two packages provide the same file, installation fails. Normal output
 names both sources and the file, for example:
@@ -29,9 +43,9 @@ native diagnostic. `pkg` does not select a package or change its priority.
 | --- | --- |
 | `pkg search QUERY` | Search local catalogs. Shows ranked package IDs and availability. |
 | `pkg info ID` | Show source, attribute, metadata revision, and known limits. |
-| `pkg install ID…` | Resolve all names, then run one native profile add. |
+| `pkg install ID…` or `pkg add ID…` | Resolve all names, then run one native profile add. |
 | `pkg list` | Read the dedicated profile. Shows package IDs and native entry IDs. |
-| `pkg remove ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. |
+| `pkg remove ID… [--entry]` or `pkg uninstall ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. |
 | `pkg setup [--no-background]` | Prepare local catalogs. Enable daily user refresh unless disabled. |
 | `pkg background enable/disable/status` | Control daily official catalog refresh. |
 | `pkg update` | Refresh discovery data. Does not change installed packages. Also refresh saved tap catalogs under their recorded consent. |

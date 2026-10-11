@@ -1,8 +1,49 @@
-//! Package identities and selectors derived from the authoritative profile.
+//! Package identities, commands, and selectors derived from the native profile.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{catalog, config::Config, nix::ProfileEntry};
+
+/// Executables exposed by this active entry in the current profile.
+pub fn commands(entry: &ProfileEntry, profile: &std::path::Path) -> Vec<String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut names = BTreeSet::new();
+    if !entry.active {
+        return Vec::new();
+    }
+    for output in &entry.store_paths {
+        let Ok(files) = std::fs::read_dir(std::path::Path::new(output).join("bin")) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let name = file.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.starts_with('.')
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "_-.+".contains(c))
+            {
+                continue;
+            }
+            let path = file.path();
+            let Ok(metadata) = std::fs::metadata(&path) else {
+                continue;
+            };
+            if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+                continue;
+            }
+            if let Ok(target) = std::fs::canonicalize(&path)
+                && std::fs::canonicalize(profile.join("bin").join(name))
+                    .ok()
+                    .as_ref()
+                    == Some(&target)
+            {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    names.into_iter().collect()
+}
 
 pub fn package_id(entry: &ProfileEntry, config: &Config, state_home: &std::path::Path) -> String {
     let mut parts = entry.attr_path.splitn(3, '.');
@@ -122,6 +163,39 @@ mod tests {
             ),
             store_paths: Vec::new(),
         }
+    }
+
+    #[test]
+    fn commands_must_be_executable_and_exposed_by_this_entry() {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("output");
+        let profile = root.path().join("profile");
+        std::fs::create_dir_all(output.join("bin/directory")).unwrap();
+        std::fs::create_dir_all(profile.join("bin")).unwrap();
+        for name in ["fff", ".fff-wrapped", "shadowed", "text", "missing"] {
+            let path = output.join("bin").join(name);
+            std::fs::write(&path, "fixture").unwrap();
+            std::fs::set_permissions(
+                &path,
+                std::fs::Permissions::from_mode(if name == "text" { 0o644 } else { 0o755 }),
+            )
+            .unwrap();
+        }
+        symlink(output.join("bin/fff"), profile.join("bin/fff")).unwrap();
+        symlink(
+            output.join("bin/.fff-wrapped"),
+            profile.join("bin/.fff-wrapped"),
+        )
+        .unwrap();
+        symlink(output.join("bin/text"), profile.join("bin/text")).unwrap();
+        symlink(output.join("bin/fff"), profile.join("bin/shadowed")).unwrap();
+        symlink(output.join("bin/absent"), output.join("bin/dangling")).unwrap();
+        let mut selected = entry("legacyPackages.aarch64-darwin.fff", "github:NixOS/nixpkgs");
+        selected.store_paths = vec![output.to_string_lossy().into_owned()];
+        assert_eq!(commands(&selected, &profile), ["fff"]);
+        selected.active = false;
+        assert!(commands(&selected, &profile).is_empty());
     }
 
     #[test]

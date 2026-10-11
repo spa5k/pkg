@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
     name = "pkg",
     version,
     about = "Find and manage packages.",
-    help_template = "{about}\n\nFind:     search, info, list\nChange:   install, remove, upgrade, rollback\nMaintain: setup, update, background, history, prune, doctor, apps\nSources:  tap add, tap list, tap update, tap remove\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
+    help_template = "{about}\n\nFind:     search, info, list\nChange:   install/add, remove/uninstall, upgrade, rollback\nMaintain: setup, update, background, history, prune, doctor, apps\nSources:  tap add, tap list, tap update, tap remove\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
     disable_help_subcommand = true
 )]
 pub struct Cli {
@@ -43,6 +43,7 @@ pub enum Command {
         id: String,
     },
     /// Resolve all IDs, then add them in one native profile operation.
+    #[command(visible_alias = "add")]
     Install {
         /// Catalog IDs or supported public GitHub flake installables.
         #[arg(required = true)]
@@ -51,6 +52,7 @@ pub enum Command {
     /// List installed entries from the dedicated native profile.
     List,
     /// Remove installed packages in one native operation.
+    #[command(visible_alias = "uninstall")]
     Remove {
         /// Package IDs, unique names, or native entry IDs from `pkg list`.
         #[arg(required = true)]
@@ -243,6 +245,28 @@ mod tests {
         }
         assert!(Cli::try_parse_from(["pkg", "apps", "sync"]).is_ok());
         assert!(Cli::try_parse_from(["pkg", "upgrade", "--all"]).is_ok());
+    }
+
+    #[test]
+    fn lifecycle_aliases_keep_arguments_and_options() {
+        for name in ["install", "add"] {
+            let cli = Cli::try_parse_from(["pkg", name, "nixpkgs:fff", "brew:bat"]).unwrap();
+            let Command::Install { ids } = cli.command else {
+                panic!("install handler")
+            };
+            assert_eq!(ids, ["nixpkgs:fff", "brew:bat"]);
+            assert!(Cli::try_parse_from(["pkg", name]).is_err());
+        }
+        for name in ["remove", "uninstall"] {
+            let cli =
+                Cli::try_parse_from(["pkg", "--verbose", name, "--entry", "--", "-fff"]).unwrap();
+            let Command::Remove { entries, entry } = cli.command else {
+                panic!("remove handler")
+            };
+            assert_eq!(entries, ["-fff"]);
+            assert!(entry && cli.verbose);
+            assert!(Cli::try_parse_from(["pkg", name]).is_err());
+        }
     }
 
     #[test]
