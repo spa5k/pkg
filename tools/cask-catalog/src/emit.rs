@@ -301,13 +301,7 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
     Ok(Generated { catalog, coverage })
 }
 
-/// The single catalog identity: `source/token` with every segment
-/// validated by the callers (source IDs contain no `/` beyond their own
-/// `owner/tap` shape; tokens are validated by `token::is_valid_token`).
-#[must_use]
-pub fn qualified_id(source: &str, token: &str) -> String {
-    format!("{source}/{token}")
-}
+pub use crate::token::full_entry_id as qualified_id;
 
 /// Publish the catalog atomically: one unique same-directory temporary
 /// file, persisted over the target once the document is complete.

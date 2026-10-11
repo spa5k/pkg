@@ -1,4 +1,31 @@
-//! Token validity: catalog map keys and Nix attribute names.
+//! Catalog source and token identities shared by the generator and client.
+
+/// Whether a source is one safe owner/tap pair.
+#[must_use]
+pub fn is_valid_source(source: &str) -> bool {
+    source.split_once('/').is_some_and(|(owner, tap)| {
+        [owner, tap].into_iter().all(|part| {
+            !part.is_empty()
+                && !matches!(part, "." | "..")
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        })
+    })
+}
+
+/// Build the full catalog identity from its source and token.
+#[must_use]
+pub fn full_entry_id(source: &str, token: &str) -> String {
+    format!("{source}/{token}")
+}
+
+/// Split a valid full identity without allocating its source or token.
+#[must_use]
+pub fn split_entry_id(id: &str) -> Option<(&str, &str)> {
+    let (source, token) = id.rsplit_once('/')?;
+    (is_valid_source(source) && is_valid_token(token)).then_some((source, token))
+}
 
 /// Homebrew-style token charset accepted as a catalog key.
 ///
@@ -24,21 +51,6 @@ pub fn is_valid_token(token: &str) -> bool {
     !token.contains("..")
 }
 
-/// Split invalid tokens out of a token list, keeping input order.
-#[must_use]
-pub fn classify_invalid<'a>(tokens: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {
-    let mut valid = Vec::new();
-    let mut invalid = Vec::new();
-    for token in tokens {
-        if is_valid_token(token) {
-            valid.push(*token);
-        } else {
-            invalid.push(*token);
-        }
-    }
-    (valid, invalid)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,12 +72,5 @@ mod tests {
         for bad in ["", "Foo", "..", "a..b", "-lead", "a/b", "a b", "@x"] {
             assert!(!is_valid_token(bad), "{bad} must be invalid");
         }
-    }
-
-    #[test]
-    fn splits_valid_from_invalid() {
-        let (valid, invalid) = classify_invalid(&["iterm2", "Bad Token", "1password@7", "zoom"]);
-        assert_eq!(valid, ["iterm2", "1password@7", "zoom"]);
-        assert_eq!(invalid, ["Bad Token"]);
     }
 }

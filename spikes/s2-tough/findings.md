@@ -4,8 +4,8 @@
 |---|---|
 | **Spike** | S2 (PR-5) — *Does the real TUF specification, as implemented by the Rust [`tough`](https://docs.rs/tough/) crate (awslabs / AWS Bottlerocket), express `pkg`'s channel/trust requirements — small target set, per-role threshold signatures, key revocation, rollback, freeze, mix-and-match, endless-data, and drained-stream tamper protection — **without** inventing any "TUF-lite" bespoke cryptography (D-09)?* |
 | **Decision it feeds** | DR-002 ([`plans/12`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)). **Accepted 2026-08-09 after the F+A review recorded in §11.** |
-| **Owner (spike)** | This directory only: `spikes/s2-tough/**`. It is a **standalone** Cargo workspace (`[workspace]` in [`Cargo.toml`](Cargo.toml)), deliberately **not** part of the production workspace at the repo root. `publish = false`, **no** `license` field, **no** SPDX headers (DR-015). |
-| **Crypto boundary** | **No bespoke ("TUF-lite") signature or verification anywhere.** Targets/snapshot/timestamp/delegated targets are signed by `tough::editor::RepositoryEditor` + `tough::key_source::LocalKeySource`; all verification is `tough::RepositoryLoader` over `FilesystemTransport`. The ONE hand-assembled role is the bootstrap `root.json`, built from `tough::schema` types and signed through `tough::sign::Sign` (the narrow test-publisher boundary in [`src/keys.rs`](src/keys.rs)). `aws-lc-rs` is used **only to *generate* ephemeral Ed25519 PKCS#8 test material** — it performs no parsing and no signing here. See §2. |
+| **Owner (spike)** | This directory only: `spikes/s2-tough/**`. It is a **standalone** Cargo workspace (`[workspace]` in [`Cargo.toml`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/Cargo.toml)), deliberately **not** part of the production workspace at the repo root. `publish = false`, **no** `license` field, **no** SPDX headers (DR-015). |
+| **Crypto boundary** | **No bespoke ("TUF-lite") signature or verification anywhere.** Targets/snapshot/timestamp/delegated targets are signed by `tough::editor::RepositoryEditor` + `tough::key_source::LocalKeySource`; all verification is `tough::RepositoryLoader` over `FilesystemTransport`. The ONE hand-assembled role is the bootstrap `root.json`, built from `tough::schema` types and signed through `tough::sign::Sign` (the narrow test-publisher boundary in [`src/keys.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/src/keys.rs)). `aws-lc-rs` is used **only to *generate* ephemeral Ed25519 PKCS#8 test material** — it performs no parsing and no signing here. See §2. |
 | **Evidence labels** | **(a)** actually executed · **(b)** official docs/source inspected. F+A acceptance is recorded separately in §11. |
 
 ---
@@ -42,12 +42,12 @@ loads them through `tough`'s **real client verification path** (`RepositoryLoade
   *already-signed* root from disk). Built from `tough::schema` types; canonical-JSON
   bytes produced with `olpc_cjson` (the same crate `tough` uses); each signature produced
   through `tough::sign::Sign::sign`. This exactly mirrors
-  `tough::editor::signed::SignedRole::new`. See [`src/keys.rs`](src/keys.rs) → `sign_role`.
+  `tough::editor::signed::SignedRole::new`. See [`src/keys.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/src/keys.rs) → `sign_role`.
 - **`aws-lc-rs`** — used **only to *generate* ephemeral Ed25519 PKCS#8** test material
   (`Ed25519KeyPair::generate_pkcs8`). It performs no parsing and no signing; parsing the
   PKCS#8, signing bytes, and deriving the TUF public `Key` all go through `tough`'s public
   `tough::sign::{parse_keypair, Sign}` abstraction.
-- **`read_target_fully`** ([`src/verify.rs`](src/verify.rs)) — the **mandatory** full-drain
+- **`read_target_fully`** ([`src/verify.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/src/verify.rs)) — the **mandatory** full-drain
   helper that consumes a target stream to completion via `IntoVec::into_vec` before
   returning any bytes, so `tough`'s incremental SHA-256 `DigestAdapter` always finishes
   before bytes are trusted (§5.4, test #11).
@@ -65,7 +65,7 @@ test's `TempDir`, and there are **no reusable/real secrets** in this repository.
 | Item | Value |
 |---|---|
 | Toolchain | **Rust `1.96.1`** (repo pin [`rust-toolchain.toml`](../../rust-toolchain.toml); MSRV `1.96`). An active `RUSTUP_TOOLCHAIN` overrides the pin — clear it or pin `1.96.1`. |
-| `tough` pin | **EXACTLY `=0.24.0`**, `default-features = false` (drops the optional HTTP transport `reqwest`/`rustls-platform-verifier`). See [`Cargo.toml`](Cargo.toml) §5. |
+| `tough` pin | **EXACTLY `=0.24.0`**, `default-features = false` (drops the optional HTTP transport `reqwest`/`rustls-platform-verifier`). See [`Cargo.toml`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/Cargo.toml) §5. |
 | Transport | **`FilesystemTransport` only** (spike-only; a local signed repo). PR-11 decides the production transport separately. |
 | `cargo-audit` | `0.22.2` (matches [`ci-fast.yml`](../../.github/workflows/ci-fast.yml)). |
 | `cargo-deny` | `0.20.2` (matches [`ci-fast.yml`](../../.github/workflows/ci-fast.yml)). |
@@ -89,9 +89,9 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
 
 **Total: 20 passed, 0 failed, 0 ignored.** Breakdown: 5 unit in
-[`src/descriptor.rs`](src/descriptor.rs) (serialization-shape guards), 6 in
-[`tests/load_and_targets.rs`](tests/load_and_targets.rs) (happy-path load & targets),
-9 in [`tests/adversarial.rs`](tests/adversarial.rs) (the security guarantees). The threat
+[`src/descriptor.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/src/descriptor.rs) (serialization-shape guards), 6 in
+[`tests/load_and_targets.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/tests/load_and_targets.rs) (happy-path load & targets),
+9 in [`tests/adversarial.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/tests/adversarial.rs) (the security guarantees). The threat
 matrix in [`README.md`](README.md) §11 maps each test to the threat it proves.
 
 ---
@@ -346,7 +346,7 @@ policy validation (deferred to PR-11; [`README.md`](README.md) §10).
 
 ### 7.1 Exact `tough` pin + patched floors (AWS-2025-007, CVE-2026-6967 / AWS 2026-019)
 
-`tough` is pinned **exactly** `=0.24.0` in [`Cargo.toml`](Cargo.toml)
+`tough` is pinned **exactly** `=0.24.0` in [`Cargo.toml`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s2-tough/Cargo.toml)
 (`default-features = false`); every recorded result in this document was produced
 against that version. Two relevant advisories were checked against this pin:
 

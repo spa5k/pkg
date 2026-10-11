@@ -65,7 +65,7 @@ This report uses primary sources only.
 
 The retained proof set is small and reviewable:
 
-- [safe Linux aarch64 replay harness](./run-dn12-linux-aarch64-proof.sh);
+- [safe Linux aarch64 replay harness](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s6-determinate-installer/run-dn12-linux-aarch64-proof.sh);
 - [normalized runtime evidence](./DN12-VENDOR-REPAIR-EVIDENCE.txt); and
 - [cleanup result](./DN12-VENDOR-REPAIR-CLEANUP.txt).
 

@@ -26,6 +26,7 @@ mod net;
 pub mod plan;
 pub mod tap;
 pub mod token;
+pub mod version;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -75,17 +76,7 @@ pub fn valid_revision(revision: &str) -> bool {
     revision.len() == 40 && is_hex(revision)
 }
 
-/// Whether a repository is one `owner/name` pair of safe characters.
-#[must_use = "the result states whether the repository is an owner/name pair"]
-pub fn valid_repo(repo: &str) -> bool {
-    let parts: Vec<&str> = repo.split('/').collect();
-    parts.len() == 2
-        && parts.iter().all(|p| {
-            !p.is_empty()
-                && p.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        })
-}
+pub use token::is_valid_source as valid_repo;
 
 /// Encode a full catalog entry id (`owner/tap/token`) into the safe
 /// Nix `packages` attribute name used by `nix profile` operations.

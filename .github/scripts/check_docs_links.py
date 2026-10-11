@@ -45,7 +45,7 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 # otherwise inflate the author-owned Markdown count). Matched as exact path
 # components, never substrings, so e.g. `my-target/` stays in scope.
 # Installed JavaScript dependencies are third-party files, not repository docs.
-IGNORED_DIR_COMPONENTS: Set[str] = {".git", "target", "node_modules", ".agents"}
+IGNORED_DIR_COMPONENTS: Set[str] = {".git", "target", "dist", "node_modules", ".agents"}
 
 # The design authority is the OpenSpec change, not plans/.
 REQUIRED_DOCS: List[str] = [

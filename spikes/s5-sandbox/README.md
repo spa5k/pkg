@@ -1,5 +1,8 @@
 # Spike S5 — managed-daemon sandbox evidence
 
+This is a historical record. The executable experiment was removed.
+Use the [original checkout](https://github.com/spa5k/pkg/tree/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s5-sandbox) to reproduce it.
+
 This is the PR-8 evidence harness for DR-005. It is not production code and it
 does not make DR-005 accepted by itself.
 

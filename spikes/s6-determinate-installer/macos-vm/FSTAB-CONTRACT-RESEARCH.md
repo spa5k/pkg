@@ -647,7 +647,7 @@ See
 [`create_fstab_entry.rs` lines 171-173](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/src/action/macos/create_fstab_entry.rs#L171-L173).
 
 The harness has the same fields, option order, spacing, and comment. See the
-local [`inside.sh`](./inside.sh) contract.
+local [`inside.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s6-determinate-installer/macos-vm/inside.sh) contract.
 
 ### 2.4 Immediate mount and persistent service
 
@@ -732,7 +732,7 @@ shows that default `Display` is a lower-case, hyphenated value.
 
 The harness still records and validates the raw upper-case value. It now
 lower-cases only `A` through `F` while it builds the expected fstab line. See
-[`inside.sh`](./inside.sh).
+[`inside.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s6-determinate-installer/macos-vm/inside.sh).
 
 R4 reached the exact fstab string comparison. The raw upper-case UUID
 validation passed. The installer and both evidence probes returned status `0`.

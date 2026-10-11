@@ -156,31 +156,6 @@ fn snapshot_path(kind: &str, source: &str, system: &str) -> PathBuf {
     PathBuf::from(format!("catalog-{}.json", cache_key(kind, source, system)))
 }
 
-/// Remove all cached discovery data (the `update` refresh path).
-///
-/// Drops the latest snapshots, any leftover write temp files, and any
-/// legacy per-query files; every file this cache owns lives in `cache_dir`
-/// with a known prefix.
-pub fn invalidate_cache(cache_dir: &Path) -> Result<usize, CatalogError> {
-    if !cache_dir.exists() {
-        return Ok(0);
-    }
-    let mut removed = 0;
-    let entries = std::fs::read_dir(cache_dir)
-        .map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let owned = (name.starts_with("search-") || name.starts_with("catalog-"))
-            && (name.ends_with(".json") || name.contains(".tmp-"));
-        if owned {
-            std::fs::remove_file(entry.path())
-                .map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
-            removed += 1;
-        }
-    }
-    Ok(removed)
-}
-
 /// The current Unix time in seconds, for cache records.
 pub(super) fn now_unix() -> u64 {
     SystemTime::now()
@@ -394,18 +369,5 @@ mod tests {
         assert!(write_snapshot(dir.path(), &snap).is_err());
         assert!(!tmp.exists(), "own temp is cleaned");
         assert!(dir.path().join(&name).is_dir(), "blocker survives");
-    }
-
-    #[test]
-    fn invalidation_drops_snapshots_and_legacy_files() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        write_snapshot(dir.path(), &native("source", "aaa")).expect("writes");
-        std::fs::write(dir.path().join("search-deadbeef.json"), "{}").expect("legacy query file");
-        std::fs::write(dir.path().join("catalog-0000000000000001.json"), "{}")
-            .expect("legacy revision file");
-        std::fs::write(dir.path().join("unrelated.txt"), "keep").expect("unrelated");
-        assert_eq!(invalidate_cache(dir.path()).expect("invalidates"), 3);
-        assert!(read_native_snapshot(dir.path(), "source", "x86_64-linux", None).is_none());
-        assert!(dir.path().join("unrelated.txt").exists());
     }
 }

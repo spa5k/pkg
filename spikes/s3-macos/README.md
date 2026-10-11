@@ -1,5 +1,8 @@
 # Spike S3 — macOS binary coverage + signing/notarization evidence harness (PR-7 / DR-003)
 
+This is a historical record. The executable experiment was removed.
+Use the [original checkout](https://github.com/spa5k/pkg/tree/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos) to reproduce it.
+
 > Links into the dated plan archive are legacy-plan context. They are not
 > current design authority.
 
@@ -11,7 +14,7 @@ standalone Cargo workspace (own `Cargo.toml`, `Cargo.lock`, `target/`) and is
 excluded from the repo-root workspace lanes — the same isolation model as
 [`spikes/s2-tough/`](../s2-tough/) and [`spikes/s4-reeval-cost/`](../s4-reeval-cost/).
 The pin lives in [`fixtures.json`](fixtures.json); the harness embeds that file at
-compile time and validates it ([`src/validate.rs`](src/validate.rs)).
+compile time and validates it ([`src/validate.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/src/validate.rs)).
 
 > **This spike is primarily an evidence harness.** A reviewed Complete real
 > Detect run was added on 2026-08-10; see
@@ -73,7 +76,7 @@ Five lanes, one report per run, one ACTIVE lane selected by the mode:
   orchestrator in this spike**; it stays `Pending` until a managed macOS / [S5]
   real harness. Its report schema is defined but unused here.
 - **SignPlan** — the Apple signing/notarization *plan*. Exposed only as the
-  library helper [`sign_plan_report`](src/runner.rs) — **`Designed`-only,
+  library helper [`sign_plan_report`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/src/runner.rs) — **`Designed`-only,
   `executed == false`, no CLI, no credentials, and not signing evidence**.
 
 Each observation carries an explicit `EvidenceSource`. This is a
@@ -88,7 +91,7 @@ genuine, or that values labeled `Observed` were genuinely observed — see
 ## Fake vs Observed vs Designed
 
 Every observation carries an `EvidenceSource`. This is a **classification** label
-that [`Report::validate`](src/report.rs) cross-checks for lane/source consistency
+that [`Report::validate`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/src/report.rs) cross-checks for lane/source consistency
 (each mode admits exactly one source), **not** a provenance attestation. It does
 not establish who produced a report, whether the runner/binary/host is genuine,
 or whether a value labeled `Observed` was in fact observed.
@@ -115,11 +118,11 @@ authenticates the runner, the `s3-probe` binary, or the host, and it never check
 that a value labeled `Observed` was truly observed. Two consequences matter:
 
 - **Injected-runner reports are simulations.** The public
-  [`preflight_report`](src/runner.rs) and [`detect_report`](src/runner.rs)
+  [`preflight_report`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/src/runner.rs) and [`detect_report`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/src/runner.rs)
   builders accept any `dyn CommandRunner` / `dyn ProbeRunner`. A unit test or a
   custom runner can return fabricated observations, and those still carry the
   `Observed` label and still pass validation. The `s3-probe` CLI is the only
-  path that wires the built-in [`RealRunner`](src/command.rs); an
+  path that wires the built-in [`RealRunner`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/src/command.rs); an
   injected-runner report — including every unit-test report — is a simulation,
   **never admissible evidence**, even when its schema label is `Observed`.
 - **`report.json` / `summary.md` are unsigned spike artifacts.** Neither file is
@@ -226,7 +229,7 @@ host OS/version/arch/Nix.
   (e.g. `rustup` shims, or an explicit `rustup run 1.96.1 …`); a standalone or
   Homebrew `cargo`/`rustc` on `PATH` **ignores** them, so you must ensure the
   `PATH`-resolved `cargo`/`rustc` really resolve to the `1.96.1` toolchain. The
-  [`run.sh`](run.sh) wrapper enforces that by requiring `rustc --version` to
+  [`run.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/run.sh) wrapper enforces that by requiring `rustc --version` to
   print exactly `rustc 1.96.1 …` and exiting `70` otherwise; it does not trust
   `rust-toolchain.toml`/`RUSTUP_TOOLCHAIN` on their own.
 - **Cached Cargo dependencies** for offline commands. The spike depends only on
@@ -251,7 +254,7 @@ host OS/version/arch/Nix.
 
 ## Running
 
-A shipped executable wrapper, [`run.sh`](run.sh), is the recommended path. It
+A shipped executable wrapper, [`run.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/run.sh), is the recommended path. It
 requires `rustc 1.96.1` **already resolved on `PATH`**, then runs the binary
 with `cargo run --locked --offline --release --bin s3-probe`. The wrapper
 **itself** never invokes `rustup` or any installer and downloads nothing. Its
@@ -354,7 +357,7 @@ symlink, so a planted out-dir symlink is not defended against. Treat
 `--out-dir` as trusted:
 
 - `report.json` — the validated, machine-readable report (pretty JSON, one
-  trailing newline). See [`src/report.rs`](src/report.rs) for the schema.
+  trailing newline). See [`src/report.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/src/report.rs) for the schema.
 - `summary.md` — the deterministic human-readable rendering of the same report.
 
 This holds for a successful **Fake** run, a **Complete** Detect/Preflight run,
@@ -363,7 +366,7 @@ and an **Incomplete** Detect/Preflight run (the diagnostic record). It does
 internal, pre-report, or artifact-write failure: those produce no report, write
 no files, and any pre-existing contents of `--out-dir` may remain.
 
-Exit codes (from [`src/main.rs`](src/main.rs)):
+Exit codes (from [`src/main.rs`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/src/main.rs)):
 
 | Code | Meaning |
 |---|---|
@@ -444,7 +447,7 @@ version string, or hash.
 - **Bounded, fixed diagnostics.** Every error message is a fixed ASCII label
   with no caller-controlled text (paths, argv, store paths, hashes, and child
   output are never echoed); I/O failures are reduced to a stable
-  `io::ErrorKind` token. The internal [`StorePath`](src/preflight.rs) type has
+  `io::ErrorKind` token. The internal [`StorePath`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/src/preflight.rs) type has
   redacted `Display`/`Debug` and is deliberately not `Serialize`/`Deserialize`,
   so it can never leak into a report or log.
 - **Credential-free by construction.** The CLI rejects every signing
@@ -465,7 +468,7 @@ version string, or hash.
 - [`FINDINGS.md`](FINDINGS.md) — the evidence ledger; today it records the
   harness proof, the official-source contract review, and the explicit
   environment limitation, with every result cell `Pending`.
-- [`run.sh`](run.sh) — the executable wrapper (effect warnings before Detect/
+- [`run.sh`](https://github.com/spa5k/pkg/blob/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s3-macos/run.sh) — the executable wrapper (effect warnings before Detect/
   Preflight; closed grammar).
 - [DR-003 in `plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
   — the decision record this evidence feeds.

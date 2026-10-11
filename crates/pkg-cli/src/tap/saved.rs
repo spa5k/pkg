@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::nix::{CatalogIndex, EntryStatus, OFFICIAL_CASK_SOURCE};
+use crate::nix::{CatalogIndex, EntryStatus};
 
 use super::registry::{self, Registry};
 use super::store::{self, Provenance};
@@ -159,30 +159,6 @@ pub fn load_all(state_home: &Path) -> Result<(Registry, SavedCatalogs), String> 
     let registry = Registry::load(&registry::registry_path(state_home))?;
     let saved = SavedCatalogs::load(&registry, state_home)?;
     Ok((registry, saved))
-}
-
-/// Explain a bare token that is ambiguous across cask sources.
-///
-/// The official source and every tap count, including excluded entries;
-/// `cask:owner/tap/token` is the unambiguous form.
-#[must_use]
-pub fn bare_ambiguity(name: &str, mut sources: Vec<String>) -> String {
-    sources.sort();
-    format!(
-        "`{name}` matches more than one cask source ({}); \
-         use the full ID `cask:owner/tap/{name}`",
-        sources
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-/// Guard used by queries: the official source never registers as a tap.
-#[must_use]
-pub fn is_official(source: &str) -> bool {
-    source == OFFICIAL_CASK_SOURCE
 }
 
 /// Validate that one index envelope is bound to exactly one provenance.

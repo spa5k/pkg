@@ -181,9 +181,7 @@ impl CatalogView {
     /// both its `source` and its bare `token`.
     #[must_use]
     pub fn record(&self, system: &str, source: &str, token: &str) -> Option<&CatalogEntry> {
-        self.entries(system)?
-            .values()
-            .find(|entry| entry.source == source && entry.token == token)
+        record(&self.index, system, source, token)
     }
 
     /// Resolve the status of one source and token on one system.
@@ -217,8 +215,7 @@ pub fn record<'a>(
         .systems
         .get(system)?
         .entries
-        .values()
-        .find(|entry| entry.source == source && entry.token == token)
+        .get(&crate::nix::full_entry_id(source, token))
 }
 
 /// The status of one source and token in one index.

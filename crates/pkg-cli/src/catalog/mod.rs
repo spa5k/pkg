@@ -29,12 +29,11 @@ use std::fmt;
 use crate::nix::NixError;
 
 pub use availability::{Availability, CaskHost};
-pub use cache::invalidate_cache;
 pub use cask::{
     CaskStatus, CatalogOnce, CatalogView, INDEX_ATTRIBUTE, native_package_attribute,
     package_attribute, record, sources_with_token, status,
 };
-pub use id::{CatalogId, ParsedId, canonical_source, escape_regex, parse_id};
+pub use id::{CatalogId, ParsedId, canonical_source, parse_id};
 pub use local::{
     missing_report, prepare_catalog, record_search_system, search_local_casks, search_local_native,
     search_local_saved, search_system,
@@ -44,8 +43,7 @@ pub use matching::SearchQuery;
 pub use routing::Routing;
 pub use search::{
     ExactMatch, SearchResult, SourceKind, SourceReport, SourceStatus, SupportBadge, catalog_meta,
-    exact_lookup, exact_lookup_in, exposed_attribute, prepare_source, report_for, resolve_bare,
-    resolve_bare_cask,
+    exact_lookup, exposed_attribute, prepare_source, report_for, resolve_bare, resolve_bare_cask,
 };
 
 /// A catalog routing error.

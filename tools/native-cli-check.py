@@ -81,7 +81,8 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="pkg-native-"))
     print(f"Evidence: {root}", flush=True)
     env = dict(os.environ)
-    # Keep the real HOME. Only pkg's three XDG bases are isolated.
+    env["HOME"] = str(root / "home")
+    Path(env["HOME"]).mkdir()
     for key, leaf in (("XDG_STATE_HOME", "state"), ("XDG_CONFIG_HOME", "config"),
                       ("XDG_CACHE_HOME", "cache")):
         env[key] = str(root / leaf)
@@ -339,7 +340,7 @@ def main():
         helper = root / "state/nix/profiles/pkg-app-tools/bin/mac-app-util"
         run(str(helper), "--help")
         run(pkg, "apps", "sync")
-        launcher = Path.home() / "Applications/pkg/AppProbe.app"
+        launcher = Path(env["HOME"]) / "Applications/pkg/AppProbe.app"
         assert launcher.is_dir(), launcher
         run(pkg, "remove", entries()[0]["entry_id"])
         assert not launcher.exists()

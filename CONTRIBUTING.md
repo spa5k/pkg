@@ -28,6 +28,9 @@ File conflict reporting follows
 [Explain package file conflicts](openspec/changes/improve-package-conflicts/proposal.md).
 Package command output follows
 [Improve package command output](openspec/changes/improve-package-command-experience/proposal.md).
+Code cleanup follows
+[Simplify the native client](openspec/changes/simplify-client/proposal.md).
+The [module map](docs/architecture.md) shows the current code owners.
 
 ## 1. Before you open a PR
 

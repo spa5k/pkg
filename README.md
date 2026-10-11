@@ -18,6 +18,8 @@ Homebrew formula discovery and source sections follow
 [Show Homebrew formulae and source sections](openspec/changes/improve-homebrew-discovery/proposal.md).
 Package command output follows
 [Improve package command output](openspec/changes/improve-package-command-experience/proposal.md).
+Code cleanup follows
+[Simplify the native client](openspec/changes/simplify-client/proposal.md).
 
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.
@@ -131,7 +133,8 @@ Catalog eligibility is a metadata claim, not a verification promise. See
 ## Contribute
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain, checks, and the
-OpenSpec workflow. The active design is
+OpenSpec workflow. Read the [module map](docs/architecture.md) to find code owners.
+The active design is
 [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md);
 the [plan index](plans/README.md) separates historical material.
 The current change is

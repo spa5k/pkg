@@ -1,5 +1,8 @@
 # S4 Complete Real evidence — 2026-08-09
 
+This is a historical record. The executable experiment was removed.
+Use the [original checkout](https://github.com/spa5k/pkg/tree/8fc06b3a0f57ecd189903c42ba5ca758c3913bbe/spikes/s4-reeval-cost/evidence) to reproduce it.
+
 These artifacts are the reviewed inputs to DR-004. Both reports validate as
 `mode=real`, `completeness=complete`, `harnessOnly=false`, detected Nix exactly
 `2.34.8`, all five canonical scenarios complete, and zero failures.
