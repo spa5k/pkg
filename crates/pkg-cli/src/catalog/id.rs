@@ -41,7 +41,10 @@ impl CatalogId {
             Self::Cask { source, token } => {
                 format!("cask:{}", full_entry_id(source, token))
             }
-            Self::Explicit { attribute, .. } => format!("flake:{attribute}"),
+            Self::Explicit {
+                reference,
+                attribute,
+            } => format!("{reference}#{attribute}"),
         }
     }
 

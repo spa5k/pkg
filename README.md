@@ -12,6 +12,8 @@ repair, or remove Nix. Install Determinate Nix from
 
 The current reliability work follows
 [Repair faults found through real package use](openspec/changes/repair-realistic-use-faults/proposal.md).
+The CLI discovery change is
+[Improve package states and discovery](openspec/changes/improve-cli-discovery/proposal.md).
 
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.
@@ -29,17 +31,20 @@ The current reliability work follows
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.11 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.11):
+   [v0.2.0-alpha.12 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.12):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.11/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.12/install.sh
    sh pkg-install.sh
    ```
 
 The downloader installs `~/.local/bin/pkg` and completions under
 `~/.local/share/pkg/completions`. It is client-only: it downloads and
 verifies the release archive, never installs Nix, and never uses `sudo`.
+It prepares local search when Nix is present. It also enables a daily user
+job to refresh official catalogs. Set `PKG_INSTALL_BACKGROUND=0` to prepare
+without this job. Set `PKG_INSTALL_PREPARE=0` to skip both steps.
 It sets up the `pkg` client `PATH` and the `pkg` profile `PATH` for Bash
 and Zsh automatically; set `PKG_INSTALL_SHELL_SETUP=0` to opt out.
 
@@ -56,11 +61,15 @@ Details are in the [install guide](docs/install.md).
 ## Use `pkg`
 
 ```sh
-pkg search ripgrep         # Search supported sources
+pkg setup                  # Prepare search and enable daily refresh
+pkg search ripgrep         # Search local catalogs
+pkg search aws             # Rank tools before helpers; hide library noise
+pkg search cask:aws         # Search Homebrew Casks and registered cask taps
+pkg search ripgrpe          # Show similar names when no literal result exists
 pkg info nixpkgs:ripgrep   # Show source, attribute, and revision
-pkg install nixpkgs:ripgrep # Install; a qualified ID skips the full-catalog bare-name scan
+pkg install nixpkgs:ripgrep # Install one exact package ID
 pkg list                   # List installed entries
-pkg update                 # Refresh discovery data only
+pkg update                 # Refresh official catalogs and saved taps
 pkg upgrade --all          # Follow each entry's original reference
 pkg history                # Show native profile generations
 pkg rollback               # Return to the previous generation
@@ -80,7 +89,8 @@ On macOS, `pkg` exposes app bundles from supported packages as launchers in
 ## What `pkg` does not do
 
 - `pkg` does not install, update, repair, or remove the Nix runtime.
-- `pkg` does not run a broker, root helper, daemon, or privileged service.
+- `pkg` uses a daily user job for catalog refresh. It exits after each run.
+  It has no broker, root helper, or privileged service.
 - `pkg` does not sign or host a package channel or central index.
 - `pkg` does not install or invoke Homebrew. Casks come from a generated
   catalog of ordinary Nix packages; no package allowlists exist.

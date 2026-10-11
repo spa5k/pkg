@@ -1,0 +1,127 @@
+{
+  "host": "aarch64-darwin, macOS 27.0.1",
+  "binary": "target/release/pkg, 0.2.0-alpha.12, uncommitted feat/cli-discovery-experience",
+  "native_rows": 113402,
+  "method": "Saved Nixpkgs JSON data converted into an isolated SQLite fixture; original Homebrew index copied. Runtime override points to an unavailable path. No live source preparation or profile mutation.",
+  "results": [
+    {
+      "query": "aws",
+      "options": [],
+      "ms": [
+        699.81,
+        144.93,
+        142.79
+      ],
+      "total": 101,
+      "approximate": false,
+      "ids": [
+        "nixpkgs:awscli2",
+        "nixpkgs:awscli",
+        "nixpkgs:awsls",
+        "nixpkgs:awsrm",
+        "nixpkgs:awsbck",
+        "nixpkgs:awsume",
+        "nixpkgs:aws-mfa",
+        "nixpkgs:awslogs"
+      ]
+    },
+    {
+      "query": "aws",
+      "options": [
+        "--broad"
+      ],
+      "ms": [
+        148.94,
+        150.66,
+        152.44
+      ],
+      "total": 603,
+      "approximate": false,
+      "ids": [
+        "nixpkgs:haskellPackages.aws",
+        "nixpkgs:haskellPackages.aws_0_25_2",
+        "nixpkgs:awscli2",
+        "nixpkgs:awscli",
+        "nixpkgs:awsls",
+        "nixpkgs:awsrm",
+        "nixpkgs:awsbck",
+        "nixpkgs:awsume"
+      ]
+    },
+    {
+      "query": "ripgrpe",
+      "options": [],
+      "ms": [
+        223.81,
+        224.31,
+        220.65
+      ],
+      "total": 2,
+      "approximate": true,
+      "ids": [
+        "nixpkgs:ripgrep",
+        "nixpkgs:ripgrep-all"
+      ]
+    },
+    {
+      "query": "firefox",
+      "options": [],
+      "ms": [
+        217.78,
+        214.44,
+        213.93
+      ],
+      "total": 47,
+      "approximate": false,
+      "ids": [
+        "cask:homebrew/cask/firefox",
+        "nixpkgs:firefox",
+        "nixpkgs:firefox-esr",
+        "nixpkgs:firefox-esr-140",
+        "nixpkgs:firefox-esr-153",
+        "nixpkgs:firefox-mobile",
+        "nixpkgs:firefoxpwa",
+        "nixpkgs:firefox-bin"
+      ]
+    },
+    {
+      "query": "cask:aws",
+      "options": [],
+      "ms": [
+        19.08,
+        18.82,
+        18.94
+      ],
+      "total": 4,
+      "approximate": false,
+      "ids": [
+        "cask:homebrew/cask/aws-vault-binary",
+        "cask:homebrew/cask/aws-vpn-client",
+        "cask:homebrew/cask/corretto",
+        "cask:homebrew/cask/cloudpouch"
+      ]
+    }
+  ],
+  "aws_first_20": [
+    "nixpkgs:awscli2",
+    "nixpkgs:awscli",
+    "nixpkgs:awsls",
+    "nixpkgs:awsrm",
+    "nixpkgs:awsbck",
+    "nixpkgs:awsume",
+    "nixpkgs:aws-mfa",
+    "nixpkgs:awslogs",
+    "nixpkgs:aws-adfs",
+    "nixpkgs:aws-gate",
+    "nixpkgs:aws-nuke",
+    "cask:homebrew/cask/aws-vault-binary",
+    "nixpkgs:aws-vault",
+    "nixpkgs:awsweeper",
+    "nixpkgs:aws-cdk-cli",
+    "nixpkgs:aws-sam-cli",
+    "nixpkgs:aws-sso-cli",
+    "nixpkgs:aws-ofi-nccl",
+    "nixpkgs:aws-sso-util",
+    "nixpkgs:aws-checksums"
+  ]
+}

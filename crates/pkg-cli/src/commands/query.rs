@@ -12,164 +12,362 @@ use crate::output::{self, ListRow};
 
 use super::{CommandError, installed_entries, print_json, session};
 
-pub(super) fn search(cli: &Cli, query: &str) -> Result<(), CommandError> {
-    // Reject a malformed pattern before any source query starts. Otherwise
-    // each source would report the same input error as an outage.
-    regex::RegexBuilder::new(query)
-        .case_insensitive(true)
-        .build()
+pub(super) fn search(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), CommandError> {
+    let (text, source) = search_input(options)?;
+    let query = catalog::SearchQuery::new(&text, options.regex, options.unavailable)
         .map_err(|error| {
-            eprintln!("Invalid search pattern `{query}`: {error}");
-            CommandError::Reported(std::process::ExitCode::from(super::USAGE))
-        })?;
-    let session = session(cli)?;
-    let system = session.nix.system()?;
-    let tap_state = super::TapState::load(&session)?;
-    let mut reports = Vec::new();
-    let mut rows = SearchSpool::new()?;
-    for (kind, moving) in super::configured_sources(&session.config) {
-        // The Nixpkgs lane filters a cached native snapshot locally.
-        // The cask lane reads the generated catalog index once and filters
-        // locally; a system outside the catalog targets is skipped from the
-        // envelope alone inside that lane, and an index failure is a
-        // failure, never a skip.
-        let report = match kind {
-            catalog::SourceKind::Nixpkgs => catalog::search_source_into(
-                &session.nix,
-                &session.paths.cache_dir,
-                moving,
-                query,
-                &system,
-                kind,
-                |row| rows.push(&row),
-            )?,
-            catalog::SourceKind::Cask => {
-                let (source_rows, report) = catalog::search_catalog(
-                    &session.nix,
-                    &session.paths.cache_dir,
-                    moving,
-                    query,
-                    &system,
-                )?;
-                for row in source_rows {
-                    rows.push(&row)?;
-                }
-                report
-            }
-        };
-        reports.push(report);
-    }
-    // Every registered tap answers from its saved catalog capture: no tap
-    // Ruby runs, no source is contacted, and a malformed capture fails the
-    // search instead of being skipped. Search lists every source, so it
-    // loads the complete strict set.
-    let saved_all = tap_state.saved_all()?;
-    for saved in saved_all.iter() {
-        let (source_rows, report) = catalog::search_saved_catalog(saved, query, &system);
-        reports.push(report);
-        for row in source_rows {
-            rows.push(&row)?;
+            eprintln!("Invalid search pattern `{text}`: {error}");
+            CommandError::Reported(ExitCode::from(super::USAGE))
+        })?
+        .broad(options.broad)
+        .fuzzy(!options.no_fuzzy);
+    let paths = crate::config::paths()?;
+    let config = crate::config::Config::load(&paths.config_file)?;
+    let limit = if options.all || cli.json && options.limit.is_none() {
+        None
+    } else {
+        Some(options.limit.unwrap_or(20))
+    };
+    let (system, reports, rows) = local_search(&paths, &config, &query, source.as_deref(), limit)?;
+    let failed = reports
+        .iter()
+        .any(|report| report.status == catalog::SourceStatus::Failed);
+    if cli.json {
+        rows.json(&system, &reports, limit)?;
+    } else {
+        if rows.count > 0 || !failed {
+            rows.text(&text, limit)?;
         }
+        eprint!("{}", output::render_source_reports(&reports, cli.verbose));
     }
-    let failed: Vec<&catalog::SourceReport> = reports
+    for report in reports
         .iter()
         .filter(|report| report.status == catalog::SourceStatus::Failed)
-        .collect();
-    if cli.json {
-        rows.json(&system, &reports)?;
-    } else {
-        if !rows.is_empty() || failed.is_empty() {
-            rows.text(query)?;
-        }
-        print!("{}", output::render_source_reports(&reports, cli.verbose));
+    {
+        eprintln!(
+            "Warning: {}: {}",
+            output::short_source(&report.source),
+            super::concise_cause(report.detail.as_deref().unwrap_or("unknown cause"))
+        );
     }
-    if !failed.is_empty() {
-        for report in &failed {
-            eprintln!(
-                "Warning: source {} is unavailable: {}",
-                output::short_source(&report.source),
-                super::concise_cause(report.detail.as_deref().unwrap_or("unknown"))
-            );
-        }
-        if rows.is_empty() {
+    if failed {
+        if rows.count == 0 {
             return Err(CommandError::Reported(ExitCode::from(super::FAILURE)));
         }
-        // Only the failed sources are degraded: their rows are missing or
-        // labeled stale. Rows from healthy sources above are fresh.
-        eprintln!("Results may be incomplete. Cached rows may be old.");
+        eprintln!("Results are incomplete. Run `pkg setup` or repair the source shown above.");
     }
     Ok(())
 }
 
+fn search_input(
+    options: &crate::cli::SearchOptions,
+) -> Result<(String, Option<String>), CommandError> {
+    let mut text = if options.regex {
+        options.query.clone()
+    } else {
+        options.query.trim().to_string()
+    };
+    let mut implied = None;
+    if !options.regex {
+        if let Some(rest) = text.strip_prefix("nixpkgs:") {
+            implied = Some(String::from("nixpkgs"));
+            text = rest.to_string();
+        } else if let Some(rest) = text.strip_prefix("cask:") {
+            let parts: Vec<_> = rest.splitn(3, '/').collect();
+            if let [owner, tap, token] = parts.as_slice() {
+                implied = Some(format!("{owner}/{tap}"));
+                text = token.to_string();
+            } else {
+                implied = Some(String::from("cask"));
+                text = rest.to_string();
+            }
+        }
+    }
+    if let (Some(implied), Some(source)) = (&implied, &options.source)
+        && implied != source
+        && !(source == "cask" && implied.contains('/'))
+        && !(implied == "cask" && source.contains('/'))
+    {
+        eprintln!("The query selects `{implied}`, but --source selects `{source}`.");
+        return Err(CommandError::Reported(ExitCode::from(super::USAGE)));
+    }
+    let source = match (implied, &options.source) {
+        (Some(implied), Some(source)) if implied == "cask" => Some(source.clone()),
+        (Some(implied), _) => Some(implied),
+        (None, source) => source.clone(),
+    };
+    Ok((text, source))
+}
+
+fn local_search(
+    paths: &crate::config::Paths,
+    config: &crate::config::Config,
+    query: &catalog::SearchQuery,
+    source: Option<&str>,
+    limit: Option<u32>,
+) -> Result<(String, Vec<catalog::SourceReport>, SearchSpool), CommandError> {
+    let system = catalog::search_system(&paths.cache_dir);
+    let mut reports = Vec::new();
+    let registry = if matches!(source, Some("nixpkgs" | "homebrew/cask")) {
+        crate::tap::Registry::empty()
+    } else {
+        match crate::tap::Registry::load(&crate::tap::registry::registry_path(&paths.state_home)) {
+            Ok(registry) => registry,
+            Err(error) => {
+                if source.is_some_and(|source| source != "cask" && source != "homebrew/cask") {
+                    return Err(error.into());
+                }
+                reports.push(catalog::missing_report("saved taps", &error));
+                crate::tap::Registry::empty()
+            }
+        }
+    };
+    if let Some(source) = source
+        && !matches!(source, "nixpkgs" | "cask" | "homebrew/cask")
+        && !registry.sources.contains_key(source)
+    {
+        return Err(format!(
+            "unknown search source `{source}`. Use nixpkgs, cask, homebrew/cask, or a source from `pkg tap list`."
+        )
+        .into());
+    }
+    let host = catalog::CaskHost::default();
+    let mut rows = SearchSpool::new(limit)?;
+    for (kind, moving) in super::configured_sources(config) {
+        if source.is_some_and(|source| {
+            source != kind.label()
+                && !(source == "homebrew/cask" && kind == catalog::SourceKind::Cask)
+        }) {
+            continue;
+        }
+        let result = match kind {
+            catalog::SourceKind::Nixpkgs => catalog::search_local_native(
+                &paths.cache_dir,
+                moving,
+                &system,
+                query,
+                |row, rank| rows.push(&row, rank),
+            ),
+            catalog::SourceKind::Cask => catalog::search_local_casks(
+                &paths.cache_dir,
+                moving,
+                &system,
+                query,
+                &host,
+                |row, rank| {
+                    if source != Some("homebrew/cask") || row.id.starts_with("cask:homebrew/cask/")
+                    {
+                        rows.push(&row, rank)?;
+                    }
+                    Ok(())
+                },
+            ),
+        };
+        reports.push(
+            result.unwrap_or_else(|error| catalog::missing_report(moving, &error.to_string())),
+        );
+    }
+    for tap_source in registry.sources.keys() {
+        if source.is_some_and(|source| source != "cask" && source != tap_source) {
+            continue;
+        }
+        let result = crate::tap::SavedCatalogs::load_one(&registry, &paths.state_home, tap_source)
+            .map_err(catalog::CatalogError::Source)
+            .and_then(|saved| {
+                catalog::search_local_saved(&saved, &system, query, &host, |row, rank| {
+                    rows.push(&row, rank)
+                })
+            });
+        reports.push(
+            result.unwrap_or_else(|error| catalog::missing_report(tap_source, &error.to_string())),
+        );
+    }
+    Ok((system, reports, rows))
+}
+
+pub(super) fn install_resolution_error(
+    session: &super::Session,
+    name: &str,
+    source: Option<&str>,
+    error: catalog::CatalogError,
+) -> CommandError {
+    if !matches!(
+        error,
+        catalog::CatalogError::NotFound(_)
+            | catalog::CatalogError::Ambiguous { .. }
+            | catalog::CatalogError::RequiresId { .. }
+    ) {
+        return error.into();
+    }
+    let suggestions = catalog::SearchQuery::new(name, false, false)
+        .ok()
+        .and_then(|query| {
+            local_search(&session.paths, &session.config, &query, source, Some(5)).ok()
+        })
+        .map(|(_, _, rows)| rows)
+        .filter(|rows| rows.count > 0);
+    if suggestions.is_some() {
+        match &error {
+            catalog::CatalogError::Ambiguous { choices, .. } => eprintln!(
+                "pkg: `{name}` matches {} exact package IDs. Choose an ID.",
+                choices.len()
+            ),
+            catalog::CatalogError::RequiresId { .. } => eprintln!(
+                "pkg: `{name}` needs an exact package ID for its development package or variant."
+            ),
+            _ => eprintln!("pkg: {error}"),
+        }
+    } else {
+        eprintln!("pkg: {error}");
+    }
+    if let Some(rows) = suggestions {
+        eprintln!(
+            "{}",
+            if rows.fuzzy {
+                "Similar package names:"
+            } else {
+                "Related packages:"
+            }
+        );
+        let _ = rows.visit(Some(5), |body| {
+            let row: catalog::SearchResult =
+                serde_json::from_str(body).map_err(std::io::Error::other)?;
+            eprint!(
+                "  {}",
+                output::render_search_row(&row, row.id.len(), row.version.len().max(1))
+            );
+            Ok(())
+        });
+        eprintln!("Choose a package ID, then run `pkg install ID`.");
+    }
+    if matches!(
+        error,
+        catalog::CatalogError::Ambiguous { .. } | catalog::CatalogError::RequiresId { .. }
+    ) {
+        eprintln!("Use `pkg search {name} --broad` to inspect other package IDs.");
+    } else {
+        eprintln!("Use `pkg search {name}` to find packages.");
+    }
+    CommandError::Reported(ExitCode::from(super::FAILURE))
+}
+
 struct SearchSpool {
-    file: tempfile::NamedTempFile,
+    _file: tempfile::NamedTempFile,
+    connection: rusqlite::Connection,
     count: usize,
-    width: usize,
+    limit: Option<u32>,
+    worst: Option<(u32, String)>,
+    fuzzy: bool,
 }
 
 impl SearchSpool {
-    fn new() -> Result<Self, CommandError> {
+    fn new(limit: Option<u32>) -> Result<Self, CommandError> {
+        let file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
+        let connection =
+            rusqlite::Connection::open(file.path()).map_err(|error| error.to_string())?;
+        connection
+            .execute_batch(
+                "PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA journal_mode=OFF;
+            CREATE TABLE results(rank INTEGER, id TEXT, body TEXT);
+            CREATE INDEX result_order ON results(rank, id);
+            BEGIN;",
+            )
+            .map_err(|error| error.to_string())?;
         Ok(Self {
-            file: tempfile::NamedTempFile::new().map_err(|error| error.to_string())?,
+            _file: file,
+            connection,
             count: 0,
-            width: 2,
+            limit,
+            worst: None,
+            fuzzy: false,
         })
     }
 
-    fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    fn push(&mut self, row: &catalog::SearchResult) -> Result<(), catalog::CatalogError> {
-        use std::io::Write as _;
-        serde_json::to_writer(self.file.as_file_mut(), row)
+    fn push(
+        &mut self,
+        row: &catalog::SearchResult,
+        rank: u32,
+    ) -> Result<(), catalog::CatalogError> {
+        let fuzzy = rank >= catalog::FUZZY_RANK;
+        if !fuzzy && self.fuzzy {
+            self.connection
+                .execute("DELETE FROM results", [])
+                .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+            self.count = 0;
+            self.worst = None;
+        } else if fuzzy && self.count > 0 && !self.fuzzy {
+            return Ok(());
+        }
+        self.fuzzy = fuzzy;
+        if self.worst.as_ref().is_some_and(|(worst_rank, worst_id)| {
+            (rank, row.id.as_str()) > (*worst_rank, worst_id.as_str())
+        }) {
+            self.count += 1;
+            return Ok(());
+        }
+        let body = serde_json::to_string(row)
             .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
-        self.file
-            .write_all(b"\n")
+        self.connection
+            .execute(
+                "INSERT INTO results VALUES (?1, ?2, ?3)",
+                rusqlite::params![rank, row.id, body],
+            )
             .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
         self.count += 1;
-        self.width = self.width.max(row.id.len());
+        if let Some(limit) = self.limit
+            && self.count >= limit as usize
+        {
+            self.connection.execute("DELETE FROM results WHERE rowid NOT IN (SELECT rowid FROM results ORDER BY rank, id LIMIT ?1)", [limit])
+                .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+            self.worst = Some(
+                self.connection
+                    .query_row(
+                        "SELECT rank, id FROM results ORDER BY rank DESC, id DESC LIMIT 1",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?,
+            );
+        }
         Ok(())
     }
 
     fn visit(
-        &mut self,
+        &self,
+        limit: Option<u32>,
         mut sink: impl FnMut(&str) -> std::io::Result<()>,
     ) -> Result<(), CommandError> {
-        use std::io::{BufRead as _, Seek as _};
-        self.file
-            .as_file_mut()
-            .rewind()
+        let mut statement = self
+            .connection
+            .prepare("SELECT body FROM results ORDER BY rank, id LIMIT ?1")
             .map_err(|error| error.to_string())?;
-        let mut input = std::io::BufReader::new(self.file.as_file_mut());
-        let mut line = String::new();
-        while input
-            .read_line(&mut line)
-            .map_err(|error| error.to_string())?
-            > 0
-        {
-            sink(line.trim_end()).map_err(|error| error.to_string())?;
-            line.clear();
+        let mut rows = statement
+            .query([limit.map(i64::from).unwrap_or(-1)])
+            .map_err(|error| error.to_string())?;
+        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+            let body: String = row.get(0).map_err(|error| error.to_string())?;
+            sink(&body).map_err(|error| error.to_string())?;
         }
         Ok(())
     }
 
     fn json(
-        &mut self,
+        &self,
         system: &str,
         reports: &[catalog::SourceReport],
+        limit: Option<u32>,
     ) -> Result<(), CommandError> {
         use std::io::Write as _;
         let stdout = std::io::stdout();
         let mut out = std::io::BufWriter::new(stdout.lock());
-        write!(out, "{{\"schema\":1,\"command\":\"search\",\"result\":{{\"system\":{},\"sources\":{},\"results\":[", serde_json::to_string(system).map_err(|error| error.to_string())?, serde_json::to_string(reports).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        write!(out, "{{\"schema\":1,\"command\":\"search\",\"result\":{{\"system\":{},\"sources\":{},\"total\":{},\"approximate\":{},\"results\":[", serde_json::to_string(system).map_err(|error| error.to_string())?, serde_json::to_string(reports).map_err(|error| error.to_string())?, self.count, self.fuzzy).map_err(|error| error.to_string())?;
         let mut first = true;
-        self.visit(|line| {
+        self.visit(limit, |body| {
             if !first {
                 out.write_all(b",")?;
             }
             first = false;
-            out.write_all(line.as_bytes())
+            out.write_all(body.as_bytes())
         })?;
         out.write_all(b"]}}\n")
             .and_then(|()| out.flush())
@@ -177,22 +375,47 @@ impl SearchSpool {
         Ok(())
     }
 
-    fn text(&mut self, query: &str) -> Result<(), CommandError> {
+    fn text(&self, query: &str, limit: Option<u32>) -> Result<(), CommandError> {
         use std::io::Write as _;
-        if self.is_empty() {
+        if self.count == 0 {
             print!("{}", output::render_search(&[], query));
             return Ok(());
         }
+        if self.fuzzy {
+            println!("No literal matches. Showing similar package names for `{query}`.");
+        }
+        let mut width = 2;
+        let mut version_width = 7;
+        self.visit(limit, |body| {
+            let row: catalog::SearchResult =
+                serde_json::from_str(body).map_err(std::io::Error::other)?;
+            width = width.max(row.id.len());
+            version_width = version_width.max(row.version.len());
+            Ok(())
+        })?;
         let stdout = std::io::stdout();
         let mut out = std::io::BufWriter::new(stdout.lock());
-        let width = self.width;
-        writeln!(out, "{:<width$}  VERSION  DESCRIPTION", "ID")
-            .map_err(|error| error.to_string())?;
-        self.visit(|line| {
+        writeln!(
+            out,
+            "{:<width$}  {:<version_width$}  DESCRIPTION",
+            "ID", "VERSION"
+        )
+        .map_err(|error| error.to_string())?;
+        self.visit(limit, |body| {
             let row: catalog::SearchResult =
-                serde_json::from_str(line).map_err(std::io::Error::other)?;
-            out.write_all(output::render_search_row(&row, width).as_bytes())
+                serde_json::from_str(body).map_err(std::io::Error::other)?;
+            out.write_all(output::render_search_row(&row, width, version_width).as_bytes())
         })?;
+        if let Some(limit) = limit
+            && self.count > limit as usize
+        {
+            writeln!(
+                out,
+                "Showing {limit} of {} matches. Use --all or --limit N to show more.",
+                self.count
+            )
+            .map_err(|error| error.to_string())?;
+        }
         out.flush().map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -212,6 +435,7 @@ struct InfoData {
     report: catalog::SourceReport,
     /// Cask classification, when the ID is a cask token.
     cask: Option<CaskDisplay>,
+    availability: Option<catalog::Availability>,
 }
 
 pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
@@ -270,6 +494,7 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
                 meta: Some(exact.meta),
                 report,
                 cask: None,
+                availability: None,
             },
             Err(catalog::CatalogError::NotFound(_)) => {
                 return Err(CommandError::Message(format!(
@@ -308,15 +533,26 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
             .clone()
             .unwrap_or_else(|| data.attribute.clone()),
     };
-    let installed = installed_entries(&session).ok().and_then(|entries| {
+    let installed_result = installed_entries(&session);
+    let installed_error = installed_result.as_ref().err().map(ToString::to_string);
+    let installed = installed_result.ok().and_then(|entries| {
         entries.into_iter().find(|(_, entry)| {
-            entry.attr_path == identity_attribute
+            entry.active
+                && entry.attr_path == identity_attribute
                 && catalog::canonical_source(&entry.original_url)
                     == catalog::canonical_source(&reference)
         })
     });
     if cli.json {
-        let result = info_json(&resolved, &data, &reference, &system, &installed);
+        let mut result = info_json(&resolved, &data, &reference, &system, &installed);
+        result["installed_state"] = serde_json::json!(if installed_error.is_some() {
+            "unknown"
+        } else if installed.is_some() {
+            "installed"
+        } else {
+            "absent"
+        });
+        result["installed_error"] = serde_json::json!(installed_error);
         print_json(&output::envelope("info", &result))?;
     } else {
         print!(
@@ -328,8 +564,12 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
                 &installed,
                 &installable,
                 cli.verbose,
+                installed_error.as_deref(),
             )
         );
+    }
+    if let Some(error) = installed_error {
+        return Err(format!("installed state is unknown: {error}").into());
     }
     Ok(())
 }
@@ -355,7 +595,10 @@ fn info_json(
         .meta
         .as_ref()
         .map(|meta| meta.pname.clone())
-        .unwrap_or_else(|| data.attribute.clone());
+        .unwrap_or_else(|| match resolved {
+            catalog::CatalogId::Cask { token, .. } => token.clone(),
+            _ => data.attribute.clone(),
+        });
     // Null and empty versions stay null; only a real value is claimed.
     let version = data
         .meta
@@ -382,6 +625,7 @@ fn info_json(
         "description": description,
         "installed": installed_json,
         "cask": cask_json,
+        "availability": data.availability,
     })
 }
 
@@ -430,6 +674,7 @@ fn info_text(
     installed: &Option<(String, ProfileEntry)>,
     installable: &str,
     verbose: bool,
+    installed_error: Option<&str>,
 ) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -437,7 +682,10 @@ fn info_text(
         .meta
         .as_ref()
         .map(|meta| meta.pname.clone())
-        .unwrap_or_else(|| data.attribute.clone());
+        .unwrap_or_else(|| match resolved {
+            catalog::CatalogId::Cask { token, .. } => token.clone(),
+            _ => data.attribute.clone(),
+        });
     let version = data
         .meta
         .as_ref()
@@ -457,42 +705,26 @@ fn info_text(
     let _ = writeln!(
         out,
         "Installed: {}",
-        if installed.is_some() { "Yes" } else { "No" }
+        if installed_error.is_some() {
+            "Unknown (profile could not be read)"
+        } else if installed.is_some() {
+            "Yes"
+        } else {
+            "No"
+        }
     );
-    if let Some(display) = &data.cask {
-        match display {
-            CaskDisplay::Status {
-                status: catalog::CaskStatus::Excluded { reason, detail },
-                ..
-            } => {
-                let _ = writeln!(out, "Status: Cannot install on this system");
-                let _ = writeln!(
-                    out,
-                    "Reason: {reason}{}",
-                    detail
-                        .as_deref()
-                        .map(|text| format!(": {text}"))
-                        .unwrap_or_default()
-                );
-            }
-            CaskDisplay::UnsupportedPlatform { targets, .. } => {
-                let _ = writeln!(
-                    out,
-                    "Status: Unsupported platform (targets: {})",
-                    targets.join(", ")
-                );
-            }
-            CaskDisplay::Status {
-                status: catalog::CaskStatus::Eligible,
-                ..
-            } => {
+    if let Some(availability) = &data.availability {
+        match availability {
+            catalog::Availability::Available => {
                 let _ = writeln!(out, "Status: Available on this system");
             }
-            CaskDisplay::Status {
-                status: catalog::CaskStatus::Unknown,
-                ..
-            } => {
-                let _ = writeln!(out, "Status: Not in this catalog");
+            catalog::Availability::Unavailable { reason } => {
+                let _ = writeln!(out, "Status: Cannot install on this system");
+                let _ = writeln!(out, "Reason: {reason}");
+            }
+            catalog::Availability::Unknown { reason } => {
+                let _ = writeln!(out, "Status: Unknown");
+                let _ = writeln!(out, "Reason: {reason}");
             }
         }
     }
@@ -567,6 +799,9 @@ fn cask_info(
             matched_attribute: None,
             meta: None,
             report: catalog::SourceReport::skipped_platform(reference, view.targets()),
+            availability: Some(
+                catalog::CaskHost::default().availability(view, system, source, token),
+            ),
             cask: Some(CaskDisplay::UnsupportedPlatform {
                 system: system.to_string(),
                 targets: view.targets().to_vec(),
@@ -580,6 +815,7 @@ fn cask_info(
         matched_attribute: None,
         meta,
         report: catalog::report_for(reference, &view.identity),
+        availability: Some(catalog::CaskHost::default().availability(view, system, source, token)),
         cask: Some(CaskDisplay::Status {
             status: view.entry(system, source, token),
             kind: record.and_then(|entry| entry.kind.clone()),
@@ -613,7 +849,7 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
     let session = session(cli)?;
     // A fresh install has no profile yet; that state is empty, not an error.
     let entries = installed_entries(&session)?;
-    let rows = list_rows(&entries);
+    let rows = list_rows(&entries, &session.config, &session.paths.state_home);
     if cli.json {
         print_json(&output::envelope("list", &rows))?;
     } else {
@@ -622,13 +858,18 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
     Ok(())
 }
 
-fn list_rows(entries: &std::collections::BTreeMap<String, ProfileEntry>) -> Vec<ListRow> {
+fn list_rows(
+    entries: &std::collections::BTreeMap<String, ProfileEntry>,
+    config: &crate::config::Config,
+    state_home: &std::path::Path,
+) -> Vec<ListRow> {
     // Discovery and display scans only consider active entries.
     entries
         .iter()
         .filter(|(_, entry)| entry.active)
         .map(|(entry_id, entry)| ListRow {
             entry_id: entry_id.clone(),
+            package_id: crate::installed::package_id(entry, config, state_home),
             name: entry.name(),
             source: entry.original_url.clone(),
             locked_source: entry.locked_url.clone(),

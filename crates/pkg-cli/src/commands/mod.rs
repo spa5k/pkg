@@ -17,6 +17,7 @@
 
 mod doctor;
 mod lifecycle;
+mod maintenance;
 mod query;
 mod support;
 mod tap;
@@ -121,7 +122,7 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
     if cli.json
         && !matches!(
             cli.command,
-            Command::Search { .. }
+            Command::Search(..)
                 | Command::Info { .. }
                 | Command::List
                 | Command::Doctor
@@ -135,13 +136,19 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
         return Err(CommandError::Reported(ExitCode::from(USAGE)));
     }
     match &cli.command {
-        Command::Search { query } => query::search(cli, query),
+        Command::Search(options) => query::search(cli, options),
         Command::Info { id } => query::info(cli, id),
         Command::Install { ids } => lifecycle::install(cli, ids),
         Command::List => query::list(cli),
-        Command::Remove { entries } => lifecycle::remove(cli, entries),
-        Command::Update => lifecycle::update(cli),
-        Command::Upgrade { entries, all } => lifecycle::upgrade(cli, entries, *all),
+        Command::Remove { entries, entry } => lifecycle::remove(cli, entries, *entry),
+        Command::Update { catalogs_only } => maintenance::update(cli, *catalogs_only),
+        Command::Setup { no_background } => maintenance::setup(cli, *no_background),
+        Command::Background(command) => maintenance::background(command),
+        Command::Upgrade {
+            entries,
+            all,
+            entry,
+        } => lifecycle::upgrade(cli, entries, *all, *entry),
         Command::History => lifecycle::history(cli),
         Command::Rollback { generation } => lifecycle::rollback(cli, *generation),
         Command::Prune { older_than } => lifecycle::prune(cli, older_than),
@@ -408,10 +415,9 @@ fn concise_cause(detail: &str) -> &str {
                 .find(|line| line.trim_start_matches("> ").starts_with("cask-build:"))
         })
         .or_else(|| {
-            detail
-                .lines()
-                .map(str::trim)
-                .find(|line| line.starts_with("error:"))
+            detail.lines().map(str::trim).find(|line| {
+                line.starts_with("error:") && !line.trim_start_matches("error:").trim().is_empty()
+            })
         })
         .or_else(|| detail.lines().map(str::trim).find(|line| !line.is_empty()))
         .unwrap_or("unknown cause")
@@ -424,8 +430,15 @@ fn concise_cause(detail: &str) -> &str {
 ///
 /// A fresh install has no profile on disk; that state is empty, not an error.
 fn installed_entries(session: &Session) -> Result<BTreeMap<String, ProfileEntry>, NixError> {
-    if !session.paths.profile.exists() {
-        return Ok(BTreeMap::new());
+    match std::fs::symlink_metadata(&session.paths.profile) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) => {
+            return Err(NixError::Decode {
+                what: "profile state",
+                detail: error.to_string(),
+            });
+        }
+        Ok(_) => {}
     }
     session.nix.profile_list(&session.paths.profile)
 }

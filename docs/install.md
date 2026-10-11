@@ -18,7 +18,7 @@ baseline, so the binary also runs on older distributions.
 Download the client downloader for the exact release and run it:
 
 ```sh
-version="0.2.0-alpha.11"
+version="0.2.0-alpha.12"
 curl -fsSL -o pkg-install.sh \
   "https://raw.githubusercontent.com/spa5k/pkg/v${version}/install.sh"
 sh pkg-install.sh
@@ -26,14 +26,18 @@ sh pkg-install.sh
 
 The downloader is pinned to one tag. It fetches
 `pkg-${version}-${system}.tar.gz` and `SHA256SUMS` from the
-[v0.2.0-alpha.11 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.11),
-verifies the archive checksum, and installs only:
+[v0.2.0-alpha.12 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.12),
+verifies the archive checksum, and installs:
 
 - `~/.local/bin/pkg` — the whole client;
 - `~/.local/share/pkg/completions/{bash,zsh,fish}.txt` — completions.
 
-Everything lands under `~/.local`. The downloader fetches and verifies the
-client archive only. It does not install Nix. It does not use `sudo`. It
+The client and completions land under `~/.local`. The downloader also
+prepares catalogs in the pkg cache. It enables a daily user refresh job.
+The first preparation can take several minutes. Progress goes to the terminal.
+A failed preparation keeps the installed client and reports how to retry.
+Setup still attempts to enable the daily job so it can retry later.
+It does not install Nix. It does not use `sudo`. It
 does not change Nix trust settings. It does not remove or migrate old
 installations.
 
@@ -43,7 +47,7 @@ installations.
 # on x86_64 Linux; use aarch64-darwin on Apple silicon macOS
 tools/release/package_client.sh x86_64-linux
 
-version="0.2.0-alpha.11"
+version="0.2.0-alpha.12"
 system="x86_64-linux"
 cat "dist/SHA256SUMS-${system}"          # compare with your own sha256sum
 
@@ -114,7 +118,7 @@ can come from a one-time export.
 When no usable Nix exists, the client stays installed and usable by its full
 path. The downloader prints the vendor link and does not claim a healthy
 setup. Install Determinate Nix yourself, then open a new terminal and run
-`pkg doctor`.
+`pkg setup`. Then run `pkg doctor`.
 
 ### Opt out
 
@@ -131,9 +135,50 @@ other shells it repeats the directory list. New terminals pick the setup up
 automatically after a completed setup. For manual control, `pkg shellenv`
 still prints idempotent `PATH` settings and never edits your shell files.
 
-To remove the setup, delete the managed block between the two marker lines.
+To remove shell setup, delete the managed block between the two marker lines.
 
-## 4. Check the setup
+## 4. Local search and background refresh
+
+The downloader runs `pkg setup` when Nix is present. For a manual archive
+installation, run it yourself:
+
+```sh
+pkg setup
+```
+
+Normal search reads complete local catalogs. It runs no Nix command and
+makes no network request. Missing data produces a setup instruction. Search
+marks data older than one day as stale. A failed refresh retains the last
+complete catalog. Installed packages remain in the native profile.
+
+The daily job runs only official catalog refresh. It does not run tap Ruby.
+It does not install or upgrade packages. It exits after each refresh.
+
+- macOS: `~/Library/LaunchAgents/com.pkg.catalog-refresh.plist`.
+  Logs: `$XDG_STATE_HOME/pkg/catalog-refresh.log`, or
+  `~/.local/state/pkg/catalog-refresh.log`.
+- Linux: `pkg-catalog-refresh.service` and `pkg-catalog-refresh.timer`
+  under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user`.
+  Logs: `journalctl --user -u pkg-catalog-refresh.service`.
+
+Control the job with these commands:
+
+```sh
+pkg background status
+pkg background disable
+pkg background enable
+```
+
+The job needs a logged-in user session. Linux also needs a systemd user
+manager. If the manager is unavailable, search preparation still succeeds.
+Setup reports that the schedule was not activated. Use `pkg update` to
+refresh manually.
+
+Set `PKG_INSTALL_BACKGROUND=0` to prepare without a job. Set
+`PKG_INSTALL_PREPARE=0` to skip preparation and scheduling. For manual
+preparation without a job, run `pkg setup --no-background`.
+
+## 5. Check the setup
 
 Open a new terminal, then run:
 
@@ -156,6 +201,7 @@ Your packages and the native profile stay unchanged.
 ## Remove the client
 
 ```sh
+pkg background disable
 rm ~/.local/bin/pkg
 # optional: local settings and disposable cache
 rm -rf ~/.config/pkg ~/.cache/pkg

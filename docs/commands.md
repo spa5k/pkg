@@ -15,13 +15,15 @@ Query commands keep JSON output and shell commands keep script-only stdout.
 
 | Command | Behavior |
 | --- | --- |
-| `pkg search QUERY` | Search supported sources. Shows source-qualified names and eligibility. |
+| `pkg search QUERY` | Search local catalogs. Shows ranked package IDs and availability. |
 | `pkg info ID` | Show source, attribute, metadata revision, and known limits. |
 | `pkg install ID…` | Resolve all names, then run one native profile add. |
-| `pkg list` | Read the dedicated profile. Shows native entry IDs and source identity. |
-| `pkg remove ENTRY…` | Remove exact installed entries in one native operation. |
-| `pkg update` | Refresh discovery data. Does not change installed packages. Does not refresh saved tap catalogs; run `pkg tap update` for that. |
-| `pkg upgrade ENTRY…` / `--all` | Follow each entry's original reference. Reports fixed references. After `tap remove`, `--all` filters removed-source references and forwards the remaining entries by explicit native entry IDs (not native `--all`); upgrading a removed-source entry refuses. |
+| `pkg list` | Read the dedicated profile. Shows package IDs and native entry IDs. |
+| `pkg remove ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. |
+| `pkg setup [--no-background]` | Prepare local catalogs. Enable daily user refresh unless disabled. |
+| `pkg background enable/disable/status` | Control daily official catalog refresh. |
+| `pkg update` | Refresh discovery data. Does not change installed packages. Also refresh saved tap catalogs under their recorded consent. |
+| `pkg upgrade ID… [--entry]` / `--all` | Follow each entry's original reference. Reports fixed references. After `tap remove`, `--all` filters removed-source references and forwards the remaining entries by explicit native entry IDs (not native `--all`); upgrading a removed-source entry refuses. |
 | `pkg history` | Show native profile generations. |
 | `pkg rollback [N]` | Use Nix's native previous or selected generation. Refreshes launchers. |
 | `pkg prune --older-than Nd` | Remove only eligible non-current generations. Requires an explicit positive age. |
@@ -57,12 +59,12 @@ change
   No fetch, import, or Ruby runs before it. A noninteractive `add` without
   consent must pass `--trust` explicitly. Otherwise it stops and changes
   nothing.
-- Only `tap add` and `tap update` execute tap Ruby. The Ruby runtime and
+- `tap add`, `tap update`, and the saved-tap phase of `pkg update` execute tap Ruby. The Ruby runtime and
   the Homebrew reader are pinned and supplied by Nix. They run inside an
   ordinary sandboxed Nix derivation. `tap update` may execute source
   revision Ruby under the same restrictions.
-- `pkg update` refreshes discovery data only. It does not refresh saved
-  tap catalogs.
+- `pkg update` refreshes official catalogs and saved taps. The daily user
+  job refreshes official catalogs only. It runs no tap Ruby.
 - Normal `search`, `info`, and `install` of saved catalogs run no source
   Ruby and never prompt.
 - `tap remove` blocks future use of a source. It does not uninstall
@@ -94,7 +96,7 @@ the [plan](../openspec/changes/import-public-cask-taps/design.md) and the
 `--json` works only with the five query commands: `search`, `info`,
 `list`, `tap list`, and `doctor`. With any other command it is a usage
 error (exit code 2). Every JSON result uses the same versioned envelope,
-pretty-printed:
+with this shape:
 
 ```json
 {
@@ -109,46 +111,80 @@ nullable are `null` when the value is unknown or does not apply.
 
 ### `search`
 
-The result holds `system` (string), `sources` (one report per queried
-source), and `results` (the matched rows). When every source fails and no
-usable cache exists, `search` exits nonzero instead of reporting an empty
-success. Rows reused from cache after a live failure carry
-`"stale": true`.
+The result holds `system`, `sources`, `total`, `approximate`, and `results`. `total` counts
+all matches before a limit. If sources fail and no usable rows remain,
+search exits nonzero. Healthy sources can still return rows when another
+source is unavailable. Warnings go to stderr.
 
-`pkg update` prepares the complete discovery cache before search. A first
-search without a current cache prepares it in the foreground. Progress goes
-to stderr. Ctrl-C cancels preparation and retains the previous complete cache.
+Search uses literal search words by default, without case sensitivity.
+Every query word must match a name or description. Exact package IDs come
+first. Name matches precede description matches. General CLI/client families
+precede helper tools; newer major versions in those families precede older
+ones. An identity match precedes a match in the display name alone.
+Library descriptions lower relevance unless the query requests them.
+Short terms match whole words or name prefixes: `aws` does not match
+`claws-mail` or the word `draws`.
 
-Nix evaluates metadata in batches of 256 attributes, with one evaluator at
-a time. Each evaluator has a 512 MiB RSS budget. The memory guard stops
-at 480 MiB to allow growth between samples. A stopped batch is split and
-retried. An entry that still exceeds the budget fails
-the refresh. The cache includes names and descriptions, without evaluating
-build dependencies. A failed refresh keeps the previous complete snapshot.
+Normal search hides known language, plugin, and build dependency namespaces.
+It also hides Nixpkgs library descriptions, unwrapped or development variants,
+and versioned `@` casks. Exact attribute IDs, namespace
+queries, and explicit variant queries can reach them. Use `--broad` to include
+them and unrestricted substring matches. `--all` changes the result count;
+it keeps the normal relevance rules.
 
-SQLite holds one complete snapshot per source and system, with its locked
-revision. Queries use an 8 MiB page cache and read rows through the Rust
-regex filter. Matched rows are spooled to disk before output. Installed
-state and history remain in the native Nix profile.
+Library queries such as `aws sdk` or `aws library` can show relevant libraries
+without `--broad`. The visibility rules use package names and descriptions;
+they do not inspect built files or promise that every row exposes a command.
 
-Search pattern grammar, per lane:
+If no literal result exists, search can show similar package names. The
+fallback uses one edit for names of four to seven characters, and up to two
+for longer names. An adjacent transposition is one edit. Three-character
+terms such as `aws` do not use fuzzy matching. Fuzzy matching never searches
+descriptions. `approximate` is true only for that fallback. Human output
+labels the similar names. Use `--no-fuzzy` to disable it. Install still requires
+an exact name. A failed short name shows up to five local suggestions and
+never starts a full catalog scan.
+A short alias that only refers to a hidden library or variant requires an
+exact package ID. Hidden aliases still count for source ambiguity. `pkg install
+aws` will suggest a tool such as `nixpkgs:awscli2` instead of selecting a library
+through its internal name.
 
-- The `nixpkgs` lane evaluates the complete catalog in bounded batches per locked
-  revision and filters locally: the
-  pattern is a Rust regex (the `regex` crate), compiled
-  case-insensitively and matched against the same three strings native
-  `nix search` matches — the full attribute path (for example
-  `legacyPackages.<system>.python312Packages.requests`), the package
-  name (already version-stripped), and the description (an empty
-  description is matched; `^$` finds packages without one). An invalid
-  pattern fails as a usage error before any source is queried.
-  Breaking note: native `nix search` uses POSIX ERE; pkg uses the Rust
-  regex engine, so advanced patterns can differ. The tested fzf and ripgrep queries
-  returned identical results.
-- The `cask` lane evaluates the generated catalog index once and filters
-  locally: the same Rust regex grammar, matched against each entry's
-  token, name, and description. Only eligible entries are listed;
-  excluded tokens stay discoverable through `pkg info`.
+Use `--regex` for a Rust
+regular expression. Invalid regex input is a usage error before any file
+or runtime lookup. Regex searches include development packages and variants.
+`^$ --regex` can match an empty description.
+
+Human output shows 20 results by default. Use
+`--limit N` or `--all` to change the count. JSON includes all matches unless
+`--limit` is supplied. These two options cannot be combined.
+
+Search includes Nixpkgs, official Homebrew Casks, and registered cask taps
+by default. Use `--source nixpkgs`, `--source cask`, `--source homebrew/cask`,
+or `--source owner/tap` to select Nixpkgs, all casks, official casks, or one
+registered tap. `nixpkgs:aws`, `cask:aws`, and `cask:owner/tap/aws` are also
+search queries. A conflicting `--source` is a usage error. Public GitHub
+flake IDs remain installable directly; arbitrary remote flakes are not a
+global searchable source.
+
+Exact unavailable cask names show their
+reason. Use `--unavailable` to include other unavailable matches. Cask host
+requirements use the same rules as info and install.
+
+The installer prepares local catalogs. `pkg setup` and `pkg update` can
+prepare them manually. Normal search uses local files without Nix or
+network access. A missing catalog gives a setup instruction. Data older
+than one day is marked stale. Verbose output includes catalog age and
+revision. A failed refresh keeps the previous complete snapshot.
+
+Preparation evaluates metadata in batches of 256 attributes. Each evaluator
+has a 512 MiB RSS budget. The memory guard stops at 480 MiB. A stopped
+batch is split and retried. An entry that still exceeds the budget fails
+the refresh. Catalog publication is atomic for each source. A source can
+finish when another source fails.
+
+SQLite holds native catalog metadata with its source and revision. Search
+uses an 8 MiB page cache. A temporary SQLite spool orders matching rows
+with bounded memory. The native Nix profile owns installed state and history.
 
 Source report fields:
 
@@ -158,7 +194,7 @@ Source report fields:
 | `display` | string, nullable | Human identity from flake metadata. |
 | `locked_reference` | string, nullable | The locked reference queried. |
 | `revision` | string, nullable | Locked revision of that reference. |
-| `status` | string | `fresh`, `stale`, `failed`, or `skipped-platform`. |
+| `status` | string | `cached`, `stale`, `failed`, or `skipped-platform`. `cached` means no live source check was made. |
 | `detail` | string, nullable | Failure or limitation detail. |
 | `support_detail` | string, nullable | Why cask support badges are absent. |
 
@@ -173,14 +209,14 @@ Row fields:
 | `reference` | string, nullable | The reference used for evaluation: normally the locked reference; the moving reference when source metadata failed. |
 | `revision` | string, nullable | Locked revision of that reference. |
 | `system` | string | System the row was evaluated for. |
-| `stale` | boolean | Row reused from cache after a live query failure. |
-| `support` | object, nullable | `{"status":"eligible"}` or `{"status":"excluded","reason":…,"detail":…}` for cask rows; `null` for nixpkgs rows. Eligible is the generated metadata status, not a verification promise. |
+| `stale` | boolean | Local catalog is older than one day, or its age is unknown. |
+| `support` | object, nullable | `{"status":"eligible"}` or `{"status":"excluded","reason":…,"detail":…}` or `{"status":"unknown","reason":…}` for cask rows; `null` for nixpkgs rows. Eligible is the generated metadata status, not a verification promise. |
 
 ### `info`
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `id` | string | Qualified ID; an explicit GitHub installable shows as `flake:<attribute>`. |
+| `id` | string | Qualified ID; an explicit GitHub installable keeps `github:owner/repo#attribute`. |
 | `source` | string | Display identity, or the reference when metadata was unreadable. |
 | `reference` | string | The moving source reference used. |
 | `locked_reference`, `revision` | string, nullable | The locked source Nix resolved. |
@@ -190,6 +226,9 @@ Row fields:
 | `name` | string | Package name or the requested attribute. |
 | `version` | string, nullable | Evaluated or recorded version. |
 | `description` | string | Evaluated description; can be empty. |
+| `installed_state` | string | `installed`, `absent`, or `unknown`. A failed profile read produces unknown and exit code 1. |
+| `installed_error` | string, nullable | Profile read failure detail. |
+| `availability` | object, nullable | Cask host decision: `available`, `unavailable`, or `unknown`, with a reason when needed. |
 | `installed` | object, nullable | `{"entry_id":…,"original_url":…,"locked_url":…}` when an installed entry matches the full attribute and the canonical source; else `null`. |
 | `cask` | object, nullable | Cask classification, below; `null` for non-cask IDs. |
 
@@ -211,7 +250,8 @@ The result is an array with one row per **active** profile entry:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `entry_id` | string | The exact native entry ID. Pass it back verbatim to `remove` and `upgrade`. |
+| `package_id` | string | Package ID accepted by remove and upgrade. Duplicate entries require an explicit entry choice. |
+| `entry_id` | string | Exact native entry ID. Pass it with `--entry` to select one duplicate. |
 | `name` | string | Final attribute segment. |
 | `source` | string | The original moving reference installed from. |
 | `locked_source` | string | The locked reference Nix resolved. |
