@@ -5,4 +5,7 @@
 - [x] RQ-03 Share immutable catalog indexes and use explicit cache mutation.
 - [x] RQ-04 Remove redundant wrappers and impossible error branches.
 - [x] RQ-05 Test error causes and cancellation. Run the required checks.
-- [ ] RQ-06 Record evidence and open the Rust quality PR.
+- [x] RQ-06 Record evidence and open the Rust quality PR.
+
+The change is [PR #114](https://github.com/spa5k/pkg/pull/114).
+Local results are in [Rust quality checks](../../../docs/verification/rust-quality-2026-10-12.md).
