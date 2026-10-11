@@ -16,6 +16,8 @@ The CLI discovery change is
 [Improve package states and discovery](openspec/changes/improve-cli-discovery/proposal.md).
 Homebrew formula discovery and source sections follow
 [Show Homebrew formulae and source sections](openspec/changes/improve-homebrew-discovery/proposal.md).
+Package command output follows
+[Improve package command output](openspec/changes/improve-package-command-experience/proposal.md).
 
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.
@@ -33,11 +35,11 @@ Homebrew formula discovery and source sections follow
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.14 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.14):
+   [v0.2.0-alpha.15 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.15):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.14/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.15/install.sh
    sh pkg-install.sh
    ```
 
@@ -83,6 +85,10 @@ pkg doctor                 # Read-only runtime and profile status
 pkg shellenv               # Print PATH setup for Bash/Zsh
 pkg apps sync              # Rebuild macOS app launchers
 ```
+
+`pkg add` also installs packages. `pkg uninstall` also removes packages.
+Install and remove show the full package ID. Install also shows the commands
+that the package exposes in the profile.
 
 Packages install into a dedicated native profile at
 `~/.local/state/nix/profiles/pkg`. Your default Nix profile stays separate.

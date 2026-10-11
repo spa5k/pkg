@@ -27,6 +27,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     for id in ids {
         parsed_ids.push(catalog::parse_id(id)?);
     }
+    eprintln!("Resolving: {}", ids.join(", "));
     let session = session(cli)?;
     let system = session.nix.system()?;
     let only_formulae = parsed_ids
@@ -121,21 +122,47 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     if pending.is_empty() {
         return Ok(());
     }
-    eprintln!("Installing: {}", ids.join(", "));
+    let requested: Vec<_> = pending
+        .iter()
+        .map(|installable| resolved_names[installable].clone())
+        .collect();
+    eprintln!("Installing: {}", requested.join(", "));
     session
         .nix
         .profile_add(&session.paths.profile, &pending)
         .map_err(|error| {
-            let requested: Vec<_> = pending
-                .iter()
-                .map(|installable| resolved_names[installable].clone())
-                .collect();
             mutation_failed(&session, "install", &error, Some(&before), Some(&requested))
         })?;
     let after = installed_entries(&session)?;
-    let names = changed_names(&before, &after);
+    let changed: Vec<_> = after
+        .iter()
+        .filter(|(key, entry)| before.get(*key) != Some(*entry))
+        .map(|(_, entry)| entry)
+        .collect();
+    let names: Vec<_> = changed
+        .iter()
+        .map(|entry| package_id(&session, entry))
+        .collect();
     apps_refresh_after_mutation(&session, "install", &names)?;
     report_names("Installed", &names);
+    let commands: std::collections::BTreeSet<_> = changed
+        .iter()
+        .flat_map(|entry| crate::installed::commands(entry, &session.paths.profile))
+        .collect();
+    if !commands.is_empty() {
+        let shown = commands
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let remaining = commands.len().saturating_sub(10);
+        if remaining == 0 {
+            println!("Commands: {shown}");
+        } else {
+            println!("Commands: {shown} (+{remaining} more)");
+        }
+    }
     Ok(())
 }
 
@@ -223,9 +250,8 @@ fn gate_view(
         .map_err(|reason| format!("cask:{source}/{token} {reason}"))
 }
 
-/// The short display name: the last path segment of the native name.
-fn short_name(name: &str) -> String {
-    name.rsplit('/').next().unwrap_or(name).to_string()
+fn package_id(session: &super::Session, entry: &ProfileEntry) -> String {
+    crate::installed::package_id(entry, &session.config, &session.paths.state_home)
 }
 
 /// Report one completed transaction: one line, only what changed.
@@ -235,18 +261,6 @@ fn report_names(verb: &str, names: &[String]) {
         [one] => println!("{verb}: {one}"),
         many => println!("{verb}: {}", many.join(", ")),
     }
-}
-
-/// The names of entries that were added or changed in the second profile.
-fn changed_names(
-    before: &BTreeMap<String, ProfileEntry>,
-    after: &BTreeMap<String, ProfileEntry>,
-) -> Vec<String> {
-    after
-        .keys()
-        .filter(|id| before.get(*id) != after.get(*id))
-        .map(|id| short_name(&after[id].name()))
-        .collect()
 }
 
 pub(super) fn remove(cli: &Cli, entries: &[String], exact_entry: bool) -> Result<(), CommandError> {
@@ -263,7 +277,11 @@ pub(super) fn remove(cli: &Cli, entries: &[String], exact_entry: bool) -> Result
         entries,
         exact_entry,
     )?;
-    eprintln!("Removing: {}", entries.join(", "));
+    let selected: Vec<_> = entries
+        .iter()
+        .map(|key| package_id(&session, &installed[key]))
+        .collect();
+    eprintln!("Removing: {}", selected.join(", "));
     session
         .nix
         .profile_remove(&session.paths.profile, &entries)
@@ -272,7 +290,7 @@ pub(super) fn remove(cli: &Cli, entries: &[String], exact_entry: bool) -> Result
     let names: Vec<String> = entries
         .iter()
         .filter(|entry| !after.contains_key(*entry))
-        .map(|entry| short_name(&installed[entry].name()))
+        .map(|entry| package_id(&session, &installed[entry]))
         .collect();
     apps_refresh_after_mutation(&session, "remove", &names)?;
     report_names("Removed", &names);
@@ -387,7 +405,11 @@ pub(super) fn upgrade(
     // and unknown targets are gated with the install policy.
     gate_upgrade_formulae(&session, &installed, &movable)?;
     gate_upgrade_macos_range(&session, &installed, &movable).map_err(CommandError::Message)?;
-    eprintln!("Upgrading: {}", movable.join(", "));
+    let selected: Vec<_> = movable
+        .iter()
+        .map(|key| package_id(&session, &installed[key]))
+        .collect();
+    eprintln!("Upgrading: {}", selected.join(", "));
     session
         .nix
         .profile_upgrade(&session.paths.profile, Some(&movable))
@@ -395,8 +417,12 @@ pub(super) fn upgrade(
     let after = installed_entries(&session)?;
     let names: Vec<String> = movable
         .iter()
-        .filter(|entry| after.get(*entry) != installed.get(*entry))
-        .map(|entry| short_name(&installed[entry].name()))
+        .filter(|entry| {
+            after
+                .get(*entry)
+                .is_some_and(|new| Some(new) != installed.get(*entry))
+        })
+        .map(|entry| package_id(&session, &after[entry]))
         .collect();
     apps_refresh_after_mutation(&session, "upgrade", &names)?;
     report_names("Upgraded", &names);

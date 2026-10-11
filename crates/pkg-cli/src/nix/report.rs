@@ -1,6 +1,6 @@
 //! Filtered live reporting for long native profile mutations.
 //!
-//! "nix profile add" and "nix profile upgrade" stream fetch and build
+//! Native profile mutations stream fetch, build, and removal
 //! progress on stderr. Raw passthrough turns one install into dozens of
 //! git transfer lines. The reporter keeps the stream readable: transfer
 //! and evaluation chatter is dropped, one compact status line shows the
@@ -11,6 +11,7 @@
 
 use std::io::IsTerminal as _;
 use std::io::Write as _;
+use std::time::Instant;
 
 use super::process::StderrSink;
 
@@ -68,6 +69,9 @@ fn classify(line: &str) -> Kind {
         // text still reaches the failure diagnostic when a run fails.
         return Kind::Hide;
     }
+    if line.starts_with("removing '") && line.ends_with('\'') {
+        return Kind::Hide;
+    }
     if line.starts_with("error:")
         || line.starts_with("❌ ")
         || line.starts_with("Reason:")
@@ -109,7 +113,7 @@ fn classify(line: &str) -> Kind {
     }
     if let Some(rest) = line.strip_prefix("copying path '") {
         let path = rest.split('\'').next().unwrap_or(rest);
-        return Kind::Status(format!("copying {}", short_name(path)));
+        return Kind::Status(format!("downloading {}", short_name(path)));
     }
     if let Some(rest) = line.strip_prefix("building '") {
         let path = rest.strip_suffix('\'').unwrap_or(rest);
@@ -140,6 +144,10 @@ pub struct MutationReporter {
     file_conflict: bool,
     profile: Option<String>,
     verbose: bool,
+    started: Instant,
+    work: String,
+    frame: usize,
+    last_render: Option<Instant>,
 }
 
 impl MutationReporter {
@@ -154,6 +162,10 @@ impl MutationReporter {
             file_conflict: false,
             profile: None,
             verbose: false,
+            started: Instant::now(),
+            work: String::from("preparing"),
+            frame: 0,
+            last_render: None,
         }
     }
 
@@ -172,12 +184,8 @@ impl MutationReporter {
 
     /// Replace the compact status line.
     fn status(&mut self, text: &str) {
-        if !self.tty {
-            return;
-        }
-        let short: String = text.chars().take(64).collect();
-        eprint!("\r\x1b[2K  nix: {short}");
-        self.status_active = true;
+        self.work = text.chars().take(64).collect();
+        self.tick();
     }
 
     /// Erase the compact status line.
@@ -185,6 +193,7 @@ impl MutationReporter {
         if self.status_active {
             eprint!("\r\x1b[2K");
             self.status_active = false;
+            self.last_render = None;
         }
     }
 
@@ -286,8 +295,31 @@ impl StderrSink for MutationReporter {
         if ends_with_prompt(&self.partial) {
             self.passthrough = true;
             let prompt = std::mem::take(&mut self.partial);
+            self.clear_status();
             self.write_raw(&prompt);
         }
+    }
+
+    fn tick(&mut self) {
+        if !self.tty || self.verbose || self.passthrough || !self.partial.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .last_render
+            .is_some_and(|last| now.duration_since(last).as_millis() < 250)
+        {
+            return;
+        }
+        self.last_render = Some(now);
+        let frame = ['|', '/', '-', '\\'][self.frame % 4];
+        self.frame = self.frame.wrapping_add(1);
+        eprint!(
+            "\r\x1b[2K  {frame} {} ({}s)",
+            self.work,
+            self.started.elapsed().as_secs()
+        );
+        self.status_active = true;
     }
 
     fn finish(&mut self, success: bool) {
@@ -329,6 +361,7 @@ mod tests {
             "  /nix/store/nsh0cwzk8kxsq5s8znsp9qpq1dx2jl6y-cask-rectangle.drv",
             "unpacking 'github:numtide/flake-utils/11707dc2' into the Git cache...",
             "error (ignored): opening file \"/etc/nix/sentry-endpoint\": Permission denied",
+            "removing 'github:NixOS/nixpkgs#legacyPackages.aarch64-darwin.fff'",
         ] {
             assert_eq!(classify(line), Kind::Hide, "{line}");
         }
@@ -362,7 +395,7 @@ mod tests {
             classify(
                 "copying path '/nix/store/mwfmi86ii02c4zlb3z40s09jww8dxqq2-file-5.47-dev' from 'https://cache.nixos.org'..."
             ),
-            Kind::Status(String::from("copying file-5.47-dev"))
+            Kind::Status(String::from("downloading file-5.47-dev"))
         );
         assert_eq!(
             classify(
