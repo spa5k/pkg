@@ -44,6 +44,9 @@ impl Routing {
     /// Registry sources are strictly validated already; a source whose
     /// reference cannot be formed fails the whole routing instead of
     /// silently routing an invalid source.
+    /// # Errors
+    ///
+    /// Returns an error when a registry source cannot be converted to its stable local reference.
     pub fn from_registry(
         sources: &Sources,
         registry: &Registry,
@@ -61,6 +64,9 @@ impl Routing {
     ///
     /// An unknown tap source is refused with the `pkg tap add` instruction;
     /// pkg never reinterprets an unknown source as Nix code.
+    /// # Errors
+    ///
+    /// Returns an error when `source` is not the official cask source or a registered tap.
     pub fn cask_reference(&self, source: &str) -> Result<String, String> {
         if source == OFFICIAL_CASK_SOURCE {
             Ok(self.casks.clone())

@@ -130,6 +130,13 @@ def main():
         return json.loads(run(pkg, "--json", "list"))["result"]
 
     flake("1")
+    flake_file = source / "flake.nix"
+    valid_flake = flake_file.read_text()
+    flake_file.write_text(valid_flake.replace(
+        "probe = ", 'broken = throw "missing attribute dependency fixture"; probe = ', 1))
+    run(pkg, "info", "broken", code=1)
+    assert "missing attribute dependency fixture" in results[-1]["stderr"], results[-1]
+    flake_file.write_text(valid_flake)
     installed = run(pkg, "add", "nixpkgs:probe")
     assert "Installed: nixpkgs:probe" in installed, installed
     assert "Commands: probe" in installed, installed

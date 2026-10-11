@@ -128,7 +128,9 @@ pub(super) fn clear_launchers(dest: &Path) -> Result<(), String> {
     {
         let entry = entry.map_err(|e| format!("could not read {}: {e}", dest.display()))?;
         if let Ok(name) = entry.file_name().into_string()
-            && name.ends_with(".app")
+            && Path::new(&name)
+                .extension()
+                .is_some_and(|extension| extension == "app")
         {
             let path = entry.path();
             fs::remove_dir_all(&path)
@@ -160,7 +162,8 @@ pub(super) fn write_source_map(
 ) -> Result<(), String> {
     let mut text = String::new();
     for (name, source) in apps {
-        text.push_str(&format!("{name}\t{}\n", source.display()));
+        use std::fmt::Write as _;
+        let _ = writeln!(text, "{name}\t{}", source.display());
     }
     fs::write(dest.join(SOURCE_MAP_NAME), text).map_err(|e| {
         format!(

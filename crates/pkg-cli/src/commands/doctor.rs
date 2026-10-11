@@ -92,7 +92,7 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
                         format!("{} ({} entries)", paths.profile.display(), entries.len()),
                     )),
                     Err(error) => {
-                        rows.push(observed("pkg profile", "unreadable", error.to_string()))
+                        rows.push(observed("pkg profile", "unreadable", error.to_string()));
                     }
                 },
             }

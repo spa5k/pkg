@@ -22,6 +22,8 @@ Code cleanup follows
 [Simplify the native client](openspec/changes/simplify-client/proposal.md).
 Rust error and ownership changes follow
 [Improve Rust error handling and ownership](openspec/changes/improve-rust-quality/proposal.md).
+The strict lint and code audit work follows
+[Enforce Rust quality](openspec/changes/enforce-rust-quality/proposal.md).
 
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.

@@ -46,8 +46,6 @@ fn capture_json(system: &str, case: &str) -> Value {
 /// source-relative path — exactly what `extract_tar_gz` would hand to
 /// the importer for the real archive.
 fn source_tree(case: &str) -> BTreeMap<String, String> {
-    let root = std::path::Path::new(TESTDATA).join("sources").join(case);
-    let mut tree = BTreeMap::new();
     fn walk(dir: &std::path::Path, prefix: &str, tree: &mut BTreeMap<String, String>) {
         let entries = std::fs::read_dir(dir)
             .unwrap_or_else(|e| panic!("fixture source tree {} missing: {e}", dir.display()));
@@ -68,6 +66,8 @@ fn source_tree(case: &str) -> BTreeMap<String, String> {
             }
         }
     }
+    let root = std::path::Path::new(TESTDATA).join("sources").join(case);
+    let mut tree = BTreeMap::new();
     walk(&root, "", &mut tree);
     assert!(!tree.is_empty(), "fixture tree {case} is empty");
     tree

@@ -118,6 +118,9 @@ fn resolve(
 /// only candidate and never falls back. Nothing is installed or repaired
 /// here, and no invented version floor is enforced: capability is proven
 /// by the decoded shapes.
+/// # Errors
+///
+/// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
 pub fn discover(configured: Option<&str>) -> Result<Nix, NixError> {
     let path = std::env::var_os("PATH");
     let state = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty());

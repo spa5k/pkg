@@ -40,7 +40,7 @@ pub(super) fn tree_inventory(tree: &Path) -> Result<BTreeMap<String, String>, St
                     .strip_prefix(tree)
                     .map_err(|e| format!("tree walk escaped {}: {e}", tree.display()))?;
                 let Some(rel) = rel.to_str() else {
-                    return Err(format!("tree path {rel:?} is not UTF-8"));
+                    return Err(format!("tree path {} is not UTF-8", rel.display()));
                 };
                 let bytes = std::fs::read(&path)
                     .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
@@ -85,7 +85,7 @@ impl<R: Read> BoundedGzReader<R> {
     /// early EOF. A tar stream is 512-byte blocked; a decoded length off
     /// that grid means the tar itself was truncated.
     fn finish(&mut self) -> Result<(), String> {
-        let mut sink = [0u8; 64 * 1024];
+        let mut sink = vec![0u8; 64 * 1024].into_boxed_slice();
         loop {
             match self.read(&mut sink) {
                 Ok(0) => break,
@@ -127,7 +127,7 @@ impl<R: Read> Read for BoundedGzReader<R> {
     }
 }
 
-/// Validate a `pax_global_header` (XGlobalHeader) member: bounded in
+/// Validate a `pax_global_header` (`XGlobalHeader`) member: bounded in
 /// size and, record by record, ONLY `comment` metadata keys. `path`,
 /// `linkpath`, or any other override key could move data around the
 /// strict extraction rules, so those are refused.
@@ -205,194 +205,242 @@ fn extract_tar_gz_limited(
     }
     std::fs::create_dir_all(dest).map_err(|e| format!("cannot create {}: {e}", dest.display()))?;
     let mut bounded = BoundedGzReader::new(flate2::read::GzDecoder::new(bytes), byte_limit);
-    let mut entries: usize = 0;
-    let mut count: usize = 0;
+    let mut tree = ExtractedTree::default();
     {
         let mut archive = tar::Archive::new(&mut bounded);
         archive.set_preserve_permissions(true);
         archive.set_unpack_xattrs(false);
-        let mut prefix: Option<String> = None;
-        let mut files: BTreeSet<String> = BTreeSet::new();
-        let mut dirs: BTreeSet<String> = BTreeSet::new();
-        let mut total: u64 = 0;
-
-        // Register every ancestor of `stripped` (lowercased: the SAME
-        // consistent spelling the file/dir registries use) so entries can
-        // never collide across letter case differences in parents.
-        let register_ancestors =
-            |stripped: &str, files: &BTreeSet<String>, dirs: &mut BTreeSet<String>| {
-                let mut current = stripped.to_ascii_lowercase();
-                while let Some((parent, _)) = current.rsplit_once('/') {
-                    if files.contains(parent) {
-                        return Err(format!(
-                            "archive path {stripped:?} descends into a file {parent:?}"
-                        ));
-                    }
-                    dirs.insert(parent.to_string());
-                    current = parent.to_string();
-                }
-                Ok::<(), String>(())
-            };
-
+        let mut entries = 0usize;
         for entry in archive
             .entries()
             .map_err(|e| format!("archive is damaged: {e}"))?
         {
             let mut entry = entry.map_err(|e| format!("archive is damaged: {e}"))?;
-            // EVERY member counts against the entry cap: files, directories,
-            // and metadata (global PAX) headers alike.
-            entries += 1;
+            entries = entries
+                .checked_add(1)
+                .ok_or_else(|| "archive entry count overflowed".to_string())?;
             if entries > max_files {
                 return Err(format!(
                     "archive has more than {max_files} entries (files, directories, \
-                 and metadata headers all count)"
+                     and metadata headers all count)"
                 ));
             }
             let entry_type = entry.header().entry_type();
-            // GitHub codeload archives carry one `pax_global_header`
-            // (XGlobalHeader) member BEFORE the root. Allow it ONLY as a
-            // bounded comment-only metadata header; any path/link/global
-            // override key could smuggle paths around the checks below.
             if entry_type == tar::EntryType::XGlobalHeader {
                 validate_global_pax_header(&mut entry)?;
                 continue;
             }
-            // Per-entry PAX records that override the path or link target
-            // are rejected for the same reason.
-            if let Ok(Some(pax)) = entry.pax_extensions() {
-                for ext in pax.flatten() {
-                    if let Ok(key) = ext.key()
-                        && matches!(key, "path" | "linkpath" | "size")
-                    {
-                        return Err(format!(
-                            "archive entry carries a pax {key} override; path, link, or \\
+            tree.unpack_entry(
+                &mut entry,
+                entry_type,
+                dest,
+                byte_limit,
+                max_files,
+                max_file_bytes,
+            )?;
+        }
+    }
+    bounded.finish()?;
+    if tree.file_count == 0 {
+        return Err("archive contains no regular files".to_string());
+    }
+    Ok(tree.file_count)
+}
+
+#[derive(Default)]
+struct ExtractedTree {
+    prefix: Option<String>,
+    files: BTreeSet<String>,
+    dirs: BTreeSet<String>,
+    total_bytes: u64,
+    file_count: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ExtractLimits {
+    bytes: u64,
+    files: usize,
+    file_bytes: u64,
+}
+
+impl ExtractedTree {
+    fn unpack_entry<R: Read>(
+        &mut self,
+        entry: &mut tar::Entry<'_, R>,
+        entry_type: tar::EntryType,
+        dest: &Path,
+        byte_limit: u64,
+        max_files: usize,
+        max_file_bytes: u64,
+    ) -> Result<(), String> {
+        let (path_str, relative_path) = self.entry_paths(entry)?;
+        match entry_type {
+            tar::EntryType::Directory if !relative_path.is_empty() => {
+                self.create_directory(&relative_path, dest)
+            }
+            tar::EntryType::Directory => Ok(()),
+            tar::EntryType::Regular => self.unpack_file(
+                entry,
+                &path_str,
+                &relative_path,
+                dest,
+                ExtractLimits {
+                    bytes: byte_limit,
+                    files: max_files,
+                    file_bytes: max_file_bytes,
+                },
+            ),
+            other => Err(format!(
+                "archive entry {path_str:?} has type {other:?}; symlinks, hardlinks, \
+                 devices, and special entries are refused"
+            )),
+        }
+    }
+
+    fn entry_paths<R: Read>(
+        &mut self,
+        entry: &mut tar::Entry<'_, R>,
+    ) -> Result<(String, String), String> {
+        if let Ok(Some(pax)) = entry.pax_extensions() {
+            for ext in pax.flatten() {
+                if let Ok(key) = ext.key()
+                    && matches!(key, "path" | "linkpath" | "size")
+                {
+                    return Err(format!(
+                        "archive entry carries a pax {key} override; path, link, or \
                          size metadata overrides are refused"
-                        ));
-                    }
-                }
-            }
-            let path = entry
-                .path()
-                .map_err(|e| format!("archive entry has no usable path: {e}"))?
-                .into_owned();
-            let Some(path_str) = path.to_str() else {
-                return Err(format!("archive path {path:?} is not UTF-8"));
-            };
-            // GitHub writes directory members WITH a trailing slash; the
-            // slash is not a path segment.
-            let path_str = path_str.trim_end_matches('/');
-            if path_str.is_empty() {
-                return Err("archive has an empty path member".to_string());
-            }
-            if path_str.starts_with('/')
-                || path_str.contains('\\')
-                || path_str.chars().any(|c| c.is_ascii_control())
-                || !path_str.split('/').all(safe_segment)
-            {
-                return Err(format!(
-                    "archive path {path_str:?} is not a safe relative tree path"
-                ));
-            }
-            // ASCII-only path components: Unicode case folding and
-            // NFD/NFC normalization would let distinct upstream names
-            // collide (or pass case checks) on macOS. File CONTENT and
-            // all other metadata stay fully Unicode.
-            if !path_str.is_ascii() {
-                return Err(format!(
-                    "archive path {path_str:?} contains non-ASCII characters; ASCII-only \
-                     source filenames are required (Unicode case-fold and NFD/NFC collisions \
-                     on macOS); rename the file in the upstream tap"
-                ));
-            }
-            let segments: Vec<&str> = path_str.split('/').collect();
-            let top = segments[0];
-            match &prefix {
-                None => prefix = Some(top.to_string()),
-                Some(p) if p == top => {}
-                Some(p) => {
-                    return Err(format!(
-                        "archive has multiple top-level prefixes ({p:?} and {top:?}); \
-                     a single source tree prefix is required"
-                    ));
-                }
-            }
-            let stripped = segments[1..].join("/");
-            match entry_type {
-                tar::EntryType::Directory => {
-                    if !stripped.is_empty() {
-                        let low = stripped.to_ascii_lowercase();
-                        if files.contains(&low) {
-                            return Err(format!(
-                                "case collision: directory {stripped:?} shadows an existing file"
-                            ));
-                        }
-                        dirs.insert(low.clone());
-                        register_ancestors(&stripped, &files, &mut dirs)?;
-                        std::fs::create_dir_all(dest.join(&stripped)).map_err(|e| {
-                            format!("cannot create {}: {e}", dest.join(&stripped).display())
-                        })?;
-                    }
-                }
-                tar::EntryType::Regular => {
-                    if stripped.is_empty() {
-                        return Err(format!(
-                            "archive member {path_str:?} is a file at the prefix root; \
-                         the prefix must be a directory"
-                        ));
-                    }
-                    let size = entry
-                        .header()
-                        .size()
-                        .map_err(|e| format!("bad entry size: {e}"))?;
-                    if size > max_file_bytes {
-                        return Err(format!(
-                            "archive file {path_str:?} is {size} bytes; per-file limit is \
-                         {max_file_bytes}"
-                        ));
-                    }
-                    total = total
-                        .checked_add(size)
-                        .ok_or_else(|| "archive total size overflowed".to_string())?;
-                    if total > byte_limit {
-                        return Err(format!("archive unpacks past the {byte_limit} byte limit"));
-                    }
-                    count += 1;
-                    if count > max_files {
-                        return Err(format!("archive has more than {max_files} files"));
-                    }
-                    let low = stripped.to_ascii_lowercase();
-                    if files.contains(&low) || dirs.contains(&low) {
-                        return Err(format!(
-                            "case collision: file {stripped:?} shadows an existing entry"
-                        ));
-                    }
-                    register_ancestors(&stripped, &files, &mut dirs)?;
-                    files.insert(low);
-                    let target = dest.join(&stripped);
-                    if let Some(parent) = target.parent() {
-                        std::fs::create_dir_all(parent)
-                            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-                    }
-                    entry
-                        .unpack(&target)
-                        .map_err(|e| format!("cannot unpack {path_str:?}: {e}"))?;
-                }
-                other => {
-                    return Err(format!(
-                        "archive entry {path_str:?} has type {other:?}; symlinks, hardlinks, \
-                     devices, and special entries are refused"
                     ));
                 }
             }
         }
+        let path = entry
+            .path()
+            .map_err(|e| format!("archive entry has no usable path: {e}"))?
+            .into_owned();
+        let Some(path_str) = path.to_str() else {
+            return Err(format!("archive path {} is not UTF-8", path.display()));
+        };
+        let path_str = path_str.trim_end_matches('/');
+        if path_str.is_empty() {
+            return Err("archive has an empty path member".to_string());
+        }
+        if path_str.starts_with('/')
+            || path_str.contains('\\')
+            || path_str.chars().any(|c| c.is_ascii_control())
+            || !path_str.split('/').all(safe_segment)
+        {
+            return Err(format!(
+                "archive path {path_str:?} is not a safe relative tree path"
+            ));
+        }
+        if !path_str.is_ascii() {
+            return Err(format!(
+                "archive path {path_str:?} contains non-ASCII characters; ASCII-only source \
+                 filenames are required (Unicode case-fold and NFD/NFC collisions on macOS); \
+                 rename the file in the upstream tap"
+            ));
+        }
+        let (top, relative_path) = path_str.split_once('/').unwrap_or((path_str, ""));
+        match &self.prefix {
+            None => self.prefix = Some(top.to_string()),
+            Some(prefix) if prefix == top => {}
+            Some(prefix) => {
+                return Err(format!(
+                    "archive has multiple top-level prefixes ({prefix:?} and {top:?}); \
+                     a single source tree prefix is required"
+                ));
+            }
+        }
+        Ok((path_str.to_string(), relative_path.to_string()))
     }
-    // The tar reader is done; finish consuming and checking the bounded
-    // gzip stream so hidden padding bombs and truncation are refused.
-    bounded.finish()?;
-    if count == 0 {
-        return Err("archive contains no regular files".to_string());
+
+    fn create_directory(&mut self, path: &str, dest: &Path) -> Result<(), String> {
+        let lower = path.to_ascii_lowercase();
+        if self.files.contains(&lower) {
+            return Err(format!(
+                "case collision: directory {path:?} shadows an existing file"
+            ));
+        }
+        self.register_ancestors(path)?;
+        self.dirs.insert(lower);
+        let target = dest.join(path);
+        std::fs::create_dir_all(&target)
+            .map_err(|e| format!("cannot create {}: {e}", target.display()))
     }
-    Ok(count)
+
+    fn unpack_file<R: Read>(
+        &mut self,
+        entry: &mut tar::Entry<'_, R>,
+        archive_path: &str,
+        relative_path: &str,
+        dest: &Path,
+        limits: ExtractLimits,
+    ) -> Result<(), String> {
+        if relative_path.is_empty() {
+            return Err(format!(
+                "archive member {archive_path:?} is a file at the prefix root; \
+                 the prefix must be a directory"
+            ));
+        }
+        let size = entry
+            .header()
+            .size()
+            .map_err(|e| format!("bad entry size: {e}"))?;
+        if size > limits.file_bytes {
+            return Err(format!(
+                "archive file {archive_path:?} is {size} bytes; per-file limit is {}",
+                limits.file_bytes
+            ));
+        }
+        self.total_bytes = self
+            .total_bytes
+            .checked_add(size)
+            .ok_or_else(|| "archive total size overflowed".to_string())?;
+        if self.total_bytes > limits.bytes {
+            return Err(format!(
+                "archive unpacks past the {} byte limit",
+                limits.bytes
+            ));
+        }
+        self.file_count = self
+            .file_count
+            .checked_add(1)
+            .ok_or_else(|| "archive file count overflowed".to_string())?;
+        if self.file_count > limits.files {
+            return Err(format!("archive has more than {} files", limits.files));
+        }
+        let lower = relative_path.to_ascii_lowercase();
+        if self.files.contains(&lower) || self.dirs.contains(&lower) {
+            return Err(format!(
+                "case collision: file {relative_path:?} shadows an existing entry"
+            ));
+        }
+        self.register_ancestors(relative_path)?;
+        self.files.insert(lower);
+        let target = dest.join(relative_path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+        }
+        entry
+            .unpack(&target)
+            .map(|_| ())
+            .map_err(|e| format!("cannot unpack {archive_path:?}: {e}"))
+    }
+
+    fn register_ancestors(&mut self, path: &str) -> Result<(), String> {
+        let mut current = path.to_ascii_lowercase();
+        while let Some((parent, _)) = current.rsplit_once('/') {
+            if self.files.contains(parent) {
+                return Err(format!(
+                    "archive path {path:?} descends into a file {parent:?}"
+                ));
+            }
+            self.dirs.insert(parent.to_string());
+            current = parent.to_string();
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -536,7 +584,7 @@ mod tests {
         // stops at the marker; finishing the bounded stream rejects
         // the hidden decompression padding.
         let mut padded = tar_bytes(&[("p/a.rb", "x", tar::EntryType::Regular)]);
-        padded.extend_from_slice(&[0u8; 512 * 64]);
+        padded.extend(std::iter::repeat_n(0u8, 512 * 64));
         let bomb = gz(padded);
         let err =
             extract_tar_gz_limited(&bomb, &dir.path().join("padding-bomb"), 8 * 1024, 100, 1024)

@@ -16,16 +16,7 @@ rust-version = "1.96"
 license = "Apache-2.0"
 publish = false
 
-# Lint policy: every crate in the workspace inherits these levels
-# through its `[lints]` table, and CI holds them at
-# `cargo clippy --locked --all-targets -- -D warnings` on Linux plus the
-# macOS smoke Clippy step. The deny set is clean in every target on
-# every supported platform. `unwrap_used`, `expect_used`, and `panic`
-# are individually selected restriction lints (not group enables):
-# production code denies explicit unwrap/expect/panic; each crate root
-# opts test builds out once with a reasoned `cfg_attr(test, allow(...))`. Suppressions stay
-# expensive: every `allow` must carry a `reason`
-# (clippy::allow_attributes_without_reason).
+# Groups have lower priority so a specific, reasoned exception can override them.
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "deny"
@@ -34,9 +25,15 @@ unused_imports = "deny"
 unused_variables = "deny"
 unused_assignments = "deny"
 dead_code = "deny"
+unfulfilled_lint_expectations = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
 
 [workspace.lints.clippy]
-all = "deny"
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
 allow_attributes_without_reason = "deny"
 derive_partial_eq_without_eq = "deny"
 float_cmp = "deny"
@@ -54,3 +51,8 @@ too_long_first_doc_paragraph = "deny"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+large_stack_arrays = "deny"
+needless_collect = "deny"
+or_fun_call = "deny"
+redundant_clone = "deny"
+use_self = "deny"

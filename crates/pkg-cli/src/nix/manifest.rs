@@ -368,7 +368,7 @@ mod tests {
         );
         assert_eq!(identity.display, "git");
         // Without a top-level url, the nested locked url stays as fallback.
-        let mut bare = value.clone();
+        let mut bare = value;
         bare.as_object_mut().expect("object").remove("url");
         let fallback = decode_source_identity("git+file:///tmp/pkg-cask-moving?ref=main", &bare);
         assert_eq!(

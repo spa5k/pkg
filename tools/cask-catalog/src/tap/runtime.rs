@@ -19,7 +19,7 @@ const BOOT_ADAPTER_SH: &str = include_str!("../../../../nix/casks/lib/tap/brew-b
 
 /// Nix build wall time limit (the runtime itself bounds export at 15
 /// minutes; nixpkgs fetchTarball and store work need headroom).
-const NIX_WALLTIME: Duration = Duration::from_secs(45 * 60);
+const NIX_WALLTIME: Duration = Duration::from_mins(45);
 /// Per-stream captured Nix log limit. Overflow ABORTS the build; it
 /// never silently truncates into a reported success.
 const MAX_STREAM_BYTES: usize = 1024 * 1024;
@@ -226,7 +226,7 @@ fn spawn_drain(
     std::thread::spawn(move || {
         let mut out = Vec::new();
         let mut overflow = false;
-        let mut chunk = [0u8; 64 * 1024];
+        let mut chunk = vec![0u8; 64 * 1024].into_boxed_slice();
         loop {
             match reader.read(&mut chunk) {
                 Ok(0) | Err(_) => break,
@@ -268,7 +268,9 @@ fn kill_process_group(pgid: u32) {
     if pgid <= 1 {
         return;
     }
-    let pgid = pgid as libc::pid_t;
+    let Ok(pgid) = libc::pid_t::try_from(pgid) else {
+        return;
+    };
     if pgid == unsafe { libc::getpgrp() } {
         return;
     }
@@ -285,7 +287,7 @@ pub(super) fn write_asset(path: &Path, contents: &str) -> Result<(), String> {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
-    let tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap_or(Path::new(".")))
+    let tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap_or_else(|| Path::new(".")))
         .map_err(|e| format!("cannot stage a write next to {}: {e}", path.display()))?;
     std::io::Write::write_all(&mut tmp.as_file(), contents.as_bytes())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -391,7 +393,7 @@ pub(super) struct BoundedOutput {
 
 /// Run one child command under the SHARED bounds: own process group,
 /// per-stream log caps that ABORT (never truncate into success), and a
-/// wall-time limit enforced by SIGKILLing the whole group. Both the
+/// wall-time limit enforced by `SIGKILLing` the whole group. Both the
 /// config gate and the raw-export build use this runner; nothing in
 /// this module reads child output unbounded.
 ///
@@ -449,13 +451,13 @@ mod signal_guard {
             // struct is zeroed and only portable fields are assigned.
             let mut new_action: libc::sigaction = unsafe { std::mem::zeroed() };
             let mut empty_mask: libc::sigset_t = unsafe { std::mem::zeroed() };
-            unsafe { libc::sigemptyset(&mut empty_mask) };
+            unsafe { libc::sigemptyset(&raw mut empty_mask) };
             new_action.sa_sigaction = on_signal as *const () as libc::sighandler_t;
             new_action.sa_mask = empty_mask;
             new_action.sa_flags = libc::SA_RESTART;
             let mut saved = [unsafe { std::mem::zeroed::<libc::sigaction>() }; SIGNALS.len()];
             for (slot, sig) in saved.iter_mut().zip(SIGNALS) {
-                if unsafe { libc::sigaction(sig, &new_action, slot) } != 0 {
+                if unsafe { libc::sigaction(sig, &raw const new_action, slot) } != 0 {
                     // Fail closed: restore EVERY handler installed so
                     // far (the registration lock releases with this
                     // error) and refuse to run any child.
@@ -471,14 +473,14 @@ mod signal_guard {
                     ));
                 }
             }
-            Ok(SignalGuard {
+            Ok(Self {
                 _registration: registration,
                 saved,
             })
         }
 
         /// Whether INT/TERM/HUP arrived since registration.
-        pub(super) fn interrupted(&self) -> bool {
+        pub(super) fn interrupted() -> bool {
             INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst)
         }
     }
@@ -505,7 +507,7 @@ mod signal_guard {
             Ok(Self)
         }
 
-        pub(super) fn interrupted(&self) -> bool {
+        pub(super) fn interrupted() -> bool {
             false
         }
     }
@@ -539,8 +541,10 @@ pub(super) fn run_bounded_child(
         Some(stream) => Box::new(stream),
         None => Box::new(std::io::empty()),
     };
-    let stdout_overflow: OverflowFlag = std::sync::Arc::new(Default::default());
-    let stderr_overflow: OverflowFlag = std::sync::Arc::new(Default::default());
+    let stdout_overflow: OverflowFlag =
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::default());
+    let stderr_overflow: OverflowFlag =
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::default());
     let stdout_handle = spawn_drain(stdout_reader, stdout_overflow.clone());
     let stderr_handle = spawn_drain(stderr_reader, stderr_overflow.clone());
 
@@ -564,7 +568,7 @@ pub(super) fn run_bounded_child(
                 return Err(format!("cannot wait for the {what} process: {e}"));
             }
             Ok(Some(status)) => break status,
-            Ok(None) if _signal_guard.interrupted() => {
+            Ok(None) if signal_guard::SignalGuard::interrupted() => {
                 kill_process_group(pgid);
                 let _ = child.wait();
                 drop(join_drain_bounded(stdout_handle));
@@ -775,6 +779,7 @@ mod tests {
             "sleep 300 &\nsleep 300",
         );
         let canary = setup_canary().expect("canary");
+        let canary_path = PathBuf::from(&canary.path);
         let started = std::time::Instant::now();
         let err = run_nix_export_with_limits(
             &fake_request(dir.path(), nix),
@@ -793,7 +798,11 @@ mod tests {
             "the group kill + bounded joins must return promptly"
         );
         // RAII removed the canary paths.
-        assert!(!Path::new(&dir.path().join("x")).exists());
+        assert!(
+            !canary_path.exists(),
+            "RAII must remove the canary file at {}",
+            canary_path.display()
+        );
     }
 
     #[cfg(unix)]
@@ -811,7 +820,7 @@ mod tests {
             "example/foo",
             REVISION,
             &canary,
-            Duration::from_secs(120),
+            Duration::from_mins(2),
         )
         .expect_err("flood");
         drop(canary);
@@ -839,7 +848,7 @@ mod tests {
             "example/foo",
             REVISION,
             &canary,
-            Duration::from_secs(120),
+            Duration::from_mins(2),
         )
         .expect_err("flood with hang");
         drop(canary);
@@ -896,7 +905,7 @@ mod tests {
             "example/foo",
             REVISION,
             &canary,
-            Duration::from_secs(60),
+            Duration::from_mins(1),
         )
         .expect_err("no export.json");
         drop(canary);
@@ -986,8 +995,7 @@ mod tests {
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());
-            let Err(error) =
-                run_bounded_child(&mut command, Duration::from_secs(60), "signal test")
+            let Err(error) = run_bounded_child(&mut command, Duration::from_mins(1), "signal test")
             else {
                 panic!("interruption must error, not succeed");
             };
@@ -1038,7 +1046,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
         // SIGTERM to the PARENT PROCESS ONLY: no group signal.
         assert_eq!(
-            unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) },
+            unsafe { libc::kill(libc::pid_t::try_from(child.id()).unwrap(), libc::SIGTERM,) },
             0
         );
         let status = child.wait().expect("child test process reaped");
@@ -1081,7 +1089,9 @@ mod tests {
             let inherited = std::env::temp_dir();
             assert_ne!(
                 parent,
-                inherited.canonicalize().unwrap_or(inherited.clone()),
+                inherited
+                    .canonicalize()
+                    .unwrap_or_else(|_| inherited.clone()),
                 "the canary parent must not be the inherited TMPDIR"
             );
             return;
@@ -1174,7 +1184,7 @@ mod tests {
         // The child got its OWN process group (guaranteed by
         // process_group(0) on spawned Nix/children here).
         assert_ne!(
-            pgid as libc::pid_t,
+            libc::pid_t::try_from(pgid).unwrap(),
             unsafe { libc::getpgrp() },
             "the spawned child must not share the test process group"
         );

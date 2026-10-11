@@ -4,12 +4,5 @@
 # rust-version = "1.96" and the exact repo toolchain (rust-toolchain.toml
 # channel "1.96.1").
 #
-# Nothing else is configured: the complexity budgets of the superseded
-# ADR 0005 (function length, argument count, cognitive complexity, type
-# complexity) are deliberately absent. No gate enforces them today, and
-# configuring them here would deny a large historical backlog at once.
-# Which lints run is decided in Cargo.toml ([workspace.lints]); it
-# selects individual lints, never blanket restriction/pedantic/nursery
-# groups.
 
 msrv = "1.96"

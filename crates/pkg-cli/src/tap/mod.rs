@@ -34,6 +34,9 @@ pub use store::{Provenance, Publication, Published, SourceStore, StagedGeneratio
 /// assets; the captured `catalogIndex` output is decoded by the ordinary
 /// strict schema-3 decoder, so no second classifier exists in the client.
 /// The decoded envelope is returned for the generation's capture file.
+/// # Errors
+///
+/// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
 pub fn validate_staging(
     nix: &crate::nix::Nix,
     flake_path: &std::path::Path,

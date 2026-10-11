@@ -189,6 +189,24 @@ impl Snapshot {
             complete: true,
             saved_unix: cache::now_unix(),
         };
+        Self::publish(
+            connection,
+            &staging,
+            temporary,
+            header,
+            cache_dir,
+            identity.revision.is_some() && identity.locked_url.is_some(),
+        )
+    }
+
+    fn publish(
+        mut connection: Connection,
+        staging: &Path,
+        temporary: tempfile::TempDir,
+        header: Header,
+        cache_dir: &Path,
+        publishable: bool,
+    ) -> Result<Self, CatalogError> {
         let transaction = connection
             .transaction()
             .map_err(CatalogError::cache_write)?;
@@ -203,20 +221,20 @@ impl Snapshot {
         connection
             .close()
             .map_err(|(_, error)| CatalogError::cache_write(error))?;
-        std::fs::File::open(&staging)
+        std::fs::File::open(staging)
             .and_then(|file| file.sync_all())
             .map_err(CatalogError::cache_write)?;
-        if identity.revision.is_some() && identity.locked_url.is_some() {
-            std::fs::rename(&staging, &destination).map_err(CatalogError::cache_write)?;
+        if publishable {
+            let destination = path(cache_dir, &header.source, &header.system);
+            std::fs::rename(staging, &destination).map_err(CatalogError::cache_write)?;
             std::fs::File::open(cache_dir)
                 .and_then(|file| file.sync_all())
                 .map_err(CatalogError::cache_write)?;
-            Self::read(cache_dir, source, system)
+            Self::read(cache_dir, &header.source, &header.system)
                 .ok_or_else(|| CatalogError::cache_write("published snapshot could not be read"))
         } else {
-            let connection =
-                Connection::open_with_flags(&staging, OpenFlags::SQLITE_OPEN_READ_ONLY)
-                    .map_err(CatalogError::cache_write)?;
+            let connection = Connection::open_with_flags(staging, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(CatalogError::cache_write)?;
             connection
                 .execute_batch(SETTINGS)
                 .map_err(CatalogError::cache_write)?;

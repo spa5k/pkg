@@ -95,6 +95,9 @@ fn xdg_base(variable: &'static str, fallback: &str) -> Result<PathBuf, ConfigErr
 ///
 /// XDG bases must be absolute when set. The profile always points at the
 /// dedicated `pkg` profile, never the user's default profile.
+/// # Errors
+///
+/// Returns an error when an XDG base is relative or `HOME` is unset or relative.
 pub fn paths() -> Result<Paths, ConfigError> {
     let state = xdg_base("XDG_STATE_HOME", ".local/state")?;
     let config = xdg_base("XDG_CONFIG_HOME", ".config")?;
@@ -139,6 +142,7 @@ pub fn default_formulae() -> String {
 /// This is the only persistent client configuration; installed state lives in
 /// the native profile.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// Catalog source references.
     #[serde(default)]
@@ -153,6 +157,7 @@ pub struct Config {
 
 /// Catalog source references.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Sources {
     /// The Nixpkgs flake reference.
     #[serde(default = "default_nixpkgs")]
@@ -177,6 +182,7 @@ impl Default for Sources {
 
 /// Output preferences.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Display {
     /// Color policy. Only `never` has an effect: it disables colored
     /// output, including for native text pkg passes through. Any other
@@ -200,6 +206,7 @@ impl Default for Display {
 
 /// Runtime selection.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Runtime {
     /// Optional absolute or PATH-relative `nix` executable override.
     #[serde(default)]
@@ -210,6 +217,9 @@ impl Config {
     /// Load config from `path`, falling back to defaults when absent.
     ///
     /// A present but malformed file is an error, not a silent default.
+    /// # Errors
+    ///
+    /// Returns an error if the configuration cannot be read, decoded, or validated.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).map_err(ConfigError::Invalid),
@@ -259,5 +269,23 @@ mod tests {
         std::fs::write(&file, "sources = 3").expect("write");
         let error = Config::load(&file).expect_err("invalid config must fail");
         assert!(error.source().unwrap().is::<toml::de::Error>());
+    }
+
+    #[test]
+    fn config_rejects_unknown_fields_at_each_level() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("config.toml");
+        for text in [
+            "soruces = {}",
+            "[sources]\nnixpkg = 'github:NixOS/nixpkgs'",
+            "[display]\ncolour = 'never'",
+            "[runtime]\nnix_path = '/usr/bin/nix'",
+        ] {
+            std::fs::write(&file, text).expect("write config");
+            assert!(
+                matches!(Config::load(&file), Err(ConfigError::Invalid(_))),
+                "unknown settings must fail: {text}"
+            );
+        }
     }
 }

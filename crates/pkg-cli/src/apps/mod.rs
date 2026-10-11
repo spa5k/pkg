@@ -37,6 +37,9 @@ pub use storage::setup_storage;
 /// partial or interrupted helper failure so a retry can proceed. With no
 /// active apps, sync is a no-op unless an owned destination still holds
 /// stale launchers to remove; an unowned folder is never touched then.
+/// # Errors
+///
+/// Returns an error if a profile or file operation fails, or the app data is invalid.
 pub fn sync(nix: &Nix, paths: &Paths) -> Result<(), String> {
     if !cfg!(target_os = "macos") {
         return sync_locked(nix, paths);
@@ -122,6 +125,9 @@ pub(crate) fn sync_locked(nix: &Nix, paths: &Paths) -> Result<(), String> {
 /// prefixed with `healthy:` or `unhealthy:` so callers can classify without
 /// parsing. Operational failures (an unreadable profile or destination)
 /// are returned as errors.
+/// # Errors
+///
+/// Returns an error if a profile or file operation fails, or the app data is invalid.
 pub fn status(nix: &Nix, paths: &Paths) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
         let _ = (nix.executable(), &paths.helper_profile);
@@ -160,7 +166,7 @@ pub fn status(nix: &Nix, paths: &Paths) -> Result<String, String> {
         ));
     };
     let mut missing: Vec<&String> = Vec::new();
-    let mut stale: Vec<&String> = Vec::new();
+    let mut stale_sources: Vec<&String> = Vec::new();
     let mut changed: Vec<&String> = Vec::new();
     for (name, source) in &apps {
         match recorded.get(name) {
@@ -179,10 +185,10 @@ pub fn status(nix: &Nix, paths: &Paths) -> Result<String, String> {
     }
     for name in recorded.keys() {
         if !apps.contains_key(name) {
-            stale.push(name);
+            stale_sources.push(name);
         }
     }
-    if missing.is_empty() && stale.is_empty() && changed.is_empty() {
+    if missing.is_empty() && stale_sources.is_empty() && changed.is_empty() {
         return Ok(format!(
             "healthy: {} launcher(s) in sync (folder {})",
             apps.len(),
@@ -201,7 +207,7 @@ pub fn status(nix: &Nix, paths: &Paths) -> Result<String, String> {
          run `pkg apps sync`",
         dest.display(),
         list(&missing),
-        list(&stale),
+        list(&stale_sources),
         list(&changed)
     ))
 }

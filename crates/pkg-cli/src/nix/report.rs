@@ -130,18 +130,9 @@ fn ends_with_prompt(partial: &[u8]) -> bool {
 
 /// Live stderr reporter for one native mutation child.
 pub struct MutationReporter {
-    /// Whether stderr is an interactive terminal.
-    tty: bool,
-    /// Bytes of the not yet complete line.
-    partial: Vec<u8>,
-    /// A trust prompt was printed; this line passes through raw.
-    passthrough: bool,
-    /// Whether the compact status line is on screen.
-    status_active: bool,
-    /// Nix is printing the informational diff for an input override.
-    lock_diff: bool,
-    /// The native file conflict block is reported by the command after re-read.
-    file_conflict: bool,
+    line: PartialLine,
+    display: DisplayState,
+    filtering: FilterState,
     profile: Option<String>,
     verbose: bool,
     started: Instant,
@@ -150,16 +141,34 @@ pub struct MutationReporter {
     last_render: Option<Instant>,
 }
 
+#[derive(Default)]
+struct PartialLine {
+    bytes: Vec<u8>,
+    passthrough: bool,
+}
+
+#[derive(Default)]
+struct DisplayState {
+    tty: bool,
+    status_active: bool,
+}
+
+#[derive(Default)]
+struct FilterState {
+    lock_diff: bool,
+    file_conflict: bool,
+}
+
 impl MutationReporter {
     /// Build the reporter for one child run.
     pub fn new(tty: bool) -> Self {
         Self {
-            tty,
-            partial: Vec::new(),
-            passthrough: false,
-            status_active: false,
-            lock_diff: false,
-            file_conflict: false,
+            line: PartialLine::default(),
+            display: DisplayState {
+                tty,
+                ..DisplayState::default()
+            },
+            filtering: FilterState::default(),
             profile: None,
             verbose: false,
             started: Instant::now(),
@@ -190,15 +199,15 @@ impl MutationReporter {
 
     /// Erase the compact status line.
     fn clear_status(&mut self) {
-        if self.status_active {
+        if self.display.status_active {
             eprint!("\r\x1b[2K");
-            self.status_active = false;
+            self.display.status_active = false;
             self.last_render = None;
         }
     }
 
     /// Write bytes the user must see unfiltered.
-    fn write_raw(&mut self, bytes: &[u8]) {
+    fn write_raw(bytes: &[u8]) {
         let mut stderr = std::io::stderr().lock();
         let _ = stderr.write_all(bytes);
         let _ = stderr.flush();
@@ -213,10 +222,10 @@ impl MutationReporter {
         let plain = crate::output::strip_ansi(text);
         let line = plain.trim();
         if super::conflict::starts_conflict(line) {
-            self.file_conflict = true;
+            self.filtering.file_conflict = true;
             return;
         }
-        if self.file_conflict {
+        if self.filtering.file_conflict {
             if line.starts_with("warning:") || line.starts_with("do you want to ") {
                 self.show(text);
                 return;
@@ -224,7 +233,7 @@ impl MutationReporter {
             if !line.starts_with("error:") {
                 return;
             }
-            self.file_conflict = false;
+            self.filtering.file_conflict = false;
         }
         if let Some(profile) = &self.profile
             && let Some(scoped) = scoped_hint(line, profile)
@@ -236,14 +245,14 @@ impl MutationReporter {
             // Input overrides deliberately do not write the upstream lock.
             // This warning and its diff are expected setup detail; verbose
             // output retains them. Other warnings still pass through.
-            self.lock_diff = true;
+            self.filtering.lock_diff = true;
             return;
         }
-        if self.lock_diff {
+        if self.filtering.lock_diff {
             if line.starts_with("• ") || line.starts_with('\'') || line.starts_with("→ '") {
                 return;
             }
-            self.lock_diff = false;
+            self.filtering.lock_diff = false;
         }
         match classify(line) {
             Kind::Show => self.show(text),
@@ -274,34 +283,35 @@ fn scoped_hint(line: &str, profile: &str) -> Option<String> {
 
 impl StderrSink for MutationReporter {
     fn chunk(&mut self, bytes: &[u8]) {
-        if self.passthrough {
+        if self.line.passthrough {
             if let Some(newline) = bytes.iter().position(|&b| b == b'\n') {
-                self.write_raw(&bytes[..=newline]);
-                self.passthrough = false;
+                Self::write_raw(&bytes[..=newline]);
+                self.line.passthrough = false;
                 if bytes.len() > newline + 1 {
                     self.chunk(&bytes[newline + 1..]);
                 }
                 return;
             }
-            self.write_raw(bytes);
+            Self::write_raw(bytes);
             return;
         }
-        self.partial.extend_from_slice(bytes);
-        while let Some(newline) = self.partial.iter().position(|&b| b == b'\n') {
-            let drained: Vec<u8> = self.partial.drain(..=newline).collect();
+        self.line.bytes.extend_from_slice(bytes);
+        while let Some(newline) = self.line.bytes.iter().position(|&b| b == b'\n') {
+            let drained: Vec<u8> = self.line.bytes.drain(..=newline).collect();
             let text = String::from_utf8_lossy(&drained[..newline]).into_owned();
             self.line(text.trim_end_matches('\r'));
         }
-        if ends_with_prompt(&self.partial) {
-            self.passthrough = true;
-            let prompt = std::mem::take(&mut self.partial);
+        if ends_with_prompt(&self.line.bytes) {
+            self.line.passthrough = true;
+            let prompt = std::mem::take(&mut self.line.bytes);
             self.clear_status();
-            self.write_raw(&prompt);
+            Self::write_raw(&prompt);
         }
     }
 
     fn tick(&mut self) {
-        if !self.tty || self.verbose || self.passthrough || !self.partial.is_empty() {
+        if !self.display.tty || self.verbose || self.line.passthrough || !self.line.bytes.is_empty()
+        {
             return;
         }
         let now = Instant::now();
@@ -319,15 +329,15 @@ impl StderrSink for MutationReporter {
             self.work,
             self.started.elapsed().as_secs()
         );
-        self.status_active = true;
+        self.display.status_active = true;
     }
 
     fn finish(&mut self, success: bool) {
         let _ = success;
-        if !self.passthrough && !self.partial.is_empty() {
-            let text = String::from_utf8_lossy(&self.partial).into_owned();
+        if !self.line.passthrough && !self.line.bytes.is_empty() {
+            let text = String::from_utf8_lossy(&self.line.bytes).into_owned();
             self.line(text.trim_end_matches('\r'));
-            self.partial.clear();
+            self.line.bytes.clear();
         }
         self.clear_status();
     }

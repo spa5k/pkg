@@ -263,6 +263,9 @@ fn unique_exposed_forms<'a>(attrs: &[&'a str], system: Option<&str>) -> Vec<&'a 
 ///
 /// On a system the catalogs do not target, a source contributes no
 /// choices at all, so it can never be a fatal requirement there.
+/// # Errors
+///
+/// Returns an error when a source fails to load, a bare name is missing or ambiguous, or the catalog handle fails.
 pub fn resolve_bare(
     nix: &Nix,
     cache_dir: &Path,
@@ -288,6 +291,9 @@ pub fn resolve_bare(
 /// entries. Exactly one source may carry the token; more than one is an
 /// ambiguity that names the full `cask:owner/tap/token` form, and none is
 /// a miss. Failed sources fail the resolution instead of being skipped.
+/// # Errors
+///
+/// Returns an error when a cask source fails to load or the token is missing or present in more than one source.
 pub fn resolve_bare_cask(
     nix: &Nix,
     saved: &crate::tap::SavedCatalogs,
@@ -316,6 +322,7 @@ fn resolve_inner(
         let identity = nix.source_identity(source).map_err(CatalogError::from)?;
         let reference = identity.locked_url.as_deref().unwrap_or(source);
         let mut exact = BTreeMap::new();
+        let mut paths = Vec::new();
         for root in ["packages", "legacyPackages"] {
             let mut path = vec![root.to_string(), system.to_string()];
             path.extend(name.split('.').map(str::to_string));
@@ -327,18 +334,11 @@ fn resolve_inner(
                     continue;
                 }
             }
-            match nix.metadata_batch(reference, system, root, &[path]) {
-                Ok(nodes) => {
-                    for node in nodes {
-                        if let crate::nix::MetadataValue::Package { meta } = node.value {
-                            exact.insert(node.path.join("."), meta);
-                        }
-                    }
-                }
-                Err(crate::nix::NixError::Failed { stderr, .. })
-                    if stderr.contains("does not provide attribute")
-                        || stderr.contains("missing") && stderr.contains("attribute") => {}
-                Err(error) => return Err(error.into()),
+            paths.push(path);
+        }
+        for node in nix.exact_metadata(reference, &paths)? {
+            if let crate::nix::MetadataValue::Package { meta } = node.value {
+                exact.insert(node.path.join("."), meta);
             }
         }
         if exact.is_empty() {
@@ -452,6 +452,9 @@ fn exact_attribute_matches(
 /// Both lanes use the Rust regex engine, compiled case-insensitively; an
 /// invalid pattern is an honest error reported before any evaluation runs.
 /// Prepare a complete current snapshot before reporting update success.
+/// # Errors
+///
+/// Returns an error when the source lacks immutable provenance, the native snapshot cannot be built, or the cache cannot be written.
 pub fn prepare_source(
     nix: &Nix,
     cache_dir: &Path,
@@ -516,6 +519,9 @@ pub fn report_for(moving_source: &str, identity: &crate::nix::SourceIdentity) ->
 /// Searches the locked reference with the escaped attribute and returns the
 /// actual full matched attribute. A source failure and a missing attribute
 /// are distinct outcomes; pkg never invents a package identity for a miss.
+/// # Errors
+///
+/// Returns an error when source metadata cannot be read, the exact attribute is missing or ambiguous, or Nix evaluation fails.
 pub fn exact_lookup(
     nix: &Nix,
     moving_source: &str,
@@ -559,13 +565,16 @@ fn exact_lookup_in(
         .search(&selected_output, ".")
         .map_err(CatalogError::from)?;
     let report = report_for(moving_source, identity);
-    let matches = exact_attribute_matches(&results, attribute);
-    if matches.len() > 1 {
+    let exact_matches = exact_attribute_matches(&results, attribute);
+    if exact_matches.len() > 1 {
         // Choices must separate the namespaces that share a short name:
         // `packages.<system>.probe` and `legacyPackages.<system>.probe`
         // stay full paths, so repeating a choice resolves it instead of
         // reproducing the ambiguity.
-        let attrs: Vec<&str> = matches.iter().map(|(attr, _)| attr.as_str()).collect();
+        let attrs: Vec<&str> = exact_matches
+            .iter()
+            .map(|(attr, _)| attr.as_str())
+            .collect();
         return Err(CatalogError::Ambiguous {
             name: attribute.to_string(),
             choices: unique_exposed_forms(&attrs, None)
@@ -574,7 +583,7 @@ fn exact_lookup_in(
                 .collect(),
         });
     }
-    match matches.into_iter().next() {
+    match exact_matches.into_iter().next() {
         Some((matched, meta)) => Ok((
             ExactMatch {
                 attribute: matched,
@@ -591,6 +600,43 @@ fn exact_lookup_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn bare_resolution_preserves_native_attribute_evaluation_failures() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let executable = temp.path().join("nix");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\ncase \"$*\" in\n*--version*) echo 'nix (Nix) 2.35.2';;\n*'flake metadata'*) echo '{\"url\":\"github:example/packages/1111111111111111111111111111111111111111\"}';;\n*'#catalogIndex'*) echo '{}';;\n*) echo 'existing package is missing an attribute dependency' >&2; exit 1;;\nesac\n",
+        )
+        .expect("write runtime");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod runtime");
+        let nix = crate::nix::discover(executable.to_str()).expect("discover runtime");
+        let routing = Routing {
+            nixpkgs: String::from("github:example/packages"),
+            casks: String::from("github:example/casks"),
+            formulae: String::from("github:example/formulae"),
+            taps: BTreeMap::new(),
+        };
+        let mut catalog = CatalogOnce::new(&nix, &routing.casks);
+        let error = resolve_bare(
+            &nix,
+            temp.path(),
+            &routing,
+            &crate::tap::SavedCatalogs::default(),
+            "probe",
+            "x86_64-linux",
+            &mut catalog,
+        )
+        .expect_err("a failed evaluation must abort name resolution");
+        assert!(
+            matches!(error, CatalogError::Native(crate::nix::NixError::Failed { ref stderr, .. }) if stderr.contains("attribute dependency")),
+            "native evaluation failure must remain visible: {error}"
+        );
+    }
 
     #[test]
     fn exposed_attribute_strips_only_standard_prefixes() {

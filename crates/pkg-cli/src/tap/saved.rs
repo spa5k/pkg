@@ -43,6 +43,9 @@ impl SavedCatalogs {
     ///
     /// One unreadable or malformed capture fails the whole load: a query
     /// must never skip a failed source and answer from the rest.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn load(registry: &Registry, state_home: &Path) -> Result<Self, String> {
         let mut catalogs = BTreeMap::new();
         for source in registry.sources.keys() {
@@ -59,6 +62,9 @@ impl SavedCatalogs {
     /// publication exchange can land between them. Taking the lock
     /// creates no file: a source without published state fails closed
     /// instead of being skipped.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn load_one(
         registry: &Registry,
         state_home: &Path,
@@ -156,6 +162,9 @@ impl SavedCatalogs {
 }
 
 /// Load the registry and every saved catalog in one strict step.
+/// # Errors
+///
+/// Returns an error when the index and provenance disagree on source, origin, revision, capture hash, target, or entry counts.
 pub fn load_all(state_home: &Path) -> Result<(Registry, SavedCatalogs), String> {
     let registry = Registry::load(&registry::registry_path(state_home))?;
     let saved = SavedCatalogs::load(&registry, state_home)?;
@@ -171,6 +180,9 @@ pub fn load_all(state_home: &Path) -> Result<(Registry, SavedCatalogs), String> 
 /// provenance, target exactly one system, and hold exactly the eligible
 /// and excluded entry counts the provenance claims. Staged import callers
 /// additionally require the one target to be the native system.
+/// # Errors
+///
+/// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
 pub fn validate_binding(index: &CatalogIndex, provenance: &Provenance) -> Result<(), String> {
     let source = provenance.source.as_str();
     if index.inputs.len() != 1 || !index.inputs.contains_key(source) {

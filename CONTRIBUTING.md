@@ -32,6 +32,8 @@ Code cleanup follows
 [Simplify the native client](openspec/changes/simplify-client/proposal.md).
 Rust error and ownership changes follow
 [Improve Rust error handling and ownership](openspec/changes/improve-rust-quality/proposal.md).
+The strict lint and code audit work follows
+[Enforce Rust quality](openspec/changes/enforce-rust-quality/proposal.md).
 The [module map](docs/architecture.md) shows the current code owners.
 
 ## 1. Before you open a PR
@@ -65,16 +67,39 @@ The [module map](docs/architecture.md) shows the current code owners.
 - Run locally:
 
 ```sh
-cargo build --locked --all-targets
-cargo test --locked
+just check
+# Equivalent Rust commands:
+cargo build --locked --workspace --all-targets --all-features
+cargo test --locked --workspace --all-features
 cargo fmt --all --check
-cargo clippy --locked --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps --document-private-items
+cargo deny check
 sh -n install.sh
 shellcheck install.sh
 python3 docs/tests/test_install_script.py
 python3 .github/scripts/check_docs_links.py
 ```
+
+Use the [Rust Style Guide](https://doc.rust-lang.org/style-guide/).
+Use the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/checklist.html)
+for naming, ownership, and public API contracts.
+`rustfmt` is the format authority.
+The workspace denies Clippy `all` and `pedantic`.
+It also selects specific nursery and restriction lints in `Cargo.toml`.
+Do not enable a whole restriction group.
+Document the actual failure conditions in each public `# Errors` section.
+Keep the original error cause until the reporting boundary.
+Preserve cancellation until the command decides its exit status.
+Use checked conversions at operating system and database boundaries.
+
+Keep an intentional lint exception on its smallest valid scope.
+Use `#[expect(..., reason = "...")]` for a specific intentional finding.
+Do not suppress correctness or safety checks to make a build pass.
+An obsolete expectation fails the build.
+Test fixture failures may use the existing reasoned `unwrap`, `expect`, and `panic` exceptions.
+Run Cargo tests on Linux and macOS.
+Clippy compiles test targets but does not execute them.
 
 ## 3. Tests and evidence
 

@@ -242,7 +242,7 @@ fn envelope_round_trips_and_full_catalog_layout_is_refused() {
 
     // A layout without per-system `systems` sections is backend data;
     // this client refuses it instead of projecting it.
-    let mut full = raw.clone();
+    let mut full = raw;
     let systems = full["systems"].clone();
     full.as_object_mut()
         .expect("object")
@@ -306,7 +306,7 @@ fn broken_records_fail_the_whole_decode_named() {
     assert!(error.to_string().contains("source"));
 
     // A record whose source carries no provenance fails the decode.
-    let mut unprovenanced = pristine.clone();
+    let mut unprovenanced = pristine;
     unprovenanced["systems"]["x86_64-linux"]["entries"]
         .as_object_mut()
         .unwrap()

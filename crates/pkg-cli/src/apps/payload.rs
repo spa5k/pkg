@@ -6,6 +6,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 /// Read generated app data without executing vendor code or writing state.
 pub(super) fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+    #[derive(serde::Deserialize)]
+    struct AppData {
+        source: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        schema: String,
+        apps: BTreeMap<String, AppData>,
+    }
+
     let namespace = output
         .join("libexec/pkg-casks")
         .join(output.file_name().ok_or("app output has no name")?);
@@ -17,15 +27,6 @@ pub(super) fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, Pat
     };
     if !metadata.is_file() || metadata.len() > 8 * 1024 * 1024 {
         return Err(format!("invalid cask app data: {}", path.display()));
-    }
-    #[derive(serde::Deserialize)]
-    struct AppData {
-        source: String,
-    }
-    #[derive(serde::Deserialize)]
-    struct Manifest {
-        schema: String,
-        apps: BTreeMap<String, AppData>,
     }
     let data: Manifest = serde_json::from_slice(
         &fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?,
@@ -43,8 +44,9 @@ pub(super) fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, Pat
     );
     let mut apps = BTreeMap::new();
     for (name, entry) in data.apps {
-        if name == ".app"
-            || !name.ends_with(".app")
+        if Path::new(&name)
+            .extension()
+            .is_none_or(|extension| extension != "app")
             || name.contains(['/', '\0', '\n', '\r'])
             || entry.source != format!("{source_dir}/{name}")
         {

@@ -123,6 +123,23 @@ pub enum Command {
 pub struct SearchOptions {
     /// Package names or search words. Also accepts nixpkgs:, brew:, or cask: queries.
     pub query: String,
+    /// Search matching controls.
+    #[command(flatten)]
+    pub matching: SearchMatchingOptions,
+    /// Maximum total results. Human sections share 20 by default; JSON defaults to all.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "all")]
+    pub limit: Option<u32>,
+    /// Result filtering and output controls.
+    #[command(flatten)]
+    pub results: SearchResultOptions,
+    /// Search nixpkgs, brew formulae, homebrew, cask, homebrew/core, homebrew/cask, or a saved tap.
+    #[arg(long)]
+    pub source: Option<String>,
+}
+
+/// Controls for matching local search results.
+#[derive(Debug, clap::Args)]
+pub struct SearchMatchingOptions {
     /// Treat the query as a regular expression.
     #[arg(long)]
     pub regex: bool,
@@ -132,15 +149,14 @@ pub struct SearchOptions {
     /// Disable name typo alternatives when literal results are absent.
     #[arg(long, conflicts_with = "regex")]
     pub no_fuzzy: bool,
-    /// Maximum total results. Human sections share 20 by default; JSON defaults to all.
-    #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "all")]
-    pub limit: Option<u32>,
+}
+
+/// Controls which matching results are shown.
+#[derive(Debug, clap::Args)]
+pub struct SearchResultOptions {
     /// Show all matching results.
     #[arg(long)]
     pub all: bool,
-    /// Search nixpkgs, brew formulae, homebrew, cask, homebrew/core, homebrew/cask, or a saved tap.
-    #[arg(long)]
-    pub source: Option<String>,
     /// Include unavailable casks and disabled formulae. Exact names are always shown.
     #[arg(long)]
     pub unavailable: bool,
@@ -213,6 +229,9 @@ pub enum Shell {
 /// Validate the `prune --older-than` age format.
 ///
 /// The design requires an explicit strictly positive age expressed in days.
+/// # Errors
+///
+/// Returns an error if the command-line arguments are invalid.
 pub fn parse_prune_age(value: &str) -> Result<u64, String> {
     let Some(digits) = value.strip_suffix(['d', 'D']) else {
         return Err(String::from("age must end in `d`, for example `30d`"));

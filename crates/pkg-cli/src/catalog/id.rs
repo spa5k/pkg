@@ -65,6 +65,9 @@ impl CatalogId {
     ///
     /// An unknown tap source is an error naming `pkg tap add`, never a
     /// guess and never an attempt to evaluate the string as Nix code.
+    /// # Errors
+    ///
+    /// Returns an error when a cask source is not present in the routing table.
     pub fn source_and_attribute(
         &self,
         routing: &Routing,
@@ -94,6 +97,9 @@ impl CatalogId {
     ///
     /// Installation always uses the original moving reference; locking is
     /// native behavior at install time.
+    /// # Errors
+    ///
+    /// Returns an error when this ID names a cask source that is not present in the routing table.
     pub fn installable(&self, routing: &Routing, system: &str) -> Result<String, String> {
         let (reference, attribute) = self.source_and_attribute(routing, system)?;
         Ok(format!("{reference}#{attribute}"))
@@ -122,6 +128,9 @@ pub enum ParsedId {
 /// tokens follow the generator token rule; full cask identities must be a
 /// valid `owner/tap` source plus a valid bare token. Anything else that
 /// looks like an explicit source is refused with a reason.
+/// # Errors
+///
+/// Returns an error when the input is empty, malformed, or uses an invalid source-qualified ID.
 pub fn parse_id(input: &str) -> Result<ParsedId, String> {
     let input = input.trim();
     if input.is_empty() {

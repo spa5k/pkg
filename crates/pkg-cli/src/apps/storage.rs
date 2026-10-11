@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// Root-owned parent of private per-user app views on the Nix volume.
 const APP_CACHE_PARENT: &str = "/nix/var/pkg/cask-apps";
 
-/// The real user's identity, matching os.getuid() in the app materializer.
+/// The real user's identity, matching `os.getuid()` in the app materializer.
 fn app_uid() -> u32 {
     // SAFETY: getuid has no arguments and cannot fail.
     unsafe { libc::getuid() }
@@ -44,6 +44,9 @@ fn check_storage_directory(path: &Path, owner: u32, private: bool) -> Result<(),
 
 /// Set up the private same-volume cache. This explicit command is the only
 /// administrator operation; normal installation and app use stay unprivileged.
+/// # Errors
+///
+/// Returns an error if a profile or file operation fails, or the app data is invalid.
 pub fn setup_storage() -> Result<(), String> {
     if !cfg!(target_os = "macos") {
         return Err(String::from("shared app storage supports macOS only"));

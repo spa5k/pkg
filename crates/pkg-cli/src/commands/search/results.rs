@@ -142,7 +142,7 @@ impl SearchSpool {
     ) -> Result<(), CommandError> {
         self.visit_rows(
             "SELECT body FROM results ORDER BY rank, id LIMIT ?1",
-            [limit.map(i64::from).unwrap_or(-1)],
+            [limit.map_or(-1, i64::from)],
             sink,
         )
     }

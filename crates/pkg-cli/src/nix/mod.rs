@@ -94,8 +94,8 @@ impl Nix {
     }
 
     /// The complete argument vector for one native invocation.
-    fn argv(&self, args: &[&str]) -> Vec<String> {
-        let mut argv: Vec<String> = [
+    fn argv(extra_args: &[&str]) -> Vec<String> {
+        let mut command_args: Vec<String> = [
             "--extra-experimental-features",
             "nix-command flakes",
             // Explicitly refuse flake-provided nix.conf settings; this is the
@@ -113,15 +113,15 @@ impl Nix {
         .into_iter()
         .map(ToString::to_string)
         .collect();
-        argv.extend(args.iter().map(|arg| (*arg).to_string()));
-        argv
+        command_args.extend(extra_args.iter().map(|arg| (*arg).to_string()));
+        command_args
     }
 
     /// Classify one reaped run into a [`NixError`], attaching the argument
     /// vector pkg ran so failures repeat the exact native command.
     /// Streamed children report no captured stderr (their streams went to
     /// the user's terminal); captured children keep theirs.
-    fn finish(&self, args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
+    fn finish(args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
         if let Some(signal) = reaped.cancelled {
             return Err(NixError::Interrupted {
                 args: args.iter().map(ToString::to_string).collect(),
@@ -149,7 +149,7 @@ impl Nix {
         // Captured children get the same forwarding and reaping as streamed
         // ones; a signal sent only to pkg still cancels the child.
         let reaped = self.execute(args, IoMode::Capture)?;
-        self.finish(args, &reaped)?;
+        Self::finish(args, &reaped)?;
         Ok(String::from_utf8_lossy(&reaped.output.stdout).into_owned())
     }
 
@@ -169,7 +169,7 @@ impl Nix {
         let reaped = self.execute_with(args, IoMode::Filtered, Some(&mut reporter))?;
         // Keep raw stderr for the command's compact cause selection. It is
         // never replayed as a block in normal output.
-        self.finish(args, &reaped)
+        Self::finish(args, &reaped)
     }
 
     /// Run a native command with streamed stdio, reaping the child.
@@ -181,7 +181,7 @@ impl Nix {
     /// native state after every failed mutation.
     fn run_streamed(&self, args: &[&str]) -> Result<(), NixError> {
         let reaped = self.execute(args, IoMode::Stream)?;
-        self.finish(args, &reaped)
+        Self::finish(args, &reaped)
     }
 
     /// Build and run one native child through the shared forward/reap
@@ -200,12 +200,12 @@ impl Nix {
     ) -> Result<Reaped, NixError> {
         // `--verbose` describes every native call here, captures included,
         // with the exact argument vector that will run.
-        let argv = self.argv(args);
+        let command_line = Self::argv(args);
         if self.verbose {
-            eprintln!("pkg: nix {}", argv.join(" "));
+            eprintln!("pkg: nix {}", command_line.join(" "));
         }
         let mut command = Command::new(&self.executable);
-        command.args(&argv);
+        command.args(&command_line);
         if self.no_color {
             // Any non-empty NO_COLOR value means "no color"; set it only when
             // disabling so colors are never suppressed by accident.
@@ -230,6 +230,9 @@ impl Nix {
     ///
     /// Keys of the returned map are the literal native entry IDs; pass them
     /// back to [`Nix::profile_remove`] and [`Nix::profile_upgrade`] verbatim.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn profile_list(&self, profile: &Path) -> Result<BTreeMap<String, ProfileEntry>, NixError> {
         let profile = profile.to_string_lossy().into_owned();
         let raw = self.json::<serde_json::Value>(
@@ -255,6 +258,9 @@ impl Nix {
     ///
     /// The manifest shape is checked read-only first; a runtime that
     /// cannot speak it fails before the profile is touched.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn profile_add(&self, profile: &Path, installables: &[String]) -> Result<(), NixError> {
         self.profile_add_with_inputs(profile, installables, &[])
     }
@@ -264,6 +270,9 @@ impl Nix {
     /// Overrides apply only to this operation and never write a lockfile.
     /// The app helper uses this to select a macOS-compatible Lisp runtime
     /// without changing the user's package sources.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn profile_add_with_inputs(
         &self,
         profile: &Path,
@@ -287,6 +296,9 @@ impl Nix {
     /// Entry names are the literal native element IDs; they are passed after
     /// `--` so IDs that begin with `-` are never read as flags. Regex
     /// removal is deliberately not offered.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn profile_remove(&self, profile: &Path, entries: &[String]) -> Result<(), NixError> {
         let profile = profile.to_string_lossy().into_owned();
         let mut args: Vec<&str> = vec!["profile", "remove", "--profile", &profile];
@@ -301,6 +313,9 @@ impl Nix {
     ///
     /// Entry names are the literal native element IDs and are passed after
     /// `--` so IDs that begin with `-` are never read as flags.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn profile_upgrade(
         &self,
         profile: &Path,
@@ -323,6 +338,9 @@ impl Nix {
     /// Native Nix creates a new generation and switches it atomically. The
     /// previous generation remains available if helper setup later fails.
     /// `--no-link` prevents an unrelated `result` link in the working directory.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn profile_replace(&self, profile: &Path, replacement: &Path) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
         let profile = profile.to_string_lossy().into_owned();
@@ -340,6 +358,9 @@ impl Nix {
     /// Roll back to the previous or a selected native generation.
     ///
     /// The manifest shape is checked read-only first.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn profile_rollback(
         &self,
         profile: &Path,
@@ -360,6 +381,9 @@ impl Nix {
     /// Eligibility stays with Nix: which generations disappear is native
     /// behavior and is not assumed by pkg. The manifest shape is checked
     /// read-only first.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn profile_wipe_history(&self, profile: &Path, age: &str) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
         let profile = profile.to_string_lossy().into_owned();
@@ -374,12 +398,18 @@ impl Nix {
     }
 
     /// Print native profile generation history.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn profile_history(&self, profile: &Path) -> Result<String, NixError> {
         let profile = profile.to_string_lossy().into_owned();
         self.capture(&["profile", "history", "--profile", &profile])
     }
 
     /// Run a native search and return evaluated metadata.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn search(
         &self,
         reference: &str,
@@ -393,6 +423,9 @@ impl Nix {
     }
 
     /// Evaluate the default installation outputs without realizing them.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn default_output_paths(&self, installable: &str) -> Result<Vec<String>, NixError> {
         let (installable, selection) = installable
             .split_once('^')
@@ -413,6 +446,9 @@ impl Nix {
     }
 
     /// Resolve the current system triple.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn system(&self) -> Result<String, NixError> {
         Ok(self
             .capture(&["config", "show", "system"])?
@@ -420,16 +456,25 @@ impl Nix {
             .to_string())
     }
     /// Read one effective client-side setting, such as the sandbox flag.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn setting(&self, name: &str) -> Result<String, NixError> {
         Ok(self.capture(&["config", "show", name])?.trim().to_string())
     }
 
     /// Read effective client settings without printing the config document.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn effective_config(&self) -> Result<serde_json::Value, NixError> {
         self.json("effective config", &["config", "show", "--json"])
     }
 
     /// Resolve source identity for a flake reference.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn source_identity(&self, reference: &str) -> Result<SourceIdentity, NixError> {
         self.source_identity_with(reference, false)
     }
@@ -438,6 +483,9 @@ impl Nix {
     ///
     /// Passes the native `--refresh` option so `pkg update` refreshes
     /// metadata instead of reusing Nix's TTL cache and calling it current.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn refresh_source_identity(&self, reference: &str) -> Result<SourceIdentity, NixError> {
         self.source_identity_with(reference, true)
     }
@@ -459,11 +507,17 @@ impl Nix {
     ///
     /// `nix store ping` is a deprecated alias for `info`; the supported
     /// command is used deliberately. Output text is returned for reporting.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn store_info(&self) -> Result<String, NixError> {
         self.capture(&["store", "info"])
     }
 
     /// Read generated Formula data without evaluating package derivations.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn formula_index(&self, reference: &str) -> Result<serde_json::Value, NixError> {
         let installable = format!("{reference}#formulaIndex");
         self.json("formula catalog index", &["eval", "--json", &installable])
@@ -477,6 +531,9 @@ impl Nix {
     /// JSON data: evaluating it forces no package derivations, and it is not
     /// per-system, so a system outside the catalog targets is detected from
     /// the envelope's own target list instead of a failed attribute probe.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn catalog_index(&self, reference: &str) -> Result<CatalogIndex, NixError> {
         let installable = format!("{reference}#catalogIndex");
         let value = self

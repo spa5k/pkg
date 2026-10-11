@@ -368,9 +368,9 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
         for row in &rows {
             match (row.eligible, row.excluded) {
                 (Some(eligible), Some(_excluded)) => {
-                    println!("{:<width$}  {}  ready", row.source, eligible)
+                    println!("{:<width$}  {}  ready", row.source, eligible);
                 }
-                _ => println!("{:<width$}  —  needs update", row.source,),
+                _ => println!("{:<width$}  —  needs update", row.source),
             }
             if cli.verbose {
                 if let Some(error) = &row.error {

@@ -1,5 +1,6 @@
 //! Per-user periodic jobs for official discovery metadata.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::config::Paths;
@@ -89,10 +90,10 @@ fn job(
         ("PATH", path.as_str()),
     ];
     let files = if macos {
-        let env = environment
-            .iter()
-            .map(|(key, value)| format!("<key>{key}</key><string>{}</string>", xml(value)))
-            .collect::<String>();
+        let mut env = String::new();
+        for (key, value) in &environment {
+            let _ = write!(env, "<key>{key}</key><string>{}</string>", xml(value));
+        }
         let content = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<!-- {MARKER} -->\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>{LABEL}</string>\n<key>ProgramArguments</key><array><string>{}</string><string>update</string><string>--catalogs-only</string></array>\n<key>EnvironmentVariables</key><dict>{env}</dict>\n<key>StartInterval</key><integer>86400</integer>\n<key>ProcessType</key><string>Background</string>\n<key>Nice</key><integer>10</integer>\n<key>LowPriorityIO</key><true/>\n<key>StandardInPath</key><string>/dev/null</string>\n<key>StandardOutPath</key><string>{}</string>\n<key>StandardErrorPath</key><string>{}</string>\n</dict></plist>\n",
             xml(executable),
@@ -104,10 +105,14 @@ fn job(
             content,
         )]
     } else {
-        let env = environment
-            .iter()
-            .map(|(key, value)| format!("Environment={}\n", unit(&format!("{key}={value}"), false)))
-            .collect::<String>();
+        let mut env = String::new();
+        for (key, value) in &environment {
+            let _ = writeln!(
+                env,
+                "Environment={}",
+                unit(&format!("{key}={value}"), false)
+            );
+        }
         let service = format!(
             "# {MARKER}\n[Unit]\nDescription=Refresh pkg package catalogs\n[Service]\nType=oneshot\nExecStart={} update --catalogs-only\n{env}StandardInput=null\nNice=10\nTimeoutStartSec=30min\n",
             unit(executable, true)

@@ -325,8 +325,8 @@ fn linux_variation_merge_selects_linux_payload() {
 }
 
 /// Parent probe regressions: all three records share the baseline
-/// fields (URL https://vendor.example/download, sha "a"*64,
-/// platforms arm64_sequoia + x86_64_linux) and all three must be
+/// fields (URL <https://vendor.example/download>, sha "a"*64,
+/// platforms `arm64_sequoia` + `x86_64_linux`) and all three must be
 /// EXCLUDED on x86_64-linux.
 #[test]
 fn probe_regressions_on_linux() {

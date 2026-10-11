@@ -46,7 +46,76 @@ pub(super) fn nix_json(value: &impl serde::Serialize) -> Result<String, NixError
 }
 
 impl Nix {
+    pub(crate) fn exact_metadata(
+        &self,
+        reference: &str,
+        paths: &[Vec<String>],
+    ) -> Result<Vec<MetadataNode>, NixError> {
+        let reference = self.exact_reference(reference)?;
+        let reference = nix_json(&reference)?;
+        let paths = nix_json(&paths)?;
+        let expression = format!(
+            r#"let
+  flake = builtins.getFlake (builtins.fromJSON {reference});
+  paths = builtins.fromJSON {paths};
+  inspect = path:
+    let
+      value = builtins.foldl' (v: name:
+        if builtins.isAttrs v && builtins.hasAttr name v
+        then builtins.getAttr name v else null) flake path;
+    in if builtins.isAttrs value && value ? type && !builtins.isString value.type then
+      throw "package type must be a string"
+    else if builtins.isAttrs value && (value.type or null) == "derivation" then
+      let name = builtins.parseDrvName value.name;
+      in {{ inherit path; kind = "package"; meta = {{ pname = name.name; version = name.version; description = builtins.replaceStrings [ "\n" ] [ " " ] (value.meta.description or ""); }}; }}
+    else {{ inherit path; kind = "skip"; }};
+in map inspect paths"#
+        );
+        let args = ["eval", "--json", "--expr", &expression];
+        match self.discovery_json("exact package metadata", &args, "20") {
+            Err(NixError::ResourceLimit(_)) => {
+                self.discovery_json("exact package metadata", &args, "100")
+            }
+            result => result,
+        }
+    }
+
+    fn exact_reference(&self, reference: &str) -> Result<String, NixError> {
+        if !reference.starts_with("path:") {
+            return Ok(reference.to_string());
+        }
+        // Path metadata can omit narHash. Pin its immutable store copy for
+        // getFlake rather than permitting mutable paths with --impure.
+        let metadata: serde_json::Value = self.json(
+            "exact source identity",
+            &["flake", "metadata", reference, "--json"],
+        )?;
+        let path = metadata["path"].as_str().ok_or_else(|| NixError::Decode {
+            what: "exact source identity",
+            detail: String::from("flake metadata has no store path"),
+        })?;
+        let hash = self.capture(&["hash", "path", "--sri", path])?;
+        let hash = hash.trim();
+        if !hash.starts_with("sha256-") || hash.contains(char::is_whitespace) {
+            return Err(NixError::Decode {
+                what: "exact source hash",
+                detail: String::from("Nix did not return a SHA-256 SRI hash"),
+            });
+        }
+        let encoded = hash
+            .replace('+', "%2B")
+            .replace('/', "%2F")
+            .replace('=', "%3D");
+        Ok(format!(
+            "path:{}?narHash={encoded}",
+            super::encode_path_reference(std::path::Path::new(path))
+        ))
+    }
+
     /// Evaluate at most one batch of names and descriptions with a 512 MiB RSS limit.
+    /// # Errors
+    ///
+    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
     pub fn metadata_batch(
         &self,
         reference: &str,
@@ -116,12 +185,12 @@ in map inspect paths"#
             "65536",
         ];
         bounded_args.extend_from_slice(args);
-        let argv = self.argv(&bounded_args);
+        let command_line = Self::argv(&bounded_args);
         if self.verbose {
-            eprintln!("pkg: nix {}", argv.join(" "));
+            eprintln!("pkg: nix {}", command_line.join(" "));
         }
         let mut command = std::process::Command::new(&self.executable);
-        command.args(argv);
+        command.args(command_line);
         command.env("GC_INITIAL_HEAP_SIZE", "8388608");
         command.env("GC_FREE_SPACE_DIVISOR", divisor);
         command.env("MIMALLOC_PURGE_DELAY", "0");
@@ -130,7 +199,7 @@ in map inspect paths"#
         }
         let reaped =
             process::run_child_bounded(command, 512 * 1024 * 1024).map_err(NixError::Spawn)?;
-        self.finish(args, &reaped)?;
+        Self::finish(args, &reaped)?;
         serde_json::from_slice(&reaped.output.stdout).map_err(|error| NixError::Json {
             what,
             source: error,

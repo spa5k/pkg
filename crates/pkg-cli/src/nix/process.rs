@@ -8,6 +8,9 @@
 
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
+#[cfg(all(test, unix))]
+mod tests;
+
 /// How a native child's stdio is wired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum IoMode {
@@ -47,14 +50,14 @@ impl Reaped {
     /// failure, so callers re-read native state instead of trusting the
     /// exit code.
     pub(super) fn classify(&self) -> Outcome {
-        if let Some(signal) = self.cancelled.or_else(|| unix_signal(&self.output.status)) {
+        if let Some(signal) = self.cancelled.or_else(|| unix_signal(self.output.status)) {
             return Outcome::Interrupted { signal };
         }
         if self.output.status.success() {
             return Outcome::Success;
         }
         Outcome::Failed {
-            status: exit_status_text(&self.output.status),
+            status: exit_status_text(self.output.status),
             stderr: String::from_utf8_lossy(&self.output.stderr).into_owned(),
         }
     }
@@ -134,7 +137,7 @@ mod forward {
             // SAFETY: registers `forward_to_child` for `signum` and captures
             // the previous disposition in `old`.
             let handler = forward_to_child as *const () as usize;
-            if unsafe { libc::sigaction(signum, &empty_action(handler), &mut old) } != 0 {
+            if unsafe { libc::sigaction(signum, &empty_action(handler), &raw mut old) } != 0 {
                 for (changed, old) in &previous {
                     // SAFETY: restores dispositions captured above.
                     unsafe { libc::sigaction(*changed, old, std::ptr::null_mut()) };
@@ -155,37 +158,70 @@ mod forward {
         pub(super) fn restore(self) {
             for (signum, old) in self.0 {
                 // SAFETY: restores a previously captured disposition.
-                unsafe { libc::sigaction(signum, &old, std::ptr::null_mut()) };
+                unsafe { libc::sigaction(signum, &raw const old, std::ptr::null_mut()) };
             }
             ACTIVE.store(false, Ordering::Relaxed);
             RECEIVED.store(0, Ordering::Relaxed);
         }
     }
 
-    /// Block termination signals, closing the spawn/registration race.
-    pub(super) fn block() {
-        // SAFETY: builds a signal set from constants and blocks it for this
-        // thread only; pending signals are delivered on unblock.
-        unsafe {
+    /// Block termination signals until the child PID is registered.
+    pub(super) fn block() -> std::io::Result<MaskGuard> {
+        // SAFETY: both masks are initialized; all signals are valid constants.
+        let previous = unsafe {
             let mut set: libc::sigset_t = std::mem::zeroed();
-            libc::sigemptyset(&mut set);
+            let mut previous: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&raw mut set);
             for signum in TERMINATION {
-                libc::sigaddset(&mut set, signum);
+                libc::sigaddset(&raw mut set, signum);
             }
-            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+            let status = libc::pthread_sigmask(
+                libc::SIG_BLOCK,
+                std::ptr::from_ref(&set),
+                std::ptr::from_mut(&mut previous),
+            );
+            if status != 0 {
+                return Err(std::io::Error::from_raw_os_error(status));
+            }
+            previous
+        };
+        Ok(MaskGuard(previous))
+    }
+
+    pub(super) struct MaskGuard(libc::sigset_t);
+
+    impl MaskGuard {
+        pub(super) fn prepare_child(&self, command: &mut std::process::Command) {
+            use std::os::unix::process::CommandExt as _;
+            let previous = self.0;
+            // SAFETY: the hook only restores a copied signal mask with the
+            // async-signal-safe sigprocmask call. It does not allocate or lock.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::sigprocmask(
+                        libc::SIG_SETMASK,
+                        std::ptr::from_ref(&previous),
+                        std::ptr::null_mut(),
+                    ) != 0
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
         }
     }
 
-    /// Unblock termination signals after the child is registered.
-    pub(super) fn unblock() {
-        // SAFETY: unblocks exactly the set `block` blocked.
-        unsafe {
-            let mut set: libc::sigset_t = std::mem::zeroed();
-            libc::sigemptyset(&mut set);
-            for signum in TERMINATION {
-                libc::sigaddset(&mut set, signum);
+    impl Drop for MaskGuard {
+        fn drop(&mut self) {
+            // SAFETY: this restores the calling thread's captured signal mask.
+            unsafe {
+                libc::pthread_sigmask(
+                    libc::SIG_SETMASK,
+                    std::ptr::from_ref(&self.0),
+                    std::ptr::null_mut(),
+                );
             }
-            libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
         }
     }
 
@@ -256,7 +292,7 @@ fn read_filtered(
                 revents: 0,
             };
             // SAFETY: the live pipe owns this fd; poll writes one initialized descriptor.
-            let ready = unsafe { libc::poll(&mut descriptor, 1, 250) };
+            let ready = unsafe { libc::poll(&raw mut descriptor, 1, 250) };
             if ready == 0 {
                 continue;
             }
@@ -276,9 +312,7 @@ fn read_filtered(
                         sink.chunk(&buffer[..read]);
                     }
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
-                    continue;
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(error) => {
                     pipe_failed = Some(error);
                     break;
@@ -337,9 +371,11 @@ fn run_child_with_limit(
     #[cfg(unix)]
     let _run = forward::lock();
     #[cfg(unix)]
+    let mask = forward::block()?;
+    #[cfg(unix)]
     let guard = forward::install();
     #[cfg(unix)]
-    forward::block();
+    mask.prepare_child(&mut command);
     #[cfg(unix)]
     if memory_limit.is_some() {
         use std::os::unix::process::CommandExt as _;
@@ -367,7 +403,7 @@ fn run_child_with_limit(
         Ok(child) => child,
         Err(error) => {
             #[cfg(unix)]
-            forward::unblock();
+            drop(mask);
             if let Some(guard) = guard {
                 guard.restore();
             }
@@ -377,7 +413,7 @@ fn run_child_with_limit(
     #[cfg(unix)]
     forward::register(child.id());
     #[cfg(unix)]
-    forward::unblock();
+    drop(mask);
     // Unfiltered children wait through wait_with_output; filtered ones
     // drain stderr through the sink while the child runs.
     let mut resource_limit = None;
@@ -437,7 +473,7 @@ fn read_bounded(
             }
             let reason = if overflow.load(Ordering::Relaxed) {
                 Some("metadata output exceeded 16 MiB")
-            } else if start.elapsed() > Duration::from_secs(120) {
+            } else if start.elapsed() > Duration::from_mins(2) {
                 Some("metadata batch exceeded 120 seconds")
             } else {
                 match resident_bytes(child.id()) {
@@ -446,14 +482,14 @@ fn read_bounded(
                         unmeasured_since = None;
                         None
                     }
-                    None => match child.try_wait() {
-                        Ok(Some(status)) => break Ok(status),
-                        _ => {
-                            let since = unmeasured_since.get_or_insert_with(Instant::now);
-                            (since.elapsed() > Duration::from_millis(200))
-                                .then_some("cannot measure evaluator memory")
+                    None => {
+                        if let Ok(Some(status)) = child.try_wait() {
+                            break Ok(status);
                         }
-                    },
+                        let since = unmeasured_since.get_or_insert_with(Instant::now);
+                        (since.elapsed() > Duration::from_millis(200))
+                            .then_some("cannot measure evaluator memory")
+                    }
                 }
             };
             if let Some(reason) = reason {
@@ -556,6 +592,10 @@ fn resident_bytes(pid: u32) -> Option<u64> {
 /// child is reaped, and pkg stays alive, so an interrupted command is
 /// reported as [`Outcome::Interrupted`] instead of killing pkg mid-run.
 /// Stderr is captured into the outcome; stdout is returned alongside it.
+/// # Errors
+///
+/// Returns an error if child setup, spawning, stream reading, or reaping fails.
+/// Nonzero exits and cancellation are returned as [`Outcome`] values.
 pub fn run_direct_captured(
     executable: &std::path::Path,
     args: &[String],
@@ -580,6 +620,10 @@ pub fn run_direct_captured(
 /// reported as [`Outcome::Interrupted`] instead of killing pkg mid-run.
 /// Stderr is captured for diagnostics; use [`run_direct_captured`] when
 /// stdout matters.
+/// # Errors
+///
+/// Returns an error if child setup, spawning, stream reading, or reaping fails.
+/// Nonzero exits and cancellation are returned as [`Outcome`] values.
 pub fn run_direct(executable: &std::path::Path, args: &[String]) -> Result<Outcome, String> {
     run_direct_captured(executable, args).map(|(outcome, _)| outcome)
 }
@@ -587,7 +631,7 @@ pub fn run_direct(executable: &std::path::Path, args: &[String]) -> Result<Outco
 /// The cancellation signal for a finished child, when the run was
 /// cancelled: a signalled child, then a child that exited 130 after
 /// handling SIGINT itself.
-fn unix_signal(status: &ExitStatus) -> Option<i32> {
+fn unix_signal(status: ExitStatus) -> Option<i32> {
     if let Some(signal) = platform_signal(status) {
         return Some(signal);
     }
@@ -596,7 +640,7 @@ fn unix_signal(status: &ExitStatus) -> Option<i32> {
     (status.code() == Some(130)).then_some(2)
 }
 
-fn platform_signal(status: &ExitStatus) -> Option<i32> {
+fn platform_signal(status: ExitStatus) -> Option<i32> {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt as _;
@@ -609,7 +653,7 @@ fn platform_signal(status: &ExitStatus) -> Option<i32> {
     }
 }
 
-fn exit_status_text(status: &ExitStatus) -> String {
+fn exit_status_text(status: ExitStatus) -> String {
     match status.code() {
         Some(code) => format!("exit code {code}"),
         None => format!("terminated by signal: {status}"),

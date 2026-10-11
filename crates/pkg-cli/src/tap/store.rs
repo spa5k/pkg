@@ -98,6 +98,9 @@ pub fn source_dir(state_home: &Path, source: &str) -> Option<PathBuf> {
 /// rollback keeps the previously locked generation. The path text is
 /// percent-encoded: a state home with spaces, `#`, `?`, `%`, or non-ASCII
 /// bytes still produces exactly one reference text Nix records verbatim.
+/// # Errors
+///
+/// Returns an error when `source` is not a valid `owner/tap` identity.
 pub fn current_ref(state_home: &Path, source: &str) -> Result<String, String> {
     let (owner, tap) = checked_source(source)?;
     let path = store_root(state_home).join(owner).join(tap).join(CURRENT);
@@ -193,6 +196,9 @@ pub struct SourceReader {
 impl SourceStore {
     /// Create the source directory tree and take the exclusive
     /// publication lock.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn lock(state_home: &Path, source: &str) -> Result<Self, String> {
         let (owner, tap) = checked_source(source)?;
         let dir = store_root(state_home).join(owner).join(tap);
@@ -220,6 +226,9 @@ impl SourceStore {
     ///
     /// No file or directory is created: a missing lock file means the
     /// source was never published under this store.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn open_readonly(state_home: &Path, source: &str) -> Result<SourceReader, String> {
         let (owner, tap) = checked_source(source)?;
         let dir = store_root(state_home).join(owner).join(tap);
@@ -275,6 +284,9 @@ impl SourceStore {
     /// needed and none exists. The returned generation is tied to THIS
     /// source: [`Self::publish`] refuses one staged by another source's
     /// store.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn new_staging(&self) -> Result<StagedGeneration, String> {
         let staging = tempfile::Builder::new()
             .prefix("incoming-")
@@ -288,7 +300,7 @@ impl SourceStore {
             .keep();
         Ok(StagedGeneration {
             guard: StagingGuard {
-                path: staging.clone(),
+                path: staging,
                 armed: true,
             },
             source: self.source.clone(),
@@ -318,6 +330,9 @@ impl SourceStore {
     /// and removes the failed staging directory. A staged generation or
     /// provenance belonging to another source is refused before any
     /// mutation.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn publish(
         &self,
         staged: StagedGeneration,
@@ -449,11 +464,17 @@ impl SourceStore {
     }
 
     /// Read the active generation's provenance.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn read_provenance(&self) -> Result<Provenance, String> {
         read_provenance_at(&self.current())
     }
 
     /// Read and strictly decode the active generation's index capture.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn read_index(&self) -> Result<CatalogIndex, String> {
         read_index_at(&self.current())
     }
@@ -466,6 +487,9 @@ impl SourceStore {
 /// profile generations, and the immutable tap generations are kept, so
 /// rollback keeps working. Creates nothing: a source with no directory is
 /// already without an active generation.
+/// # Errors
+///
+/// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
 pub fn remove_current(state_home: &Path, source: &str) -> Result<(), String> {
     let Some(dir) = source_dir(state_home, source) else {
         return Ok(());
@@ -485,11 +509,17 @@ impl SourceReader {
     }
 
     /// Read the active generation's provenance.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn read_provenance(&self) -> Result<Provenance, String> {
         self.store.read_provenance()
     }
 
     /// Read and strictly decode the active generation's index capture.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn read_index(&self) -> Result<CatalogIndex, String> {
         self.store.read_index()
     }
@@ -681,6 +711,9 @@ impl Publication<'_> {
     /// reported, never swallowed: the caller must know when the new
     /// generation may still be active instead of being told it was
     /// undone.
+    /// # Errors
+    ///
+    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
     pub fn undo(self) -> Result<(), String> {
         match self.published {
             Published::First => self.store.undo_first_publication(),

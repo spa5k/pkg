@@ -50,6 +50,11 @@ pub fn variation_key_for(system: &str) -> Option<&'static str> {
 ///
 /// Errors when the record carries a variation for the target that is not
 /// an object: that is a malformed record, never a silent base fallback.
+///
+/// # Errors
+///
+/// Returns an error when the record or its target variation has an invalid
+/// shape.
 pub fn effective_for(record: &RawRecord, system: &str) -> Result<Value, String> {
     let mut eff = record.raw.clone();
     let Some(key) = variation_key_for(system) else {
@@ -174,7 +179,7 @@ mod tests {
             .expect("artifacts");
         assert_eq!(artifacts.len(), 1);
         assert!(artifacts[0].get("binary").is_some());
-        assert!(eff.get("sha256").map(Value::is_null).unwrap_or(true));
+        assert!(eff.get("sha256").is_none_or(Value::is_null));
     }
 
     #[test]

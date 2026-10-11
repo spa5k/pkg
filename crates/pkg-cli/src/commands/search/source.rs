@@ -67,13 +67,13 @@ impl SearchSource {
 pub(super) fn search_input(
     options: &SearchOptions,
 ) -> Result<(String, SearchSource), CommandError> {
-    let text = if options.regex {
+    let text = if options.matching.regex {
         options.query.as_str()
     } else {
         options.query.trim()
     };
     let explicit = SearchSource::parse(options.source.as_deref());
-    let (text, implied) = match text.split_once(':').filter(|_| !options.regex) {
+    let (text, implied) = match text.split_once(':').filter(|_| !options.matching.regex) {
         Some(("nixpkgs", text)) => (text, SearchSource::Nixpkgs),
         Some(("brew", text)) => (
             text.strip_prefix("homebrew/core/").unwrap_or(text),
@@ -92,10 +92,8 @@ pub(super) fn search_input(
         _ => (text, SearchSource::All),
     };
     let source = match (&implied, &explicit) {
-        (SearchSource::All, _) => explicit,
-        (_, SearchSource::All) => implied,
-        (SearchSource::Casks, SearchSource::Cask(_)) => explicit,
-        (SearchSource::Cask(_), SearchSource::Casks) => implied,
+        (SearchSource::All, _) | (SearchSource::Casks, SearchSource::Cask(_)) => explicit,
+        (_, SearchSource::All) | (SearchSource::Cask(_), SearchSource::Casks) => implied,
         _ if implied == explicit => implied,
         _ => {
             eprintln!(

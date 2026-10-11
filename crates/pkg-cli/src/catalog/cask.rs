@@ -137,6 +137,9 @@ impl CatalogView {
     }
 
     /// Load the index from `moving_source` through its locked reference.
+    /// # Errors
+    ///
+    /// Returns an error when source identity lookup, catalog evaluation, or catalog decoding fails.
     pub fn load(nix: &Nix, moving_source: &str) -> Result<Self, CatalogError> {
         let identity = nix
             .source_identity(moving_source)
@@ -273,6 +276,9 @@ impl<'a> CatalogOnce<'a> {
     }
 
     /// Load the view once and return it for every later call.
+    /// # Errors
+    ///
+    /// Returns an error when catalog loading or decoding fails.
     pub fn load(&mut self) -> Result<&CatalogView, CatalogError> {
         match &mut self.view {
             Some(view) => Ok(view),

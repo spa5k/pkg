@@ -28,7 +28,7 @@ const BUILDS_DIR: &str = "/nix/var/nix/builds";
 const CUSTOM_CONF: &str = "/etc/nix/nix.custom.conf";
 /// The generated global config; the client view needs it world-readable.
 const NIX_CONF: &str = "/etc/nix/nix.conf";
-/// The Determinate daemon LaunchDaemon on macOS.
+/// The Determinate daemon `LaunchDaemon` on macOS.
 const DETERMINATE_PLIST: &str = "/Library/LaunchDaemons/systems.determinate.nix-daemon.plist";
 
 /// One administrator step, printed to the user before anything runs.
@@ -138,7 +138,7 @@ fn read_conf_file(path: &Path) -> ConfFile {
             std::io::ErrorKind::InvalidData => {
                 ConfFile::Malformed(format!("not valid UTF-8 text: {error}"))
             }
-            _ => ConfFile::Unreadable(format!("{path:?}: {error}")),
+            _ => ConfFile::Unreadable(format!("{}: {error}", path.display())),
         },
     }
 }
@@ -339,9 +339,11 @@ fn run_step(step: &Step) -> Result<bool, String> {
             let waited = child.wait();
             let mut message = format!("could not feed input to {}: {error}", step.argv.join(" "));
             if let Err(error) = waited {
-                message.push_str(&format!(
+                use std::fmt::Write as _;
+                let _ = write!(
+                    message,
                     "; waiting for the failed child also failed: {error}"
-                ));
+                );
             }
             return Err(message);
         }

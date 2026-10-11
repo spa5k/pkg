@@ -555,6 +555,10 @@ fn doctor_forwards_verbose_and_no_color_to_native_children() {
 /// install refuses excluded and unknown tokens before any profile change,
 /// and search returns eligible cask rows without evaluating derivations.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one integration journey checks cask info, install gates, updates, and search"
+)]
 fn cask_flows_read_the_generated_index() {
     let bin = tempfile::tempdir().expect("tempdir");
     let home = tempfile::tempdir().expect("tempdir");
@@ -804,6 +808,10 @@ fn publish_search_tap(state: &std::path::Path) {
 /// fails before any child runs. Proven by a fake Nix runtime that logs
 /// every search and eval call.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one integration journey proves snapshot reuse and cold-query evaluation counts"
+)]
 fn search_snapshots_amortize_new_queries() {
     let bin = tempfile::tempdir().expect("tempdir");
     let home = tempfile::tempdir().expect("tempdir");
@@ -828,9 +836,10 @@ elif "flake metadata" in text:
  owner,repo,rev=("NixOS","nixpkgs","a"*40) if "nixpkgs" in text else ("spa5k","pkg","b"*40)
  print(json.dumps({{"url":"github:"+owner+"/"+repo,"locked":{{"type":"github","owner":owner,"repo":repo,"rev":rev}}}}))
 elif "eval" in args and '#formulaIndex' in text: print(open({formulae:?}).read())
-elif "eval" in args and "--apply" in args:
+elif "eval" in args and ("--apply" in args or "--expr" in args):
  with open({log},"a") as log: log.write("batch\n")
- paths=json.loads(json.loads(re.search(r'paths = builtins.fromJSON (.+?);',args[args.index("--apply")+1]).group(1)))
+ expression=args[args.index("--apply")+1] if "--apply" in args else args[args.index("--expr")+1]
+ paths=json.loads(json.loads(re.search(r'paths = builtins.fromJSON (.+?);',expression).group(1)))
  metadata={{"ripgrep":("ripgrep","15.2.0","grep-like searcher"),"gnugrep":("grep","3.11","search tool"),"zzz-empty":("zzz-empty","1.0","")}}
  metadata.update({{"aws-library":("aws","1.0","AWS library"),"aws-c-http":("aws-c-http","0.11.0","C99 implementation of HTTP"),"aws-sdk-cpp":("aws-sdk-cpp","1.0","C++ interface for Amazon Web Services"),"awscli2":("awscli2","2.0","Universal command line interface for AWS"),"claws-mail":("claws-mail","1.0","Email client"),"awscli2-unwrapped":("awscli2","2.0","Universal command line interface for AWS"),"python312Packages.awscli":("awscli","1.0","AWS command line interface")}})
  metadata["probe"]=("probe","1","probing tool")
@@ -1098,7 +1107,7 @@ else: sys.exit(9)
             || id.contains("aws-sdk-cpp")
             || id.contains("claws")
             || id.contains("python")
-            || id.contains("@")
+            || id.contains('@')
             || id.contains("unwrapped")),
         "{ids:?}"
     );
@@ -1257,8 +1266,8 @@ else: sys.exit(9)
     assert!(!stderr.contains("Installing:"));
     assert_eq!(
         std::fs::read_to_string(&log).unwrap().lines().count() - before,
-        3,
-        "two exact lookups and one cask index; no full scan"
+        2,
+        "one exact metadata batch and one cask index; no full scan"
     );
     for path in std::fs::read_dir(&pkg_cache)
         .unwrap()
@@ -1278,8 +1287,8 @@ else: sys.exit(9)
     assert!(stderr.contains("no supported exact match"));
     assert_eq!(
         std::fs::read_to_string(&log).unwrap().lines().count() - before,
-        3,
-        "cold miss must not scan the whole catalog"
+        2,
+        "cold miss must use targeted metadata evaluation"
     );
 }
 
@@ -1290,7 +1299,8 @@ fn encode_ref(path: &str) -> String {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
             out.push(byte as char);
         } else {
-            out.push_str(&format!("%{byte:02X}"));
+            use std::fmt::Write as _;
+            write!(&mut out, "%{byte:02X}").expect("writing to String cannot fail");
         }
     }
     out
@@ -1588,6 +1598,10 @@ esac
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one integration journey covers verified conflicts across profile-state scenarios"
+)]
 fn file_conflicts_name_verified_owners_without_replacement_commands() {
     let bin = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
@@ -1927,7 +1941,7 @@ fn tap_add_sandbox_refusal_is_concise_and_offers_setup() {
     let bin = tempfile::tempdir().expect("tempdir");
     let home = tempfile::tempdir().expect("tempdir");
     let nix = bin.path().join("nix");
-    let script = r##"#!/bin/sh
+    let script = r#"#!/bin/sh
 case "$*" in
   *--version*) echo 'nix (Nix) 2.35.2';;
   *'config show system'*) printf '%s' "$FAKE_SYSTEM";;
@@ -1935,7 +1949,7 @@ case "$*" in
   *'config show'*) echo 'false';;
   *) echo 'unexpected nix call: '$* >&2; exit 9;;
 esac
-"##;
+"#;
     std::fs::write(&nix, script).expect("write fake nix");
     #[cfg(unix)]
     {

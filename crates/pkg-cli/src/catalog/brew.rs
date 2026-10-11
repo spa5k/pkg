@@ -180,6 +180,25 @@ pub(crate) fn search(
         ));
     }
     let host = CaskHost::default();
+    visit_formula_entries(
+        &view,
+        &host,
+        system,
+        query,
+        (&reference, snapshot.revision.as_deref(), &report),
+        &mut sink,
+    )?;
+    Ok(report)
+}
+
+fn visit_formula_entries(
+    view: &FormulaView,
+    host: &CaskHost,
+    system: &str,
+    query: &SearchQuery,
+    (reference, revision, report): (&str, Option<&str>, &SourceReport),
+    sink: &mut impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
+) -> Result<(), CatalogError> {
     let mut aliases_by_name: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (alias, name) in &view.aliases {
         aliases_by_name.entry(name).or_default().push(alias);
@@ -201,7 +220,7 @@ pub(crate) fn search(
             {
                 continue;
             }
-            let support = match view.availability(&host, system, &entry.token) {
+            let support = match view.availability(host, system, &entry.token) {
                 Availability::Available => SupportBadge::Eligible,
                 Availability::Unavailable { reason } => {
                     if !query.unavailable && !exact {
@@ -233,8 +252,8 @@ pub(crate) fn search(
                     .collect::<Vec<_>>()
                     .join(" "),
                 source: String::from("brew"),
-                reference: Some(reference.clone()),
-                revision: snapshot.revision.clone(),
+                reference: Some(reference.to_string()),
+                revision: revision.map(str::to_string),
                 system: system.to_string(),
                 stale: report.status == super::SourceStatus::Stale,
                 support: Some(support),
@@ -255,5 +274,5 @@ pub(crate) fn search(
             }
         }
     }
-    Ok(report)
+    Ok(())
 }

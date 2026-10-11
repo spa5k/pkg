@@ -10,17 +10,32 @@ pub use model::{
 use serde::Deserialize as _;
 use std::collections::BTreeMap;
 
+#[derive(serde::Deserialize)]
+struct IndexHeader {
+    generator: CatalogGenerator,
+    inputs: BTreeMap<String, CatalogInput>,
+    targets: Vec<String>,
+    #[serde(rename = "macosBaseline")]
+    macos_baseline: String,
+}
+
 /// Decode one captured `catalogIndex` envelope (schema 4).
 ///
 /// Require [`CATALOG_INDEX_SCHEMA`] and per-system entry maps. Each full
 /// `owner/tap/token` key must match its record and name an input with provenance.
 /// Invalid identity, status, or version bounds fail the whole decode.
 /// Unknown provenance fields are accepted. The backend owns index projection.
+/// # Errors
+///
+/// Returns an error when the value has an unsupported schema or invalid catalog fields.
 pub fn decode_catalog_index(raw: &serde_json::Value) -> Result<CatalogIndex, super::NixError> {
     decode_index(raw, CATALOG_INDEX_SCHEMA, "cask catalog index")
 }
 
 /// Decode the Formula envelope with the shared identity and status checks.
+/// # Errors
+///
+/// Returns an error when the value has an unsupported schema or invalid Formula fields.
 pub fn decode_formula_index(raw: &serde_json::Value) -> Result<CatalogIndex, super::NixError> {
     decode_index(raw, "pkg-formula-catalog/1", "formula catalog index")
 }
@@ -42,20 +57,13 @@ fn decode_index(
             "index schema {schema:?} is not the decoded schema {expected:?}"
         )));
     }
-    #[derive(serde::Deserialize)]
-    struct Header {
-        generator: CatalogGenerator,
-        inputs: BTreeMap<String, CatalogInput>,
-        targets: Vec<String>,
-        #[serde(rename = "macosBaseline")]
-        macos_baseline: String,
-    }
-    let Header {
+    let IndexHeader {
         generator,
         inputs,
         targets,
         macos_baseline,
-    } = Header::deserialize(raw).map_err(|error| gate(format!("invalid index header: {error}")))?;
+    } = IndexHeader::deserialize(raw)
+        .map_err(|error| gate(format!("invalid index header: {error}")))?;
     if inputs.is_empty() {
         return Err(gate(String::from(
             "the `inputs` provenance map is empty; a catalog names at least one source",
@@ -136,7 +144,7 @@ fn decode_index(
         generator,
         inputs,
         targets,
-        macos_baseline: macos_baseline.to_string(),
+        macos_baseline,
         systems,
     })
 }
@@ -208,13 +216,12 @@ fn validate_entry(
         ("maxMacos", &entry.max_macos),
     ] {
         match value {
-            None => {}
             Some(value) if super::host::parse_numeric_version(value).is_none() => {
                 return Err(format!(
                     "{field} must be a non-empty numeric version, found {value:?}"
                 ));
             }
-            Some(_) => {}
+            None | Some(_) => {}
         }
     }
     if let (Some(min), Some(max)) = (&entry.min_macos, &entry.max_macos)

@@ -221,43 +221,30 @@ pub(super) struct Capture {
     pub(super) tree: BTreeMap<String, String>,
 }
 
-pub(super) fn convert_capture(
-    capture: &Capture,
-    output_dir: &Path,
-) -> Result<ImportResult, String> {
-    let Capture {
-        source,
-        origin,
-        revision,
-        system,
-        export,
-        metadata_sha256,
-        archive_url: archive_url_value,
-        archive_sha256,
-        license,
-        tree,
-    } = capture;
-    let casks = export
-        .get("casks")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
-    let mut eligible = 0usize;
-    let mut excluded = 0usize;
+struct CaptureEntryBuilder<'a> {
+    source: &'a str,
+    system: &'a str,
+    entries: BTreeMap<String, Entry>,
+    eligible: usize,
+    excluded: usize,
+}
 
-    let mut record_for = |token: String,
-                          status: TargetDecision,
-                          origin_field: Option<Origin>,
-                          raw: Option<&Value>| {
-        let raw = raw.filter(|v| v.is_object());
+impl CaptureEntryBuilder<'_> {
+    fn record(
+        &mut self,
+        token: String,
+        status: TargetDecision,
+        origin: Option<Origin>,
+        raw: Option<&Value>,
+    ) -> Result<(), String> {
+        let raw = raw.filter(|value| value.is_object());
         if !crate::token::is_valid_token(&token) {
             return Err(format!(
                 "integrity: exported token {token:?} is not a usable catalog key"
             ));
         }
-        let id = emit::qualified_id(source, &token);
-        if entries.contains_key(&id) {
+        let id = emit::qualified_id(self.source, &token);
+        if self.entries.contains_key(&id) {
             return Err(format!("integrity: duplicate token {token} in export"));
         }
         let record = raw.cloned().map(RawRecord::new);
@@ -271,26 +258,70 @@ pub(super) fn convert_capture(
             None => (None, None, None, None),
         };
         if status.is_eligible() {
-            eligible += 1;
+            self.eligible += 1;
         } else {
-            excluded += 1;
+            self.excluded += 1;
         }
         let mut targets = BTreeMap::new();
-        targets.insert(system.to_string(), status);
-        entries.insert(
+        targets.insert(self.system.to_string(), status);
+        self.entries.insert(
             id,
             Entry {
-                source: source.to_string(),
+                source: self.source.to_string(),
                 token,
                 name,
                 description,
                 version,
                 homepage,
-                origin: origin_field,
+                origin,
                 targets,
             },
         );
         Ok(())
+    }
+}
+
+fn input_provenance(capture: &Capture) -> InputProvenance {
+    InputProvenance {
+        url: capture.origin.clone(),
+        revision: capture.revision.clone(),
+        sha256: capture.archive_sha256.clone(),
+        license: capture.license.clone(),
+        kind: "raw-ruby-tap",
+        raw: serde_json::json!({
+            "archiveUrl": capture.archive_url,
+            "archiveSha256": capture.archive_sha256,
+            "captureSha256": capture.metadata_sha256,
+            "envelopeSchema": EXPORT_SCHEMA,
+        }),
+    }
+}
+
+pub(super) fn convert_capture(
+    capture: &Capture,
+    output_dir: &Path,
+) -> Result<ImportResult, String> {
+    let Capture {
+        source,
+        origin,
+        revision,
+        system,
+        export,
+        metadata_sha256,
+        tree,
+        ..
+    } = capture;
+    let casks = export
+        .get("casks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut entry_builder = CaptureEntryBuilder {
+        source,
+        system,
+        entries: BTreeMap::new(),
+        eligible: 0,
+        excluded: 0,
     };
 
     for cask in &casks {
@@ -351,40 +382,47 @@ pub(super) fn convert_capture(
             };
             (status, origin_field, Some(cask))
         };
-        record_for(token, status, origin_field, raw)?;
+        entry_builder.record(token, status, origin_field, raw)?;
     }
 
-    let mut inputs = BTreeMap::new();
-    inputs.insert(
-        source.to_string(),
-        InputProvenance {
-            // Client agreement: the public url is the canonical approved
-            // origin; the exact download URL is separate, below.
-            url: origin.to_string(),
-            revision: revision.to_string(),
-            // Hash of the pinned source ARCHIVE bytes (the codeload
-            // tarball), never a handwaved capture hash.
-            sha256: archive_sha256.to_string(),
-            license: license.to_string(),
-            kind: "raw-ruby-tap",
-            raw: serde_json::json!({
-                // Exact source blob download URL (pinned revision).
-                "archiveUrl": archive_url_value,
-                // Actual SHA-256 of the downloaded codeload archive.
-                "archiveSha256": archive_sha256,
-                // Actual SHA-256 of the export.json metadata capture
-                // (the client checks it against result.metadata_sha256).
-                "captureSha256": metadata_sha256,
-                "envelopeSchema": EXPORT_SCHEMA,
-            }),
-        },
-    );
+    let CaptureEntryBuilder {
+        entries,
+        eligible,
+        excluded,
+        ..
+    } = entry_builder;
+    let inputs = BTreeMap::from([(source.clone(), input_provenance(capture))]);
+    write_flake_tree(capture, output_dir, &inputs, &entries)?;
+    let flake_dir = output_dir.join("flake");
+    Ok(ImportResult {
+        source: source.clone(),
+        origin: origin.clone(),
+        revision: revision.clone(),
+        metadata_sha256: metadata_sha256.clone(),
+        flake_path: flake_dir,
+        eligible,
+        excluded,
+    })
+}
+
+fn write_flake_tree(
+    capture: &Capture,
+    output_dir: &Path,
+    inputs: &BTreeMap<String, InputProvenance>,
+    entries: &BTreeMap<String, Entry>,
+) -> Result<(), String> {
+    let Capture {
+        source,
+        revision,
+        system,
+        ..
+    } = capture;
     let flake_dir = output_dir.join("flake");
     std::fs::create_dir_all(&flake_dir)
         .map_err(|e| format!("cannot create {}: {e}", flake_dir.display()))?;
     emit::write_catalog(
         &flake_dir.join("catalog"),
-        &emit::assemble_catalog(&inputs, &entries, &[system])?,
+        &emit::assemble_catalog(inputs, entries, &[system])?,
     )?;
     write_asset(&flake_dir.join("lib").join("builders.nix"), BUILDERS_NIX)?;
     write_asset(&flake_dir.join("lib").join("plan.py"), PLAN_PY)?;
@@ -446,15 +484,7 @@ pub(super) fn convert_capture(
         }
     }
 
-    Ok(ImportResult {
-        source: source.clone(),
-        origin: origin.clone(),
-        revision: revision.clone(),
-        metadata_sha256: metadata_sha256.clone(),
-        flake_path: flake_dir,
-        eligible,
-        excluded,
-    })
+    Ok(())
 }
 
 #[cfg(test)]
@@ -623,6 +653,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "Nix derivation paths use the exact .drv suffix"
+    )]
     fn generated_flake_nix_evaluates_drv_path_offline_with_pinned_inputs() {
         // End-to-end eval contract, not just a Nix parse: the generated
         // standalone flake must evaluate one package's drvPath OFFLINE
