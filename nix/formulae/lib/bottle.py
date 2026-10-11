@@ -18,10 +18,12 @@ def install(archive, plan, output):
     stage = pathlib.Path("bottle-stage")
     stage.mkdir()
     with tarfile.open(archive, "r:gz") as source:
-        members = source.getmembers()
-        if len(members) > 100000 or sum(member.size for member in members) > 2 * 1024**3:
-            raise ValueError("bottle exceeds extraction limits")
-        for member in members:
+        members = []
+        expanded = 0
+        for member in source:
+            expanded += member.size
+            if len(members) >= 100000 or expanded > 2 * 1024**3:
+                raise ValueError("bottle exceeds extraction limits")
             path = pathlib.PurePosixPath(member.name)
             if path.is_absolute() or ".." in path.parts or not (member.name == plan['name'] or member.name == root or member.name.startswith(root + "/")):
                 raise ValueError("bottle member escapes its Cellar root")
@@ -34,6 +36,7 @@ def install(archive, plan, output):
                 location = stage / path.parent / target if member.issym() else stage / target
                 if not location.resolve().is_relative_to((stage / root).resolve()):
                     raise ValueError("bottle link escapes its package")
+            members.append(member)
         source.extractall(stage, members=members, filter="data")
     payload = stage / root
     if not payload.is_dir() or payload.is_symlink():

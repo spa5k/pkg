@@ -4,6 +4,7 @@
 - The client SHALL NOT install, embed, or invoke Brew.
 - A generated catalog SHALL prefer verified Nixpkgs equivalents.
 - Equivalents SHALL match the upstream project and numeric version major.
+- An explicit `@VERSION` name SHALL require that version family.
 - The index SHALL report the actual selected package version.
 - A restricted bottle importer SHALL refuse dependencies, hooks, services,
   unknown requirements, relocation, and unsupported origins.

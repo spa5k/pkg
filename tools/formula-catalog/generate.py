@@ -91,6 +91,12 @@ def equivalent(formula, metadata):
         native_major = re.match(r"v?(\d+)", version)
         if not major or not native_major or major[1] != native_major[1]:
             continue
+        if "@" in formula["name"]:
+            family = formula["name"].rsplit("@", 1)[1]
+            if not re.fullmatch(r"\d+(\.\d+)*", family):
+                continue
+            if not re.match(r"v?" + re.escape(family) + r"(?:\.|$)", version):
+                continue
         return {"kind": "nixpkgs-equivalent", "attribute": [name], "version": version,
                 "status": "eligible", "reason": None, "detail": None, "minMacos": None}
     return None

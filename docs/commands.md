@@ -186,6 +186,7 @@ Eligible Formula rows include `install_command`, such as
 The generated source first checks for a Nixpkgs package with a matching name
 or alias, upstream project, and version major. These packages use Nixpkgs
 versions. `pkg info brew:NAME` shows `nixpkgs-equivalent` in `formula_kind`.
+An explicit `@VERSION` Formula name also requires that version family.
 The second route imports a pinned Homebrew bottle through Nix.
 It accepts only dependency-free bottles that need no Homebrew relocation,
 install hook, service, or special requirement. It checks archive paths,

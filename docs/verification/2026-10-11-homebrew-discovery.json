@@ -85,8 +85,8 @@
     "clippy": "passed",
     "docs": "passed",
     "dependencyPolicy": "passed with existing duplicate dependency warnings",
-    "formulaBehaviorTests": "8 passed",
-    "safeFetchTests": "58 passed",
+    "formulaBehaviorTests": "9 passed",
+    "safeFetchTests": "59 passed",
     "installer": "37 passed, 7 Linux-only skipped",
     "docsLinks": "508 valid"
   },

@@ -15,6 +15,7 @@ from the Formula name and aliases. A matching upstream homepage and
 numeric version major are required. The catalog records the Nixpkgs
 attribute and actual version. The generated flake verifies that version
 against its pinned Nixpkgs input.
+An explicit `@VERSION` name also requires that version family.
 
 When no equivalent exists, the importer accepts a restricted bottle.
 It requires no dependencies, macOS-provided dependencies, requirements,

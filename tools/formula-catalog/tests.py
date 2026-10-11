@@ -2,6 +2,7 @@
 """Behavior checks for Formula identity, support decisions, and bottle writes."""
 
 import copy
+import gzip
 import importlib.util
 import io
 import os
@@ -52,6 +53,11 @@ class FormulaTests(unittest.TestCase):
         metadata = {name: {"homepage": package["homepage"], "version": version}
                     for name, version in [("awscli", "1.0"), ("awscli2", "2.1")]}
         self.assertEqual(generator.equivalent(package, metadata)["attribute"], ["awscli2"])
+        package.update(name="probe@2.1", aliases=["probe"])
+        metadata = {"probe": {"homepage": package["homepage"], "version": "2.0"}}
+        self.assertIsNone(generator.equivalent(package, metadata))
+        metadata["probe"]["version"] = "2.1.3"
+        self.assertEqual(generator.equivalent(package, metadata)["attribute"], ["probe"])
 
     def test_bottle_refuses_dependencies_hooks_relocation_and_wrong_origin(self):
         package = formula()
@@ -117,6 +123,15 @@ class BottleTests(unittest.TestCase):
     def test_path_escape_is_refused_before_writes(self):
         self.archive([("probe/2.0/bin/probe", b"safe", None), ("../../outside", b"bad", None)])
         with self.assertRaises(ValueError):
+            bottle.install("probe.tar.gz", self.plan, "output")
+        self.assertEqual(list(pathlib.Path("bottle-stage").iterdir()), [])
+        self.assertFalse(pathlib.Path("output").exists())
+
+    def test_declared_expansion_is_refused_before_reading_the_payload(self):
+        entry = tarfile.TarInfo("probe/2.0/bin/probe")
+        entry.size = 3 * 1024**3
+        pathlib.Path("probe.tar.gz").write_bytes(gzip.compress(entry.tobuf() + bytes(1024)))
+        with self.assertRaisesRegex(ValueError, "extraction limits"):
             bottle.install("probe.tar.gz", self.plan, "output")
         self.assertEqual(list(pathlib.Path("bottle-stage").iterdir()), [])
         self.assertFalse(pathlib.Path("output").exists())
