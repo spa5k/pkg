@@ -14,6 +14,7 @@
 //! native output shapes, and the `reference` module the pure reference
 //! rules.
 
+mod conflict;
 mod discovery;
 mod error;
 mod host;
@@ -26,6 +27,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub use conflict::ProfileConflict;
 pub use discovery::MetadataNode;
 pub use error::NixError;
 pub use host::{in_range, macos_product_version};
@@ -310,10 +312,10 @@ impl Nix {
 
     /// Run a native command with stderr reduced to progress and signal.
     ///
-    /// Fetch, clone, and evaluation chatter is filtered; warnings,
-    /// errors, and interactive prompts stay visible, and the raw stderr
-    /// stays captured for failure diagnostics. The verbose flag keeps
-    /// the unfiltered stream.
+    /// Fetch, clone, and evaluation chatter is filtered. Warnings and
+    /// interactive prompts stay visible. Raw stderr stays captured for
+    /// the command's failure report. The verbose flag keeps the
+    /// unfiltered stream.
     fn run_filtered(&self, args: &[&str]) -> Result<(), NixError> {
         let profile = args
             .iter()

@@ -24,6 +24,8 @@ The CLI discovery change is
 [Improve package states and discovery](openspec/changes/improve-cli-discovery/proposal.md).
 Homebrew formula discovery and source sections follow
 [Show Homebrew formulae and source sections](openspec/changes/improve-homebrew-discovery/proposal.md).
+File conflict reporting follows
+[Explain package file conflicts](openspec/changes/improve-package-conflicts/proposal.md).
 
 ## 1. Before you open a PR
 

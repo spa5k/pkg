@@ -33,11 +33,11 @@ Homebrew formula discovery and source sections follow
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.13 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.13):
+   [v0.2.0-alpha.14 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.14):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.13/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.14/install.sh
    sh pkg-install.sh
    ```
 
@@ -139,6 +139,8 @@ Native lifecycle and archive repairs are specified in
 [harden native package lifecycle](openspec/changes/harden-native-package-lifecycle/proposal.md).
 The accepted audit repairs are
 [implement audit repairs](openspec/changes/implement-audit-repairs/proposal.md).
+Package conflict reporting follows
+[explain package file conflicts](openspec/changes/improve-package-conflicts/proposal.md).
 
 ## License
 

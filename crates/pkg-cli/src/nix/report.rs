@@ -4,10 +4,10 @@
 //! progress on stderr. Raw passthrough turns one install into dozens of
 //! git transfer lines. The reporter keeps the stream readable: transfer
 //! and evaluation chatter is dropped, one compact status line shows the
-//! current fetch, copy, or build, and warnings, errors, and Nix's
-//! interactive trust prompts always reach the user immediately. Nothing
-//! is lost on failure: the raw stderr stays captured for the error
-//! report.
+//! current fetch, copy, or build. Warnings and Nix's interactive trust
+//! prompts reach the user immediately. The command reports the cause
+//! after checking the profile. Raw stderr stays captured for decoding
+//! and is visible under `--verbose`.
 
 use std::io::IsTerminal as _;
 use std::io::Write as _;
@@ -136,6 +136,8 @@ pub struct MutationReporter {
     status_active: bool,
     /// Nix is printing the informational diff for an input override.
     lock_diff: bool,
+    /// The native file conflict block is reported by the command after re-read.
+    file_conflict: bool,
     profile: Option<String>,
     verbose: bool,
 }
@@ -149,6 +151,7 @@ impl MutationReporter {
             passthrough: false,
             status_active: false,
             lock_diff: false,
+            file_conflict: false,
             profile: None,
             verbose: false,
         }
@@ -194,15 +197,30 @@ impl MutationReporter {
 
     /// Report one complete line.
     fn line(&mut self, text: &str) {
-        let line = text.trim();
+        if self.verbose {
+            self.show(text);
+            return;
+        }
+        let plain = crate::output::strip_ansi(text);
+        let line = plain.trim();
+        if super::conflict::starts_conflict(line) {
+            self.file_conflict = true;
+            return;
+        }
+        if self.file_conflict {
+            if line.starts_with("warning:") || line.starts_with("do you want to ") {
+                self.show(text);
+                return;
+            }
+            if !line.starts_with("error:") {
+                return;
+            }
+            self.file_conflict = false;
+        }
         if let Some(profile) = &self.profile
             && let Some(scoped) = scoped_hint(line, profile)
         {
             self.show(&scoped);
-            return;
-        }
-        if self.verbose {
-            self.show(text);
             return;
         }
         if line.starts_with("warning: not writing modified lock file of flake ") {
@@ -218,7 +236,7 @@ impl MutationReporter {
             }
             self.lock_diff = false;
         }
-        match classify(text) {
+        match classify(line) {
             Kind::Show => self.show(text),
             Kind::Hide => {}
             Kind::Status(text) => self.status(&text),
