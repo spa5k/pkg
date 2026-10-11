@@ -28,7 +28,8 @@ pub(super) fn search(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(
     } else {
         Some(options.limit.unwrap_or(20))
     };
-    let (system, reports, rows) = local_search(&paths, &config, &query, source.as_deref(), limit)?;
+    let (system, reports, rows) =
+        local_search(&paths, &config, &query, source.as_deref(), limit, !cli.json)?;
     let failed = reports
         .iter()
         .any(|report| report.status == catalog::SourceStatus::Failed);
@@ -46,7 +47,10 @@ pub(super) fn search(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(
     {
         eprintln!(
             "Warning: {}: {}",
-            output::short_source(&report.source),
+            report
+                .display
+                .clone()
+                .unwrap_or_else(|| output::short_source(&report.source)),
             super::concise_cause(report.detail.as_deref().unwrap_or("unknown cause"))
         );
     }
@@ -72,6 +76,15 @@ fn search_input(
         if let Some(rest) = text.strip_prefix("nixpkgs:") {
             implied = Some(String::from("nixpkgs"));
             text = rest.to_string();
+        } else if let Some(rest) = text.strip_prefix("brew:") {
+            implied = Some(String::from("brew"));
+            text = rest
+                .strip_prefix("homebrew/core/")
+                .unwrap_or(rest)
+                .to_string();
+        } else if let Some(rest) = text.strip_prefix("homebrew:") {
+            implied = Some(String::from("homebrew"));
+            text = rest.to_string();
         } else if let Some(rest) = text.strip_prefix("cask:") {
             let parts: Vec<_> = rest.splitn(3, '/').collect();
             if let [owner, tap, token] = parts.as_slice() {
@@ -83,7 +96,14 @@ fn search_input(
             }
         }
     }
-    if let (Some(implied), Some(source)) = (&implied, &options.source)
+    let explicit = options.source.as_deref().map(|source| {
+        if source == "homebrew/core" {
+            "brew"
+        } else {
+            source
+        }
+    });
+    if let (Some(implied), Some(source)) = (&implied, explicit)
         && implied != source
         && !(source == "cask" && implied.contains('/'))
         && !(implied == "cask" && source.contains('/'))
@@ -91,10 +111,10 @@ fn search_input(
         eprintln!("The query selects `{implied}`, but --source selects `{source}`.");
         return Err(CommandError::Reported(ExitCode::from(super::USAGE)));
     }
-    let source = match (implied, &options.source) {
-        (Some(implied), Some(source)) if implied == "cask" => Some(source.clone()),
+    let source = match (implied, explicit) {
+        (Some(implied), Some(source)) if implied == "cask" => Some(source.to_string()),
         (Some(implied), _) => Some(implied),
-        (None, source) => source.clone(),
+        (None, source) => source.map(str::to_string),
     };
     Ok((text, source))
 }
@@ -105,16 +125,19 @@ fn local_search(
     query: &catalog::SearchQuery,
     source: Option<&str>,
     limit: Option<u32>,
+    grouped: bool,
 ) -> Result<(String, Vec<catalog::SourceReport>, SearchSpool), CommandError> {
     let system = catalog::search_system(&paths.cache_dir);
     let mut reports = Vec::new();
-    let registry = if matches!(source, Some("nixpkgs" | "homebrew/cask")) {
+    let registry = if matches!(source, Some("nixpkgs" | "brew" | "homebrew/cask")) {
         crate::tap::Registry::empty()
     } else {
         match crate::tap::Registry::load(&crate::tap::registry::registry_path(&paths.state_home)) {
             Ok(registry) => registry,
             Err(error) => {
-                if source.is_some_and(|source| source != "cask" && source != "homebrew/cask") {
+                if source
+                    .is_some_and(|source| !matches!(source, "cask" | "homebrew" | "homebrew/cask"))
+                {
                     return Err(error.into());
                 }
                 reports.push(catalog::missing_report("saved taps", &error));
@@ -123,20 +146,24 @@ fn local_search(
         }
     };
     if let Some(source) = source
-        && !matches!(source, "nixpkgs" | "cask" | "homebrew/cask")
+        && !matches!(
+            source,
+            "nixpkgs" | "brew" | "homebrew" | "cask" | "homebrew/cask"
+        )
         && !registry.sources.contains_key(source)
     {
         return Err(format!(
-            "unknown search source `{source}`. Use nixpkgs, cask, homebrew/cask, or a source from `pkg tap list`."
+            "unknown search source `{source}`. Use nixpkgs, brew, homebrew, cask, homebrew/core, homebrew/cask, or a source from `pkg tap list`."
         )
         .into());
     }
     let host = catalog::CaskHost::default();
-    let mut rows = SearchSpool::new(limit)?;
+    let mut rows = SearchSpool::new(limit, grouped)?;
     for (kind, moving) in super::configured_sources(config) {
         if source.is_some_and(|source| {
             source != kind.label()
                 && !(source == "homebrew/cask" && kind == catalog::SourceKind::Cask)
+                && !(source == "homebrew" && kind == catalog::SourceKind::Cask)
         }) {
             continue;
         }
@@ -167,8 +194,22 @@ fn local_search(
             result.unwrap_or_else(|error| catalog::missing_report(moving, &error.to_string())),
         );
     }
+    if source.is_none() || matches!(source, Some("brew" | "homebrew")) {
+        let result = catalog::brew::search(
+            &paths.cache_dir,
+            &config.sources.formulae,
+            &system,
+            query,
+            |row, rank| rows.push(&row, rank),
+        );
+        reports.push(result.unwrap_or_else(|error| {
+            catalog::missing_report(&config.sources.formulae, &error.to_string())
+        }));
+    }
     for tap_source in registry.sources.keys() {
-        if source.is_some_and(|source| source != "cask" && source != tap_source) {
+        if source
+            .is_some_and(|source| source != "cask" && source != "homebrew" && source != tap_source)
+        {
             continue;
         }
         let result = crate::tap::SavedCatalogs::load_one(&registry, &paths.state_home, tap_source)
@@ -202,7 +243,15 @@ pub(super) fn install_resolution_error(
     let suggestions = catalog::SearchQuery::new(name, false, false)
         .ok()
         .and_then(|query| {
-            local_search(&session.paths, &session.config, &query, source, Some(5)).ok()
+            local_search(
+                &session.paths,
+                &session.config,
+                &query,
+                source,
+                Some(5),
+                false,
+            )
+            .ok()
         })
         .map(|(_, _, rows)| rows)
         .filter(|rows| rows.count > 0);
@@ -256,20 +305,23 @@ struct SearchSpool {
     connection: rusqlite::Connection,
     count: usize,
     limit: Option<u32>,
-    worst: Option<(u32, String)>,
+    worst: std::collections::BTreeMap<String, (u32, String)>,
+    sections: std::collections::BTreeMap<String, usize>,
+    grouped: bool,
     fuzzy: bool,
 }
 
 impl SearchSpool {
-    fn new(limit: Option<u32>) -> Result<Self, CommandError> {
+    fn new(limit: Option<u32>, grouped: bool) -> Result<Self, CommandError> {
         let file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
         let connection =
             rusqlite::Connection::open(file.path()).map_err(|error| error.to_string())?;
         connection
             .execute_batch(
                 "PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA journal_mode=OFF;
-            CREATE TABLE results(rank INTEGER, id TEXT, body TEXT);
+            CREATE TABLE results(rank INTEGER, id TEXT, body TEXT, section TEXT);
             CREATE INDEX result_order ON results(rank, id);
+            CREATE INDEX section_order ON results(section, rank, id);
             BEGIN;",
             )
             .map_err(|error| error.to_string())?;
@@ -278,7 +330,9 @@ impl SearchSpool {
             connection,
             count: 0,
             limit,
-            worst: None,
+            worst: std::collections::BTreeMap::new(),
+            sections: std::collections::BTreeMap::new(),
+            grouped,
             fuzzy: false,
         })
     }
@@ -294,40 +348,72 @@ impl SearchSpool {
                 .execute("DELETE FROM results", [])
                 .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
             self.count = 0;
-            self.worst = None;
+            self.worst.clear();
+            self.sections.clear();
         } else if fuzzy && self.count > 0 && !self.fuzzy {
             return Ok(());
         }
         self.fuzzy = fuzzy;
-        if self.worst.as_ref().is_some_and(|(worst_rank, worst_id)| {
+        let section = match row.source.as_str() {
+            "nixpkgs" => String::from("Nixpkgs"),
+            "brew" => String::from("Homebrew Formulae"),
+            _ => {
+                let source = row
+                    .id
+                    .strip_prefix("cask:")
+                    .unwrap_or(&row.id)
+                    .rsplit_once('/')
+                    .map_or(row.source.as_str(), |(source, _)| source);
+                if source == "homebrew/cask" {
+                    String::from("Homebrew Casks")
+                } else {
+                    format!("Cask tap: {source}")
+                }
+            }
+        };
+        self.count += 1;
+        let section_count = self.sections.entry(section.clone()).or_default();
+        *section_count += 1;
+        let retained_count = if self.grouped {
+            *section_count
+        } else {
+            self.count
+        };
+        let key = if self.grouped {
+            section.clone()
+        } else {
+            String::new()
+        };
+        if self.worst.get(&key).is_some_and(|(worst_rank, worst_id)| {
             (rank, row.id.as_str()) > (*worst_rank, worst_id.as_str())
         }) {
-            self.count += 1;
             return Ok(());
         }
         let body = serde_json::to_string(row)
             .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
         self.connection
             .execute(
-                "INSERT INTO results VALUES (?1, ?2, ?3)",
-                rusqlite::params![rank, row.id, body],
+                "INSERT INTO results VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![rank, row.id, body, section],
             )
             .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
-        self.count += 1;
         if let Some(limit) = self.limit
-            && self.count >= limit as usize
+            && retained_count >= limit as usize
         {
-            self.connection.execute("DELETE FROM results WHERE rowid NOT IN (SELECT rowid FROM results ORDER BY rank, id LIMIT ?1)", [limit])
-                .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
-            self.worst = Some(
-                self.connection
-                    .query_row(
+            let worst = if self.grouped {
+                self.connection.execute("DELETE FROM results WHERE section=?2 AND rowid NOT IN (SELECT rowid FROM results WHERE section=?2 ORDER BY rank, id LIMIT ?1)", rusqlite::params![limit, section])
+                    .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+                self.connection.query_row("SELECT rank, id FROM results WHERE section=?1 ORDER BY rank DESC, id DESC LIMIT 1", [&section], |row| Ok((row.get(0)?, row.get(1)?)))
+            } else {
+                self.connection.execute("DELETE FROM results WHERE rowid NOT IN (SELECT rowid FROM results ORDER BY rank, id LIMIT ?1)", [limit])
+                    .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+                self.connection.query_row(
                         "SELECT rank, id FROM results ORDER BY rank DESC, id DESC LIMIT 1",
                         [],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
-                    .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?,
-            );
+            }.map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+            self.worst.insert(key, worst);
         }
         Ok(())
     }
@@ -375,6 +461,30 @@ impl SearchSpool {
         Ok(())
     }
 
+    fn visit_section(
+        &self,
+        section: &str,
+        limit: usize,
+        mut sink: impl FnMut(catalog::SearchResult) -> std::io::Result<()>,
+    ) -> Result<(), CommandError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT body FROM results WHERE section=?1 ORDER BY rank, id LIMIT ?2")
+            .map_err(|error| error.to_string())?;
+        let mut rows = statement
+            .query(rusqlite::params![
+                section,
+                i64::try_from(limit).map_err(|error| error.to_string())?
+            ])
+            .map_err(|error| error.to_string())?;
+        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+            let body: String = row.get(0).map_err(|error| error.to_string())?;
+            sink(serde_json::from_str(&body).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     fn text(&self, query: &str, limit: Option<u32>) -> Result<(), CommandError> {
         use std::io::Write as _;
         if self.count == 0 {
@@ -384,28 +494,75 @@ impl SearchSpool {
         if self.fuzzy {
             println!("No literal matches. Showing similar package names for `{query}`.");
         }
-        let mut width = 2;
-        let mut version_width = 7;
-        self.visit(limit, |body| {
-            let row: catalog::SearchResult =
-                serde_json::from_str(body).map_err(std::io::Error::other)?;
-            width = width.max(row.id.len());
-            version_width = version_width.max(row.version.len());
-            Ok(())
-        })?;
+        let mut sections: Vec<_> = self.sections.iter().collect();
+        sections.sort_by_key(|(section, _)| {
+            (
+                match section.as_str() {
+                    "Nixpkgs" => 0,
+                    "Homebrew Formulae" => 1,
+                    "Homebrew Casks" => 2,
+                    _ => 3,
+                },
+                section.as_str(),
+            )
+        });
+        let mut shown = vec![0; sections.len()];
+        let mut remaining = limit.map_or(self.count, |limit| (limit as usize).min(self.count));
+        if limit.is_none() {
+            for ((_, count), shown) in sections.iter().zip(&mut shown) {
+                *shown = **count;
+            }
+        } else {
+            while remaining > 0 {
+                for ((_, count), shown) in sections.iter().zip(&mut shown) {
+                    if remaining > 0 && *shown < **count {
+                        *shown += 1;
+                        remaining -= 1;
+                    }
+                }
+            }
+        }
         let stdout = std::io::stdout();
         let mut out = std::io::BufWriter::new(stdout.lock());
-        writeln!(
-            out,
-            "{:<width$}  {:<version_width$}  DESCRIPTION",
-            "ID", "VERSION"
-        )
-        .map_err(|error| error.to_string())?;
-        self.visit(limit, |body| {
-            let row: catalog::SearchResult =
-                serde_json::from_str(body).map_err(std::io::Error::other)?;
-            out.write_all(output::render_search_row(&row, width, version_width).as_bytes())
-        })?;
+        for (index, ((section, count), shown)) in sections.iter().zip(&shown).enumerate() {
+            if index > 0 {
+                writeln!(out).map_err(|error| error.to_string())?;
+            }
+            if shown == *count {
+                let noun = if **count == 1 { "match" } else { "matches" };
+                writeln!(out, "{section} ({count} {noun})").map_err(|error| error.to_string())?;
+            } else {
+                writeln!(out, "{section} ({shown} of {count} matches)")
+                    .map_err(|error| error.to_string())?;
+            }
+            if *shown == 0 {
+                continue;
+            }
+            let mut width = 2;
+            let mut version_width = 7;
+            let mut command = None;
+            self.visit_section(section, *shown, |row| {
+                width = width.max(row.id.len());
+                version_width = version_width.max(row.version.len());
+                if command.is_none() {
+                    command = row.install_command;
+                }
+                Ok(())
+            })?;
+            writeln!(
+                out,
+                "{:<width$}  {:<version_width$}  DESCRIPTION",
+                "ID", "VERSION"
+            )
+            .map_err(|error| error.to_string())?;
+            self.visit_section(section, *shown, |row| {
+                out.write_all(output::render_search_row(&row, width, version_width).as_bytes())
+            })?;
+            if let Some(command) = command {
+                writeln!(out, "Install example: {}", command.join(" "))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
         if let Some(limit) = limit
             && self.count > limit as usize
         {
@@ -436,6 +593,7 @@ struct InfoData {
     /// Cask classification, when the ID is a cask token.
     cask: Option<CaskDisplay>,
     availability: Option<catalog::Availability>,
+    formula_kind: Option<String>,
 }
 
 pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
@@ -445,10 +603,22 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
     let session = session(cli)?;
     let system = session.nix.system()?;
     let mut catalog_handle = catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks);
-    let tap_state = super::TapState::load(&session)?;
+    let formula_view = if matches!(&parsed, ParsedId::Qualified(catalog::CatalogId::Formula(_))) {
+        Some(catalog::brew::FormulaView::load(
+            &session.nix,
+            &session.config.sources.formulae,
+        )?)
+    } else {
+        None
+    };
+    let tap_state = if formula_view.is_some() {
+        super::TapState::official(&session)
+    } else {
+        super::TapState::load(&session)?
+    };
     // Qualified IDs resolve without reading any saved tap; bare names
     // load every source so their resolution stays strict.
-    let resolved = match parsed {
+    let mut resolved = match parsed {
         ParsedId::Qualified(qualified) => qualified,
         ParsedId::Bare(name) => {
             let saved = tap_state.saved_all()?;
@@ -467,6 +637,9 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
             catalog::resolve_bare_cask(&session.nix, &saved, &token, &system, &mut catalog_handle)?
         }
     };
+    if let (catalog::CatalogId::Formula(name), Some(view)) = (&resolved, &formula_view) {
+        resolved = catalog::CatalogId::Formula(view.resolve(&system, name)?);
+    }
     let (reference, attribute) = resolved
         .source_and_attribute(&tap_state.routing, &system)
         .map_err(CommandError::Message)?;
@@ -476,7 +649,23 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
     // Cask status and metadata come from the generated index before any
     // derivation lookup: excluded and unknown tokens report their recorded
     // state without forcing a package evaluation.
-    let data = if let catalog::CatalogId::Cask { source, token } = &resolved {
+    let data = if let (catalog::CatalogId::Formula(name), Some(view)) = (&resolved, &formula_view) {
+        let record = view.catalog.record(&system, "homebrew/core", name);
+        let mut report = catalog::report_for(&reference, &view.catalog.identity);
+        report.display = Some(String::from("Homebrew Formulae"));
+        InfoData {
+            attribute,
+            matched_attribute: Some(catalog::native_package_attribute(
+                &system,
+                &format!("homebrew/core/{name}"),
+            )),
+            meta: record.map(|entry| catalog::catalog_meta(name, entry)),
+            report,
+            cask: None,
+            availability: Some(view.availability(&catalog::CaskHost::default(), &system, name)),
+            formula_kind: record.and_then(|entry| entry.kind.clone()),
+        }
+    } else if let catalog::CatalogId::Cask { source, token } = &resolved {
         cask_info(
             &mut catalog_handle,
             &tap_state,
@@ -494,6 +683,7 @@ pub(super) fn info(cli: &Cli, id: &str) -> Result<(), CommandError> {
                 meta: Some(exact.meta),
                 report,
                 cask: None,
+                formula_kind: None,
                 availability: None,
             },
             Err(catalog::CatalogError::NotFound(_)) => {
@@ -626,6 +816,7 @@ fn info_json(
         "installed": installed_json,
         "cask": cask_json,
         "availability": data.availability,
+        "formula_kind": data.formula_kind,
     })
 }
 
@@ -702,6 +893,17 @@ fn info_text(
         let _ = writeln!(out, "{}", meta.description);
     }
     let _ = writeln!(out, "ID: {}", resolved.qualified());
+    if let Some(kind) = &data.formula_kind {
+        let _ = writeln!(
+            out,
+            "Package: {}",
+            if kind == "nixpkgs-equivalent" {
+                "Nixpkgs equivalent"
+            } else {
+                "Homebrew bottle through Nix"
+            }
+        );
+    }
     let _ = writeln!(
         out,
         "Installed: {}",
@@ -759,6 +961,7 @@ fn info_text(
 fn request_qualified(resolved: &catalog::CatalogId, attribute: &str) -> String {
     match resolved {
         catalog::CatalogId::Nixpkgs(_) => format!("nixpkgs:{attribute}"),
+        catalog::CatalogId::Formula(name) => format!("brew:homebrew/core/{name}"),
         catalog::CatalogId::Explicit { reference, .. } => {
             format!("{reference}#{attribute}")
         }
@@ -802,6 +1005,7 @@ fn cask_info(
             availability: Some(
                 catalog::CaskHost::default().availability(view, system, source, token),
             ),
+            formula_kind: None,
             cask: Some(CaskDisplay::UnsupportedPlatform {
                 system: system.to_string(),
                 targets: view.targets().to_vec(),
@@ -816,6 +1020,7 @@ fn cask_info(
         meta,
         report: catalog::report_for(reference, &view.identity),
         availability: Some(catalog::CaskHost::default().availability(view, system, source, token)),
+        formula_kind: None,
         cask: Some(CaskDisplay::Status {
             status: view.entry(system, source, token),
             kind: record.and_then(|entry| entry.kind.clone()),

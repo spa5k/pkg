@@ -11,8 +11,9 @@ Invoked by ./public-fetch.nix as:
     python safe-fetch.py --url <url> --output <out> --sha256 <hash>
 
 No proxy support and no environment credential behavior is used:
-http.client reads no proxy or credential variables and no auth,
-cookie, or referer headers are ever sent. Requests use
+http.client reads no proxy or credential variables. No user auth,
+cookie, or referer headers are ever sent. Homebrew Core requests to GHCR
+use a fixed anonymous bearer value; redirects do not inherit it. Requests use
 Accept-Encoding: identity, so response bytes are payload bytes.
 """
 
@@ -349,15 +350,18 @@ def fetch(
                     f"connect failed for all resolved addresses: {last_error}"
                 )
             with contextlib.closing(conn):
+                headers = {
+                    "Host": target.host_header,
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/octet-stream, */*",
+                    "Accept-Encoding": "identity",
+                }
+                if target.host == "ghcr.io" and target.path.startswith("/v2/homebrew/core/"):
+                    headers["Authorization"] = "Bearer QQ=="
                 conn.request(
                     "GET",
                     target.path,
-                    headers={
-                        "Host": target.host_header,
-                        "User-Agent": USER_AGENT,
-                        "Accept": "application/octet-stream, */*",
-                        "Accept-Encoding": "identity",
-                    },
+                    headers=headers,
                 )
                 resp = conn.getresponse()
                 status = resp.status

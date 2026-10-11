@@ -29,7 +29,25 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     }
     let session = session(cli)?;
     let system = session.nix.system()?;
-    let tap_state = super::TapState::load(&session)?;
+    let only_formulae = parsed_ids
+        .iter()
+        .all(|id| matches!(id, ParsedId::Qualified(catalog::CatalogId::Formula(_))));
+    let formula_view = if parsed_ids
+        .iter()
+        .any(|id| matches!(id, ParsedId::Qualified(catalog::CatalogId::Formula(_))))
+    {
+        Some(catalog::brew::FormulaView::load(
+            &session.nix,
+            &session.config.sources.formulae,
+        )?)
+    } else {
+        None
+    };
+    let tap_state = if only_formulae {
+        super::TapState::official(&session)
+    } else {
+        super::TapState::load(&session)?
+    };
     // One index evaluation is shared by every bare resolution and every
     // cask gate in this command run.
     let mut catalog_handle = catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks);
@@ -40,7 +58,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
         // unrelated broken tap cannot block a request that names its
         // source. Bare names load every source, because bare
         // resolution must stay strict across all of them.
-        let resolved = match parsed {
+        let mut resolved = match parsed {
             ParsedId::Qualified(qualified) => qualified,
             ParsedId::Bare(name) => {
                 let saved = tap_state.saved_all()?;
@@ -71,6 +89,13 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                 })?
             }
         };
+        if let (catalog::CatalogId::Formula(name), Some(view)) = (&resolved, &formula_view) {
+            let canonical = view.resolve(&system, name)?;
+            view.availability(&catalog::CaskHost::default(), &system, &canonical)
+                .require()
+                .map_err(|reason| format!("brew:homebrew/core/{canonical}: {reason}"))?;
+            resolved = catalog::CatalogId::Formula(canonical);
+        }
         if let catalog::CatalogId::Cask { source, token } = &resolved {
             gate_cask(&mut catalog_handle, &tap_state, &system, source, token)
                 .map_err(CommandError::Message)?;
@@ -354,6 +379,7 @@ pub(super) fn upgrade(
     // casks source never judges an entry installed from another one;
     // Nixpkgs entries are never gated as casks. Unsupported, excluded,
     // and unknown targets are gated with the install policy.
+    gate_upgrade_formulae(&session, &installed, &movable)?;
     gate_upgrade_macos_range(&session, &installed, &movable).map_err(CommandError::Message)?;
     eprintln!("Upgrading: {}", movable.join(", "));
     session
@@ -368,6 +394,45 @@ pub(super) fn upgrade(
         .collect();
     apps_refresh_after_mutation(&session, "upgrade", &names)?;
     report_names("Upgraded", &names);
+    Ok(())
+}
+
+fn gate_upgrade_formulae(
+    session: &super::Session,
+    installed: &BTreeMap<String, ProfileEntry>,
+    movable: &[String],
+) -> Result<(), CommandError> {
+    let mut views = BTreeMap::new();
+    let host = catalog::CaskHost::default();
+    for key in movable {
+        let entry = &installed[key];
+        let Some((system, source, name)) = cask_identity(&entry.attr_path) else {
+            continue;
+        };
+        if source != "homebrew/core"
+            || catalog::canonical_source(&entry.original_url)
+                == catalog::canonical_source(&session.config.sources.nixpkgs)
+        {
+            continue;
+        }
+        let host_system = session.nix.system()?;
+        if system != host_system {
+            return Err(format!(
+                "brew:homebrew/core/{name} was installed for {system}; this host is {host_system}"
+            )
+            .into());
+        }
+        if !views.contains_key(&entry.original_url) {
+            views.insert(
+                entry.original_url.clone(),
+                catalog::brew::FormulaView::load(&session.nix, &entry.original_url)?,
+            );
+        }
+        let view = &views[&entry.original_url];
+        view.availability(&host, &system, &name)
+            .require()
+            .map_err(|reason| format!("brew:homebrew/core/{name}: {reason}"))?;
+    }
     Ok(())
 }
 
@@ -417,6 +482,9 @@ fn gate_upgrade_macos_range(
         // A saved tap is judged only under its exact verified source; an
         // attribute that names a different source is not that cask.
         if saved_source.as_deref().is_some_and(|saved| saved != source) {
+            continue;
+        }
+        if source == "homebrew/core" {
             continue;
         }
         casks.push((entry, system, source, token));

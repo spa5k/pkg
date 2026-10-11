@@ -1,0 +1,94 @@
+{
+  "date": "2026-10-11",
+  "system": "aarch64-darwin",
+  "baseline": "692e9cf8e26a7101333180b9c5ae541ecb1c362d",
+  "scope": "Nix-only Formula support and source sections",
+  "inputs": {
+    "homebrew/core": {
+      "kind": "official",
+      "license": "BSD-2-Clause (Homebrew Core data)",
+      "revision": "603c29bb3c1350e0fafc592b4ed91129695d7a38",
+      "sha256": "34f9d707972a62bc040024643e3f2b221ab882f0c29708b39c378c9f30e4e9ab",
+      "url": "https://formulae.brew.sh/api/formula.json"
+    }
+  },
+  "nixpkgsRevision": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+  "formulaCount": 8650,
+  "eligibility": {
+    "aarch64-darwin": {
+      "nixpkgs-equivalent": 2724,
+      "homebrew-relocation": 390,
+      "formula-bottle": 1377,
+      "deprecated": 318,
+      "formula-dependency": 2694,
+      "no-compatible-bottle": 918,
+      "disabled": 152,
+      "install-hook": 74,
+      "unsupported-bottle-origin": 3
+    },
+    "x86_64-linux": {
+      "nixpkgs-equivalent": 2945,
+      "unsupported-bottle-platform": 5235,
+      "deprecated": 318,
+      "disabled": 152
+    }
+  },
+  "actualPackages": [
+    {
+      "id": "brew:homebrew/core/abnfgen",
+      "kind": "formula-bottle",
+      "version": "0.21",
+      "executableCheck": "ABNF grammar output matched expected text"
+    },
+    {
+      "id": "brew:homebrew/core/fd",
+      "kind": "nixpkgs-equivalent",
+      "version": "10.4.2",
+      "executableCheck": "fd --version"
+    }
+  ],
+  "realLifecycle": [
+    "mixed-install preflight refusal",
+    "single transaction with bottle and equivalent",
+    "native list and installed info",
+    "repeat install skips",
+    "upgrade",
+    "history",
+    "remove",
+    "rollback",
+    "remove after rollback"
+  ],
+  "searchSeconds": {
+    "all": 0.545,
+    "formulae": 0.321
+  },
+  "nativeFixtureChecks": [
+    "alias normalization",
+    "duplicate request",
+    "broken tap registry isolation",
+    "upgrade refusal before profile mutation",
+    "native Formula state",
+    "rollback and removal",
+    "existing native lifecycle and cask regressions"
+  ],
+  "userProfile": {
+    "beforeSha256": "b137161f201cd4e42027fb6011aed7f14f5da7b6baf8083507b79c365d504782",
+    "afterSha256": "b137161f201cd4e42027fb6011aed7f14f5da7b6baf8083507b79c365d504782"
+  },
+  "localChecks": {
+    "cargoTest": "257 passed",
+    "clippy": "passed",
+    "docs": "passed",
+    "dependencyPolicy": "passed with existing duplicate dependency warnings",
+    "formulaBehaviorTests": "9 passed",
+    "safeFetchTests": "510 passed",
+    "installer": "37 passed, 7 Linux-only skipped",
+    "docsLinks": "508 valid"
+  },
+  "limitations": [
+    "Metadata eligibility is not build verification for all catalog entries.",
+    "Linux builds require the Linux CI runner.",
+    "Core metadata refresh is a maintainer operation. User refresh loads the latest published generated source.",
+    "Bottle import is limited to Apple silicon macOS. Linux uses verified Nixpkgs equivalents; bottle probes retained Homebrew paths after native ELF fixup and were refused."
+  ]
+}

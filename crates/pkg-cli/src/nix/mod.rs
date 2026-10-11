@@ -33,7 +33,8 @@ pub use manifest::OFFICIAL_CASK_SOURCE;
 pub use manifest::{
     CATALOG_INDEX_SCHEMA, CatalogEntry, CatalogGenerator, CatalogIndex, CatalogInput,
     CatalogSystem, EntryStatus, ProfileEntry, RawInputProvenance, SearchMeta, SourceIdentity,
-    decode_catalog_index, full_entry_id, split_entry_id, valid_catalog_source, valid_catalog_token,
+    decode_catalog_index, decode_formula_index, full_entry_id, split_entry_id,
+    valid_catalog_source, valid_catalog_token,
 };
 use process::{IoMode, Reaped, run_child};
 pub use process::{Outcome, run_direct, run_direct_captured};
@@ -615,6 +616,12 @@ impl Nix {
     /// command is used deliberately. Output text is returned for reporting.
     pub fn store_info(&self) -> Result<String, NixError> {
         self.capture(&["store", "info"])
+    }
+
+    /// Read generated Formula data without evaluating package derivations.
+    pub fn formula_index(&self, reference: &str) -> Result<serde_json::Value, NixError> {
+        let installable = format!("{reference}#formulaIndex");
+        self.json("formula catalog index", &["eval", "--json", &installable])
     }
 
     /// Evaluate and decode the cask catalog index envelope.

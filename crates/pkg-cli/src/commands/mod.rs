@@ -245,6 +245,15 @@ impl TapState {
         })
     }
 
+    fn official(session: &Session) -> Self {
+        Self {
+            routing: catalog::Routing::new(&session.config.sources, BTreeMap::new()),
+            registry: crate::tap::Registry::empty(),
+            state_home: session.paths.state_home.clone(),
+            saved: std::cell::RefCell::new(BTreeMap::new()),
+        }
+    }
+
     /// One registered source's saved catalog, loaded on first use.
     ///
     /// Loading is strict and reads exactly this source: a broken

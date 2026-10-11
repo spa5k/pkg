@@ -154,11 +154,17 @@ regular expression. Invalid regex input is a usage error before any file
 or runtime lookup. Regex searches include development packages and variants.
 `^$ --regex` can match an empty description.
 
+Human output has separate Nixpkgs, Homebrew Formulae, Homebrew Casks, and
+saved tap sections. Each section shows its match count. Results stay ranked
+within each section. The global limit is shared across nonempty sections,
+so a large source does not hide the others. A small limit can show a section
+with zero displayed rows and its full count.
+
 Human output shows 20 results by default. Use
 `--limit N` or `--all` to change the count. JSON includes all matches unless
 `--limit` is supplied. These two options cannot be combined.
 
-Search includes Nixpkgs, official Homebrew Casks, and registered cask taps
+Search includes Nixpkgs, official Homebrew Formulae, Homebrew Casks, and registered cask taps
 by default. Use `--source nixpkgs`, `--source cask`, `--source homebrew/cask`,
 or `--source owner/tap` to select Nixpkgs, all casks, official casks, or one
 registered tap. `nixpkgs:aws`, `cask:aws`, and `cask:owner/tap/aws` are also
@@ -166,15 +172,52 @@ search queries. A conflicting `--source` is a usage error. Public GitHub
 flake IDs remain installable directly; arbitrary remote flakes are not a
 global searchable source.
 
-Exact unavailable cask names show their
-reason. Use `--unavailable` to include other unavailable matches. Cask host
-requirements use the same rules as info and install.
+Use `--source brew` or `--source homebrew/core` for formulae. Use
+`--source homebrew` for formulae and all cask sources. `brew:aws` and
+`homebrew:aws` select the same groups. Formula aliases return the canonical
+`brew:homebrew/core/NAME` ID. JSON stays a flat list with global relevance
+order and a global limit.
+
+Formulae install through Nix into the pkg profile. Use `pkg install brew:NAME`
+or the full `brew:homebrew/core/NAME` ID. Search aliases return this canonical ID.
+Eligible Formula rows include `install_command`, such as
+`["pkg", "install", "brew:homebrew/core/awscli"]`.
+
+The generated source first checks for a Nixpkgs package with a matching name
+or alias, upstream project, and version major. These packages use Nixpkgs
+versions. `pkg info brew:NAME` shows `nixpkgs-equivalent` in `formula_kind`.
+An explicit `@VERSION` Formula name also requires that version family.
+The second route imports a pinned Homebrew bottle through Nix.
+It accepts only dependency-free bottles that need no Homebrew relocation,
+install hook, service, or special requirement. It checks archive paths,
+links, and remaining Homebrew paths before publishing the Nix output.
+The bottle importer supports Apple silicon macOS. Linux Formulae use
+Nixpkgs equivalents. Linux bottles are refused with `unsupported-bottle-platform`.
+`formula_kind` is `formula-bottle` for this route. No Formula Ruby runs.
+No Brew command runs. Eligibility is a metadata decision; a build can
+still refuse a bottle whose contents fail the checks.
+
+Install, list, info, remove, upgrade, history, and rollback use the native
+Nix profile for Formulae. Remove accepts the canonical ID or `brew:NAME`.
+Aliases are resolved by search, info, and install. A mixed install checks
+all requested Casks and Formulae before it changes the profile.
+
+Normal Formula search hides unsupported packages and declared libraries.
+Exact names and `--unavailable` show unsupported packages with their reason.
+Exact names, `--broad`, and library or resource queries can show packages
+with no declared executables. An absent executable field is not treated as
+an empty list. Casks use the same host availability rules in search, info,
+and install.
 
 The installer prepares local catalogs. `pkg setup` and `pkg update` can
 prepare them manually. Normal search uses local files without Nix or
 network access. A missing catalog gives a setup instruction. Data older
 than one day is marked stale. Verbose output includes catalog age and
 revision. A failed refresh keeps the previous complete snapshot.
+Formula preparation evaluates the generated `formulaIndex` at a locked Git
+revision. It does not fetch the Homebrew API on the user's machine.
+The daily catalog job refreshes this source. Maintainers refresh the pinned
+Core input with [the Formula generator](../tools/formula-catalog/README.md).
 
 Preparation evaluates metadata in batches of 256 attributes. Each evaluator
 has a 512 MiB RSS budget. The memory guard stops at 480 MiB. A stopped
@@ -191,26 +234,27 @@ Source report fields:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `source` | string | The moving reference queried. |
-| `display` | string, nullable | Human identity from flake metadata. |
-| `locked_reference` | string, nullable | The locked reference queried. |
-| `revision` | string, nullable | Locked revision of that reference. |
+| `display` | string, nullable | Human source identity. |
+| `locked_reference` | string, nullable | Locked native reference. |
+| `revision` | string, nullable | Native source revision. |
 | `status` | string | `cached`, `stale`, `failed`, or `skipped-platform`. `cached` means no live source check was made. |
 | `detail` | string, nullable | Failure or limitation detail. |
-| `support_detail` | string, nullable | Why cask support badges are absent. |
+| `support_detail` | string, nullable | Why support badges are absent. |
 
 Row fields:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `id` | string | Source-qualified ID such as `nixpkgs:fd`; usable as an install ID. |
-| `attribute` | string | The full native attribute behind the row. |
-| `name`, `version`, `description` | string | Evaluated metadata. `description` can be empty. |
-| `source` | string | `nixpkgs` or `cask`. |
-| `reference` | string, nullable | The reference used for evaluation: normally the locked reference; the moving reference when source metadata failed. |
-| `revision` | string, nullable | Locked revision of that reference. |
-| `system` | string | System the row was evaluated for. |
+| `id` | string | Source-qualified ID such as `nixpkgs:fd` or `brew:homebrew/core/awscli`. |
+| `attribute` | string | Full native attribute. |
+| `name`, `version`, `description` | string | Prepared metadata. `description` can be empty. |
+| `source` | string | `nixpkgs`, `brew`, or `cask`. |
+| `reference` | string, nullable | Locked native reference. |
+| `revision` | string, nullable | Native source revision. |
+| `system` | string | Search target system. |
 | `stale` | boolean | Local catalog is older than one day, or its age is unknown. |
-| `support` | object, nullable | `{"status":"eligible"}` or `{"status":"excluded","reason":…,"detail":…}` or `{"status":"unknown","reason":…}` for cask rows; `null` for nixpkgs rows. Eligible is the generated metadata status, not a verification promise. |
+| `support` | object, nullable | `{"status":"eligible"}`, `{"status":"excluded","reason":…,"detail":…}`, or `{"status":"unknown","reason":…}` for Casks and Formulae. Nixpkgs rows have `null`. Eligible is a metadata status, not an installation promise. |
+| `install_command` | array of strings, optional | Suggested pkg install command for eligible Formulae. Absent for unsupported Formulae and other rows. |
 
 ### `info`
 

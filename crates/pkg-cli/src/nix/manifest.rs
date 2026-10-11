@@ -376,19 +376,29 @@ pub(super) fn decode_source_identity(reference: &str, value: &serde_json::Value)
 /// projected by the backend flake, never by this client, so no second
 /// classifier or projection can silently skip malformed records.
 pub fn decode_catalog_index(raw: &serde_json::Value) -> Result<CatalogIndex, super::NixError> {
-    let gate = |detail: String| super::NixError::Decode {
-        what: "cask catalog index",
-        detail,
-    };
+    decode_index(raw, CATALOG_INDEX_SCHEMA, "cask catalog index")
+}
+
+/// Decode the Formula envelope with the shared identity and status checks.
+pub fn decode_formula_index(raw: &serde_json::Value) -> Result<CatalogIndex, super::NixError> {
+    decode_index(raw, "pkg-formula-catalog/1", "formula catalog index")
+}
+
+fn decode_index(
+    raw: &serde_json::Value,
+    expected: &str,
+    what: &'static str,
+) -> Result<CatalogIndex, super::NixError> {
+    let gate = |detail: String| super::NixError::Decode { what, detail };
     let found = raw.get("schema").and_then(serde_json::Value::as_str);
     let Some(schema) = found else {
         return Err(gate(format!(
-            "the index reports no schema; schema {CATALOG_INDEX_SCHEMA:?} is required"
+            "the index reports no schema; schema {expected:?} is required"
         )));
     };
-    if schema != CATALOG_INDEX_SCHEMA {
+    if schema != expected {
         return Err(gate(format!(
-            "index schema {schema:?} is not the decoded schema {CATALOG_INDEX_SCHEMA:?}"
+            "index schema {schema:?} is not the decoded schema {expected:?}"
         )));
     }
     let generator: CatalogGenerator = serde_json::from_value(
@@ -509,7 +519,7 @@ pub fn decode_catalog_index(raw: &serde_json::Value) -> Result<CatalogIndex, sup
         systems.insert(system.clone(), CatalogSystem { entries });
     }
     Ok(CatalogIndex {
-        schema: CATALOG_INDEX_SCHEMA.to_string(),
+        schema: expected.to_string(),
         generator,
         inputs,
         targets,

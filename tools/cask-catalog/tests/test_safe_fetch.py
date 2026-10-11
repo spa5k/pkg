@@ -528,6 +528,12 @@ class FetchTestCase(unittest.TestCase):
     def _leftover_tmps(self):
         return [p for p in Path(self.tmp.name).iterdir() if p.name != "payload.bin"]
 
+    def test_homebrew_anonymous_bearer_is_scoped_to_registry(self):
+        ScriptedConnection.script = [FakeResponse(302, {"Location": "https://vendor.example.com/payload"}), FakeResponse(200, {"Content-Length": str(len(DATA))}, DATA)]
+        safe_fetch.fetch("https://ghcr.io/v2/homebrew/core/tool/blobs/sha256:abc", self.out, DATA_SHA)
+        self.assertEqual(ScriptedConnection.calls[0]["headers"]["Authorization"], "Bearer QQ==")
+        self.assertNotIn("Authorization", ScriptedConnection.calls[1]["headers"])
+
     def test_success_writes_file_and_no_temp_left(self):
         ScriptedConnection.script = [
             FakeResponse(200, {"Content-Length": str(len(DATA))}, DATA)

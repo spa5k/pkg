@@ -549,6 +549,7 @@ fn cask_flows_read_the_generated_index() {
     let bin = tempfile::tempdir().expect("tempdir");
     let home = tempfile::tempdir().expect("tempdir");
     let nix = bin.path().join("nix");
+    let formula_file = formula_index_fixture(bin.path()).display().to_string();
     let catalog = r#"{"schema":"pkg-cask-catalog/4",
       "generator":{"name":"cask-catalog","version":"0.1.0"},
       "inputs":{"homebrew/cask":{"url":"github:BatteredBunny/brew-api/245947c0","revision":"245947c0",
@@ -568,7 +569,7 @@ fn cask_flows_read_the_generated_index() {
     std::fs::write(
         &nix,
         format!(
-            "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"2403040105060708090a0b0c0d0e0f1011121314\"}}}}';;\n  *'eval --json'*) cat <<'JSON'\n{catalog}\nJSON\n;;\n  *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n"
+            "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"2403040105060708090a0b0c0d0e0f1011121314\"}}}}';;\n  *'#formulaIndex'*) cat '{formula_file}' ;;\n  *'eval --json'*) cat <<'JSON'\n{catalog}\nJSON\n;;\n  *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n"
         ),
     )
     .expect("write fake nix");
@@ -674,6 +675,45 @@ fn cask_flows_read_the_generated_index() {
     assert_eq!(profile_row["status"], "unreadable");
 }
 
+fn formula_index_fixture(bin: &std::path::Path) -> std::path::PathBuf {
+    let payload = bin.join("formula-index.json");
+    let names: Vec<String> = std::iter::once(String::from("awscli"))
+        .chain((0..25).map(|i| format!("aws-helper-{i}")))
+        .chain([
+            String::from("aws-disabled"),
+            String::from("aws-deprecated"),
+            String::from("aws-framework"),
+        ])
+        .collect();
+    let entries: Vec<_> = names
+        .iter()
+        .map(|name| (name.as_str(), name.as_str(), "AWS command line tool"))
+        .collect();
+    let mut index = search_fixture_index("homebrew/core", &entries);
+    index["schema"] = serde_json::json!("pkg-formula-catalog/1");
+    index["aliases"] = serde_json::json!({"awscli@2": "awscli"});
+    index["executables"] = serde_json::json!({"aws-framework": []});
+    index["deprecated"] = serde_json::json!(["aws-deprecated"]);
+    for name in &names {
+        index["systems"]["x86_64-linux"]["entries"][format!("homebrew/core/{name}")]["kind"] =
+            serde_json::json!("nixpkgs-equivalent");
+    }
+    for (name, reason) in [
+        ("aws-disabled", "disabled"),
+        ("aws-deprecated", "deprecated"),
+    ] {
+        let entry =
+            &mut index["systems"]["x86_64-linux"]["entries"][format!("homebrew/core/{name}")];
+        entry["status"] = serde_json::json!("excluded");
+        entry["kind"] = serde_json::Value::Null;
+        entry["reason"] = serde_json::json!(reason);
+    }
+    index["systems"]["x86_64-linux"]["entries"]["homebrew/core/aws-framework"]["description"] =
+        serde_json::json!("AWS SDK framework");
+    std::fs::write(&payload, serde_json::to_string(&index).unwrap()).unwrap();
+    payload
+}
+
 fn search_fixture_index(source: &str, entries: &[(&str, &str, &str)]) -> serde_json::Value {
     let origin = format!(
         "https://github.com/{}/homebrew-{}",
@@ -741,6 +781,7 @@ fn search_snapshots_amortize_new_queries() {
     let bin = tempfile::tempdir().expect("tempdir");
     let home = tempfile::tempdir().expect("tempdir");
     let nix = bin.path().join("nix");
+    let formulae = formula_index_fixture(bin.path());
     let log = bin.path().join("calls.log");
     let index_file = bin.path().join("index.json");
     let index = search_fixture_index(
@@ -759,6 +800,7 @@ elif "config show system" in text: print("x86_64-linux")
 elif "flake metadata" in text:
  owner,repo,rev=("NixOS","nixpkgs","a"*40) if "nixpkgs" in text else ("spa5k","pkg","b"*40)
  print(json.dumps({{"url":"github:"+owner+"/"+repo,"locked":{{"type":"github","owner":owner,"repo":repo,"rev":rev}}}}))
+elif "eval" in args and '#formulaIndex' in text: print(open({formulae:?}).read())
 elif "eval" in args and "--apply" in args:
  with open({log},"a") as log: log.write("batch\n")
  paths=json.loads(json.loads(re.search(r'paths = builtins.fromJSON (.+?);',args[args.index("--apply")+1]).group(1)))
@@ -778,7 +820,7 @@ elif "eval" in args:
  with open({log},"a") as log: log.write("index\n")
  print(open({index_file:?}).read())
 else: sys.exit(9)
-"#, log = format!("{:?}", log), index_file = index_file)).expect("write fake nix");
+"#, log = format!("{:?}", log), index_file = index_file, formulae = formulae)).expect("write fake nix");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -837,7 +879,7 @@ else: sys.exit(9)
                 && !entry.file_name().to_string_lossy().ends_with(".pkg-lock")
         })
         .count();
-    assert_eq!(snapshots, 3, "two catalogs and one checked marker");
+    assert_eq!(snapshots, 4, "three catalogs and one checked marker");
 
     // A different query at the same revision: no new search, no new eval.
     let (code, stdout, stderr) = run(&["search", "grep|searcher", "--regex"]);
@@ -916,9 +958,111 @@ else: sys.exit(9)
         .iter()
         .map(|row| row["id"].as_str().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(ids[0], "nixpkgs:awscli2");
+    assert_eq!(
+        ids.iter().copied().find(|id| id.starts_with("nixpkgs:")),
+        Some("nixpkgs:awscli2")
+    );
+    assert!(ids.contains(&"brew:homebrew/core/awscli"));
     assert!(ids.contains(&"cask:homebrew/cask/aws-vault-binary"));
     assert!(ids.contains(&"cask:acme/tools/aws-console"));
+    assert!(!ids.iter().any(|id| id.contains("aws-disabled")
+        || id.contains("aws-deprecated")
+        || id.contains("aws-framework")));
+
+    let (code, stdout, stderr) = run(&["search", "aws", "--limit", "4"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("Nixpkgs (")
+            && stdout.contains("Homebrew Formulae (")
+            && stdout.contains("Homebrew Casks (")
+            && stdout.contains("Cask tap: acme/tools ("),
+        "{stdout}"
+    );
+    for id in [
+        "nixpkgs:awscli2",
+        "brew:homebrew/core/awscli",
+        "cask:homebrew/cask/aws-vault-binary",
+        "cask:acme/tools/aws-console",
+    ] {
+        assert!(stdout.contains(id), "{stdout}");
+    }
+    assert_eq!(
+        stdout
+            .lines()
+            .filter(|line| line.starts_with("nixpkgs:")
+                || line.starts_with("brew:")
+                || line.starts_with("cask:"))
+            .count(),
+        4,
+        "{stdout}"
+    );
+
+    for query in ["brew:awscli@2", "brew:homebrew/core/awscli"] {
+        let (code, stdout, stderr) = run(&["search", query, "--json", "--limit", "1"]);
+        assert_eq!(code, 0, "{stderr}");
+        let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(
+            value["result"]["results"][0]["id"],
+            "brew:homebrew/core/awscli"
+        );
+        assert_eq!(
+            value["result"]["results"][0]["install_command"],
+            serde_json::json!(["pkg", "install", "brew:homebrew/core/awscli"])
+        );
+    }
+    for source in ["brew", "homebrew/core"] {
+        let (code, stdout, stderr) = run(&[
+            "search", "aws", "--source", source, "--json", "--limit", "2",
+        ]);
+        assert_eq!(code, 0, "{stderr}");
+        let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(value["result"]["total"], 26);
+        assert_eq!(value["result"]["results"].as_array().unwrap().len(), 2);
+        assert_eq!(value["result"]["sources"].as_array().unwrap().len(), 1);
+    }
+    let (code, stdout, stderr) = run(&["search", "aws-disabled", "--source", "brew"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("disabled"), "{stdout}");
+    let (code, stdout, stderr) = run(&["search", "aws sdk", "--source", "brew"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("brew:homebrew/core/aws-framework"),
+        "{stdout}"
+    );
+    let (code, stdout, stderr) = run(&["search", "aws-framework", "--source", "brew"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("brew:homebrew/core/aws-framework"),
+        "{stdout}"
+    );
+    let (code, stdout, stderr) = run(&["search", "aws", "--source", "homebrew", "--all"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("brew:homebrew/core/awscli")
+            && stdout.contains("cask:homebrew/cask/aws-vault-binary"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("nixpkgs:"), "{stdout}");
+    assert!(formulae.exists());
+    let formula_snapshot = std::fs::read_dir(cache.join("pkg"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .is_some_and(|value| value["kind"] == "formula-index")
+        })
+        .unwrap();
+    let complete = std::fs::read(&formula_snapshot).unwrap();
+    std::fs::write(&formulae, "invalid JSON").unwrap();
+    std::fs::write(&nix, original_runtime.replace("\"b\"*40", "\"c\"*40")).unwrap();
+    let (code, _, stderr) = run(&["update", "--catalogs-only"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("formula catalog index"), "{stderr}");
+    assert_eq!(std::fs::read(&formula_snapshot).unwrap(), complete);
+    std::fs::write(&nix, "#!/bin/sh\nexit 99\n").unwrap();
     assert!(
         !ids.iter().any(|id| id.contains("aws-library")
             || id.contains("aws-c-http")
@@ -1001,6 +1145,10 @@ else: sys.exit(9)
     std::fs::create_dir_all(registry.parent().unwrap()).unwrap();
     let healthy_registry = std::fs::read_to_string(&registry).unwrap();
     std::fs::write(&registry, "broken registry").unwrap();
+    let (code, stdout, stderr) = run(&["search", "aws", "--source", "brew"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stderr.is_empty(), "{stderr}");
+    assert!(stdout.contains("brew:homebrew/core/awscli"));
     let (code, stdout, stderr) = run(&["search", "ripgrep", "--source", "nixpkgs"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(

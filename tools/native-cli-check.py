@@ -199,6 +199,77 @@ def main():
         run(pkg, "remove", entries()[0]["entry_id"])
         assert entries() == []
 
+    formulae = root / "formulae"
+    formulae.mkdir()
+    for version in ("1", "2"):
+        shutil.copy2(source / f"builder{version}", formulae / f"builder{version}")
+    formula_reference = "path:" + str(formulae)
+    config.write_text(f"[sources]\nnixpkgs = {json.dumps(reference)}\n"
+                      f"casks = {json.dumps(reference)}\nformulae = {json.dumps(formula_reference)}\n")
+    formula_records = {name: dict(source="homebrew/core", token=name, name=name,
+                                  description="Native Formula fixture", homepage=None, version="1",
+                                  status="eligible", kind=kind, reason=None, detail=None)
+                       for name, kind in (("formula-probe", "nixpkgs-equivalent"),
+                                          ("formula-bottle", "formula-bottle"))}
+    formula_records["formula-blocked"] = dict(formula_records["formula-probe"],
+                                             token="formula-blocked", name="formula-blocked",
+                                             status="excluded", kind=None, reason="install-hook")
+
+    def formula_version(version):
+        for name in ("formula-probe", "formula-bottle"):
+            formula_records[name]["version"] = version
+        index = dict(schema="pkg-formula-catalog/1", generator=dict(name="formula-catalog", version="0.1.0"),
+                     inputs={"homebrew/core": dict(url="https://formulae.brew.sh/api/formula.json",
+                                                   revision="a" * 40, sha256="b" * 64, license="BSD-2-Clause")},
+                     targets=[system], macosBaseline="14", aliases={"formula-alias": "formula-probe"},
+                     executables={}, systems={system: {"entries": {"homebrew/core/" + name: record
+                                                                   for name, record in formula_records.items()}}})
+        (formulae / "index.json").write_text(json.dumps(index))
+        packages = " ".join(
+            f'"homebrew/core/{name}" = builtins.derivation {{ name = "{name}-{version}"; '
+            f'system = "{system}"; builder = ./builder{version}; '
+            f'args = [ ./builder{version} "{name}" ]; nonce = "{root.name}"; }} '
+            f'// {{ version = "{version}"; meta.description = "Formula fixture"; }};'
+            for name in ("formula-probe", "formula-bottle"))
+        (formulae / "flake.nix").write_text(
+            '{ outputs = {self}: { formulaIndex = builtins.fromJSON (builtins.readFile ./index.json); '
+            f'packages.{system} = {{ {packages} }}; }}; }}')
+
+    formula_version("1")
+    before_manifest = (profile / "manifest.json").read_bytes()
+    before_link = os.readlink(profile)
+    run(pkg, "install", "brew:formula-alias", "brew:formula-blocked", code=1)
+    assert "install-hook" in results[-1]["stderr"], results[-1]
+    assert (profile / "manifest.json").read_bytes() == before_manifest
+    assert os.readlink(profile) == before_link
+    registry.write_text("broken registry")
+    run(pkg, "install", "brew:formula-alias", "brew:formula-probe", "brew:formula-bottle")
+    assert len(entries()) == 2, entries()
+    assert {row["package_id"] for row in entries()} == {"brew:homebrew/core/formula-probe", "brew:homebrew/core/formula-bottle"}
+    info = json.loads(run(pkg, "info", "brew:formula-alias", "--json"))["result"]
+    assert info["installed_state"] == "installed" and info["formula_kind"] == "nixpkgs-equivalent", info
+    run(pkg, "install", "brew:formula-alias")
+    assert "Already installed" in results[-1]["stdout"], results[-1]
+    registry.unlink()
+    before_manifest = (profile / "manifest.json").read_bytes()
+    before_link = os.readlink(profile)
+    formula_records["formula-probe"].update(status="excluded", kind=None, reason="install-hook")
+    formula_version("2")
+    run(pkg, "upgrade", "--all", code=1)
+    assert "install-hook" in results[-1]["stderr"], results[-1]
+    assert (profile / "manifest.json").read_bytes() == before_manifest
+    assert os.readlink(profile) == before_link
+    formula_records["formula-probe"].update(status="eligible", kind="nixpkgs-equivalent", reason=None)
+    formula_version("2")
+    run(pkg, "upgrade", "--all")
+    assert run(str(profile / "bin/formula-probe")).strip() == "2"
+    assert run(str(profile / "bin/formula-bottle")).strip() == "2"
+    run(pkg, "rollback")
+    assert run(str(profile / "bin/formula-probe")).strip() == "1"
+    run(pkg, "remove", "brew:formula-probe", "brew:homebrew/core/formula-bottle")
+    assert entries() == []
+    print("PASS: Formula alias, native state, duplicate install, refusals, upgrade, rollback and removal")
+
     if platform.system() == "Darwin":
         host = subprocess.check_output(["/usr/bin/sw_vers", "-productVersion"], text=True).strip()
         major = int(host.split(".")[0])
