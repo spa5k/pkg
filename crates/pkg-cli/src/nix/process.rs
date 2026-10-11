@@ -320,11 +320,11 @@ pub(super) fn run_child(
     command: Command,
     mode: IoMode,
     sink: Option<&mut dyn StderrSink>,
-) -> Result<Reaped, String> {
+) -> std::io::Result<Reaped> {
     run_child_with_limit(command, mode, sink, None)
 }
 
-pub(super) fn run_child_bounded(command: Command, bytes: u64) -> Result<Reaped, String> {
+pub(super) fn run_child_bounded(command: Command, bytes: u64) -> std::io::Result<Reaped> {
     run_child_with_limit(command, IoMode::Capture, None, Some(bytes))
 }
 
@@ -333,7 +333,7 @@ fn run_child_with_limit(
     mode: IoMode,
     sink: Option<&mut dyn StderrSink>,
     memory_limit: Option<u64>,
-) -> Result<Reaped, String> {
+) -> std::io::Result<Reaped> {
     #[cfg(unix)]
     let _run = forward::lock();
     #[cfg(unix)]
@@ -371,7 +371,7 @@ fn run_child_with_limit(
             if let Some(guard) = guard {
                 guard.restore();
             }
-            return Err(error.to_string());
+            return Err(error);
         }
     };
     #[cfg(unix)]
@@ -401,13 +401,11 @@ fn run_child_with_limit(
     if let Some(guard) = guard {
         guard.restore();
     }
-    waited
-        .map(|output| Reaped {
-            output,
-            cancelled,
-            resource_limit,
-        })
-        .map_err(|error| error.to_string())
+    waited.map(|output| Reaped {
+        output,
+        cancelled,
+        resource_limit,
+    })
 }
 
 fn read_bounded(
@@ -564,12 +562,14 @@ pub fn run_direct_captured(
 ) -> Result<(Outcome, String), String> {
     let mut command = Command::new(executable);
     command.args(args);
-    run_child(command, IoMode::Capture, None).map(|reaped| {
-        (
-            reaped.classify(),
-            String::from_utf8_lossy(&reaped.output.stdout).into_owned(),
-        )
-    })
+    run_child(command, IoMode::Capture, None)
+        .map_err(|error| error.to_string())
+        .map(|reaped| {
+            (
+                reaped.classify(),
+                String::from_utf8_lossy(&reaped.output.stdout).into_owned(),
+            )
+        })
 }
 
 /// Run one direct external command through the shared signal forward/reap

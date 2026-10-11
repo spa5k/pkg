@@ -146,9 +146,9 @@ pub(super) fn decode_profile_manifest(
             ),
         });
     };
-    serde_json::from_value(elements.clone()).map_err(|error| super::NixError::Decode {
+    serde::Deserialize::deserialize(elements).map_err(|error| super::NixError::Json {
         what: "profile identity",
-        detail: error.to_string(),
+        source: error,
     })
 }
 

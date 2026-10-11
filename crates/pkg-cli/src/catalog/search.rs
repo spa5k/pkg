@@ -330,7 +330,7 @@ fn resolve_inner(
             match nix.metadata_batch(reference, system, root, &[path]) {
                 Ok(nodes) => {
                     for node in nodes {
-                        if let Some(meta) = node.meta {
+                        if let crate::nix::MetadataValue::Package { meta } = node.value {
                             exact.insert(node.path.join("."), meta);
                         }
                     }

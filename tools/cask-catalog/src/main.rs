@@ -254,10 +254,13 @@ fn write_pin(path: &Path, pin: &Pin) -> Result<(), String> {
     std::fs::create_dir_all(parent)
         .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     let text = serde_json::to_string_pretty(pin).map_err(|e| e.to_string())?;
-    let tmp = tempfile::NamedTempFile::new_in(parent)
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)
         .map_err(|e| format!("cannot stage the pin: {e}"))?;
-    std::io::Write::write_all(&mut tmp.as_file(), format!("{text}\n").as_bytes())
+    std::io::Write::write_all(tmp.as_file_mut(), format!("{text}\n").as_bytes())
         .map_err(|e| format!("cannot write the staged pin: {e}"))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| format!("cannot sync the staged pin: {e}"))?;
     tmp.persist(path)
         .map_err(|e| format!("cannot publish {}: {e}", path.display()))?;
     Ok(())

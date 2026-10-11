@@ -14,6 +14,7 @@
 //! never mistaken for a platform skip.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use crate::nix::{CatalogEntry, CatalogIndex, EntryStatus, Nix, SourceIdentity};
 
@@ -99,7 +100,7 @@ impl CaskStatus {
 pub struct CatalogView {
     /// The resolved identity of the casks source.
     pub identity: SourceIdentity,
-    index: CatalogIndex,
+    index: Rc<CatalogIndex>,
 }
 
 impl CatalogView {
@@ -110,7 +111,10 @@ impl CatalogView {
     /// revision), because no flake metadata was evaluated for them.
     #[must_use]
     pub fn from_parts(identity: SourceIdentity, index: CatalogIndex) -> Self {
-        Self { identity, index }
+        Self {
+            identity,
+            index: Rc::new(index),
+        }
     }
 
     /// Assemble a view over one saved tap catalog.
@@ -142,7 +146,7 @@ impl CatalogView {
             .clone()
             .unwrap_or_else(|| moving_source.to_string());
         let index = nix.catalog_index(&eval_ref).map_err(CatalogError::from)?;
-        Ok(Self { identity, index })
+        Ok(Self::from_parts(identity, index))
     }
 
     /// The decoded index envelope.
@@ -270,17 +274,10 @@ impl<'a> CatalogOnce<'a> {
 
     /// Load the view once and return it for every later call.
     pub fn load(&mut self) -> Result<&CatalogView, CatalogError> {
-        if self.view.is_none() {
-            let view = CatalogView::load(self.nix, self.moving)?;
-            self.view = Some(view);
+        match &mut self.view {
+            Some(view) => Ok(view),
+            empty @ None => Ok(empty.insert(CatalogView::load(self.nix, self.moving)?)),
         }
-        let Some(view) = self.view.as_ref() else {
-            // Unreachable by construction: the branch above stored a view.
-            return Err(CatalogError::Source(String::from(
-                "the catalog index view was not loaded",
-            )));
-        };
-        Ok(view)
     }
 }
 
@@ -304,7 +301,7 @@ mod tests {
                 revision: Some(String::from("2403040105060708090a0b0c0d0e0f1011121314")),
                 display: String::from("github:spa5k/pkg"),
             },
-            index: crate::nix::decode_catalog_index(&raw).expect("decodes fixture"),
+            index: Rc::new(crate::nix::decode_catalog_index(&raw).expect("decodes fixture")),
         }
     }
 

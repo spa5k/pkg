@@ -13,6 +13,13 @@ pub enum NixError {
         /// Why the configured value is unusable.
         detail: String,
     },
+    /// The configured runtime failed its version probe.
+    ConfiguredProbe {
+        /// The configured executable name or path.
+        requested: String,
+        /// The native probe failure.
+        source: Box<NixError>,
+    },
     /// Default discovery found no usable `nix` in `PATH` or the stable
     /// profile paths (discovery design D1, D3).
     NotFound {
@@ -22,7 +29,14 @@ pub enum NixError {
         standard: Vec<String>,
     },
     /// A native command could not be started.
-    Spawn(String),
+    Spawn(std::io::Error),
+    /// Reading native state failed.
+    Io {
+        /// The state being read.
+        what: &'static str,
+        /// The filesystem cause.
+        source: std::io::Error,
+    },
     /// A discovery evaluator was stopped before exceeding its resource budget.
     ResourceLimit(String),
     /// A native command failed. Upstream diagnostics are preserved.
@@ -51,6 +65,13 @@ pub enum NixError {
         /// Why decoding failed.
         detail: String,
     },
+    /// Native JSON did not match the required type.
+    Json {
+        /// What pkg was decoding.
+        what: &'static str,
+        /// The JSON decoding or serialization cause.
+        source: serde_json::Error,
+    },
 }
 
 impl NixError {
@@ -67,13 +88,12 @@ impl NixError {
 impl fmt::Display for NixError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ConfiguredUnavailable { requested, detail } => write!(
-                f,
-                "the configured Nix executable ({requested}) is unusable: {detail}\n\
-                 pkg uses only this configured value and does not fall back to another runtime.\n\
-                 Fix the path, or remove `runtime.nix` from the pkg config file\n\
-                 (default ~/.config/pkg/config.toml), then run this command again."
-            ),
+            Self::ConfiguredUnavailable { requested, detail } => {
+                configured_diagnostic(f, requested, detail)
+            }
+            Self::ConfiguredProbe { requested, source } => {
+                configured_diagnostic(f, requested, &format!("the version probe failed: {source}"))
+            }
             Self::NotFound {
                 path_entries,
                 standard,
@@ -99,6 +119,7 @@ impl fmt::Display for NixError {
                 )
             }
             Self::Spawn(detail) => write!(f, "could not start the Nix command: {detail}"),
+            Self::Io { what, source } => write!(f, "could not read {what}: {source}"),
             Self::ResourceLimit(detail) => write!(f, "discovery evaluation stopped: {detail}"),
             Self::Failed {
                 args,
@@ -124,11 +145,34 @@ impl fmt::Display for NixError {
             Self::Decode { what, detail } => {
                 write!(f, "could not decode required {what} from Nix: {detail}")
             }
+            Self::Json { what, source } => {
+                write!(f, "could not decode required {what} from Nix: {source}")
+            }
         }
     }
 }
 
-impl std::error::Error for NixError {}
+impl std::error::Error for NixError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Spawn(source) => Some(source),
+            Self::ConfiguredProbe { source, .. } => Some(source.as_ref()),
+            Self::Io { source, .. } => Some(source),
+            Self::Json { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
+
+fn configured_diagnostic(f: &mut fmt::Formatter<'_>, requested: &str, detail: &str) -> fmt::Result {
+    write!(
+        f,
+        "the configured Nix executable ({requested}) is unusable: {detail}\n\
+         pkg uses only this configured value and does not fall back to another runtime.\n\
+         Fix the path, or remove `runtime.nix` from the pkg config file\n\
+         (default ~/.config/pkg/config.toml), then run this command again."
+    )
+}
 
 #[cfg(test)]
 mod tests {

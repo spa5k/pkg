@@ -16,6 +16,7 @@
 
 mod conflict;
 mod doctor;
+mod error;
 mod info;
 mod lifecycle;
 mod list;
@@ -31,8 +32,10 @@ use clap::Parser as _;
 
 use crate::catalog;
 use crate::cli::{Cli, Command};
-use crate::config::{self, Config, ConfigError, Paths};
+use crate::config::{self, Config, Paths};
 use crate::nix::{self, Nix, NixError, ProfileEntry};
+
+use error::CommandError;
 
 /// Exit status for a runtime failure with diagnostics already printed.
 pub const FAILURE: u8 = 1;
@@ -44,53 +47,6 @@ pub const USAGE: u8 = 2;
 ///
 /// The child was reaped and native state was re-read before exiting.
 pub const INTERRUPTED: u8 = 130;
-
-/// How a command ended without success.
-pub(super) enum CommandError {
-    /// Not yet printed: the runner prints it with the `pkg:` prefix and
-    /// exits with the ordinary failure status.
-    Message(String),
-    /// Already printed, including re-read native state where it applies;
-    /// the runner exits with this status unchanged.
-    Reported(ExitCode),
-}
-
-impl From<String> for CommandError {
-    fn from(message: String) -> Self {
-        Self::Message(message)
-    }
-}
-
-impl From<NixError> for CommandError {
-    fn from(error: NixError) -> Self {
-        match error {
-            NixError::Interrupted { signal, .. } => Self::Reported(ExitCode::from(
-                u8::try_from(128 + signal).unwrap_or(FAILURE),
-            )),
-            error => Self::Message(error.to_string()),
-        }
-    }
-}
-
-impl From<catalog::CatalogError> for CommandError {
-    fn from(error: catalog::CatalogError) -> Self {
-        match error {
-            catalog::CatalogError::Interrupted(signal) => {
-                eprintln!("Discovery cancelled. The previous complete cache was retained.");
-                Self::Reported(ExitCode::from(
-                    u8::try_from(128 + signal).unwrap_or(FAILURE),
-                ))
-            }
-            error => Self::Message(error.to_string()),
-        }
-    }
-}
-
-impl From<ConfigError> for CommandError {
-    fn from(error: ConfigError) -> Self {
-        Self::Message(error.to_string())
-    }
-}
 
 /// Parse arguments and run the requested command.
 pub fn run<I, T>(args: I) -> ExitCode
@@ -110,11 +66,18 @@ where
 fn finish(outcome: Result<(), CommandError>) -> ExitCode {
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
-        Err(CommandError::Message(message)) => {
-            eprintln!("pkg: {message}");
+        Err(CommandError::Reported(code)) => code,
+        Err(CommandError::Native(NixError::Interrupted { signal, .. })) => {
+            error::signal_exit(signal)
+        }
+        Err(CommandError::Catalog(catalog::CatalogError::Interrupted(signal))) => {
+            eprintln!("Discovery cancelled. The previous complete cache was retained.");
+            error::signal_exit(signal)
+        }
+        Err(error) => {
+            eprintln!("pkg: {error}");
             ExitCode::from(FAILURE)
         }
-        Err(CommandError::Reported(code)) => code,
     }
 }
 
@@ -190,18 +153,6 @@ fn session(cli: &Cli) -> Result<Session, CommandError> {
     Ok(Session { paths, config, nix })
 }
 
-/// One command run that needs no Nix runtime: paths and configuration only.
-struct PathsOnly {
-    paths: Paths,
-}
-
-/// Resolve paths and configuration without discovering a Nix runtime.
-fn paths_only() -> Result<PathsOnly, CommandError> {
-    Ok(PathsOnly {
-        paths: config::paths()?,
-    })
-}
-
 /// The tap state one query or mutation run uses: the registry, the
 /// routing it implies, and saved catalogs loaded per source on demand.
 ///
@@ -219,7 +170,7 @@ struct TapState {
     /// The state home the saved catalogs live under.
     state_home: std::path::PathBuf,
     /// Saved catalogs loaded so far, keyed by source.
-    saved: std::cell::RefCell<BTreeMap<String, crate::tap::SavedCatalog>>,
+    saved: BTreeMap<String, crate::tap::SavedCatalog>,
 }
 
 impl TapState {
@@ -243,7 +194,7 @@ impl TapState {
             routing,
             registry,
             state_home: session.paths.state_home.clone(),
-            saved: std::cell::RefCell::new(BTreeMap::new()),
+            saved: BTreeMap::new(),
         })
     }
 
@@ -252,7 +203,7 @@ impl TapState {
             routing: catalog::Routing::new(&session.config.sources, BTreeMap::new()),
             registry: crate::tap::Registry::empty(),
             state_home: session.paths.state_home.clone(),
-            saved: std::cell::RefCell::new(BTreeMap::new()),
+            saved: BTreeMap::new(),
         }
     }
 
@@ -261,22 +212,22 @@ impl TapState {
     /// Loading is strict and reads exactly this source: a broken
     /// unrelated tap cannot fail a request that never reads it, and an
     /// unregistered source is refused like routing refuses it.
-    fn saved_one(&self, source: &str) -> Result<crate::tap::SavedCatalog, String> {
-        if let Some(hit) = self.saved.borrow().get(source) {
-            return Ok(hit.clone());
+    fn saved_one(&mut self, source: &str) -> Result<&crate::tap::SavedCatalog, String> {
+        use std::collections::btree_map::Entry;
+        match self.saved.entry(source.to_string()) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                if !self.registry.sources.contains_key(source) {
+                    return Err(format!(
+                        "unknown cask source `{source}`; \
+                         add it first with `pkg tap add {source}`"
+                    ));
+                }
+                let catalog =
+                    crate::tap::SavedCatalogs::load_one(&self.registry, &self.state_home, source)?;
+                Ok(entry.insert(catalog))
+            }
         }
-        if !self.registry.sources.contains_key(source) {
-            return Err(format!(
-                "unknown cask source `{source}`; \
-                 add it first with `pkg tap add {source}`"
-            ));
-        }
-        let catalog =
-            crate::tap::SavedCatalogs::load_one(&self.registry, &self.state_home, source)?;
-        self.saved
-            .borrow_mut()
-            .insert(source.to_string(), catalog.clone());
-        Ok(catalog)
     }
 
     /// Every registered source's saved catalog, loaded strictly.
@@ -284,10 +235,12 @@ impl TapState {
     /// Bare-name resolution needs the complete source set to stay
     /// fail-closed: one unreadable or malformed capture fails the whole
     /// load, exactly like [`crate::tap::load_all`].
-    fn saved_all(&self) -> Result<crate::tap::SavedCatalogs, String> {
+    fn saved_all(&mut self) -> Result<crate::tap::SavedCatalogs, String> {
         let mut catalogs = BTreeMap::new();
-        for source in self.registry.sources.keys() {
-            catalogs.insert(source.clone(), self.saved_one(source)?);
+        let sources: Vec<_> = self.registry.sources.keys().cloned().collect();
+        for source in sources {
+            let catalog = self.saved_one(&source)?.clone();
+            catalogs.insert(source, catalog);
         }
         Ok(crate::tap::SavedCatalogs::from_catalogs(catalogs))
     }
@@ -447,9 +400,9 @@ fn installed_entries(session: &Session) -> Result<BTreeMap<String, ProfileEntry>
     match std::fs::symlink_metadata(&session.paths.profile) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
         Err(error) => {
-            return Err(NixError::Decode {
+            return Err(NixError::Io {
                 what: "profile state",
-                detail: error.to_string(),
+                source: error,
             });
         }
         Ok(_) => {}

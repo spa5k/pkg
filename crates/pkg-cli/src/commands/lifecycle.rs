@@ -23,10 +23,10 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     }
     // IDs are validated before the runtime is touched, so malformed input is
     // refused identically with or without Nix present.
-    let mut parsed_ids = Vec::new();
-    for id in ids {
-        parsed_ids.push(catalog::parse_id(id)?);
-    }
+    let parsed_ids = ids
+        .iter()
+        .map(|id| catalog::parse_id(id))
+        .collect::<Result<Vec<_>, _>>()?;
     eprintln!("Resolving: {}", ids.join(", "));
     let session = session(cli)?;
     let system = session.nix.system()?;
@@ -44,7 +44,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     } else {
         None
     };
-    let tap_state = if only_formulae {
+    let mut tap_state = if only_formulae {
         super::TapState::official(&session)
     } else {
         super::TapState::load(&session)?
@@ -98,8 +98,7 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
             resolved = catalog::CatalogId::Formula(canonical);
         }
         if let catalog::CatalogId::Cask { source, token } = &resolved {
-            gate_cask(&mut catalog_handle, &tap_state, &system, source, token)
-                .map_err(CommandError::Message)?;
+            gate_cask(&mut catalog_handle, &mut tap_state, &system, source, token)?;
         }
         let installable = resolved
             .installable(&tap_state.routing, &system)
@@ -219,22 +218,22 @@ fn already_installed(
 /// Returns `Err(message)` when the token must not be installed on `system`.
 fn gate_cask(
     catalog: &mut catalog::CatalogOnce<'_>,
-    state: &super::TapState,
+    state: &mut super::TapState,
     system: &str,
     source: &str,
     token: &str,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let saved_view;
     let view = if source == nix::OFFICIAL_CASK_SOURCE {
-        catalog.load().map_err(|error| error.to_string())?
+        catalog.load()?
     } else {
         // The gate reads exactly the source it judges: an unrelated
         // broken tap cannot block this install.
         let saved = state.saved_one(source)?;
-        saved_view = catalog::CatalogView::from_saved(&saved);
+        saved_view = catalog::CatalogView::from_saved(saved);
         &saved_view
     };
-    gate_view(view, system, source, token)
+    gate_view(view, system, source, token).map_err(Into::into)
 }
 
 /// Gate one (source, token) against one already-loaded index view.
@@ -404,7 +403,7 @@ pub(super) fn upgrade(
     // Nixpkgs entries are never gated as casks. Unsupported, excluded,
     // and unknown targets are gated with the install policy.
     gate_upgrade_formulae(&session, &installed, &movable)?;
-    gate_upgrade_macos_range(&session, &installed, &movable).map_err(CommandError::Message)?;
+    gate_upgrade_macos_range(&session, &installed, &movable)?;
     let selected: Vec<_> = movable
         .iter()
         .map(|key| package_id(&session, &installed[key]))
@@ -491,7 +490,7 @@ fn gate_upgrade_macos_range(
     session: &super::Session,
     installed: &BTreeMap<String, ProfileEntry>,
     movable: &[String],
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     // Recover exact cask identities first; Nixpkgs-only upgrades never
     // touch tap state or any index.
     let mut casks: Vec<(&str, String, String, String)> = Vec::new();
@@ -524,7 +523,7 @@ fn gate_upgrade_macos_range(
     if casks.is_empty() {
         return Ok(());
     }
-    let host_system = session.nix.system().map_err(|error| error.to_string())?;
+    let host_system = session.nix.system()?;
     let mut tap_state: Option<super::TapState> = None;
     // One index load per distinct original source, cached for the run.
     let mut views: BTreeMap<String, catalog::CatalogView> = BTreeMap::new();
@@ -532,7 +531,8 @@ fn gate_upgrade_macos_range(
         if system != host_system {
             return Err(format!(
                 "cask:{source}/{token} was installed for {system}; this host is {host_system}"
-            ));
+            )
+            .into());
         }
         let original = installed[entry].original_url.clone();
         let saved_source = store::source_of_reference(&session.paths.state_home, &original);
@@ -542,32 +542,24 @@ fn gate_upgrade_macos_range(
             // entry; the match keeps that invariant local: the loaded
             // state is used and cached in the same arm, with no
             // impossible state left to assert.
-            let saved = match tap_state.as_ref() {
-                Some(state) => state.saved_one(&source)?,
-                None => {
-                    let state = super::TapState::load(session).map_err(|error| match error {
-                        super::CommandError::Message(message) => message,
-                        super::CommandError::Reported(_) => {
-                            String::from("tap state could not be loaded for the upgrade gate")
-                        }
-                    })?;
-                    let saved = state.saved_one(&source)?;
-                    tap_state = Some(state);
-                    saved
-                }
+            let state = match &mut tap_state {
+                Some(state) => state,
+                empty @ None => empty.insert(super::TapState::load(session)?),
             };
-            views.insert(source.clone(), catalog::CatalogView::from_saved(&saved));
-            &views[&source]
+            let saved = state.saved_one(&source)?;
+            views
+                .entry(source.clone())
+                .or_insert_with(|| catalog::CatalogView::from_saved(saved))
         } else {
             // Any other casks source is judged by the index of its own
             // original URL, however `sources.casks` is configured today.
             let key = catalog::canonical_source(&original);
-            if !views.contains_key(&key) {
-                let view = catalog::CatalogView::load(&session.nix, &original)
-                    .map_err(|error| error.to_string())?;
-                views.insert(key.clone(), view);
+            match views.entry(key) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(catalog::CatalogView::load(&session.nix, &original)?)
+                }
             }
-            &views[&key]
         };
         gate_view(view, &system, &source, &token)?;
     }

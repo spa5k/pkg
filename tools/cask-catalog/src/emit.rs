@@ -309,21 +309,25 @@ pub use crate::token::full_entry_id as qualified_id;
 /// A failure leaves the previously committed catalog untouched.
 pub fn write_catalog(dir: &Path, catalog: &str) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let tmp = tempfile::NamedTempFile::new_in(dir)
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)
         .map_err(|e| format!("cannot stage a temporary file in {}: {e}", dir.display()))?;
-    std::io::Write::write_all(&mut tmp.as_file(), catalog.as_bytes())
+    std::io::Write::write_all(tmp.as_file_mut(), catalog.as_bytes())
         .map_err(|e| format!("cannot write the staged catalog: {e}"))?;
     let target = dir.join("catalog.json");
-    tmp.persist(&target)
-        .map_err(|e| format!("cannot publish {}: {e}", target.display()))?;
-    // NamedTempFile keeps 0600; committed data is world-readable.
+    // Set public data permissions before replacing the old catalog.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         let permissions = std::fs::Permissions::from_mode(0o644);
-        std::fs::set_permissions(&target, permissions)
+        tmp.as_file()
+            .set_permissions(permissions)
             .map_err(|e| format!("cannot make {} readable: {e}", target.display()))?;
     }
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| format!("cannot sync the staged catalog: {e}"))?;
+    tmp.persist(&target)
+        .map_err(|e| format!("cannot publish {}: {e}", target.display()))?;
     Ok(())
 }
 
@@ -530,6 +534,14 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("catalog.json")).unwrap(),
             "new"
+        );
+        assert_eq!(
+            std::fs::metadata(dir.path().join("catalog.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644
         );
     }
 }

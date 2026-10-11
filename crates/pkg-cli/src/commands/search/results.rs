@@ -48,7 +48,7 @@ impl SearchSpool {
         if !fuzzy && self.fuzzy {
             self.connection
                 .execute("DELETE FROM results", [])
-                .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+                .map_err(catalog::CatalogError::cache_write)?;
             self.count = 0;
             self.worst.clear();
             self.sections.clear();
@@ -91,14 +91,13 @@ impl SearchSpool {
         }) {
             return Ok(());
         }
-        let body = serde_json::to_string(row)
-            .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+        let body = serde_json::to_string(row).map_err(catalog::CatalogError::cache_write)?;
         self.connection
             .execute(
                 "INSERT INTO results VALUES (?1, ?2, ?3, ?4)",
                 rusqlite::params![rank, row.id, body, section],
             )
-            .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+            .map_err(catalog::CatalogError::cache_write)?;
         if let Some(limit) = self.limit
             && retained_count >= limit as usize
         {
@@ -120,7 +119,7 @@ impl SearchSpool {
             };
             self.connection
                 .execute(remove, bindings)
-                .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+                .map_err(catalog::CatalogError::cache_write)?;
             let one = 1;
             let bindings: &[&dyn rusqlite::ToSql] = if self.grouped {
                 &[&one, &section]
@@ -130,7 +129,7 @@ impl SearchSpool {
             let worst = self
                 .connection
                 .query_row(select, bindings, |row| Ok((row.get(0)?, row.get(1)?)))
-                .map_err(|error| catalog::CatalogError::CacheWrite(error.to_string()))?;
+                .map_err(catalog::CatalogError::cache_write)?;
             self.worst.insert(key, worst);
         }
         Ok(())

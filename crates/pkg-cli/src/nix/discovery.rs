@@ -7,26 +7,41 @@ use super::{Nix, NixError, SearchMeta, process};
 pub struct MetadataNode {
     /// Full attribute path components, including the output root and system.
     pub path: Vec<String>,
-    /// `package`, `children`, `skip`, or an ignored legacy `error`.
-    pub kind: String,
-    /// Package metadata, only for a derivation.
-    #[serde(default)]
-    pub meta: Option<SearchMeta>,
-    /// Attribute names to visit under a recursive set.
-    #[serde(default)]
-    pub children: Vec<String>,
+    /// The evaluated value at this path.
+    #[serde(flatten)]
+    pub value: MetadataValue,
+}
+
+/// The possible results of inspecting one native attribute.
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum MetadataValue {
+    /// A derivation with projected metadata.
+    Package {
+        /// The package name, version, and description.
+        meta: SearchMeta,
+    },
+    /// A recursive set to visit.
+    Children {
+        /// Attribute names under this set.
+        children: Vec<String>,
+    },
+    /// A value outside the package traversal.
+    Skip,
+    /// A legacy attribute whose evaluation failed.
+    Error,
 }
 
 pub(super) fn nix_json(value: &impl serde::Serialize) -> Result<String, NixError> {
-    let json = serde_json::to_string(value).map_err(|error| NixError::Decode {
+    let json = serde_json::to_string(value).map_err(|error| NixError::Json {
         what: "metadata arguments",
-        detail: error.to_string(),
+        source: error,
     })?;
     serde_json::to_string(&json)
         .map(|literal| literal.replace("${", "\\${"))
-        .map_err(|error| NixError::Decode {
+        .map_err(|error| NixError::Json {
             what: "metadata arguments",
-            detail: error.to_string(),
+            source: error,
         })
 }
 
@@ -116,9 +131,29 @@ in map inspect paths"#
         let reaped =
             process::run_child_bounded(command, 512 * 1024 * 1024).map_err(NixError::Spawn)?;
         self.finish(args, &reaped)?;
-        serde_json::from_slice(&reaped.output.stdout).map_err(|error| NixError::Decode {
+        serde_json::from_slice(&reaped.output.stdout).map_err(|error| NixError::Json {
             what,
-            detail: error.to_string(),
+            source: error,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_rows_require_the_payload_for_their_kind() {
+        for row in [
+            r#"{"path":["packages"],"kind":"package"}"#,
+            r#"{"path":["packages"],"kind":"children"}"#,
+            r#"{"path":["packages"],"kind":"unknown"}"#,
+        ] {
+            assert!(serde_json::from_str::<MetadataNode>(row).is_err(), "{row}");
+        }
+        let row: MetadataNode =
+            serde_json::from_str(r#"{"path":["packages"],"kind":"children","children":["hello"]}"#)
+                .unwrap();
+        assert!(matches!(row.value, MetadataValue::Children { children } if children == ["hello"]));
     }
 }

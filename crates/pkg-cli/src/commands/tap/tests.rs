@@ -94,8 +94,8 @@ const CAPTURE_SHA: &str = "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf25
 /// The text of one unprinted command error.
 fn message(error: CommandError) -> String {
     match error {
-        CommandError::Message(text) => text,
         CommandError::Reported(_) => panic!("the error is a message"),
+        error => error.to_string(),
     }
 }
 

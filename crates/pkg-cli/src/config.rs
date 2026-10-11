@@ -41,7 +41,7 @@ pub enum ConfigError {
     /// The config file could not be read.
     ReadFailed(std::io::Error),
     /// The config file is not valid TOML or has invalid values.
-    Invalid(String),
+    Invalid(toml::de::Error),
 }
 
 impl fmt::Display for ConfigError {
@@ -58,7 +58,15 @@ impl fmt::Display for ConfigError {
     }
 }
 
-impl std::error::Error for ConfigError {}
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ReadFailed(source) => Some(source),
+            Self::Invalid(source) => Some(source),
+            _ => None,
+        }
+    }
+}
 
 fn home_dir() -> Result<PathBuf, ConfigError> {
     match std::env::var_os("HOME") {
@@ -204,9 +212,7 @@ impl Config {
     /// A present but malformed file is an error, not a silent default.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         match std::fs::read_to_string(path) {
-            Ok(text) => {
-                toml::from_str(&text).map_err(|error| ConfigError::Invalid(error.to_string()))
-            }
+            Ok(text) => toml::from_str(&text).map_err(ConfigError::Invalid),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(ConfigError::ReadFailed(error)),
         }
@@ -242,6 +248,7 @@ mod tests {
 
     #[test]
     fn config_defaults_and_roundtrip() {
+        use std::error::Error as _;
         let dir = tempfile::tempdir().expect("tempdir");
         let file = dir.path().join("config.toml");
         let loaded = Config::load(&file).expect("missing file means defaults");
@@ -250,6 +257,7 @@ mod tests {
         std::fs::write(&file, text).expect("write");
         assert_eq!(Config::load(&file).expect("parses"), Config::default());
         std::fs::write(&file, "sources = 3").expect("write");
-        assert!(Config::load(&file).is_err());
+        let error = Config::load(&file).expect_err("invalid config must fail");
+        assert!(error.source().unwrap().is::<toml::de::Error>());
     }
 }

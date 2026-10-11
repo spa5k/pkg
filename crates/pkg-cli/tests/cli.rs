@@ -683,6 +683,23 @@ fn cask_flows_read_the_generated_index() {
         .find(|row| row["component"] == "pkg profile")
         .unwrap();
     assert_eq!(profile_row["status"], "unreadable");
+
+    let script = std::fs::read_to_string(&nix)
+        .unwrap()
+        .replace("*'eval --json'*) cat", "*'eval --json'*) exit 130; cat");
+    std::fs::write(&nix, script).unwrap();
+    for command in ["info", "install"] {
+        for id in ["cask:iterm2", "cask:homebrew/cask/iterm2"] {
+            let (code, stdout, stderr) = run(&[command, id]);
+            assert_eq!(code, 130, "{command} {id}: {stderr}");
+            assert!(stdout.is_empty(), "{stdout}");
+            assert!(stderr.contains("Discovery cancelled"), "{stderr}");
+            assert_eq!(
+                std::fs::read_link(&profile).unwrap(),
+                std::path::Path::new("missing-generation")
+            );
+        }
+    }
 }
 
 fn formula_index_fixture(bin: &std::path::Path) -> std::path::PathBuf {

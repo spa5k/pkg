@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::rc::Rc;
 
 use crate::nix::{CatalogIndex, EntryStatus};
 
@@ -27,8 +28,8 @@ pub struct SavedCatalog {
     pub reference: String,
     /// The provenance recorded inside the active generation.
     pub provenance: Provenance,
-    /// The strictly decoded index envelope.
-    pub index: CatalogIndex,
+    /// The immutable index shared by saved catalogs and query views.
+    pub index: Rc<CatalogIndex>,
 }
 
 /// Every registered source's saved catalog, loaded strictly.
@@ -109,7 +110,7 @@ impl SavedCatalogs {
             source: source.to_string(),
             reference,
             provenance,
-            index,
+            index: Rc::new(index),
         })
     }
 
