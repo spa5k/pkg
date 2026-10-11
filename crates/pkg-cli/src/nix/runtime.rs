@@ -130,7 +130,7 @@ pub fn discover(configured: Option<&str>) -> Result<Nix, NixError> {
     let absolute = if resolved.is_absolute() {
         resolved
     } else {
-        let cwd = std::env::current_dir().map_err(|error| NixError::Spawn(error.to_string()))?;
+        let cwd = std::env::current_dir().map_err(NixError::Spawn)?;
         cwd.join(resolved)
     };
     let executable = std::fs::canonicalize(&absolute).unwrap_or(absolute);
@@ -143,15 +143,15 @@ pub fn discover(configured: Option<&str>) -> Result<Nix, NixError> {
     runtime.version = runtime
         .capture(&["--version"])
         .map(|text| text.trim().to_string())
-        .map_err(|error| match configured {
+        .map_err(|error| match (configured, error) {
+            (_, error @ NixError::Interrupted { .. }) | (None, error) => error,
             // A configured runtime that cannot even answer `--version` is
             // unusable; report it against the configured value, not as an
             // anonymous native failure.
-            Some(requested) => NixError::ConfiguredUnavailable {
+            (Some(requested), source) => NixError::ConfiguredProbe {
                 requested: requested.to_string(),
-                detail: format!("the version probe failed: {error}"),
+                source: Box::new(source),
             },
-            None => error,
         })?;
     Ok(runtime)
 }
@@ -337,6 +337,7 @@ mod tests {
     /// installed machine.
     #[test]
     fn discover_captures_the_version_from_a_real_child() {
+        use std::error::Error as _;
         let (path, _keep) = fake_runtime("echo 'nix (Nix) 2.35.2'");
         let runtime = discover(Some(path.to_str().expect("utf8 path")))
             .expect("discovery captures the child's version");
@@ -345,6 +346,27 @@ mod tests {
             runtime.executable(),
             path.canonicalize().expect("canonical")
         );
+        std::fs::remove_file(&path).unwrap();
+        let error = runtime.system().expect_err("the runtime was removed");
+        assert_eq!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+
+        let (path, _keep) = fake_runtime("echo probe-failed >&2; exit 7");
+        let error = discover(Some(path.to_str().unwrap())).expect_err("probe failed");
+        assert!(
+            matches!(error.source().unwrap().downcast_ref::<NixError>(), Some(NixError::Failed { status, stderr, .. }) if status == "exit code 7" && stderr.contains("probe-failed"))
+        );
+
+        let (path, _keep) = fake_runtime("exit 130");
+        let error = discover(Some(path.to_str().unwrap())).expect_err("probe cancelled");
+        assert!(matches!(error, NixError::Interrupted { signal: 2, .. }));
     }
 
     /// Captured success, captured failure with stderr, and streamed success

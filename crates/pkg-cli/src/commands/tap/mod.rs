@@ -97,10 +97,7 @@ pub(super) fn add(
 
     // Paths and the strict registry only: no Nix discovery, no created
     // directory, no fetch, and no Ruby before consent.
-    let state_home = {
-        let paths = super::paths_only()?;
-        paths.paths.state_home
-    };
+    let state_home = crate::config::paths()?.state_home;
     let registry_path = registry::registry_path(&state_home);
     let existing = registry::Registry::load(&registry_path)?;
     // Whether THIS invocation explicitly approved the source. Remembered
@@ -326,14 +323,14 @@ fn report_publication(
 /// broken saved catalog of one source is reported per source instead —
 /// `remove` keeps working, and `pkg tap update SOURCE` can repair.
 pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
-    let session = super::paths_only()?;
-    let registry_path = registry::registry_path(&session.paths.state_home);
+    let paths = crate::config::paths()?;
+    let registry_path = registry::registry_path(&paths.state_home);
     let registry = registry::Registry::load(&registry_path)?;
     let rows: Vec<TapRow> = registry
         .sources
         .iter()
         .map(|(source, entry)| {
-            let state = tap::SavedCatalogs::load_one(&registry, &session.paths.state_home, source);
+            let state = tap::SavedCatalogs::load_one(&registry, &paths.state_home, source);
             match state {
                 Ok(catalog) => TapRow {
                     source: source.clone(),
@@ -408,11 +405,11 @@ struct TapRow {
 /// so rollback keeps working.
 pub(super) fn remove(_cli: &Cli, source: &str) -> Result<(), CommandError> {
     let source = canonical_source(source)?;
-    let session = super::paths_only()?;
-    let path = registry::registry_path(&session.paths.state_home);
+    let paths = crate::config::paths()?;
+    let path = registry::registry_path(&paths.state_home);
     // The global lock blocks concurrent add or update runs over the same
     // registry for the whole removal.
-    let _global = registry::GlobalLock::acquire(&session.paths.state_home)?;
+    let _global = registry::GlobalLock::acquire(&paths.state_home)?;
     let mut registry = registry::Registry::load(&path)?;
     if !registry.remove(&source) {
         return Err(
@@ -420,7 +417,7 @@ pub(super) fn remove(_cli: &Cli, source: &str) -> Result<(), CommandError> {
         );
     }
     registry.save(&path)?;
-    store::remove_current(&session.paths.state_home, &source).map_err(|error| {
+    store::remove_current(&paths.state_home, &source).map_err(|error| {
         format!(
             "Partial: tap {source} was unregistered, but its active catalog could not be removed: {error}"
         )

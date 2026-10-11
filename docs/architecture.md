@@ -32,7 +32,8 @@ Paths below start at the repository root.
 | Responsibility | Owner |
 | --- | --- |
 | Argument grammar | `crates/pkg-cli/src/cli.rs` |
-| Command dispatch, session, error status | `crates/pkg-cli/src/commands/mod.rs` |
+| Command dispatch and session | `crates/pkg-cli/src/commands/mod.rs` |
+| Typed command errors and signal exit codes | `crates/pkg-cli/src/commands/error.rs` |
 | Search source groups and prefixes | `crates/pkg-cli/src/commands/search/source.rs` |
 | Search collection | `crates/pkg-cli/src/commands/search/mod.rs` |
 | Bounded result storage and output | `crates/pkg-cli/src/commands/search/results.rs` |
@@ -68,7 +69,13 @@ It accepts only the current `pkg-cask-apps/2` private payload layout.
 The client and generator use the same identity and numeric version rules.
 The generator owns classification and build plans.
 The client validates generated indexes and reports their recorded status.
+Saved catalogs and query views share immutable indexes with `Rc`.
+Tap cache writes require a mutable borrow.
+Metadata rows use a tagged enum with a required payload for each kind.
+Native, configuration, and cache errors keep their causes until command reporting.
 
 Historical experiment findings remain under `spikes/`.
 Their source links point to the last revision before removal.
 Current work follows [Simplify the native client](../openspec/changes/simplify-client/design.md).
+Rust ownership and error rules follow
+[Rust design](../openspec/changes/improve-rust-quality/design.md).

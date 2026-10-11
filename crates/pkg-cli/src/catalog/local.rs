@@ -326,10 +326,8 @@ fn platform() -> String {
 /// Record the system selected by Nix for subsequent runtime-free searches.
 pub fn record_search_system(cache_dir: &Path, system: &str) -> Result<(), CatalogError> {
     use std::io::Write as _;
-    std::fs::create_dir_all(cache_dir)
-        .map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
-    let mut file = tempfile::NamedTempFile::new_in(cache_dir)
-        .map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
+    std::fs::create_dir_all(cache_dir).map_err(CatalogError::cache_write)?;
+    let mut file = tempfile::NamedTempFile::new_in(cache_dir).map_err(CatalogError::cache_write)?;
     serde_json::to_writer(
         &mut file,
         &PreparedHost {
@@ -337,12 +335,12 @@ pub fn record_search_system(cache_dir: &Path, system: &str) -> Result<(), Catalo
             system: system.to_string(),
         },
     )
-    .map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
+    .map_err(CatalogError::cache_write)?;
     file.flush()
         .and_then(|()| file.as_file().sync_all())
-        .map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
+        .map_err(CatalogError::cache_write)?;
     file.persist(cache_dir.join("search-host.json"))
-        .map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
+        .map_err(CatalogError::cache_write)?;
     Ok(())
 }
 

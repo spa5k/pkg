@@ -69,8 +69,17 @@ pub enum CatalogError {
     },
     /// A source query failed. Native diagnostics are preserved.
     Source(String),
+    /// A native source query failed.
+    Native(NixError),
     /// The disposable cache could not be written.
-    CacheWrite(String),
+    CacheWrite(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl CatalogError {
+    /// Retain the cause of a failed cache operation.
+    pub(crate) fn cache_write(source: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
+        Self::CacheWrite(source.into())
+    }
 }
 
 impl fmt::Display for CatalogError {
@@ -97,18 +106,27 @@ impl fmt::Display for CatalogError {
                 Ok(())
             }
             Self::Source(detail) => write!(f, "{detail}"),
+            Self::Native(source) => source.fmt(f),
             Self::CacheWrite(detail) => write!(f, "cannot write discovery cache: {detail}"),
         }
     }
 }
 
-impl std::error::Error for CatalogError {}
+impl std::error::Error for CatalogError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Native(source) => Some(source),
+            Self::CacheWrite(source) => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 impl From<NixError> for CatalogError {
     fn from(error: NixError) -> Self {
         match error {
             NixError::Interrupted { signal, .. } => Self::Interrupted(signal),
-            error => Self::Source(error.to_string()),
+            error => Self::Native(error),
         }
     }
 }

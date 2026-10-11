@@ -118,34 +118,22 @@ pub fn write_snapshot<P: serde::Serialize>(
 ) -> Result<(), CatalogError> {
     use std::io::Write as _;
 
-    std::fs::create_dir_all(cache_dir)
-        .map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
-    let text =
-        serde_json::to_string(snap).map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
-    let name = snapshot_path(&snap.kind, &snap.source, &snap.system);
-    let final_path = cache_dir.join(&name);
-    let tmp_path = cache_dir.join(format!("{}.tmp-{}", name.display(), std::process::id()));
-    // Created new: a preexisting path or symlink is never followed. The
-    // temp file is ours only after this open succeeds, so a failure here
-    // removes nothing — the preexisting path belongs to someone else.
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp_path)
-        .map_err(|error| CatalogError::CacheWrite(error.to_string()))?;
-    let write = file
+    std::fs::create_dir_all(cache_dir).map_err(CatalogError::cache_write)?;
+    let text = serde_json::to_string(snap).map_err(CatalogError::cache_write)?;
+    let final_path = cache_dir.join(snapshot_path(&snap.kind, &snap.source, &snap.system));
+    let mut staged =
+        tempfile::NamedTempFile::new_in(cache_dir).map_err(CatalogError::cache_write)?;
+    staged
         .write_all(text.as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|error| CatalogError::CacheWrite(error.to_string()))
-        .and_then(|()| {
-            std::fs::rename(&tmp_path, &final_path)
-                .map_err(|error| CatalogError::CacheWrite(error.to_string()))
-        });
-    if write.is_err() {
-        // Never leave a partial temp file of our own behind on failure.
-        let _ = std::fs::remove_file(&tmp_path);
-    }
-    write
+        .map_err(CatalogError::cache_write)?;
+    staged
+        .as_file()
+        .sync_all()
+        .map_err(CatalogError::cache_write)?;
+    staged
+        .persist(final_path)
+        .map_err(|error| CatalogError::cache_write(error.error))?;
+    Ok(())
 }
 
 /// One snapshot file name for a kind, source, and system.
@@ -308,30 +296,21 @@ mod tests {
         let tmp = dir
             .path()
             .join(format!("{}.tmp-{}", name.display(), std::process::id()));
-        // A preexisting temp file blocks the create-new open; the failure
-        // must surface and the blocking file must survive unchanged.
+        // A leftover from an old writer must not block publication.
         std::fs::write(&tmp, "leftover").expect("blocks");
         let snap = native("source", "aaa");
-        assert!(write_snapshot(dir.path(), &snap).is_err());
+        write_snapshot(dir.path(), &snap).expect("leftover does not block a new write");
         assert_eq!(std::fs::read_to_string(&tmp).expect("survives"), "leftover");
-        assert!(!dir.path().join(&name).exists());
-        // Once the blocker is gone the write succeeds and leaves no temp.
-        std::fs::remove_file(&tmp).expect("clears");
-        write_snapshot(dir.path(), &snap).expect("writes");
         assert!(dir.path().join(&name).exists());
-        assert!(!tmp.exists());
     }
 
     #[test]
-    fn preexisting_temp_symlink_target_survives_failure() {
+    fn preexisting_temp_symlink_is_not_followed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let name = snapshot_path(KIND_NATIVE, "source", "x86_64-linux");
         let tmp = dir
             .path()
             .join(format!("{}.tmp-{}", name.display(), std::process::id()));
-        // A symlink at the temp path also blocks the create-new open;
-        // the cleanup must not follow or remove it, and the file it
-        // points to must keep its content.
         let victim = dir.path().join("victim.json");
         std::fs::write(&victim, "do not touch").expect("victim");
         #[cfg(unix)]
@@ -339,7 +318,7 @@ mod tests {
         #[cfg(not(unix))]
         std::fs::write(&tmp, "leftover").expect("blocks");
         let snap = native("source", "aaa");
-        assert!(write_snapshot(dir.path(), &snap).is_err());
+        write_snapshot(dir.path(), &snap).expect("uses a unique staged path");
         #[cfg(unix)]
         assert!(
             std::fs::symlink_metadata(&tmp)
@@ -351,23 +330,26 @@ mod tests {
             std::fs::read_to_string(&victim).expect("victim survives"),
             "do not touch"
         );
-        assert!(!dir.path().join(&name).exists());
+        assert!(read_native_snapshot(dir.path(), "source", "x86_64-linux", Some("aaa")).is_some());
     }
 
     #[test]
     fn rename_failure_cleans_own_temp_only() {
+        use std::error::Error as _;
         let dir = tempfile::tempdir().expect("tempdir");
         let name = snapshot_path(KIND_NATIVE, "source", "x86_64-linux");
-        let tmp = dir
-            .path()
-            .join(format!("{}.tmp-{}", name.display(), std::process::id()));
         // A directory at the final path makes the rename fail after our
         // temp file was created; our own temp must be removed and the
         // blocking entry must stay.
         std::fs::create_dir(dir.path().join(&name)).expect("blocks rename");
         let snap = native("source", "aaa");
-        assert!(write_snapshot(dir.path(), &snap).is_err());
-        assert!(!tmp.exists(), "own temp is cleaned");
+        let error = write_snapshot(dir.path(), &snap).expect_err("cannot replace a directory");
+        assert!(error.source().unwrap().is::<std::io::Error>());
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "staged file is cleaned"
+        );
         assert!(dir.path().join(&name).is_dir(), "blocker survives");
     }
 }

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, OpenFlags, params};
 
-use crate::nix::{MetadataNode, Nix, NixError, SearchMeta, SourceIdentity};
+use crate::nix::{MetadataNode, MetadataValue, Nix, NixError, SearchMeta, SourceIdentity};
 use crate::profile_lock::ProfileLock;
 
 use super::{CatalogError, cache, exposed_attribute};
@@ -36,10 +36,6 @@ fn path(cache_dir: &Path, source: &str, system: &str) -> PathBuf {
         "catalog-{}.sqlite",
         cache::cache_key("native-sqlite-1", source, system)
     ))
-}
-
-fn cache_error(error: impl std::fmt::Display) -> CatalogError {
-    CatalogError::CacheWrite(error.to_string())
 }
 
 impl Snapshot {
@@ -111,9 +107,9 @@ impl Snapshot {
         {
             return Ok(snapshot);
         }
-        std::fs::create_dir_all(cache_dir).map_err(cache_error)?;
+        std::fs::create_dir_all(cache_dir).map_err(CatalogError::cache_write)?;
         let destination = path(cache_dir, source, system);
-        let _lock = ProfileLock::acquire(&destination).map_err(cache_error)?;
+        let _lock = ProfileLock::acquire(&destination).map_err(CatalogError::cache_write)?;
         if let Some(snapshot) = Self::read(cache_dir, source, system)
             && snapshot.matches(identity)
         {
@@ -122,15 +118,15 @@ impl Snapshot {
         let temporary = tempfile::Builder::new()
             .prefix(".pkg-discovery-")
             .tempdir_in(cache_dir)
-            .map_err(cache_error)?;
+            .map_err(CatalogError::cache_write)?;
         let staging = temporary.path().join("snapshot.sqlite");
-        let mut connection = Connection::open(&staging).map_err(cache_error)?;
+        let mut connection = Connection::open(&staging).map_err(CatalogError::cache_write)?;
         connection.execute_batch(&format!("{SETTINGS}
             PRAGMA journal_mode=DELETE;
             CREATE TABLE metadata(value TEXT NOT NULL);
             CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL) WITHOUT ROWID;
             CREATE TABLE pending(path TEXT PRIMARY KEY, root TEXT NOT NULL) WITHOUT ROWID;
-            CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;")).map_err(cache_error)?;
+            CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;")).map_err(CatalogError::cache_write)?;
         let reference = identity.locked_url.as_deref().unwrap_or(source);
         eprintln!(
             "Preparing search data for {} ({system})…",
@@ -159,12 +155,12 @@ impl Snapshot {
             let jobs: Vec<(String, String)> = {
                 let mut statement = connection
                     .prepare("SELECT path, root FROM pending ORDER BY root, path LIMIT 256")
-                    .map_err(cache_error)?;
+                    .map_err(CatalogError::cache_write)?;
                 statement
                     .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-                    .map_err(cache_error)?
+                    .map_err(CatalogError::cache_write)?
                     .collect::<Result<_, _>>()
-                    .map_err(cache_error)?
+                    .map_err(CatalogError::cache_write)?
             };
             let Some((_, root)) = jobs.first() else {
                 break;
@@ -173,13 +169,13 @@ impl Snapshot {
                 .iter()
                 .take_while(|(_, candidate)| candidate == root)
                 .take(BATCH_SIZE)
-                .map(|(path, _)| serde_json::from_str(path).map_err(cache_error))
+                .map(|(path, _)| serde_json::from_str(path).map_err(CatalogError::cache_write))
                 .collect::<Result<_, _>>()?;
             evaluate(nix, &mut connection, reference, system, root, &paths)?;
             if last_progress.elapsed() >= Duration::from_secs(1) {
                 let count: i64 = connection
                     .query_row("SELECT count(*) FROM packages", [], |row| row.get(0))
-                    .map_err(cache_error)?;
+                    .map_err(CatalogError::cache_write)?;
                 eprintln!("Search data: {count} packages.");
                 last_progress = Instant::now();
             }
@@ -193,33 +189,37 @@ impl Snapshot {
             complete: true,
             saved_unix: cache::now_unix(),
         };
-        let transaction = connection.transaction().map_err(cache_error)?;
-        transaction.execute_batch("INSERT INTO claims SELECT exposed, count(*) FROM packages GROUP BY exposed; DROP TABLE pending;").map_err(cache_error)?;
+        let transaction = connection
+            .transaction()
+            .map_err(CatalogError::cache_write)?;
+        transaction.execute_batch("INSERT INTO claims SELECT exposed, count(*) FROM packages GROUP BY exposed; DROP TABLE pending;").map_err(CatalogError::cache_write)?;
         transaction
             .execute(
                 "INSERT INTO metadata VALUES (?1)",
-                [serde_json::to_string(&header).map_err(cache_error)?],
+                [serde_json::to_string(&header).map_err(CatalogError::cache_write)?],
             )
-            .map_err(cache_error)?;
-        transaction.commit().map_err(cache_error)?;
+            .map_err(CatalogError::cache_write)?;
+        transaction.commit().map_err(CatalogError::cache_write)?;
         connection
             .close()
-            .map_err(|(_, error)| cache_error(error))?;
+            .map_err(|(_, error)| CatalogError::cache_write(error))?;
         std::fs::File::open(&staging)
             .and_then(|file| file.sync_all())
-            .map_err(cache_error)?;
+            .map_err(CatalogError::cache_write)?;
         if identity.revision.is_some() && identity.locked_url.is_some() {
-            std::fs::rename(&staging, &destination).map_err(cache_error)?;
+            std::fs::rename(&staging, &destination).map_err(CatalogError::cache_write)?;
             std::fs::File::open(cache_dir)
                 .and_then(|file| file.sync_all())
-                .map_err(cache_error)?;
+                .map_err(CatalogError::cache_write)?;
             Self::read(cache_dir, source, system)
-                .ok_or_else(|| cache_error("published snapshot could not be read"))
+                .ok_or_else(|| CatalogError::cache_write("published snapshot could not be read"))
         } else {
             let connection =
                 Connection::open_with_flags(&staging, OpenFlags::SQLITE_OPEN_READ_ONLY)
-                    .map_err(cache_error)?;
-            connection.execute_batch(SETTINGS).map_err(cache_error)?;
+                    .map_err(CatalogError::cache_write)?;
+            connection
+                .execute_batch(SETTINGS)
+                .map_err(CatalogError::cache_write)?;
             Ok(Self {
                 connection,
                 header,
@@ -232,16 +232,16 @@ impl Snapshot {
         &self,
         mut visitor: impl FnMut(String, String, SearchMeta) -> Result<(), CatalogError>,
     ) -> Result<(), CatalogError> {
-        let mut statement = self.connection.prepare("SELECT p.attribute, CASE WHEN c.n>1 THEN p.attribute ELSE p.exposed END, p.pname, p.version, p.description FROM packages p JOIN claims c ON c.exposed=p.exposed ORDER BY p.attribute").map_err(cache_error)?;
-        let mut rows = statement.query([]).map_err(cache_error)?;
-        while let Some(row) = rows.next().map_err(cache_error)? {
+        let mut statement = self.connection.prepare("SELECT p.attribute, CASE WHEN c.n>1 THEN p.attribute ELSE p.exposed END, p.pname, p.version, p.description FROM packages p JOIN claims c ON c.exposed=p.exposed ORDER BY p.attribute").map_err(CatalogError::cache_write)?;
+        let mut rows = statement.query([]).map_err(CatalogError::cache_write)?;
+        while let Some(row) = rows.next().map_err(CatalogError::cache_write)? {
             visitor(
-                row.get(0).map_err(cache_error)?,
-                row.get(1).map_err(cache_error)?,
+                row.get(0).map_err(CatalogError::cache_write)?,
+                row.get(1).map_err(CatalogError::cache_write)?,
                 SearchMeta {
-                    pname: row.get(2).map_err(cache_error)?,
-                    version: row.get(3).map_err(cache_error)?,
-                    description: row.get(4).map_err(cache_error)?,
+                    pname: row.get(2).map_err(CatalogError::cache_write)?,
+                    version: row.get(3).map_err(CatalogError::cache_write)?,
+                    description: row.get(4).map_err(CatalogError::cache_write)?,
                 },
             )?;
         }
@@ -277,9 +277,7 @@ fn evaluate(
                 paths,
                 vec![MetadataNode {
                     path: paths[0].clone(),
-                    kind: String::from("error"),
-                    meta: None,
-                    children: Vec::new(),
+                    value: MetadataValue::Error,
                 }],
                 root,
                 system,
@@ -330,19 +328,18 @@ fn store_nodes(
             "incomplete metadata batch",
         )));
     }
-    let transaction = connection.transaction().map_err(cache_error)?;
+    let transaction = connection
+        .transaction()
+        .map_err(CatalogError::cache_write)?;
     for node in nodes {
         transaction
             .execute(
                 "DELETE FROM pending WHERE path=?1",
-                [serde_json::to_string(&node.path).map_err(cache_error)?],
+                [serde_json::to_string(&node.path).map_err(CatalogError::cache_write)?],
             )
-            .map_err(cache_error)?;
-        match node.kind.as_str() {
-            "package" => {
-                let meta = node.meta.ok_or_else(|| {
-                    CatalogError::Source(String::from("missing package metadata"))
-                })?;
+            .map_err(CatalogError::cache_write)?;
+        match node.value {
+            MetadataValue::Package { meta } => {
                 let attr = node.path.join(".");
                 transaction
                     .execute(
@@ -355,23 +352,25 @@ fn store_nodes(
                             meta.description
                         ],
                     )
-                    .map_err(cache_error)?;
+                    .map_err(CatalogError::cache_write)?;
             }
-            "children" => {
-                for child in node.children {
+            MetadataValue::Children { children } => {
+                for child in children {
                     let mut path = node.path.clone();
                     path.push(child);
                     transaction
                         .execute(
                             "INSERT OR IGNORE INTO pending VALUES (?1,?2)",
-                            params![serde_json::to_string(&path).map_err(cache_error)?, root],
+                            params![
+                                serde_json::to_string(&path).map_err(CatalogError::cache_write)?,
+                                root
+                            ],
                         )
-                        .map_err(cache_error)?;
+                        .map_err(CatalogError::cache_write)?;
                 }
             }
-            "skip" | "error" => {}
-            _ => return Err(CatalogError::Source(String::from("unknown metadata node"))),
+            MetadataValue::Skip | MetadataValue::Error => {}
         }
     }
-    transaction.commit().map_err(cache_error)
+    transaction.commit().map_err(CatalogError::cache_write)
 }

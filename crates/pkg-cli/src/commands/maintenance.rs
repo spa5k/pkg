@@ -74,11 +74,15 @@ pub(super) fn update(cli: &Cli, catalogs_only: bool) -> Result<(), CommandError>
         for source in registry.sources.keys() {
             match super::tap::update(cli, Some(source), None) {
                 Ok(()) => {}
-                Err(CommandError::Message(message)) => {
-                    failed = true;
-                    eprintln!("Failed: {source}: {message}");
+                Err(error)
+                    if error.is_interrupted() || matches!(error, CommandError::Reported(_)) =>
+                {
+                    return Err(error);
                 }
-                Err(error @ CommandError::Reported(_)) => return Err(error),
+                Err(error) => {
+                    failed = true;
+                    eprintln!("Failed: {source}: {error}");
+                }
             }
         }
     }
@@ -93,23 +97,29 @@ pub(super) fn update(cli: &Cli, catalogs_only: bool) -> Result<(), CommandError>
 
 pub(super) fn setup(cli: &Cli, no_background: bool) -> Result<(), CommandError> {
     let preparation = update(cli, true);
-    if no_background || matches!(&preparation, Err(CommandError::Reported(_))) {
+    if no_background
+        || preparation.as_ref().is_err_and(|error| {
+            error.is_interrupted() || matches!(error, CommandError::Reported(_))
+        })
+    {
         return preparation;
     }
     match background(&BackgroundCommand::Enable) {
         Ok(()) => preparation,
-        Err(CommandError::Message(message)) => {
+        Err(error) if error.is_interrupted() || matches!(error, CommandError::Reported(_)) => {
+            Err(error)
+        }
+        Err(error) => {
             if preparation.is_ok() {
-                Err(format!("search is ready, but background setup failed: {message}. Run `pkg background enable` to retry.").into())
+                Err(format!("search is ready, but background setup failed: {error}. Run `pkg background enable` to retry.").into())
             } else {
                 eprintln!(
                     "Background refresh could not be enabled: {}",
-                    super::concise_cause(&message)
+                    super::concise_cause(&error.to_string())
                 );
                 preparation
             }
         }
-        Err(error @ CommandError::Reported(_)) => Err(error),
     }
 }
 

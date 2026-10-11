@@ -30,6 +30,8 @@ Package command output follows
 [Improve package command output](openspec/changes/improve-package-command-experience/proposal.md).
 Code cleanup follows
 [Simplify the native client](openspec/changes/simplify-client/proposal.md).
+Rust error and ownership changes follow
+[Improve Rust error handling and ownership](openspec/changes/improve-rust-quality/proposal.md).
 The [module map](docs/architecture.md) shows the current code owners.
 
 ## 1. Before you open a PR

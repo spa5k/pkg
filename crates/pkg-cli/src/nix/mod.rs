@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub use conflict::ProfileConflict;
-pub use discovery::MetadataNode;
+pub use discovery::{MetadataNode, MetadataValue};
 pub use error::NixError;
 pub use host::{in_range, macos_product_version};
 pub use index::OFFICIAL_CASK_SOURCE;
@@ -220,9 +220,9 @@ impl Nix {
         args: &[&str],
     ) -> Result<T, NixError> {
         let captured = self.capture(args)?;
-        serde_json::from_str(&captured).map_err(|error| NixError::Decode {
+        serde_json::from_str(&captured).map_err(|error| NixError::Json {
             what,
-            detail: error.to_string(),
+            source: error,
         })
     }
 

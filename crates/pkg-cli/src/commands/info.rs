@@ -38,7 +38,7 @@ pub(super) fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
     } else {
         None
     };
-    let tap_state = if formula_view.is_some() {
+    let mut tap_state = if formula_view.is_some() {
         super::TapState::official(&session)
     } else {
         super::TapState::load(&session)?
@@ -95,13 +95,12 @@ pub(super) fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
     } else if let catalog::CatalogId::Cask { source, token } = &resolved {
         cask_info(
             &mut catalog_handle,
-            &tap_state,
+            &mut tap_state,
             &system,
             &reference,
             source,
             token,
-        )
-        .map_err(CommandError::Message)?
+        )?
     } else {
         match catalog::exact_lookup(&session.nix, &reference, &attribute) {
             Ok((exact, report)) => InfoData {
@@ -406,20 +405,20 @@ fn request_qualified(resolved: &catalog::CatalogId, attribute: &str) -> String {
 /// catalog targets reports the target list.
 fn cask_info(
     catalog: &mut catalog::CatalogOnce<'_>,
-    state: &super::TapState,
+    state: &mut super::TapState,
     system: &str,
     reference: &str,
     source: &str,
     token: &str,
-) -> Result<InfoData, String> {
+) -> Result<InfoData, CommandError> {
     let saved_view;
     let view = if source == nix::OFFICIAL_CASK_SOURCE {
-        catalog.load().map_err(|error| error.to_string())?
+        catalog.load()?
     } else {
         // Info reads exactly the source it reports: an unrelated broken
         // tap cannot block a qualified cask lookup.
         let saved = state.saved_one(source)?;
-        saved_view = catalog::CatalogView::from_saved(&saved);
+        saved_view = catalog::CatalogView::from_saved(saved);
         &saved_view
     };
     let attribute = catalog::package_attribute(system, &nix::full_entry_id(source, token));
