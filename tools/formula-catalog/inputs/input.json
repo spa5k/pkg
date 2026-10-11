@@ -1,0 +1,8 @@
+{
+  "kind": "official",
+  "license": "BSD-2-Clause (Homebrew Core data)",
+  "revision": "603c29bb3c1350e0fafc592b4ed91129695d7a38",
+  "sha256": "34f9d707972a62bc040024643e3f2b221ab882f0c29708b39c378c9f30e4e9ab",
+  "url": "https://formulae.brew.sh/api/formula.json",
+  "snapshot": "formula.json.gz"
+}

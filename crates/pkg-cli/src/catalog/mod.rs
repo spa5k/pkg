@@ -1,19 +1,20 @@
 //! Catalog name routing and disposable discovery data (design D5).
 //!
 //! The catalog maps names to installables. It owns no installed state. Discovery
-//! uses native evaluation results only; repositories are never parsed.
+//! uses native evaluation results and generated Homebrew support metadata;
+//! repositories are never parsed.
 //!
-//! Every discovery result is bound to provenance: the moving source reference,
-//! the locked reference actually queried, the locked revision, and the system.
-//! Installation always passes the original moving reference to Nix; only
-//! discovery reads through the locked reference so a result set can never mix
-//! revisions.
+//! Native discovery records the moving source, locked reference, revision, and
+//! system. Native installation passes the original moving reference to Nix.
+//! Formula installation uses verified Nixpkgs equivalents or restricted bottles.
 //!
 //! Layout: `id` parses and normalizes user IDs, `search` queries sources
 //! with provenance and looks up exact matches, `cask` reads the generated
-//! catalog index, and `cache` holds the disposable derived data.
+//! catalog index, `brew` reads the generated Formula index, and `cache` holds
+//! the disposable derived data.
 
 mod availability;
+pub mod brew;
 mod cache;
 mod cask;
 mod id;

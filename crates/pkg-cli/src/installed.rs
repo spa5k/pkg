@@ -17,6 +17,15 @@ pub fn package_id(entry: &ProfileEntry, config: &Config, state_home: &std::path:
     }
     if root == "packages"
         && let Ok(full) = cask_catalog::decode_package_attribute(tail)
+        && full.starts_with("homebrew/core/")
+        && catalog::canonical_source(&entry.original_url)
+            == catalog::canonical_source(&config.sources.formulae)
+        && catalog::native_package_attribute(system, &full) == entry.attr_path
+    {
+        return format!("brew:{full}");
+    }
+    if root == "packages"
+        && let Ok(full) = cask_catalog::decode_package_attribute(tail)
         && let Some((source, _)) = crate::nix::split_entry_id(&full)
         && (catalog::canonical_source(&entry.original_url)
             == catalog::canonical_source(&config.sources.casks)
@@ -56,6 +65,10 @@ pub fn select(
                     || name == *request
                     || name.rsplit('/').next() == Some(request.as_str())
                     || id.strip_prefix("nixpkgs:") == Some(request.as_str())
+                    || request.strip_prefix("brew:").is_some_and(|name| {
+                        id.strip_prefix("brew:homebrew/core/")
+                            == Some(name.strip_prefix("homebrew/core/").unwrap_or(name))
+                    })
                     || id.strip_prefix("cask:") == Some(request.as_str())
                     || request.strip_prefix("cask:").is_some_and(|token| {
                         id.strip_prefix("cask:")
@@ -194,6 +207,25 @@ mod tests {
             "packages.aarch64-darwin.homebrew/cask/rectangle",
             "github:other/project",
         );
+        assert!(package_id(&foreign, &config, state).starts_with("github:other/project#"));
+
+        let attribute =
+            catalog::native_package_attribute("aarch64-darwin", "homebrew/core/probe_tool@2.1");
+        entries.insert(
+            String::from("formulae"),
+            entry(&attribute, &config.sources.formulae),
+        );
+        assert_eq!(
+            package_id(&entries["formulae"], &config, state),
+            "brew:homebrew/core/probe_tool@2.1"
+        );
+        for name in ["brew:probe_tool@2.1", "brew:homebrew/core/probe_tool@2.1"] {
+            assert_eq!(
+                select(&entries, &config, state, &[name.to_string()], false).unwrap(),
+                ["formulae"]
+            );
+        }
+        let foreign = entry(&attribute, "github:other/project");
         assert!(package_id(&foreign, &config, state).starts_with("github:other/project#"));
     }
 }

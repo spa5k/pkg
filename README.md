@@ -14,6 +14,8 @@ The current reliability work follows
 [Repair faults found through real package use](openspec/changes/repair-realistic-use-faults/proposal.md).
 The CLI discovery change is
 [Improve package states and discovery](openspec/changes/improve-cli-discovery/proposal.md).
+Homebrew formula discovery and source sections follow
+[Show Homebrew formulae and source sections](openspec/changes/improve-homebrew-discovery/proposal.md).
 
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.
@@ -31,11 +33,11 @@ The CLI discovery change is
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.12 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.12):
+   [v0.2.0-alpha.13 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.13):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.12/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.13/install.sh
    sh pkg-install.sh
    ```
 
@@ -64,6 +66,8 @@ Details are in the [install guide](docs/install.md).
 pkg setup                  # Prepare search and enable daily refresh
 pkg search ripgrep         # Search local catalogs
 pkg search aws             # Rank tools before helpers; hide library noise
+pkg search aws --source homebrew # Show Homebrew Formulae and Casks
+pkg search brew:aws        # Search official Homebrew Formulae
 pkg search cask:aws         # Search Homebrew Casks and registered cask taps
 pkg search ripgrpe          # Show similar names when no literal result exists
 pkg info nixpkgs:ripgrep   # Show source, attribute, and revision
@@ -82,6 +86,10 @@ pkg apps sync              # Rebuild macOS app launchers
 
 Packages install into a dedicated native profile at
 `~/.local/state/nix/profiles/pkg`. Your default Nix profile stays separate.
+Formulae and Casks install through Nix into this profile.
+Use `pkg install brew:awscli` for a Formula. The client does not need Brew.
+Formulae use verified Nixpkgs equivalents or a restricted bottle importer.
+Unsupported recipes are refused with a reason.
 
 On macOS, `pkg` exposes app bundles from supported packages as launchers in
 `~/Applications/pkg/`. See [commands](docs/commands.md).
@@ -93,7 +101,8 @@ On macOS, `pkg` exposes app bundles from supported packages as launchers in
   It has no broker, root helper, or privileged service.
 - `pkg` does not sign or host a package channel or central index.
 - `pkg` does not install or invoke Homebrew. Casks come from a generated
-  catalog of ordinary Nix packages; no package allowlists exist.
+  catalog of ordinary Nix packages. Formulae use the same native profile.
+  Both importers support a restricted subset.
 - `pkg` does not migrate, adopt, or erase old installations.
 - `pkg` does not remove your machine's Nix installation when removed.
 

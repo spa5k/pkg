@@ -20,6 +20,8 @@ pub struct Routing {
     pub nixpkgs: String,
     /// The configured official casks flake reference.
     pub casks: String,
+    /// The configured native Formula source.
+    pub formulae: String,
     /// One stable `current` path reference per imported tap, keyed by
     /// source identity.
     pub taps: BTreeMap<String, String>,
@@ -32,6 +34,7 @@ impl Routing {
         Self {
             nixpkgs: sources.nixpkgs.clone(),
             casks: sources.casks.clone(),
+            formulae: sources.formulae.clone(),
             taps,
         }
     }

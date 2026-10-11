@@ -12,6 +12,8 @@ use super::routing::Routing;
 /// A routed catalog identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CatalogId {
+    /// An official Formula converted to a native Nix package.
+    Formula(String),
     /// An attribute in the configured Nixpkgs source.
     Nixpkgs(String),
     /// A token in one cask catalog: the official `homebrew/cask` source or
@@ -38,6 +40,7 @@ impl CatalogId {
     pub fn qualified(&self) -> String {
         match self {
             Self::Nixpkgs(attr) => format!("nixpkgs:{attr}"),
+            Self::Formula(name) => format!("brew:homebrew/core/{name}"),
             Self::Cask { source, token } => {
                 format!("cask:{}", full_entry_id(source, token))
             }
@@ -69,6 +72,10 @@ impl CatalogId {
     ) -> Result<(String, String), String> {
         match self {
             Self::Nixpkgs(attr) => Ok((routing.nixpkgs.clone(), attr.clone())),
+            Self::Formula(name) => Ok((
+                routing.formulae.clone(),
+                package_attribute(system, &format!("homebrew/core/{name}")),
+            )),
             Self::Cask { source, token } => {
                 let reference = routing.cask_reference(source)?;
                 Ok((
@@ -119,6 +126,13 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
     let input = input.trim();
     if input.is_empty() {
         return Err(String::from("ID must not be empty"));
+    }
+    if let Some(name) = input.strip_prefix("brew:") {
+        let name = name.strip_prefix("homebrew/core/").unwrap_or(name);
+        if !super::brew::valid_formula_name(name) {
+            return Err(String::from("brew: needs a valid Homebrew formula name"));
+        }
+        return Ok(ParsedId::Qualified(CatalogId::Formula(name.to_string())));
     }
     if let Some(attr) = input.strip_prefix("nixpkgs:") {
         validate_attr_path(attr, "nixpkgs:")?;

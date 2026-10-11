@@ -119,7 +119,7 @@ pub enum Command {
 /// Local search inputs and output controls.
 #[derive(Debug, clap::Args)]
 pub struct SearchOptions {
-    /// Package names or search words. Also accepts nixpkgs: or cask: queries.
+    /// Package names or search words. Also accepts nixpkgs:, brew:, or cask: queries.
     pub query: String,
     /// Treat the query as a regular expression.
     #[arg(long)]
@@ -130,16 +130,16 @@ pub struct SearchOptions {
     /// Disable name typo alternatives when literal results are absent.
     #[arg(long, conflicts_with = "regex")]
     pub no_fuzzy: bool,
-    /// Maximum results. Human output defaults to 20; JSON defaults to all.
+    /// Maximum total results. Human sections share 20 by default; JSON defaults to all.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "all")]
     pub limit: Option<u32>,
     /// Show all matching results.
     #[arg(long)]
     pub all: bool,
-    /// Search nixpkgs, all casks, homebrew/cask, or a registered owner/tap.
+    /// Search nixpkgs, brew formulae, homebrew, cask, homebrew/core, homebrew/cask, or a saved tap.
     #[arg(long)]
     pub source: Option<String>,
-    /// Include unavailable casks. Exact unavailable names are always shown.
+    /// Include unavailable casks and disabled formulae. Exact names are always shown.
     #[arg(long)]
     pub unavailable: bool,
 }

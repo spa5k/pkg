@@ -15,6 +15,23 @@ pub(super) fn update(cli: &Cli, catalogs_only: bool) -> Result<(), CommandError>
     catalog::record_search_system(&session.paths.cache_dir, &system)?;
     eprintln!("Preparing local package search. The first run can take several minutes.");
     let mut failed = false;
+    eprintln!("Checking Homebrew Formulae…");
+    match catalog::brew::prepare(
+        &session.nix,
+        &session.paths.cache_dir,
+        &session.config.sources.formulae,
+        &system,
+    ) {
+        Ok(count) => eprintln!("Ready: Homebrew Formulae search data ({count} formulae)."),
+        Err(error @ catalog::CatalogError::Interrupted(_)) => return Err(error.into()),
+        Err(error) => {
+            failed = true;
+            eprintln!(
+                "Failed: Homebrew Formulae: {}. Previous complete data was kept.",
+                super::concise_cause(&error.to_string())
+            );
+        }
+    }
     for (kind, source) in super::configured_sources(&session.config).into_iter().rev() {
         eprintln!("Checking {}…", kind.label());
         let result = session

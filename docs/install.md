@@ -18,7 +18,7 @@ baseline, so the binary also runs on older distributions.
 Download the client downloader for the exact release and run it:
 
 ```sh
-version="0.2.0-alpha.12"
+version="0.2.0-alpha.13"
 curl -fsSL -o pkg-install.sh \
   "https://raw.githubusercontent.com/spa5k/pkg/v${version}/install.sh"
 sh pkg-install.sh
@@ -26,7 +26,7 @@ sh pkg-install.sh
 
 The downloader is pinned to one tag. It fetches
 `pkg-${version}-${system}.tar.gz` and `SHA256SUMS` from the
-[v0.2.0-alpha.12 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.12),
+[v0.2.0-alpha.13 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.13),
 verifies the archive checksum, and installs:
 
 - `~/.local/bin/pkg` — the whole client;
@@ -47,7 +47,7 @@ installations.
 # on x86_64 Linux; use aarch64-darwin on Apple silicon macOS
 tools/release/package_client.sh x86_64-linux
 
-version="0.2.0-alpha.12"
+version="0.2.0-alpha.13"
 system="x86_64-linux"
 cat "dist/SHA256SUMS-${system}"          # compare with your own sha256sum
 
@@ -151,7 +151,11 @@ makes no network request. Missing data produces a setup instruction. Search
 marks data older than one day as stale. A failed refresh retains the last
 complete catalog. Installed packages remain in the native profile.
 
-The daily job runs only official catalog refresh. It does not run tap Ruby.
+The daily job runs only official catalog refresh, including Homebrew Formulae.
+Formula metadata comes from the generated Nix source at
+`github:spa5k/pkg/main?dir=nix/formulae`. The source contains pinned
+Homebrew Core data and a pinned Nixpkgs input. Brew is not required.
+The job does not run tap Ruby.
 It does not install or upgrade packages. It exits after each refresh.
 
 - macOS: `~/Library/LaunchAgents/com.pkg.catalog-refresh.plist`.

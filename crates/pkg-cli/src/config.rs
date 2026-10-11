@@ -120,6 +120,12 @@ pub fn default_casks() -> String {
     String::from("github:spa5k/pkg/main?dir=nix/casks")
 }
 
+/// The default native Formula source.
+#[must_use]
+pub fn default_formulae() -> String {
+    String::from("github:spa5k/pkg/main?dir=nix/formulae")
+}
+
 /// Source references and display settings.
 ///
 /// This is the only persistent client configuration; installed state lives in
@@ -146,6 +152,9 @@ pub struct Sources {
     /// The Cask product flake reference.
     #[serde(default = "default_casks")]
     pub casks: String,
+    /// The Formula product flake reference.
+    #[serde(default = "default_formulae")]
+    pub formulae: String,
 }
 
 impl Default for Sources {
@@ -153,6 +162,7 @@ impl Default for Sources {
         Self {
             nixpkgs: default_nixpkgs(),
             casks: default_casks(),
+            formulae: default_formulae(),
         }
     }
 }

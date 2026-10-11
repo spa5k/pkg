@@ -1,0 +1,55 @@
+name: formula-catalog
+
+on:
+  pull_request:
+    paths:
+      - "tools/formula-catalog/**"
+      - "nix/formulae/**"
+      - "nix/casks/lib/public-fetch.nix"
+      - "nix/casks/lib/safe-fetch.py"
+      - ".github/workflows/formula-catalog.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/formula-catalog/**"
+      - "nix/formulae/**"
+      - "nix/casks/lib/public-fetch.nix"
+      - "nix/casks/lib/safe-fetch.py"
+      - ".github/workflows/formula-catalog.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@668647a33843b1f280cb2ef4c41736f86b29f826
+      - name: Generator and bottle boundary tests
+        run: python3 tools/formula-catalog/tests.py
+      - name: Regenerate from the pinned snapshot
+        run: python3 tools/formula-catalog/generate.py
+      - name: Compare generated source
+        run: git diff --exit-code -- nix/formulae
+      - name: Linux bottle build
+        run: nix build --no-link ./nix/formulae#homebrew/core/abnfgen
+
+  darwin:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@668647a33843b1f280cb2ef4c41736f86b29f826
+      - name: macOS bottle build
+        run: nix build --no-link ./nix/formulae#homebrew/core/abnfgen

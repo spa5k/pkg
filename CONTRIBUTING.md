@@ -22,6 +22,8 @@ The real-use repairs are
 [Repair faults found through real package use](openspec/changes/repair-realistic-use-faults/proposal.md).
 The CLI discovery change is
 [Improve package states and discovery](openspec/changes/improve-cli-discovery/proposal.md).
+Homebrew formula discovery and source sections follow
+[Show Homebrew formulae and source sections](openspec/changes/improve-homebrew-discovery/proposal.md).
 
 ## 1. Before you open a PR
 

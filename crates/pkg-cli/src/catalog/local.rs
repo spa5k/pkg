@@ -95,6 +95,7 @@ pub fn search_local_native(
             system: system.to_string(),
             stale: report.status == SourceStatus::Stale,
             support: None,
+            install_command: None,
         };
         if let Some(rank) = query.rank(&row) {
             sink(row, rank)?;
@@ -211,6 +212,7 @@ fn visit_casks(
             system: system.to_string(),
             stale: report.status == SourceStatus::Stale,
             support: None,
+            install_command: None,
         };
         let Some(rank) = query.rank(&row) else {
             continue;

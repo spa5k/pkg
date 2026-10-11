@@ -71,6 +71,36 @@ impl SearchQuery {
             .is_some_and(|query| values.iter().any(|value| value.to_lowercase() == *query))
     }
 
+    pub(super) fn includes_hidden(&self) -> bool {
+        self.broad || self.pattern.is_some()
+    }
+
+    pub(super) fn library_query(&self) -> bool {
+        self.terms.iter().any(|term| {
+            matches!(
+                term.as_str(),
+                "lib"
+                    | "libs"
+                    | "library"
+                    | "libraries"
+                    | "sdk"
+                    | "binding"
+                    | "bindings"
+                    | "headers"
+                    | "c"
+                    | "c++"
+                    | "font"
+                    | "fonts"
+                    | "data"
+                    | "theme"
+                    | "icons"
+                    | "plugin"
+                    | "plugins"
+                    | "extension"
+            )
+        })
+    }
+
     /// Match one row and return its relevance order, smaller first.
     #[must_use]
     pub fn rank(&self, row: &SearchResult) -> Option<u32> {
@@ -144,23 +174,9 @@ impl SearchQuery {
         if row.source == "nixpkgs" && development_namespace(name) && !query.contains('.') {
             return false;
         }
-        if row.source == "nixpkgs"
+        if matches!(row.source.as_str(), "nixpkgs" | "brew")
             && declared_library(description)
-            && !self.terms.iter().any(|term| {
-                matches!(
-                    term.as_str(),
-                    "lib"
-                        | "libs"
-                        | "library"
-                        | "libraries"
-                        | "sdk"
-                        | "binding"
-                        | "bindings"
-                        | "headers"
-                        | "c"
-                        | "c++"
-                )
-            })
+            && !self.library_query()
         {
             return false;
         }
@@ -361,6 +377,7 @@ mod tests {
             system: String::from("x86_64-linux"),
             stale: false,
             support: None,
+            install_command: None,
         }
     }
 

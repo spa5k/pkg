@@ -66,7 +66,7 @@ impl SourceReport {
             locked_reference: None,
             revision: None,
             status: SourceStatus::SkippedPlatform,
-            detail: Some(format!("cask catalog targets {} only", targets.join(", "))),
+            detail: Some(format!("catalog targets {} only", targets.join(", "))),
             support_detail: None,
         }
     }
@@ -102,7 +102,7 @@ impl SourceStatus {
     }
 }
 
-/// Support badge for a cask row in discovery results.
+/// Support badge for a generated catalog row in discovery results.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum SupportBadge {
@@ -141,7 +141,7 @@ pub struct SearchResult {
     pub version: String,
     /// The package description.
     pub description: String,
-    /// The source label (`nixpkgs` or `cask`).
+    /// The source label (`nixpkgs`, `brew`, or `cask`).
     pub source: String,
     /// The locked reference this row was evaluated from.
     pub reference: Option<String>,
@@ -151,8 +151,11 @@ pub struct SearchResult {
     pub system: String,
     /// Whether the row was reused from stale cache data.
     pub stale: bool,
-    /// Cask support classification, for cask rows.
+    /// Generated catalog support classification.
     pub support: Option<SupportBadge>,
+    /// Suggested pkg command for an eligible Formula result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_command: Option<Vec<String>>,
 }
 
 /// Normalize a native attribute path to its exposed catalog ID suffix.
@@ -359,6 +362,7 @@ fn resolve_inner(
                             system: system.to_string(),
                             stale: false,
                             support: None,
+                            install_command: None,
                         };
                         requires_id |= query.rank(&row).is_none();
                         choices.push(CatalogId::Nixpkgs(exposed));
@@ -512,6 +516,7 @@ pub(super) fn rows_from<'a>(
                 system: system.to_string(),
                 stale,
                 support: None,
+                install_command: None,
             }
         })
         .collect()
