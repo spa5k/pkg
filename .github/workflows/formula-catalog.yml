@@ -40,8 +40,14 @@ jobs:
         run: python3 tools/formula-catalog/generate.py
       - name: Compare generated source
         run: git diff --exit-code -- nix/formulae
-      - name: Linux bottle build
-        run: nix build --no-link ./nix/formulae#homebrew/core/abnfgen
+      - name: Linux bottle build and execution
+        run: |
+          output="$(nix build --no-link --print-out-paths ./nix/formulae#homebrew/core/abnfgen)"
+          actual="$("$output/bin/abnfgen" -x -s root <<'GRAMMAR'
+          root = %s"ok"
+          GRAMMAR
+          )"
+          test "$actual" = ok
 
   darwin:
     runs-on: macos-15
@@ -51,5 +57,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@668647a33843b1f280cb2ef4c41736f86b29f826
-      - name: macOS bottle build
-        run: nix build --no-link ./nix/formulae#homebrew/core/abnfgen
+      - name: macOS bottle build and execution
+        run: |
+          output="$(nix build --no-link --print-out-paths ./nix/formulae#homebrew/core/abnfgen)"
+          actual="$("$output/bin/abnfgen" -x -s root <<'GRAMMAR'
+          root = %s"ok"
+          GRAMMAR
+          )"
+          test "$actual" = ok
