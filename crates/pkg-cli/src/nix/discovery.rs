@@ -92,11 +92,29 @@ in map inspect paths"#
             "exact source identity",
             &["flake", "metadata", reference, "--json"],
         )?;
-        let path = metadata["path"].as_str().ok_or_else(|| NixError::Decode {
-            what: "exact source identity",
-            detail: String::from("flake metadata has no store path"),
-        })?;
-        let hash = self.capture(&["hash", "path", "--sri", path])?;
+        let path = if let Some(path) = metadata.get("path") {
+            path.as_str()
+                .ok_or_else(|| NixError::Decode {
+                    what: "exact source identity",
+                    detail: String::from("flake metadata path has an invalid type"),
+                })?
+                .to_string()
+        } else {
+            let archive: serde_json::Value = self.json(
+                "exact source archive",
+                &["flake", "archive", "--json", reference],
+            )?;
+            let path = archive
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .filter(|path| std::path::Path::new(path).starts_with("/nix/store/"))
+                .ok_or_else(|| NixError::Decode {
+                    what: "exact source archive",
+                    detail: String::from("flake archive has no valid Nix store path"),
+                })?;
+            path.to_string()
+        };
+        let hash = self.capture(&["hash", "path", "--sri", &path])?;
         let hash = hash.trim();
         if !hash.starts_with("sha256-") || hash.contains(char::is_whitespace) {
             return Err(NixError::Decode {
@@ -110,7 +128,7 @@ in map inspect paths"#
             .replace('=', "%3D");
         let mut pinned = format!(
             "path:{}?narHash={encoded}",
-            super::encode_path_reference(std::path::Path::new(path))
+            super::encode_path_reference(std::path::Path::new(&path))
         );
         if let Some(dir) = metadata["locked"]["dir"]
             .as_str()
@@ -260,26 +278,31 @@ mod tests {
     use super::*;
 
     #[cfg(unix)]
-    #[test]
-    fn exact_path_reference_preserves_native_source_identity() {
+    fn fake_runtime(cases: &str) -> (tempfile::TempDir, Nix) {
         use std::os::unix::fs::PermissionsExt as _;
 
         let temp = tempfile::tempdir().unwrap();
         let executable = temp.path().join("nix");
-        std::fs::write(
-            &executable,
-            r#"#!/bin/sh
-case "$*" in
-*--version*) echo 'nix (Nix) 2.35.2';;
-*'flake metadata'*) echo '{"path":"/nix/store/fixture-source","locked":{"dir":"sub flake?#","lastModified":1234567890,"rev":"0123456789abcdef0123456789abcdef01234567","revCount":7}}';;
-*'hash path'*) echo 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';;
-*) exit 9;;
-esac
-"#,
-        )
-        .unwrap();
+        let script = [
+            "#!/bin/sh\ncase \"$*\" in\n",
+            "*--version*) echo 'nix (Nix) 2.35.2';;\n",
+            cases,
+            "\n*) exit 9;;\nesac\n",
+        ]
+        .concat();
+        std::fs::write(&executable, script).unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
         let nix = crate::nix::discover(executable.to_str()).unwrap();
+        (temp, nix)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_path_reference_preserves_native_source_identity() {
+        let (_temp, nix) = fake_runtime(
+            r#"*'flake metadata'*) echo '{"path":"/nix/store/fixture-source","locked":{"dir":"sub flake?#","lastModified":1234567890,"rev":"0123456789abcdef0123456789abcdef01234567","revCount":7}}';;
+*'hash path'*) echo 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';;"#,
+        );
         let reference = nix
             .exact_reference("path:/fixture?dir=sub%20flake%3F%23")
             .unwrap();
@@ -287,6 +310,77 @@ esac
             reference,
             "path:/nix/store/fixture-source?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D&dir=sub%20flake%3F%23&lastModified=1234567890&rev=0123456789abcdef0123456789abcdef01234567&revCount=7"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_path_reference_archives_when_metadata_omits_path() {
+        let (_temp, nix) = fake_runtime(
+            r#"*'flake metadata'*) echo '{"locked":{"dir":"sub flake?#","lastModified":1234567890,"rev":"0123456789abcdef0123456789abcdef01234567","revCount":7}}';;
+*'flake archive'*) echo '{"inputs":{},"path":"/nix/store/fixture-archive-source"}';;
+*'hash path --sri /nix/store/fixture-archive-source'*) echo 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';;"#,
+        );
+
+        let reference = nix
+            .exact_reference("path:/fixture?dir=sub%20flake%3F%23")
+            .unwrap();
+
+        assert_eq!(
+            reference,
+            "path:/nix/store/fixture-archive-source?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D&dir=sub%20flake%3F%23&lastModified=1234567890&rev=0123456789abcdef0123456789abcdef01234567&revCount=7"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_path_reference_rejects_wrong_type_metadata_path_without_archiving() {
+        let (_temp, nix) = fake_runtime(
+            r#"*'flake metadata'*) echo '{"path":7,"locked":{}}';;
+*'flake archive'*) echo '{"path":"/nix/store/must-not-be-used"}';;"#,
+        );
+
+        let result = nix.exact_reference("path:/fixture");
+
+        assert!(matches!(
+            result,
+            Err(NixError::Decode {
+                what: "exact source identity",
+                ..
+            })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_path_reference_rejects_non_store_archive_path() {
+        let (_temp, nix) = fake_runtime(
+            r#"*'flake metadata'*) echo '{"locked":{}}';;
+*'flake archive'*) echo '{"path":"/tmp/mutable-source"}';;
+*'hash path'*) echo 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';;"#,
+        );
+
+        let result = nix.exact_reference("path:/fixture");
+
+        assert!(matches!(
+            result,
+            Err(NixError::Decode {
+                what: "exact source archive",
+                ..
+            })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_path_reference_preserves_archive_interruption() {
+        let (_temp, nix) = fake_runtime(
+            r#"*'flake metadata'*) echo '{"locked":{}}';;
+*'flake archive'*) kill -TERM $$;;"#,
+        );
+
+        let result = nix.exact_reference("path:/fixture");
+
+        assert!(matches!(result, Err(NixError::Interrupted { .. })));
     }
 
     #[test]
