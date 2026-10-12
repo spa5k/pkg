@@ -5,7 +5,7 @@ use std::ffi::CString;
 use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 
 use super::destination::{
@@ -70,46 +70,76 @@ pub(super) fn refresh_staged(
 fn publish_staged(
     staged: &Path,
     destination: &Path,
-    staging: tempfile::TempDir,
+    mut staging: tempfile::TempDir,
 ) -> Result<(), AppError> {
     prepare_parent(destination)?;
-    let had_destination = match inspect_destination(destination)? {
-        DestinationState::Missing => false,
-        DestinationState::Owned => true,
+    let previous = match inspect_destination(destination)? {
+        DestinationState::Missing => None,
+        DestinationState::Owned => Some(
+            fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+                .open(destination)
+                .map_err(|error| format!("could not open the previous launcher folder: {error}"))?,
+        ),
         DestinationState::Unowned { detail } => {
             return Err(format!("{detail}; refusing to publish launchers").into());
         }
     };
-    if had_destination {
-        rename_exclusive(destination, &staging.path().join("previous-launchers")).map_err(
-            |error| format!("could not move the previous launcher folder aside: {error}"),
-        )?;
+    if let Some(previous) = &previous {
+        staging = move_previous(destination, previous, staging)?;
     }
     if let Err(error) = rename_exclusive(staged, destination) {
         let publish_error =
             AppError::message(format!("could not publish staged launchers: {error}"));
-        if had_destination {
-            return restore_previous(destination, staging, publish_error);
+        if previous.is_some() {
+            return Err(restore_previous(destination, staging, publish_error));
         }
         return Err(publish_error);
     }
     Ok(())
 }
 
+fn move_previous(
+    destination: &Path,
+    previous: &fs::File,
+    staging: tempfile::TempDir,
+) -> Result<tempfile::TempDir, AppError> {
+    let backup = staging.path().join("previous-launchers");
+    rename_exclusive(destination, &backup)
+        .map_err(|error| format!("could not move the previous launcher folder aside: {error}"))?;
+    let verify = || {
+        let expected = previous.metadata()?;
+        let moved = fs::symlink_metadata(&backup)?;
+        Ok::<_, io::Error>(expected.dev() == moved.dev() && expected.ino() == moved.ino())
+    };
+    let owned = matches!(inspect_destination(&backup), Ok(DestinationState::Owned));
+    if !verify().is_ok_and(|same| same) || !owned {
+        return Err(restore_previous(
+            destination,
+            staging,
+            AppError::message(
+                "launcher destination changed before publication; refusing to replace it",
+            ),
+        ));
+    }
+    Ok(staging)
+}
+
 fn restore_previous(
     destination: &Path,
     staging: tempfile::TempDir,
     publish_error: AppError,
-) -> Result<(), AppError> {
+) -> AppError {
     let backup = staging.path().join("previous-launchers");
     if let Err(error) = rename_exclusive(&backup, destination) {
         let recovery = staging.keep().join("previous-launchers");
-        return Err(format!(
-            "{publish_error}; could not restore the previous launcher folder: {error}; previous launchers were retained at {}",
+        return AppError::message(format!(
+            "{publish_error}; could not restore the previous launcher folder: {error}; previous destination was retained at {}",
             recovery.display()
-        ).into());
+        ));
     }
-    Err(publish_error)
+    publish_error
 }
 
 // Publication and recovery must not overwrite an entry created after inspection.
@@ -211,15 +241,44 @@ mod tests {
         let backup = staging.path().join("previous-launchers");
         fs::create_dir(&backup).unwrap();
         fs::write(backup.join("Old.app"), "old").unwrap();
-        let error = restore_previous(&destination, staging, AppError::message("publish failed"))
-            .unwrap_err();
+        let error = restore_previous(&destination, staging, AppError::message("publish failed"));
         assert!(
             error
                 .to_string()
-                .contains("previous launchers were retained at")
+                .contains("previous destination was retained at")
         );
         assert_eq!(fs::read_to_string(backup.join("Old.app")).unwrap(), "old");
         assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        assert!(matches!(
+            inspect_destination(&destination),
+            Ok(DestinationState::Unowned { .. })
+        ));
+    }
+
+    #[test]
+    fn a_replaced_checked_source_is_restored_without_deletion() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("pkg");
+        fs::create_dir(&destination).unwrap();
+        write_marker(&destination).unwrap();
+        fs::write(destination.join("Old.app"), "old").unwrap();
+        let checked = fs::File::open(&destination).unwrap();
+        let original = root.path().join("original");
+        fs::rename(&destination, &original).unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("Unowned.app"), "keep").unwrap();
+        let staging = tempfile::tempdir_in(root.path()).unwrap();
+        let error = move_previous(&destination, &checked, staging).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("destination changed before publication")
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("Unowned.app")).unwrap(),
+            "keep"
+        );
+        assert_eq!(fs::read_to_string(original.join("Old.app")).unwrap(), "old");
         assert!(matches!(
             inspect_destination(&destination),
             Ok(DestinationState::Unowned { .. })
