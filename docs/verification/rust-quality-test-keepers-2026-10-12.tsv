@@ -163,7 +163,7 @@ df1af1d	search_snapshots_amortize_new_queries	1288	assert_eq!(	cold_bare_install
 df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1700	"assert_eq!(output.status.code(), Some(1), ""{scenario}: {stderr}"");"	conflicts_name_one_verified_owner_and_hide_replacement_commands	crates/pkg-cli/tests/file_conflicts.rs	207	C
 df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1701	assert!(output.stdout.is_empty());	conflicts_name_one_verified_owner_and_hide_replacement_commands	crates/pkg-cli/tests/file_conflicts.rs	207	C
 df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1702	"assert!(stderr.contains(""bin/bat""), ""{scenario}: {stderr}"");"	conflicts_name_one_verified_owner_and_hide_replacement_commands	crates/pkg-cli/tests/file_conflicts.rs	207	C
-df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1704	one => assert!(	conflicts_name_one_verified_owner_and_hide_replacement_commands	crates/pkg-cli/tests/file_conflicts.rs	207	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1704	"""one"" => assert!("	conflicts_name_one_verified_owner_and_hide_replacement_commands	crates/pkg-cli/tests/file_conflicts.rs	207	C
 df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1711	assert!(	conflicts_name_all_verified_owners	crates/pkg-cli/tests/file_conflicts.rs	220	C
 df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1715	assert!(	conflicts_name_all_verified_owners	crates/pkg-cli/tests/file_conflicts.rs	220	C
 df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1721	assert!(	conflicts_do_not_claim_unknown_or_unmatched_owners	crates/pkg-cli/tests/file_conflicts.rs	238	C
