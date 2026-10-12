@@ -22,7 +22,7 @@ pub use cask_catalog::version::{in_range, parse as parse_numeric_version};
 /// catalogs.
 /// # Errors
 ///
-/// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+/// Returns an error if `/usr/bin/sw_vers` cannot start or complete, its output cannot be read, or it does not return one numeric version line.
 pub fn macos_product_version() -> Result<String, String> {
     let args = vec![String::from("-productVersion")];
     let (outcome, stdout) =

@@ -581,14 +581,7 @@ fn classify_gated(
     }
 }
 
-fn dependency_exclusion(eff: &Value, system: &str) -> Option<TargetOutcome> {
-    if system == "aarch64-darwin"
-        && eff
-            .get("depends_on")
-            .is_some_and(|d| d.get("linux").is_some_and(|v| !v.is_null()))
-    {
-        return Some(excluded(ExclusionReason::UnsupportedPlatform));
-    }
+fn dependency_exclusion(eff: &Value) -> Option<TargetOutcome> {
     let depends = eff.get("depends_on").filter(|v| !v.is_null())?;
     let Some(depends) = depends.as_object() else {
         return Some(excluded_malformed(
@@ -682,13 +675,20 @@ fn classify_effective(
             }
         }
     }
+    if system == "aarch64-darwin"
+        && eff
+            .get("depends_on")
+            .is_some_and(|d| d.get("linux").is_some_and(|v| !v.is_null()))
+    {
+        return excluded(ExclusionReason::UnsupportedPlatform);
+    }
     if let Some(detail) = arch_detail(eff, system) {
         return excluded_with_detail(ExclusionReason::ArchUnsupported, detail);
     }
     if let Some(outcome) = unsupported_download_spec(eff) {
         return outcome;
     }
-    if let Some(outcome) = dependency_exclusion(eff, system) {
+    if let Some(outcome) = dependency_exclusion(eff) {
         return outcome;
     }
     let url = eff.get("url").and_then(Value::as_str).unwrap_or("");

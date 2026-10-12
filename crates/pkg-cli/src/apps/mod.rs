@@ -39,7 +39,7 @@ pub use storage::setup_storage;
 /// stale launchers to remove; an unowned folder is never touched then.
 /// # Errors
 ///
-/// Returns an error if a profile or file operation fails, or the app data is invalid.
+/// Returns an error if the host is not macOS, a profile lock or read fails, app assessment fails, or helper, destination, or launcher operations fail.
 pub fn sync(nix: &Nix, paths: &Paths) -> Result<(), String> {
     if !cfg!(target_os = "macos") {
         return sync_locked(nix, paths);
@@ -127,7 +127,7 @@ pub(crate) fn sync_locked(nix: &Nix, paths: &Paths) -> Result<(), String> {
 /// are returned as errors.
 /// # Errors
 ///
-/// Returns an error if a profile or file operation fails, or the app data is invalid.
+/// Returns an error if the host is not macOS, the profile cannot be read, app scanning fails, or destination state cannot be inspected or read.
 pub fn status(nix: &Nix, paths: &Paths) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
         let _ = (nix.executable(), &paths.helper_profile);

@@ -120,7 +120,7 @@ fn resolve(
 /// by the decoded shapes.
 /// # Errors
 ///
-/// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+/// Returns an error if no usable runtime is found, a configured runtime is unusable, the current directory cannot be read for a relative path, or the version probe cannot start, complete, or be reaped.
 pub fn discover(configured: Option<&str>) -> Result<Nix, NixError> {
     let path = std::env::var_os("PATH");
     let state = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty());

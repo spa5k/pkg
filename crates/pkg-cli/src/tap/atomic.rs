@@ -21,7 +21,7 @@ use std::path::Path;
 /// the check and the exchange.
 /// # Errors
 ///
-/// Returns an error when either path is not a real directory or the platform exchange operation fails.
+/// Returns an error when either path is not a real directory, contains a NUL byte, or the platform exchange operation fails.
 pub fn exchange_directories(a: &Path, b: &Path) -> Result<(), String> {
     // Everything fallible — the real-directory checks and the C string
     // conversions — happens before the syscall. Nothing fallible runs

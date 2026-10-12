@@ -46,7 +46,7 @@ fn check_storage_directory(path: &Path, owner: u32, private: bool) -> Result<(),
 /// administrator operation; normal installation and app use stay unprivileged.
 /// # Errors
 ///
-/// Returns an error if a profile or file operation fails, or the app data is invalid.
+/// Returns an error when the host is not macOS, the caller is root, storage is unsafe or off-volume, or setup commands and file operations fail or are interrupted.
 pub fn setup_storage() -> Result<(), String> {
     if !cfg!(target_os = "macos") {
         return Err(String::from("shared app storage supports macOS only"));

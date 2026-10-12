@@ -71,6 +71,8 @@ Exact package probes use pure `builtins.getFlake` evaluation.
 Guarded attribute lookup returns a structured skip only for absent paths.
 Errors inside present values remain errors.
 Local path sources use their Nix store copy and its NAR hash.
+Retain the native subdirectory, revision, revision count, and modification time.
+Package expressions can depend on these flake metadata fields.
 This avoids `--impure` and does not change forge source identity.
 
 Flake staging was chosen over cleanup of a partially written final tree.

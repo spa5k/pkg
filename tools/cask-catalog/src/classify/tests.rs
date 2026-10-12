@@ -21,6 +21,30 @@ fn record(platforms: &[&str], extra: &Value) -> RawRecord {
 const BASE: &str = "15.7.7";
 
 #[test]
+fn linux_requirement_precedes_architecture_exclusion_on_macos() {
+    let rec = record(
+        &["arm64_sequoia"],
+        &json!({"depends_on": {"linux": true, "arch": []}}),
+    );
+    assert_eq!(
+        classify_target(&rec, "aarch64-darwin", BASE).reason_code(),
+        Some("unsupported-platform")
+    );
+}
+
+#[test]
+fn linux_requirement_precedes_download_spec_exclusion_on_macos() {
+    let rec = record(
+        &["arm64_sequoia"],
+        &json!({"depends_on": {"linux": true}, "url_specs": {"user_agent": "fixture"}}),
+    );
+    assert_eq!(
+        classify_target(&rec, "aarch64-darwin", BASE).reason_code(),
+        Some("unsupported-platform")
+    );
+}
+
+#[test]
 fn platform_scope_comes_only_from_supported_platforms() {
     let both = ["arm64_sequoia", "x86_64_linux"];
     assert!(classify_target(&record(&both, &json!({})), "aarch64-darwin", BASE).is_eligible());

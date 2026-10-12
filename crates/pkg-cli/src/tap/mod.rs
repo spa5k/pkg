@@ -36,7 +36,7 @@ pub use store::{Provenance, Publication, Published, SourceStore, StagedGeneratio
 /// The decoded envelope is returned for the generation's capture file.
 /// # Errors
 ///
-/// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+/// Returns an error if Nix cannot evaluate the staging catalog or its JSON envelope and catalog fields are invalid.
 pub fn validate_staging(
     nix: &crate::nix::Nix,
     flake_path: &std::path::Path,

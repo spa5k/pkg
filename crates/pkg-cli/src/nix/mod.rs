@@ -232,7 +232,7 @@ impl Nix {
     /// back to [`Nix::profile_remove`] and [`Nix::profile_upgrade`] verbatim.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, Nix fails or is interrupted, or the JSON or profile manifest is invalid.
     pub fn profile_list(&self, profile: &Path) -> Result<BTreeMap<String, ProfileEntry>, NixError> {
         let profile = profile.to_string_lossy().into_owned();
         let raw = self.json::<serde_json::Value>(
@@ -260,7 +260,7 @@ impl Nix {
     /// cannot speak it fails before the profile is touched.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if the profile manifest cannot be read or decoded, command setup or spawn fails, stderr reading or child reaping fails, or Nix fails or is interrupted.
     pub fn profile_add(&self, profile: &Path, installables: &[String]) -> Result<(), NixError> {
         self.profile_add_with_inputs(profile, installables, &[])
     }
@@ -272,7 +272,7 @@ impl Nix {
     /// without changing the user's package sources.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if the profile manifest cannot be read or decoded, command setup or spawn fails, stderr reading or child reaping fails, or Nix fails or is interrupted.
     pub fn profile_add_with_inputs(
         &self,
         profile: &Path,
@@ -298,7 +298,7 @@ impl Nix {
     /// removal is deliberately not offered.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, stderr reading or child reaping fails, or Nix fails or is interrupted.
     pub fn profile_remove(&self, profile: &Path, entries: &[String]) -> Result<(), NixError> {
         let profile = profile.to_string_lossy().into_owned();
         let mut args: Vec<&str> = vec!["profile", "remove", "--profile", &profile];
@@ -315,7 +315,7 @@ impl Nix {
     /// `--` so IDs that begin with `-` are never read as flags.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, stderr reading or child reaping fails, or Nix fails or is interrupted.
     pub fn profile_upgrade(
         &self,
         profile: &Path,
@@ -340,7 +340,7 @@ impl Nix {
     /// `--no-link` prevents an unrelated `result` link in the working directory.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if the profile manifest cannot be read or decoded, command setup or spawn fails, stderr reading or child reaping fails, or Nix fails or is interrupted.
     pub fn profile_replace(&self, profile: &Path, replacement: &Path) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
         let profile = profile.to_string_lossy().into_owned();
@@ -360,7 +360,7 @@ impl Nix {
     /// The manifest shape is checked read-only first.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if the profile manifest cannot be read or decoded, command setup or spawn fails, child reaping fails, or Nix fails or is interrupted.
     pub fn profile_rollback(
         &self,
         profile: &Path,
@@ -383,7 +383,7 @@ impl Nix {
     /// read-only first.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if the profile manifest cannot be read or decoded, command setup or spawn fails, child reaping fails, or Nix fails or is interrupted.
     pub fn profile_wipe_history(&self, profile: &Path, age: &str) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
         let profile = profile.to_string_lossy().into_owned();
@@ -400,7 +400,7 @@ impl Nix {
     /// Print native profile generation history.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, or Nix fails or is interrupted.
     pub fn profile_history(&self, profile: &Path) -> Result<String, NixError> {
         let profile = profile.to_string_lossy().into_owned();
         self.capture(&["profile", "history", "--profile", &profile])
@@ -409,7 +409,7 @@ impl Nix {
     /// Run a native search and return evaluated metadata.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, Nix fails or is interrupted, evaluation exceeds its limits, or result JSON is invalid.
     pub fn search(
         &self,
         reference: &str,
@@ -425,7 +425,7 @@ impl Nix {
     /// Evaluate the default installation outputs without realizing them.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if output selection is invalid, command setup or spawn fails, output reading or child reaping fails, Nix fails or is interrupted, or the returned JSON is invalid.
     pub fn default_output_paths(&self, installable: &str) -> Result<Vec<String>, NixError> {
         let (installable, selection) = installable
             .split_once('^')
@@ -448,7 +448,7 @@ impl Nix {
     /// Resolve the current system triple.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, or the config command fails or is interrupted.
     pub fn system(&self) -> Result<String, NixError> {
         Ok(self
             .capture(&["config", "show", "system"])?
@@ -458,7 +458,7 @@ impl Nix {
     /// Read one effective client-side setting, such as the sandbox flag.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, or the config command fails or is interrupted.
     pub fn setting(&self, name: &str) -> Result<String, NixError> {
         Ok(self.capture(&["config", "show", name])?.trim().to_string())
     }
@@ -466,7 +466,7 @@ impl Nix {
     /// Read effective client settings without printing the config document.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, the config command fails or is interrupted, or its JSON is invalid.
     pub fn effective_config(&self) -> Result<serde_json::Value, NixError> {
         self.json("effective config", &["config", "show", "--json"])
     }
@@ -474,7 +474,7 @@ impl Nix {
     /// Resolve source identity for a flake reference.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, the metadata command fails or is interrupted, or its JSON is invalid.
     pub fn source_identity(&self, reference: &str) -> Result<SourceIdentity, NixError> {
         self.source_identity_with(reference, false)
     }
@@ -485,7 +485,7 @@ impl Nix {
     /// metadata instead of reusing Nix's TTL cache and calling it current.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, the metadata command fails or is interrupted, or its JSON is invalid.
     pub fn refresh_source_identity(&self, reference: &str) -> Result<SourceIdentity, NixError> {
         self.source_identity_with(reference, true)
     }
@@ -509,7 +509,7 @@ impl Nix {
     /// command is used deliberately. Output text is returned for reporting.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, or the store-info command fails or is interrupted.
     pub fn store_info(&self) -> Result<String, NixError> {
         self.capture(&["store", "info"])
     }
@@ -517,7 +517,7 @@ impl Nix {
     /// Read generated Formula data without evaluating package derivations.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, the evaluation fails or is interrupted, or its JSON is invalid.
     pub fn formula_index(&self, reference: &str) -> Result<serde_json::Value, NixError> {
         let installable = format!("{reference}#formulaIndex");
         self.json("formula catalog index", &["eval", "--json", &installable])
@@ -533,7 +533,7 @@ impl Nix {
     /// the envelope's own target list instead of a failed attribute probe.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, the evaluation fails or is interrupted, or the JSON envelope or catalog fields are invalid.
     pub fn catalog_index(&self, reference: &str) -> Result<CatalogIndex, NixError> {
         let installable = format!("{reference}#catalogIndex");
         let value = self

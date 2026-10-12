@@ -231,7 +231,7 @@ pub enum Shell {
 /// The design requires an explicit strictly positive age expressed in days.
 /// # Errors
 ///
-/// Returns an error if the command-line arguments are invalid.
+/// Returns an error unless `value` is a positive integer followed by `d` or `D`, or if the integer exceeds `u64`.
 pub fn parse_prune_age(value: &str) -> Result<u64, String> {
     let Some(digits) = value.strip_suffix(['d', 'D']) else {
         return Err(String::from("age must end in `d`, for example `30d`"));

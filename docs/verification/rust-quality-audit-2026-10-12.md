@@ -51,7 +51,7 @@ preserve the native signal and source-guard results.
 | P1 | A direct child inherits blocked INT, TERM, and HUP. Forwarded signals cannot stop a child with default handlers. | `nix/process.rs` | Save the caller mask in an owned guard. Restore it in the child before exec. Restore the parent on all exits. A native baseline probe hung. The fixed test checks all three real signals, child masks, reaping, and spawn failure. |
 | P1 | A canceled optional history read becomes `None`. Rollback or prune can still mutate the profile. | `commands/lifecycle.rs` | Preserve `NixError::Interrupted`. Compiled CLI fixtures check no mutation after preflight cancellation, post-prune status 130, and ordinary history failure. Rollback failed the new test before repair. |
 | P2 | Config typos silently select defaults. | `config.rs` | Reject unknown root, source, display, and runtime fields. The new config test failed before repair and passes after it. |
-| P2 | An existing package fails with text containing missing/attribute. Bare resolution hides that error as absence. | `catalog/search.rs`, `nix/discovery.rs` | Evaluate exact paths with `hasAttr` and `getAttr`. Missing paths become structured skips. Evaluation failures propagate. Preserve pure evaluation by pinning local store paths with a NAR hash. The failure test failed before repair. A real Nix fixture checks the same case. |
+| P2 | An existing package fails with text containing missing/attribute. Bare resolution hides that error as absence. | `catalog/search.rs`, `nix/discovery.rs` | Evaluate exact paths with `hasAttr` and `getAttr`. Missing paths become structured skips. Evaluation failures propagate. Preserve pure evaluation by pinning local store paths with a NAR hash. The failure test failed before repair. A real Nix fixture checks the same case. Review also found discarded local subdirectories and source metadata. The corrected pin retains encoded `dir`, `rev`, `revCount`, and `lastModified`. Focused tests and real Nix fixtures check these values. |
 | P2 | `https://` passes prefix validation without a host. | `cask-catalog/src/lib.rs` | Parse with the existing URL library. Require HTTP(S) and a host. Both direct URL and pin-load regressions pass. The direct test failed before repair. |
 | P2 | A late importer output failure leaves a partial final flake and blocks retry. | `cask-catalog/src/tap/mod.rs` | Convert in an output-local temporary directory. Publish by rename only after success. A real asset-write failure leaves output empty and permits retry. No deterministic failing-before product run was obtained with a valid empty output. This repair has source evidence and transaction tests. |
 | P2 | macOS-only Cargo tests compile under Clippy but never run in CI. | `ci-fast.yml` | Execute workspace Cargo tests on the macOS leg. Local macOS tests pass. Remote CI execution is still required after publication. |
@@ -73,8 +73,10 @@ Unfulfilled lint expectations fail the build.
 Cleanup uses borrowed inputs, checked numeric conversions, explicit pointer creation,
 smaller importer operations, and accurate public error contracts.
 It does not add new error libraries or shared process abstractions.
-The separate comment audit caught generic error text that satisfied lint syntax but was false.
-Those paragraphs were corrected against the function bodies.
+The separate comment audit and Standards review caught generic error text that satisfied lint syntax but was false.
+The documentation worker checked all 70 new sections outside the parent-owned process and discovery files.
+The parent checked those two files.
+The false contracts were corrected against the function bodies.
 
 Five new local lint expectations remain.
 Two preserve exact `.app` and `.drv` protocol suffixes.
@@ -130,7 +132,7 @@ Executed on Apple silicon macOS with Rust 1.96.1:
 | Check | Result |
 | --- | --- |
 | `just check` | Pass. Formatting, strict all-target/all-feature workspace Clippy, build, tests, and private-item rustdoc all pass with the updated lockfile. |
-| Workspace tests | Pass. Generator: 121 library, one binary, one integration test. Client: 126 library, 22 CLI, four cancellation, and one source-scan test. Zero doctest failures. |
+| Workspace tests | Pass. Generator: 123 library, one binary, one integration test. Client: 127 library, 22 CLI, four cancellation, and one source-scan test. Zero doctest failures. |
 | `cargo deny check` with cargo-deny 0.20.2 | Pass. Three existing duplicate-version warnings remain permitted by the documented dependency policy. No yanked package or policy exception remains. |
 | `sh -n install.sh` and `shellcheck install.sh` | Pass. |
 | `python3 -m unittest discover -s docs/tests -v` | Pass. 44 tests ran. Seven Linux isolation tests were skipped on macOS. |
@@ -143,5 +145,7 @@ Full Linux execution and remote CI remain unverified on this host.
 The macOS CI test step is configured but has not run remotely from these local changes.
 No push, PR, merge, or release was performed.
 
-Separate standards, spec, and decision-trail reviews follow the implementation commit.
-
+The [separate reviews](rust-quality-review-2026-10-12.md) record Standards and Spec findings.
+The Standards findings were repaired after the implementation commit.
+The decision-trail review uses a different model from the main author.
+Append-only rows correct missing or weak evidence.

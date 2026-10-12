@@ -75,7 +75,7 @@ impl Registry {
     /// source — fails closed with the reason.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if the file cannot be read or its JSON, schema, source identities, or origins are invalid. A missing file returns an empty registry.
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -169,7 +169,7 @@ impl Registry {
     /// sources cannot lose each other's updates.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if registry encoding, temporary-file creation or writing, or the final rename fails.
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let prepared = self.prepare(path)?;
         commit_prepared(prepared, path)
@@ -183,7 +183,7 @@ impl Registry {
     /// single already-prepared rename away.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if registry encoding, parent-directory creation, or temporary-file creation, writing, or syncing fails.
     pub fn prepare(&self, path: &Path) -> Result<tempfile::NamedTempFile, String> {
         let text = self.encode()?;
         let parent = path
@@ -212,7 +212,7 @@ impl Registry {
 /// effort. The caller holds the [`GlobalLock`].
 /// # Errors
 ///
-/// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+/// Returns an error if replacing the registry with the prepared file fails.
 pub fn commit_prepared(prepared: tempfile::NamedTempFile, path: &Path) -> Result<(), String> {
     prepared
         .persist(path)
@@ -237,7 +237,7 @@ impl GlobalLock {
     /// Create the tap namespace if needed and take the global lock.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if creating the registry directory, opening the lock file, or acquiring the lock fails.
     pub fn acquire(state_home: &Path) -> Result<Self, String> {
         let dir = taps_root(state_home);
         std::fs::create_dir_all(&dir)

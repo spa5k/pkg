@@ -57,7 +57,7 @@ pub fn missing_report(source: &str, detail: &str) -> SourceReport {
 /// Visit a complete native catalog using only local files.
 /// # Errors
 ///
-/// Returns an error when snapshot reading or result delivery fails.
+/// Returns an error when the cached database cannot be visited or result delivery fails.
 pub fn search_local_native(
     cache_dir: &Path,
     source: &str,
@@ -111,7 +111,7 @@ pub fn search_local_native(
 /// Visit a complete cached cask index using only local files and host metadata.
 /// # Errors
 ///
-/// Returns an error when snapshot reading or result delivery fails.
+/// Returns an error when result delivery fails.
 pub fn search_local_casks(
     cache_dir: &Path,
     source: &str,

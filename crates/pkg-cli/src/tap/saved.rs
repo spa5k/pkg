@@ -45,7 +45,7 @@ impl SavedCatalogs {
     /// must never skip a failed source and answer from the rest.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if any registered source cannot be opened, locked, read, or validated.
     pub fn load(registry: &Registry, state_home: &Path) -> Result<Self, String> {
         let mut catalogs = BTreeMap::new();
         for source in registry.sources.keys() {
@@ -64,7 +64,7 @@ impl SavedCatalogs {
     /// instead of being skipped.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if `source` is invalid or unregistered, its generation cannot be locked or read, or its provenance and index do not match the registry.
     pub fn load_one(
         registry: &Registry,
         state_home: &Path,
@@ -164,7 +164,7 @@ impl SavedCatalogs {
 /// Load the registry and every saved catalog in one strict step.
 /// # Errors
 ///
-/// Returns an error when the index and provenance disagree on source, origin, revision, capture hash, target, or entry counts.
+/// Returns an error when registry loading or any saved catalog read, lock, or validation fails.
 pub fn load_all(state_home: &Path) -> Result<(Registry, SavedCatalogs), String> {
     let registry = Registry::load(&registry::registry_path(state_home))?;
     let saved = SavedCatalogs::load(&registry, state_home)?;
@@ -182,7 +182,7 @@ pub fn load_all(state_home: &Path) -> Result<(Registry, SavedCatalogs), String> 
 /// additionally require the one target to be the native system.
 /// # Errors
 ///
-/// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+/// Returns an error when the source, origin, revision, capture hash, sole target or target section, or eligible and excluded entry counts disagree.
 pub fn validate_binding(index: &CatalogIndex, provenance: &Provenance) -> Result<(), String> {
     let source = provenance.source.as_str();
     if index.inputs.len() != 1 || !index.inputs.contains_key(source) {

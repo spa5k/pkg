@@ -198,7 +198,7 @@ impl SourceStore {
     /// publication lock.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if `source` is invalid or creating, opening, or locking its source directory fails.
     pub fn lock(state_home: &Path, source: &str) -> Result<Self, String> {
         let (owner, tap) = checked_source(source)?;
         let dir = store_root(state_home).join(owner).join(tap);
@@ -228,7 +228,7 @@ impl SourceStore {
     /// source was never published under this store.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if `source` is invalid, no published source lock exists, or opening or locking it fails.
     pub fn open_readonly(state_home: &Path, source: &str) -> Result<SourceReader, String> {
         let (owner, tap) = checked_source(source)?;
         let dir = store_root(state_home).join(owner).join(tap);
@@ -286,7 +286,7 @@ impl SourceStore {
     /// store.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if the staging directory cannot be created.
     pub fn new_staging(&self) -> Result<StagedGeneration, String> {
         let staging = tempfile::Builder::new()
             .prefix("incoming-")
@@ -332,7 +332,7 @@ impl SourceStore {
     /// mutation.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if the staged source or provenance does not match this store, the index fails validation, or file creation or publication fails.
     pub fn publish(
         &self,
         staged: StagedGeneration,
@@ -466,7 +466,7 @@ impl SourceStore {
     /// Read the active generation's provenance.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if the active generation's provenance file cannot be read or decoded.
     pub fn read_provenance(&self) -> Result<Provenance, String> {
         read_provenance_at(&self.current())
     }
@@ -474,7 +474,7 @@ impl SourceStore {
     /// Read and strictly decode the active generation's index capture.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if the active generation's index file cannot be read or strictly decoded.
     pub fn read_index(&self) -> Result<CatalogIndex, String> {
         read_index_at(&self.current())
     }
@@ -489,7 +489,7 @@ impl SourceStore {
 /// already without an active generation.
 /// # Errors
 ///
-/// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+/// Returns an error if an existing source's publication lock cannot be acquired or its active generation cannot be removed. Invalid or absent sources are a no-op.
 pub fn remove_current(state_home: &Path, source: &str) -> Result<(), String> {
     let Some(dir) = source_dir(state_home, source) else {
         return Ok(());
@@ -511,7 +511,7 @@ impl SourceReader {
     /// Read the active generation's provenance.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if the active generation's provenance file cannot be read or decoded.
     pub fn read_provenance(&self) -> Result<Provenance, String> {
         self.store.read_provenance()
     }
@@ -519,7 +519,7 @@ impl SourceReader {
     /// Read and strictly decode the active generation's index capture.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if the active generation's index file cannot be read or strictly decoded.
     pub fn read_index(&self) -> Result<CatalogIndex, String> {
         self.store.read_index()
     }
@@ -713,7 +713,7 @@ impl Publication<'_> {
     /// undone.
     /// # Errors
     ///
-    /// Returns an error if a file operation, lock acquisition, or persisted-data validation fails.
+    /// Returns an error if undoing the first publication or restoring the prior generation fails.
     pub fn undo(self) -> Result<(), String> {
         match self.published {
             Published::First => self.store.undo_first_publication(),

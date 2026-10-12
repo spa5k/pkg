@@ -6,7 +6,7 @@
 - [x] RQ2-04 Enforce the strict lint policy and align local checks with CI.
 - [x] RQ2-05 Repair both crates' lint findings and public error contracts.
 - [x] RQ2-06 Repair confirmed priority defects with regression tests.
-- [ ] RQ2-07 Verify the workspace and native CLI. Review the diff and decision trail.
+- [x] RQ2-07 Verify the workspace and native CLI. Review the diff and decision trail.
 
 The pstack workflow uses Frame, Design the workflow, Run the loop,
 Keep the audit trail, and Verify and hand back.

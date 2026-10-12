@@ -106,16 +106,45 @@ in map inspect paths"#
             .replace('+', "%2B")
             .replace('/', "%2F")
             .replace('=', "%3D");
-        Ok(format!(
+        let mut pinned = format!(
             "path:{}?narHash={encoded}",
             super::encode_path_reference(std::path::Path::new(path))
-        ))
+        );
+        if let Some(dir) = metadata["locked"]["dir"]
+            .as_str()
+            .or_else(|| metadata["original"]["dir"].as_str())
+            .filter(|dir| !dir.is_empty())
+        {
+            pinned.push_str("&dir=");
+            pinned.push_str(&super::encode_path_reference(std::path::Path::new(dir)));
+        }
+        for key in ["lastModified", "rev", "revCount"] {
+            let Some(value) = metadata["locked"].get(key) else {
+                continue;
+            };
+            let value = if key == "rev" {
+                value.as_str().map(str::to_string)
+            } else {
+                value.as_u64().map(|value| value.to_string())
+            }
+            .ok_or_else(|| NixError::Decode {
+                what: "exact source identity",
+                detail: format!("locked {key} has an invalid type"),
+            })?;
+            pinned.push('&');
+            pinned.push_str(key);
+            pinned.push('=');
+            pinned.push_str(&super::encode_path_reference(std::path::Path::new(&value)));
+        }
+        Ok(pinned)
     }
 
     /// Evaluate at most one batch of names and descriptions with a 512 MiB RSS limit.
     /// # Errors
     ///
-    /// Returns an error if the native command cannot be spawned, fails, is interrupted, or returns invalid output.
+    /// Returns an error if argument encoding, child setup, stream reading, or reaping fails.
+    /// Also fails when evaluation is interrupted, exceeds its resource budget,
+    /// exits unsuccessfully, or returns invalid metadata JSON.
     pub fn metadata_batch(
         &self,
         reference: &str,
@@ -210,6 +239,36 @@ in map inspect paths"#
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_path_reference_preserves_native_source_identity() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("nix");
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+case "$*" in
+*--version*) echo 'nix (Nix) 2.35.2';;
+*'flake metadata'*) echo '{"path":"/nix/store/fixture-source","locked":{"dir":"sub flake?#","lastModified":1234567890,"rev":"0123456789abcdef0123456789abcdef01234567","revCount":7}}';;
+*'hash path'*) echo 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';;
+*) exit 9;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let nix = crate::nix::discover(executable.to_str()).unwrap();
+        let reference = nix
+            .exact_reference("path:/fixture?dir=sub%20flake%3F%23")
+            .unwrap();
+        assert_eq!(
+            reference,
+            "path:/nix/store/fixture-source?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D&dir=sub%20flake%3F%23&lastModified=1234567890&rev=0123456789abcdef0123456789abcdef01234567&revCount=7"
+        );
+    }
 
     #[test]
     fn metadata_rows_require_the_payload_for_their_kind() {
