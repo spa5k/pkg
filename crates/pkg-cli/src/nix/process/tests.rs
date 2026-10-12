@@ -8,6 +8,7 @@ use super::{IoMode, Outcome, run_child};
 const MODE: &str = "PKG_PROCESS_SIGNAL_TEST";
 const READY: &str = "PKG_PROCESS_SIGNAL_READY";
 const SIGNAL: &str = "PKG_PROCESS_SIGNAL_NUMBER";
+const MARKER: &str = "PKG_PROCESS_SPAWN_MARKER";
 
 #[test]
 fn argv_child() {
@@ -18,6 +19,62 @@ fn argv_child() {
             serde_json::to_string(&args[index + 1]).unwrap()
         );
     }
+}
+
+#[test]
+fn spawn_marker_child() {
+    if std::env::var(MODE).as_deref() != Ok("spawn-marker-child") {
+        return;
+    }
+    fs::write(std::env::var(MARKER).unwrap(), "spawned").unwrap();
+}
+
+#[test]
+fn auto_reap_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("auto-reap-supervisor") {
+        return;
+    }
+    let marker = std::env::var(MARKER).unwrap();
+    // SAFETY: SIGCHLD is a valid signal and SIG_IGN is a valid disposition.
+    assert_ne!(
+        unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) },
+        libc::SIG_ERR
+    );
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::spawn_marker_child",
+            "--nocapture",
+        ])
+        .env(MODE, "spawn-marker-child")
+        .env(MARKER, &marker);
+    let error = run_child(command, IoMode::Capture, None)
+        .err()
+        .expect("auto-reaped children cannot be supervised safely");
+    assert!(
+        !Path::new(&marker).exists(),
+        "the child must not be spawned"
+    );
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn automatic_sigchld_reaping_is_rejected_before_spawn() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let marker = temp.path().join("spawned");
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "nix::process::tests::auto_reap_supervisor",
+            "--nocapture",
+        ])
+        .env(MODE, "auto-reap-supervisor")
+        .env(MARKER, &marker)
+        .status()
+        .expect("run isolated SIGCHLD supervisor");
+    assert!(status.success(), "isolated SIGCHLD check failed");
+    assert!(!marker.exists(), "the child must not be spawned");
 }
 
 #[test]
