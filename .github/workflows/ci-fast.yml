@@ -181,5 +181,8 @@ jobs:
           github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#libarchive
           --command python3 tools/cask-build-check/plan_tests.py
 
+      - name: Native discovery boundary checks
+        run: cargo test --locked -p pkg-cli --lib --all-features native_flake_discovery -- --ignored
+
       - name: Native package lifecycle and regression checks
         run: python3 tools/native-cli-check.py --pkg target/release/pkg

@@ -10,7 +10,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -196,15 +196,26 @@ fn write_executable(path: &Path, text: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("make executable");
 }
 
-fn wait_for_file(path: &Path) {
+fn wait_for_child_stage(mut child: Child, path: &Path) -> Child {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         if path.exists() {
-            return;
+            return child;
+        }
+        if child.try_wait().expect("poll fixture child").is_some() {
+            let output = child.wait_with_output().expect("collect early exit");
+            panic!("child exited before {}: {output:?}", path.display());
         }
         thread::sleep(Duration::from_millis(10));
     }
-    panic!("stage marker did not appear: {}", path.display());
+    child.kill().expect("stop timed-out fixture child");
+    let output = child
+        .wait_with_output()
+        .expect("collect timed-out fixture child");
+    panic!(
+        "stage marker did not appear: {}: {output:?}",
+        path.display()
+    );
 }
 
 #[test]
@@ -232,7 +243,7 @@ fn compiled_cli_preserves_signal_status_and_launcher_state_at_each_child_stage()
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
         let child = command.spawn().expect("spawn compiled pkg");
         let stage_marker = PathBuf::from(format!("{}.{}", fixture.ready.display(), stage));
-        wait_for_file(&stage_marker);
+        let child = wait_for_child_stage(child, &stage_marker);
         // SAFETY: the PID belongs to this live child process.
         let result = unsafe { libc::kill(child.id().cast_signed(), signal) };
         assert_eq!(result, 0, "send signal {signal}");
@@ -340,10 +351,10 @@ fn doctor_preserves_interruption_during_app_status() {
     let mut command = fixture.command_with(&["doctor", "--json"]);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let child = command.spawn().expect("spawn compiled pkg doctor");
-    wait_for_file(&PathBuf::from(format!(
-        "{}.doctor",
-        fixture.ready.display()
-    )));
+    let child = wait_for_child_stage(
+        child,
+        &PathBuf::from(format!("{}.doctor", fixture.ready.display())),
+    );
     // SAFETY: the PID belongs to this live child process.
     let result = unsafe { libc::kill(child.id().cast_signed(), libc::SIGTERM) };
     assert_eq!(result, 0, "send SIGTERM");
@@ -352,4 +363,73 @@ fn doctor_preserves_interruption_during_app_status() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("signal 15"), "{stderr}");
     assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn first_sync_creates_the_user_applications_directory() {
+    let fixture = Fixture::new(
+        false,
+        "#!/bin/sh\nif [ \"$1\" = '--help' ]; then exit 0; fi\nmkdir -p \"$3\"\necho new launcher > \"$3/Stats.app\"\n",
+        "",
+    );
+    fs::remove_dir_all(fixture.home.join("Applications")).unwrap();
+    let output = fixture.command().output().expect("run compiled pkg");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.launchers().join(".pkg-owned")).unwrap(),
+        MARKER
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.launchers().join("Stats.app")).unwrap(),
+        "new launcher\n"
+    );
+}
+
+#[test]
+fn canceled_refresh_reports_the_completed_native_upgrade() {
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        let fixture = Fixture::new(
+            false,
+            "#!/bin/sh\nif [ \"$1\" = '--help' ]; then exit 0; fi\ntouch {ready}.sync\nexec /bin/sleep 60\n",
+            "",
+        );
+        fs::create_dir_all(fixture.root.path().join("state/nix/profiles/pkg")).unwrap();
+        let runtime = fs::read_to_string(&fixture.nix).unwrap();
+        let mutation = fixture.root.path().join("upgraded");
+        let branch = format!(
+            "  *'profile upgrade'*) touch {};;\n  *) echo",
+            quote(&mutation.display().to_string())
+        );
+        write_executable(&fixture.nix, &runtime.replace("  *) echo", &branch));
+        let mut command = fixture.command_with(&["upgrade", "stats", "--entry"]);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = command.spawn().expect("spawn compiled pkg upgrade");
+        let child = wait_for_child_stage(
+            child,
+            &PathBuf::from(format!("{}.sync", fixture.ready.display())),
+        );
+        assert!(mutation.exists());
+        // SAFETY: the PID belongs to this live child process.
+        assert_eq!(unsafe { libc::kill(child.id().cast_signed(), signal) }, 0);
+        let output = child.wait_with_output().expect("wait for upgrade");
+        assert_eq!(output.status.code(), Some(128 + signal));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Partial: upgrade"), "{stderr}");
+        assert!(stderr.contains("pkg apps sync"), "{stderr}");
+        assert!(stderr.contains("Dock state may have changed"), "{stderr}");
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            fs::read_to_string(fixture.launchers().join(".pkg-launcher-sources")).unwrap(),
+            SOURCE_MAP
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.launchers().join("Old.app")).unwrap(),
+            "old launcher"
+        );
+    }
 }

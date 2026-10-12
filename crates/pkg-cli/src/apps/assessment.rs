@@ -284,19 +284,21 @@ mod tests {
         // exists and confirms assessment, the bundle's own signature
         // refusal names the signature check instead. Either way the
         // refusal names an exact read-only check and no bypass.
+        let detail = error.to_string();
         assert!(
-            error.contains(SPCTL_STATUS_CHECK) || error.contains(CODESIGN_CHECK),
+            detail.contains(SPCTL_STATUS_CHECK) || detail.contains(CODESIGN_CHECK),
             "{error}"
         );
-        assert!(!error.contains("bypass"), "{error}");
+        assert!(!detail.contains("bypass"), "{error}");
 
         // The bundle check also names the bundle and its check: an
         // unsigned synthetic bundle fails the signature check on macOS;
         // where the tool is absent the run itself fails. Both shapes
         // refuse.
         let error = assess_bundle(&bundle).expect_err("an unsigned synthetic bundle must not pass");
-        assert!(error.contains("Vendor.app"), "{error}");
-        assert!(error.contains(CODESIGN_CHECK), "{error}");
+        let detail = error.to_string();
+        assert!(detail.contains("Vendor.app"), "{error}");
+        assert!(detail.contains(CODESIGN_CHECK), "{error}");
 
         // Nothing about the destination changed: this proves the gate
         // itself is read-only. It calls the gate directly and does not

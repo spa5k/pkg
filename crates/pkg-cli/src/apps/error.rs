@@ -56,15 +56,6 @@ impl AppError {
         self.dock_effect_possible = true;
         self
     }
-
-    pub(super) fn mark_dock_effect_possible(error: Self) -> Self {
-        error.with_dock_effect_possible()
-    }
-
-    #[cfg(test)]
-    pub(super) fn contains(&self, text: &str) -> bool {
-        self.to_string().contains(text)
-    }
 }
 
 impl From<String> for AppError {

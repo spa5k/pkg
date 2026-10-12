@@ -213,7 +213,11 @@ pub(super) fn run_sync_trampolines(helper: &Path, from: &Path, to: &Path) -> Res
             stderr.trim()
         ))
         .with_dock_effect_possible()),
-        Err(detail) => Err(format!("could not run {}: {detail}", helper.display()).into()),
+        Err(detail) => Err(AppError::message(format!(
+            "could not run {}: {detail}",
+            helper.display()
+        ))
+        .with_dock_effect_possible()),
     }
 }
 

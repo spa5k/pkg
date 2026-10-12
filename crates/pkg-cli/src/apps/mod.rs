@@ -8,6 +8,7 @@ mod destination;
 pub(crate) mod error;
 mod helper;
 mod payload;
+mod publication;
 mod scan;
 mod storage;
 
@@ -19,8 +20,9 @@ use destination::{
     inspect_destination, read_source_map, write_marker, write_source_map,
 };
 use error::AppError;
-use helper::{ensure_helper, run_sync_trampolines};
+use helper::ensure_helper;
 use payload::{prepare_bundle, restored_path};
+use publication::{prepare_parent, refresh_staged};
 use scan::scan_apps;
 use std::collections::BTreeMap;
 use std::fs;
@@ -44,14 +46,20 @@ pub(crate) use storage::setup_storage;
 /// Returns an error if the host is not macOS, a profile lock or read fails, app assessment fails, or helper, destination, or launcher operations fail.
 pub(crate) fn sync(nix: &Nix, paths: &Paths) -> Result<(), AppError> {
     if !cfg!(target_os = "macos") {
-        return sync_locked(nix, paths);
+        return Err(AppError::message(
+            "pkg apps sync supports macOS only; .app bundles are not exposed on this platform",
+        ));
     }
-    let _profile_lock = crate::profile_lock::ProfileLock::acquire(&paths.profile)?;
-    sync_locked(nix, paths)
+    let profile = crate::profile_lock::LockedProfile::acquire(nix, paths)?;
+    sync_locked(&profile)
 }
 
 /// Refresh launchers while the caller holds the profile lock.
-pub(crate) fn sync_locked(nix: &Nix, paths: &Paths) -> Result<(), AppError> {
+pub(crate) fn sync_locked(
+    profile: &crate::profile_lock::LockedProfile<'_>,
+) -> Result<(), AppError> {
+    let nix = profile.nix();
+    let paths = profile.paths();
     if !cfg!(target_os = "macos") {
         let _ = (nix.executable(), &paths.helper_profile);
         return Err(
@@ -92,6 +100,7 @@ pub(crate) fn sync_locked(nix: &Nix, paths: &Paths) -> Result<(), AppError> {
     // Writing requires a missing or owned destination; an unowned folder is
     // refused before the helper is fetched.
     ensure_owned_destination(&dest)?;
+    prepare_parent(&dest)?;
     let helper = ensure_helper(nix, paths)?;
     let view = tempfile::tempdir()
         .map_err(|e| format!("could not create a temporary source view: {e}"))?;
@@ -218,89 +227,4 @@ fn list_profile(
 ) -> Result<BTreeMap<String, crate::nix::ProfileEntry>, AppError> {
     nix.profile_list(profile)
         .map_err(|e| AppError::native(format!("could not list profile {}", profile.display()), e))
-}
-
-fn refresh_staged(
-    helper: &Path,
-    source_view: &Path,
-    destination: &Path,
-    apps: &BTreeMap<String, std::path::PathBuf>,
-) -> Result<(), AppError> {
-    let parent = destination
-        .parent()
-        .ok_or_else(|| AppError::message("launcher destination has no parent"))?;
-    let staging = tempfile::tempdir_in(parent)
-        .map_err(|error| format!("could not create launcher staging directory: {error}"))?;
-    let staged = staging.path().join("launchers");
-    run_sync_trampolines(helper, source_view, &staged)?;
-    let publish = || {
-        let metadata = fs::symlink_metadata(&staged)
-            .map_err(|error| format!("could not inspect staged launchers: {error}"))?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(AppError::message(
-                "mac-app-util did not create a plain launcher directory",
-            ));
-        }
-        write_marker(&staged)?;
-        write_source_map(&staged, apps)?;
-        ensure_owned_destination(destination)?;
-        publish_staged(&staged, destination, staging)
-    };
-    publish().map_err(AppError::mark_dock_effect_possible)
-}
-
-fn publish_staged(
-    staged: &Path,
-    destination: &Path,
-    staging: tempfile::TempDir,
-) -> Result<(), AppError> {
-    use std::os::unix::fs::MetadataExt as _;
-
-    let parent = destination
-        .parent()
-        .ok_or_else(|| AppError::message("launcher destination has no parent"))?;
-    let parent_metadata = fs::symlink_metadata(parent).map_err(|error| {
-        format!(
-            "could not inspect launcher parent {}: {error}",
-            parent.display()
-        )
-    })?;
-    // A symlinked or foreign-owned parent can redirect publication outside
-    // the user's Applications directory.
-    // SAFETY: getuid takes no arguments and cannot fail.
-    let current_uid = unsafe { libc::getuid() };
-    if !parent_metadata.is_dir() || parent_metadata.uid() != current_uid {
-        return Err(AppError::message(format!(
-            "refusing to publish launchers through an unsafe parent: {}",
-            parent.display()
-        )));
-    }
-    let backup = staging.path().join("previous-launchers");
-    let had_destination = match inspect_destination(destination)? {
-        DestinationState::Missing => false,
-        DestinationState::Owned => true,
-        DestinationState::Unowned { detail } => {
-            return Err(AppError::message(format!(
-                "{detail}; refusing to publish launchers"
-            )));
-        }
-    };
-    if had_destination {
-        fs::rename(destination, &backup).map_err(|error| {
-            format!("could not move the previous launcher folder aside: {error}")
-        })?;
-    }
-    if let Err(error) = fs::rename(staged, destination) {
-        let publish_error =
-            AppError::message(format!("could not publish staged launchers: {error}"));
-        if had_destination && let Err(restore_error) = fs::rename(&backup, destination) {
-            let recovery_dir = staging.keep();
-            return Err(AppError::message(format!(
-                "{publish_error}; could not restore the previous launcher folder: {restore_error}; previous launchers were retained at {}",
-                recovery_dir.join("previous-launchers").display()
-            )));
-        }
-        return Err(publish_error);
-    }
-    Ok(())
 }

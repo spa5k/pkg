@@ -44,7 +44,7 @@ enum Prepared {
 }
 
 pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), CommandError> {
-    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
+    let profile = crate::profile_lock::LockedProfile::acquire(&session.nix, &session.paths)?;
     if let Request::Prune { days } = request {
         return prune(session, days);
     }
@@ -58,7 +58,7 @@ pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), Com
     let after = installed_entries(session)
         .map_err(|error| report_postflight_failure(prepared.action(), &error))?;
     let report = prepared.completed(session, &before, &after);
-    apps_refresh_after_mutation(session, prepared.action(), &report.names)?;
+    apps_refresh_after_mutation(&profile, prepared.action(), &report.names)?;
     report.render();
     Ok(())
 }
@@ -375,7 +375,13 @@ fn prune(session: &Session, days: u64) -> Result<(), CommandError> {
         .nix
         .profile_wipe_history(&session.paths.profile, &format!("{days}d"))
         .map_err(|error| super::mutation_failed(session, "prune", &error, None, None))?;
-    let after = optional_history(session)?.map(|text| history_numbers(&text));
+    let after = optional_history(session)
+        .map_err(|error| {
+            eprintln!("Partial: native prune completed. The generation history could not be read.");
+            eprintln!("Next: run `pkg history` to inspect generations.");
+            CommandError::Reported(failure_exit(&error))
+        })?
+        .map(|text| history_numbers(&text));
     match (before, after) {
         (Some(before), Some(after)) if !before.is_empty() && !after.is_empty() => {
             let removed = before.difference(&after).count();
@@ -554,10 +560,10 @@ fn report_names(verb: &str, names: &[String]) {
     }
 }
 
-fn optional_history(session: &super::Session) -> Result<Option<String>, CommandError> {
+fn optional_history(session: &super::Session) -> Result<Option<String>, NixError> {
     match session.nix.profile_history(&session.paths.profile) {
         Ok(text) => Ok(Some(text)),
-        Err(error @ nix::NixError::Interrupted { .. }) => Err(error.into()),
+        Err(error @ nix::NixError::Interrupted { .. }) => Err(error),
         Err(_) => Ok(None),
     }
 }

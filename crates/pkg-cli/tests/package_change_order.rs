@@ -85,6 +85,7 @@ elif action=='list':
  entries={} if changed else {'opaque':{'active':True,'attrPath':'legacyPackages.x86_64-linux.probe','originalUrl':'github:NixOS/nixpkgs','url':'github:NixOS/nixpkgs/1111111111111111111111111111111111111111','storePaths':[]}}
  print(json.dumps({'version':3,'elements':entries}))
 elif action=='history':
+ if os.environ['PKG_ORDER_STOP']=='after' and changed: interrupt()
  print('Version 2 (2026-10-12)' if changed else 'Version 1 (2026-10-11)\nVersion 2 (2026-10-12)')
 elif action in ('add','remove','upgrade','rollback','wipe-history'):
  (home/'changed').touch()
@@ -158,7 +159,7 @@ fn preflight_cancellation_prevents_mutation() {
 
 #[test]
 fn postflight_cancellation_reports_committed_change_and_stops_refresh() {
-    for args in &ACTIONS[..4] {
+    for args in ACTIONS {
         let fixture = Fixture::new();
         let output = fixture.run(args, "after", "HUP");
         assert_eq!(output.status.code(), Some(129), "{args:?}: {output:?}");
@@ -169,13 +170,23 @@ fn postflight_cancellation_reports_committed_change_and_stops_refresh() {
             stderr.contains("Partial:"),
             "committed native change: {stderr}"
         );
-        assert!(stderr.contains("pkg list"), "recovery: {stderr}");
+        let recovery = if args[0] == "prune" {
+            "pkg history"
+        } else {
+            "pkg list"
+        };
+        assert!(stderr.contains(recovery), "recovery: {stderr}");
         let calls = fixture.calls();
-        assert_eq!(calls.last().expect("last native call")["call"], "list");
+        let observation = if args[0] == "prune" {
+            "history"
+        } else {
+            "list"
+        };
+        assert_eq!(calls.last().expect("last native call")["call"], observation);
         assert_eq!(
             calls
                 .iter()
-                .filter(|call| call["call"] == "list" && call["changed"] == true)
+                .filter(|call| call["call"] == observation && call["changed"] == true)
                 .count(),
             1,
             "canceled postflight is the final native read: {calls:?}"

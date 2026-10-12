@@ -417,14 +417,14 @@ fn installed_entries(session: &Session) -> Result<BTreeMap<String, ProfileEntry>
 /// nonzero exit and `pkg apps sync` named as the retry (design D4). On other
 /// systems app exposure does not apply and this is a no-op.
 fn apps_refresh_after_mutation(
-    session: &Session,
+    profile: &crate::profile_lock::LockedProfile<'_>,
     action: &str,
     names: &[String],
 ) -> Result<(), CommandError> {
     if !cfg!(target_os = "macos") {
         return Ok(());
     }
-    match crate::apps::sync_locked(&session.nix, &session.paths) {
+    match crate::apps::sync_locked(profile) {
         Ok(()) => Ok(()),
         Err(detail) => {
             if names.is_empty() {

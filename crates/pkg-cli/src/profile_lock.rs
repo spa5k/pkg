@@ -46,3 +46,35 @@ impl ProfileLock {
         Ok(Self { _file: file })
     }
 }
+
+/// A native profile and its paths with their exclusive profile lock held.
+pub struct LockedProfile<'a> {
+    nix: &'a crate::nix::Nix,
+    paths: &'a crate::config::Paths,
+    _lock: ProfileLock,
+}
+
+impl<'a> LockedProfile<'a> {
+    /// Acquire the lock for these exact profile paths.
+    pub fn acquire(
+        nix: &'a crate::nix::Nix,
+        paths: &'a crate::config::Paths,
+    ) -> Result<Self, String> {
+        let lock = ProfileLock::acquire(&paths.profile)?;
+        Ok(Self {
+            nix,
+            paths,
+            _lock: lock,
+        })
+    }
+
+    /// The native adapter bound to this locked profile.
+    pub const fn nix(&self) -> &crate::nix::Nix {
+        self.nix
+    }
+
+    /// The paths whose native profile is locked.
+    pub const fn paths(&self) -> &crate::config::Paths {
+        self.paths
+    }
+}
