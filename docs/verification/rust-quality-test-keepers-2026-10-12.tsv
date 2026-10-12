@@ -1,162 +1,183 @@
 baseline	old_test	old_line	assertion_start	proposed_keeper	new_file	new_line	status
-df1af1d	cask_flows_read_the_generated_index	617	assert_eq!(code, 0, "info reports recorded exclusion");	cask_info_reports_recorded_exclusion	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	618	assert!(stdout.contains("Cannot install"), "{stdout}");	cask_info_reports_recorded_exclusion	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	619	assert!(stdout.contains("unsupported-platform"), "{stdout}");	cask_info_reports_recorded_exclusion	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	626	assert_eq!(code, 1);	cask_install_gates_excluded_and_unknown_tokens	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	627	assert!(stderr.contains("unsupported-platform"), "{stderr}");	cask_install_gates_excluded_and_unknown_tokens	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	629	assert_eq!(code, 1);	cask_install_gates_excluded_and_unknown_tokens	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	630	assert!(stderr.contains("missing-token"), "{stderr}");	cask_install_gates_excluded_and_unknown_tokens	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	632	assert_eq!(code, 1);	cask_install_gates_excluded_and_unknown_tokens	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	633	assert!(stderr.contains("not in the generated catalog"), "{stderr}");	cask_install_gates_excluded_and_unknown_tokens	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	637	assert_eq!(code, 1, "native fixture has no package outputs: {stderr}");	cask_preparation_retains_healthy_source_after_native_failure	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	638	assert!(stderr.contains("Ready: cask"), "{stderr}");	cask_preparation_retains_healthy_source_after_native_failure	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	642	assert_eq!(code, 0, "{stdout}");	cask_search_respects_eligibility_and_unavailable_option	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	643	assert!(	cask_search_respects_eligibility_and_unavailable_option	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	647	assert!(	cask_search_respects_eligibility_and_unavailable_option	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	651	assert!(stdout.contains("2.39.0"), "{stdout}");	cask_search_respects_eligibility_and_unavailable_option	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	653	assert_eq!(code, 0);	cask_search_respects_eligibility_and_unavailable_option	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	654	assert!(	cask_search_respects_eligibility_and_unavailable_option	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	659	assert_eq!(code, 0);	cask_search_respects_eligibility_and_unavailable_option	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	660	assert!(stdout.contains("cask:homebrew/cask/iterm2"), "{stdout}");	cask_search_respects_eligibility_and_unavailable_option	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	671	assert_eq!(code, 1, "{stderr}");	unreadable_profile_reports_unknown_info_and_doctor_state	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	673	assert_eq!(value["result"]["installed_state"], "unknown");	unreadable_profile_reports_unknown_info_and_doctor_state	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	674	assert!(	unreadable_profile_reports_unknown_info_and_doctor_state	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	681	assert_eq!(code, 1);	unreadable_profile_reports_unknown_info_and_doctor_state	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	689	assert_eq!(profile_row["status"], "unreadable");	unreadable_profile_reports_unknown_info_and_doctor_state	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	698	assert_eq!(code, 130, "{command} {id}: {stderr}");	cask_discovery_cancellation_stops_info_and_install	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	699	assert!(stdout.is_empty(), "{stdout}");	cask_discovery_cancellation_stops_info_and_install	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	700	assert!(stderr.contains("Discovery cancelled"), "{stderr}");	cask_discovery_cancellation_stops_info_and_install	pending	pending	mapped-before-move
-df1af1d	cask_flows_read_the_generated_index	701	assert_eq!(	cask_discovery_cancellation_stops_info_and_install	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	890	assert_eq!(code, 0, "{stderr}");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	900	assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	901	assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	904	assert_eq!(	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	909	assert!(calls.contains("batch"), "{calls}");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	920	assert_eq!(snapshots, 4, "three catalogs and one checked marker");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	924	assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	925	assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	926	assert!(stdout.contains("nixpkgs:gnugrep"), "{stdout}");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	928	assert_eq!(calls.lines().count(), 6, "snapshot reused: {calls}");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	932	assert!(!stdout.contains("zzz-empty"), "{stdout}");	prepared_catalogs_reuse_snapshot_without_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	938	assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");	native_regex_matches_attribute_and_empty_description	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	939	assert!(stdout.contains("nixpkgs:zzz-empty"), "{stdout}");	native_regex_matches_attribute_and_empty_description	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	940	assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");	native_regex_matches_attribute_and_empty_description	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	942	assert_eq!(calls.lines().count(), 6, "no new calls: {calls}");	native_regex_matches_attribute_and_empty_description	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	946	assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");	native_regex_matches_attribute_and_empty_description	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	947	assert!(stdout.contains("nixpkgs:zzz-empty"), "{stdout}");	native_regex_matches_attribute_and_empty_description	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	948	assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");	native_regex_matches_attribute_and_empty_description	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	949	assert!(!stdout.contains("nixpkgs:gnugrep"), "{stdout}");	native_regex_matches_attribute_and_empty_description	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	951	assert_eq!(calls.lines().count(), 6, "no new calls: {calls}");	native_regex_matches_attribute_and_empty_description	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	955	assert_eq!(code, 2);	invalid_regex_fails_before_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	956	assert!(stderr.contains("Invalid search pattern"), "{stderr}");	invalid_regex_fails_before_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	958	assert_eq!(calls.lines().count(), 6, "no new calls: {calls}");	invalid_regex_fails_before_runtime_calls	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	960	assert_eq!(code, 0, "{stderr}");	search_output_has_order_limits_and_json_totals	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	961	assert!(	search_output_has_order_limits_and_json_totals	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	965	assert!(stdout.contains("Showing 2 of 27 matches"), "{stdout}");	search_output_has_order_limits_and_json_totals	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	967	assert_eq!(code, 0, "{stderr}");	search_output_has_order_limits_and_json_totals	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	969	assert_eq!(value["result"]["total"], 27);	search_output_has_order_limits_and_json_totals	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	970	assert_eq!(value["result"]["results"].as_array().unwrap().len(), 27);	search_output_has_order_limits_and_json_totals	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	971	assert_eq!(value["result"]["sources"][0]["status"], "cached");	search_output_has_order_limits_and_json_totals	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	973	assert_eq!(code, 0, "{stderr}");	literal_search_treats_regex_characters_as_text	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	974	assert!(stdout.contains("No matches"), "literal pipe: {stdout}");	literal_search_treats_regex_characters_as_text	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	976	assert_eq!(code, 0, "literal bracket: {stderr}");	literal_search_treats_regex_characters_as_text	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	977	assert!(stdout.contains("No matches"));	literal_search_treats_regex_characters_as_text	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	979	assert_eq!(code, 1, "refresh must fail: {stderr}");	failed_update_retains_complete_snapshot	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	981	assert_eq!(code, 0, "old complete catalog survives: {stderr}");	failed_update_retains_complete_snapshot	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	982	assert!(stdout.contains("nixpkgs:ripgrep"));	failed_update_retains_complete_snapshot	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	984	assert_eq!(code, 0, "{stderr}");	search_limit_preserves_total_and_rejects_conflicting_options	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	986	assert_eq!(value["result"]["total"], 27);	search_limit_preserves_total_and_rejects_conflicting_options	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	987	assert_eq!(value["result"]["results"].as_array().unwrap().len(), 2);	search_limit_preserves_total_and_rejects_conflicting_options	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	989	assert_eq!(code, 2);	search_limit_preserves_total_and_rejects_conflicting_options	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	991	assert_eq!(code, 0, "{stderr}");	normal_aws_search_ranks_user_facing_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	999	assert_eq!(	normal_aws_search_ranks_user_facing_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1003	assert!(ids.contains(&"brew:homebrew/core/awscli"));	normal_aws_search_ranks_user_facing_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1004	assert!(ids.contains(&"cask:homebrew/cask/aws-vault-binary"));	normal_aws_search_ranks_user_facing_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1005	assert!(ids.contains(&"cask:acme/tools/aws-console"));	normal_aws_search_ranks_user_facing_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1006	assert!(!ids.iter().any(|id| id.contains("aws-disabled")	normal_aws_search_ranks_user_facing_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1011	assert_eq!(code, 0, "{stderr}");	search_limit_keeps_source_groups	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1012	assert!(	search_limit_keeps_source_groups	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1025	assert!(stdout.contains(id), "{stdout}");	search_limit_keeps_source_groups	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1027	assert_eq!(	search_limit_keeps_source_groups	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1040	assert_eq!(code, 0, "{stderr}");	formula_aliases_have_canonical_install_commands	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1042	assert_eq!(	formula_aliases_have_canonical_install_commands	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1046	assert_eq!(	formula_aliases_have_canonical_install_commands	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1055	assert_eq!(code, 0, "{stderr}");	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1057	assert_eq!(value["result"]["total"], 26);	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1058	assert_eq!(value["result"]["results"].as_array().unwrap().len(), 2);	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1059	assert_eq!(value["result"]["sources"].as_array().unwrap().len(), 1);	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1062	assert_eq!(code, 0, "{stderr}");	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1063	assert!(stdout.contains("disabled"), "{stdout}");	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1065	assert_eq!(code, 0, "{stderr}");	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1066	assert!(	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1071	assert_eq!(code, 0, "{stderr}");	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1072	assert!(	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1077	assert_eq!(code, 0, "{stderr}");	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1078	assert!(	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1083	assert!(!stdout.contains("nixpkgs:"), "{stdout}");	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1084	assert!(formulae.exists());	source_filters_and_exact_formula_queries_preserve_visibility	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1100	assert_eq!(code, 1, "{stderr}");	invalid_formula_refresh_retains_previous_snapshot	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1101	assert!(stderr.contains("formula catalog index"), "{stderr}");	invalid_formula_refresh_retains_previous_snapshot	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1102	assert_eq!(std::fs::read(&formula_snapshot).unwrap(), complete);	invalid_formula_refresh_retains_previous_snapshot	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1104	assert!(	normal_aws_search_ranks_user_facing_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1114	assert_eq!(value["result"]["approximate"], false);	normal_aws_search_ranks_user_facing_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1116	assert_eq!(code, 0, "{stderr}");	broad_search_includes_low_priority_matches	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1126	assert!(stdout.contains(extra), "{extra}: {stdout}");	broad_search_includes_low_priority_matches	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1130	assert_eq!(code, 0, "{stderr}");	explicit_source_filters_select_one_source	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1132	assert_eq!(value["result"]["sources"].as_array().unwrap().len(), 1);	explicit_source_filters_select_one_source	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1133	assert_eq!(	explicit_source_filters_select_one_source	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1141	assert_eq!(code, 0, "{stderr}");	duplicate_native_names_keep_distinct_attributes	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1144	assert_eq!(rows.len(), expected, "{stdout}");	duplicate_native_names_keep_distinct_attributes	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1145	assert!(	duplicate_native_names_keep_distinct_attributes	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1151	assert!(	duplicate_native_names_keep_distinct_attributes	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1160	assert_eq!(code, 0, "{stderr}");	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1162	assert_eq!(value["result"]["sources"].as_array().unwrap().len(), 1);	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1163	assert_eq!(	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1169	assert_eq!(code, 0, "{stderr}");	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1170	assert!(stdout.contains("cask:homebrew/cask/aws-vault-binary"));	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1171	assert!(stdout.contains("cask:acme/tools/aws-console"));	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1172	assert!(!stdout.contains("nixpkgs:"));	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1174	assert_eq!(code, 0, "{stderr}");	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1175	assert!(stdout.contains("cask:acme/tools/aws-console"));	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1176	assert!(!stdout.contains("homebrew/cask"));	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1178	assert_eq!(code, 0, "{stderr}");	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1179	assert!(stdout.contains("nixpkgs:awscli2"));	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1180	assert!(!stdout.contains("cask:"));	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1182	assert_eq!(code, 2);	query_prefixes_combine_with_source_filters	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1184	assert_eq!(code, 0, "{stderr}");	multiword_search_uses_description_terms	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1185	assert!(stdout.contains("cask:homebrew/cask/aws-vault-binary"));	multiword_search_uses_description_terms	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1186	assert!(!stdout.contains("awscli2"));	multiword_search_uses_description_terms	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1188	assert_eq!(code, 0, "{stderr}");	multiword_search_uses_description_terms	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1189	assert!(stdout.contains("nixpkgs:aws-sdk-cpp"));	multiword_search_uses_description_terms	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1190	assert!(!stdout.contains("awscli2"));	multiword_search_uses_description_terms	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1192	assert_eq!(code, 0, "{stderr}");	fuzzy_fallback_yields_to_later_literal_match	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1194	assert_eq!(value["result"]["approximate"], true);	fuzzy_fallback_yields_to_later_literal_match	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1195	assert_eq!(value["result"]["results"][0]["id"], "nixpkgs:ripgrep");	fuzzy_fallback_yields_to_later_literal_match	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1197	assert_eq!(code, 0, "{stderr}");	fuzzy_fallback_yields_to_later_literal_match	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1198	assert!(stdout.contains("No matches"));	fuzzy_fallback_yields_to_later_literal_match	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1201	assert_eq!(code, 0, "{stderr}");	fuzzy_fallback_yields_to_later_literal_match	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1203	assert_eq!(value["result"]["approximate"], false);	fuzzy_fallback_yields_to_later_literal_match	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1204	assert_eq!(value["result"]["total"], 1);	fuzzy_fallback_yields_to_later_literal_match	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1205	assert_eq!(	fuzzy_fallback_yields_to_later_literal_match	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1210	assert_eq!(code, 2);	empty_query_is_usage_error	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1216	assert_eq!(code, 0, "{stderr}");	broken_registry_is_isolated_from_selected_sources	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1217	assert!(stderr.is_empty(), "{stderr}");	broken_registry_is_isolated_from_selected_sources	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1218	assert!(stdout.contains("brew:homebrew/core/awscli"));	broken_registry_is_isolated_from_selected_sources	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1220	assert_eq!(code, 0, "{stderr}");	broken_registry_is_isolated_from_selected_sources	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1221	assert!(	broken_registry_is_isolated_from_selected_sources	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1225	assert!(stdout.contains("nixpkgs:ripgrep"));	broken_registry_is_isolated_from_selected_sources	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1227	assert_eq!(code, 0, "healthy rows remain: {stderr}");	broken_registry_is_isolated_from_selected_sources	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1228	assert!(stdout.contains("nixpkgs:ripgrep"));	broken_registry_is_isolated_from_selected_sources	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1229	assert!(stderr.contains("Results are incomplete"), "{stderr}");	broken_registry_is_isolated_from_selected_sources	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1252	assert_eq!(code, 0, "{stderr}");	stale_snapshots_remain_visible_and_marked	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1254	assert_eq!(value["result"]["sources"][0]["status"], "stale");	stale_snapshots_remain_visible_and_marked	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1255	assert_eq!(value["result"]["results"][0]["stale"], true);	stale_snapshots_remain_visible_and_marked	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1259	assert_eq!(code, 1, "{stderr}");	bare_install_miss_uses_targeted_metadata_with_related_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1260	assert!(stdout.is_empty());	bare_install_miss_uses_targeted_metadata_with_related_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1261	assert!(stderr.contains("needs an exact package ID"), "{stderr}");	bare_install_miss_uses_targeted_metadata_with_related_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1262	assert!(	bare_install_miss_uses_targeted_metadata_with_related_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1266	assert!(!stderr.contains("Installing:"));	bare_install_miss_uses_targeted_metadata_with_related_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1267	assert_eq!(	bare_install_miss_uses_targeted_metadata_with_related_packages	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1286	assert_eq!(code, 1, "{stderr}");	cold_bare_install_miss_uses_targeted_metadata	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1287	assert!(stderr.contains("no supported exact match"));	cold_bare_install_miss_uses_targeted_metadata	pending	pending	mapped-before-move
-df1af1d	search_snapshots_amortize_new_queries	1288	assert_eq!(	cold_bare_install_miss_uses_targeted_metadata	pending	pending	mapped-before-move
+df1af1d	cask_flows_read_the_generated_index	617	"assert_eq!(code, 0, ""info reports recorded exclusion"");"	cask_info_reports_recorded_exclusion	crates/pkg-cli/tests/cask_index.rs	156	C
+df1af1d	cask_flows_read_the_generated_index	618	"assert!(stdout.contains(""Cannot install""), ""{stdout}"");"	cask_info_reports_recorded_exclusion	crates/pkg-cli/tests/cask_index.rs	156	C
+df1af1d	cask_flows_read_the_generated_index	619	"assert!(stdout.contains(""unsupported-platform""), ""{stdout}"");"	cask_info_reports_recorded_exclusion	crates/pkg-cli/tests/cask_index.rs	156	C
+df1af1d	cask_flows_read_the_generated_index	626	assert_eq!(code, 1);	cask_install_gates_excluded_and_unknown_tokens	crates/pkg-cli/tests/cask_index.rs	165	C
+df1af1d	cask_flows_read_the_generated_index	627	"assert!(stderr.contains(""unsupported-platform""), ""{stderr}"");"	cask_install_gates_excluded_and_unknown_tokens	crates/pkg-cli/tests/cask_index.rs	165	C
+df1af1d	cask_flows_read_the_generated_index	629	assert_eq!(code, 1);	cask_install_gates_excluded_and_unknown_tokens	crates/pkg-cli/tests/cask_index.rs	165	C
+df1af1d	cask_flows_read_the_generated_index	630	"assert!(stderr.contains(""missing-token""), ""{stderr}"");"	cask_install_gates_excluded_and_unknown_tokens	crates/pkg-cli/tests/cask_index.rs	165	C
+df1af1d	cask_flows_read_the_generated_index	632	assert_eq!(code, 1);	cask_install_gates_excluded_and_unknown_tokens	crates/pkg-cli/tests/cask_index.rs	165	C
+df1af1d	cask_flows_read_the_generated_index	633	"assert!(stderr.contains(""not in the generated catalog""), ""{stderr}"");"	cask_install_gates_excluded_and_unknown_tokens	crates/pkg-cli/tests/cask_index.rs	165	C
+df1af1d	cask_flows_read_the_generated_index	637	"assert_eq!(code, 1, ""native fixture has no package outputs: {stderr}"");"	cask_preparation_retains_healthy_source_after_native_failure	crates/pkg-cli/tests/cask_index.rs	179	C
+df1af1d	cask_flows_read_the_generated_index	638	"assert!(stderr.contains(""Ready: cask""), ""{stderr}"");"	cask_preparation_retains_healthy_source_after_native_failure	crates/pkg-cli/tests/cask_index.rs	179	C
+df1af1d	cask_flows_read_the_generated_index	642	"assert_eq!(code, 0, ""{stdout}"");"	cask_search_respects_eligibility_and_unavailable_option	crates/pkg-cli/tests/cask_index.rs	187	C
+df1af1d	cask_flows_read_the_generated_index	643	assert!(	cask_search_respects_eligibility_and_unavailable_option	crates/pkg-cli/tests/cask_index.rs	187	C
+df1af1d	cask_flows_read_the_generated_index	647	assert!(	cask_search_respects_eligibility_and_unavailable_option	crates/pkg-cli/tests/cask_index.rs	187	C
+df1af1d	cask_flows_read_the_generated_index	651	"assert!(stdout.contains(""2.39.0""), ""{stdout}"");"	cask_search_respects_eligibility_and_unavailable_option	crates/pkg-cli/tests/cask_index.rs	187	C
+df1af1d	cask_flows_read_the_generated_index	653	assert_eq!(code, 0);	cask_search_respects_eligibility_and_unavailable_option	crates/pkg-cli/tests/cask_index.rs	187	C
+df1af1d	cask_flows_read_the_generated_index	654	assert!(	cask_search_respects_eligibility_and_unavailable_option	crates/pkg-cli/tests/cask_index.rs	187	C
+df1af1d	cask_flows_read_the_generated_index	659	assert_eq!(code, 0);	cask_search_respects_eligibility_and_unavailable_option	crates/pkg-cli/tests/cask_index.rs	187	C
+df1af1d	cask_flows_read_the_generated_index	660	"assert!(stdout.contains(""cask:homebrew/cask/iterm2""), ""{stdout}"");"	cask_search_respects_eligibility_and_unavailable_option	crates/pkg-cli/tests/cask_index.rs	187	C
+df1af1d	cask_flows_read_the_generated_index	671	"assert_eq!(code, 1, ""{stderr}"");"	unreadable_profile_reports_unknown_info_and_doctor_state	crates/pkg-cli/tests/cask_index.rs	212	C
+df1af1d	cask_flows_read_the_generated_index	673	"assert_eq!(value[""result""][""installed_state""], ""unknown"");"	unreadable_profile_reports_unknown_info_and_doctor_state	crates/pkg-cli/tests/cask_index.rs	212	C
+df1af1d	cask_flows_read_the_generated_index	674	assert!(	unreadable_profile_reports_unknown_info_and_doctor_state	crates/pkg-cli/tests/cask_index.rs	212	C
+df1af1d	cask_flows_read_the_generated_index	681	assert_eq!(code, 1);	unreadable_profile_reports_unknown_info_and_doctor_state	crates/pkg-cli/tests/cask_index.rs	212	C
+df1af1d	cask_flows_read_the_generated_index	689	"assert_eq!(profile_row[""status""], ""unreadable"");"	unreadable_profile_reports_unknown_info_and_doctor_state	crates/pkg-cli/tests/cask_index.rs	212	C
+df1af1d	cask_flows_read_the_generated_index	698	"assert_eq!(code, 130, ""{command} {id}: {stderr}"");"	cask_discovery_cancellation_stops_info_and_install	crates/pkg-cli/tests/cask_index.rs	245	C
+df1af1d	cask_flows_read_the_generated_index	699	"assert!(stdout.is_empty(), ""{stdout}"");"	cask_discovery_cancellation_stops_info_and_install	crates/pkg-cli/tests/cask_index.rs	245	C
+df1af1d	cask_flows_read_the_generated_index	700	"assert!(stderr.contains(""Discovery cancelled""), ""{stderr}"");"	cask_discovery_cancellation_stops_info_and_install	crates/pkg-cli/tests/cask_index.rs	245	C
+df1af1d	cask_flows_read_the_generated_index	701	assert_eq!(	cask_discovery_cancellation_stops_info_and_install	crates/pkg-cli/tests/cask_index.rs	245	C
+df1af1d	search_snapshots_amortize_new_queries	890	"assert_eq!(code, 0, ""{stderr}"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	900	"assert_eq!(code, 0, ""stdout: {stdout}\nstderr: {stderr}"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	901	"assert!(stdout.contains(""nixpkgs:ripgrep""), ""{stdout}"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	904	assert_eq!(	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	909	"assert!(calls.contains(""batch""), ""{calls}"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	920	"assert_eq!(snapshots, 4, ""three catalogs and one checked marker"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	924	"assert_eq!(code, 0, ""stdout: {stdout}\nstderr: {stderr}"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	925	"assert!(stdout.contains(""nixpkgs:ripgrep""), ""{stdout}"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	926	"assert!(stdout.contains(""nixpkgs:gnugrep""), ""{stdout}"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	928	"assert_eq!(calls.lines().count(), 6, ""snapshot reused: {calls}"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	932	"assert!(!stdout.contains(""zzz-empty""), ""{stdout}"");"	prepared_catalogs_reuse_snapshot_without_runtime_calls	crates/pkg-cli/tests/cli.rs	766	C
+df1af1d	search_snapshots_amortize_new_queries	938	"assert_eq!(code, 0, ""stdout: {stdout}\nstderr: {stderr}"");"	native_regex_matches_attribute_and_empty_description	crates/pkg-cli/tests/cli.rs	801	C
+df1af1d	search_snapshots_amortize_new_queries	939	"assert!(stdout.contains(""nixpkgs:zzz-empty""), ""{stdout}"");"	native_regex_matches_attribute_and_empty_description	crates/pkg-cli/tests/cli.rs	801	C
+df1af1d	search_snapshots_amortize_new_queries	940	"assert!(!stdout.contains(""nixpkgs:ripgrep""), ""{stdout}"");"	native_regex_matches_attribute_and_empty_description	crates/pkg-cli/tests/cli.rs	801	C
+df1af1d	search_snapshots_amortize_new_queries	942	"assert_eq!(calls.lines().count(), 6, ""no new calls: {calls}"");"	native_regex_matches_attribute_and_empty_description	crates/pkg-cli/tests/cli.rs	801	C
+df1af1d	search_snapshots_amortize_new_queries	946	"assert_eq!(code, 0, ""stdout: {stdout}\nstderr: {stderr}"");"	native_regex_matches_attribute_and_empty_description	crates/pkg-cli/tests/cli.rs	801	C
+df1af1d	search_snapshots_amortize_new_queries	947	"assert!(stdout.contains(""nixpkgs:zzz-empty""), ""{stdout}"");"	native_regex_matches_attribute_and_empty_description	crates/pkg-cli/tests/cli.rs	801	C
+df1af1d	search_snapshots_amortize_new_queries	948	"assert!(!stdout.contains(""nixpkgs:ripgrep""), ""{stdout}"");"	native_regex_matches_attribute_and_empty_description	crates/pkg-cli/tests/cli.rs	801	C
+df1af1d	search_snapshots_amortize_new_queries	949	"assert!(!stdout.contains(""nixpkgs:gnugrep""), ""{stdout}"");"	native_regex_matches_attribute_and_empty_description	crates/pkg-cli/tests/cli.rs	801	C
+df1af1d	search_snapshots_amortize_new_queries	951	"assert_eq!(calls.lines().count(), 6, ""no new calls: {calls}"");"	native_regex_matches_attribute_and_empty_description	crates/pkg-cli/tests/cli.rs	801	C
+df1af1d	search_snapshots_amortize_new_queries	955	assert_eq!(code, 2);	invalid_regex_fails_before_runtime_calls	crates/pkg-cli/tests/cli.rs	817	C
+df1af1d	search_snapshots_amortize_new_queries	956	"assert!(stderr.contains(""Invalid search pattern""), ""{stderr}"");"	invalid_regex_fails_before_runtime_calls	crates/pkg-cli/tests/cli.rs	817	C
+df1af1d	search_snapshots_amortize_new_queries	958	"assert_eq!(calls.lines().count(), 6, ""no new calls: {calls}"");"	invalid_regex_fails_before_runtime_calls	crates/pkg-cli/tests/cli.rs	817	C
+df1af1d	search_snapshots_amortize_new_queries	960	"assert_eq!(code, 0, ""{stderr}"");"	search_output_has_order_limits_and_json_totals	crates/pkg-cli/tests/cli.rs	826	C
+df1af1d	search_snapshots_amortize_new_queries	961	assert!(	search_output_has_order_limits_and_json_totals	crates/pkg-cli/tests/cli.rs	826	C
+df1af1d	search_snapshots_amortize_new_queries	965	"assert!(stdout.contains(""Showing 2 of 27 matches""), ""{stdout}"");"	search_output_has_order_limits_and_json_totals	crates/pkg-cli/tests/cli.rs	826	C
+df1af1d	search_snapshots_amortize_new_queries	967	"assert_eq!(code, 0, ""{stderr}"");"	search_output_has_order_limits_and_json_totals	crates/pkg-cli/tests/cli.rs	826	C
+df1af1d	search_snapshots_amortize_new_queries	969	"assert_eq!(value[""result""][""total""], 27);"	search_output_has_order_limits_and_json_totals	crates/pkg-cli/tests/cli.rs	826	C
+df1af1d	search_snapshots_amortize_new_queries	970	"assert_eq!(value[""result""][""results""].as_array().unwrap().len(), 27);"	search_output_has_order_limits_and_json_totals	crates/pkg-cli/tests/cli.rs	826	C
+df1af1d	search_snapshots_amortize_new_queries	971	"assert_eq!(value[""result""][""sources""][0][""status""], ""cached"");"	search_output_has_order_limits_and_json_totals	crates/pkg-cli/tests/cli.rs	826	C
+df1af1d	search_snapshots_amortize_new_queries	973	"assert_eq!(code, 0, ""{stderr}"");"	literal_search_treats_regex_characters_as_text	crates/pkg-cli/tests/cli.rs	845	C
+df1af1d	search_snapshots_amortize_new_queries	974	"assert!(stdout.contains(""No matches""), ""literal pipe: {stdout}"");"	literal_search_treats_regex_characters_as_text	crates/pkg-cli/tests/cli.rs	845	C
+df1af1d	search_snapshots_amortize_new_queries	976	"assert_eq!(code, 0, ""literal bracket: {stderr}"");"	literal_search_treats_regex_characters_as_text	crates/pkg-cli/tests/cli.rs	845	C
+df1af1d	search_snapshots_amortize_new_queries	977	"assert!(stdout.contains(""No matches""));"	literal_search_treats_regex_characters_as_text	crates/pkg-cli/tests/cli.rs	845	C
+df1af1d	search_snapshots_amortize_new_queries	979	"assert_eq!(code, 1, ""refresh must fail: {stderr}"");"	failed_update_retains_complete_snapshot	crates/pkg-cli/tests/cli.rs	856	C
+df1af1d	search_snapshots_amortize_new_queries	981	"assert_eq!(code, 0, ""old complete catalog survives: {stderr}"");"	failed_update_retains_complete_snapshot	crates/pkg-cli/tests/cli.rs	856	C
+df1af1d	search_snapshots_amortize_new_queries	982	"assert!(stdout.contains(""nixpkgs:ripgrep""));"	failed_update_retains_complete_snapshot	crates/pkg-cli/tests/cli.rs	856	C
+df1af1d	search_snapshots_amortize_new_queries	984	"assert_eq!(code, 0, ""{stderr}"");"	search_limit_preserves_total_and_rejects_conflicting_options	crates/pkg-cli/tests/cli.rs	866	C
+df1af1d	search_snapshots_amortize_new_queries	986	"assert_eq!(value[""result""][""total""], 27);"	search_limit_preserves_total_and_rejects_conflicting_options	crates/pkg-cli/tests/cli.rs	866	C
+df1af1d	search_snapshots_amortize_new_queries	987	"assert_eq!(value[""result""][""results""].as_array().unwrap().len(), 2);"	search_limit_preserves_total_and_rejects_conflicting_options	crates/pkg-cli/tests/cli.rs	866	C
+df1af1d	search_snapshots_amortize_new_queries	989	assert_eq!(code, 2);	search_limit_preserves_total_and_rejects_conflicting_options	crates/pkg-cli/tests/cli.rs	866	C
+df1af1d	search_snapshots_amortize_new_queries	991	"assert_eq!(code, 0, ""{stderr}"");"	normal_aws_search_ranks_user_facing_packages	crates/pkg-cli/tests/cli.rs	878	C
+df1af1d	search_snapshots_amortize_new_queries	999	assert_eq!(	normal_aws_search_ranks_user_facing_packages	crates/pkg-cli/tests/cli.rs	878	C
+df1af1d	search_snapshots_amortize_new_queries	1003	"assert!(ids.contains(&""brew:homebrew/core/awscli""));"	normal_aws_search_ranks_user_facing_packages	crates/pkg-cli/tests/cli.rs	878	C
+df1af1d	search_snapshots_amortize_new_queries	1004	"assert!(ids.contains(&""cask:homebrew/cask/aws-vault-binary""));"	normal_aws_search_ranks_user_facing_packages	crates/pkg-cli/tests/cli.rs	878	C
+df1af1d	search_snapshots_amortize_new_queries	1005	"assert!(ids.contains(&""cask:acme/tools/aws-console""));"	normal_aws_search_ranks_user_facing_packages	crates/pkg-cli/tests/cli.rs	878	C
+df1af1d	search_snapshots_amortize_new_queries	1006	"assert!(!ids.iter().any(|id| id.contains(""aws-disabled"")"	normal_aws_search_ranks_user_facing_packages	crates/pkg-cli/tests/cli.rs	878	C
+df1af1d	search_snapshots_amortize_new_queries	1011	"assert_eq!(code, 0, ""{stderr}"");"	search_limit_keeps_source_groups	crates/pkg-cli/tests/cli.rs	910	C
+df1af1d	search_snapshots_amortize_new_queries	1012	assert!(	search_limit_keeps_source_groups	crates/pkg-cli/tests/cli.rs	910	C
+df1af1d	search_snapshots_amortize_new_queries	1025	"assert!(stdout.contains(id), ""{stdout}"");"	search_limit_keeps_source_groups	crates/pkg-cli/tests/cli.rs	910	C
+df1af1d	search_snapshots_amortize_new_queries	1027	assert_eq!(	search_limit_keeps_source_groups	crates/pkg-cli/tests/cli.rs	910	C
+df1af1d	search_snapshots_amortize_new_queries	1040	"assert_eq!(code, 0, ""{stderr}"");"	formula_aliases_have_canonical_install_commands	crates/pkg-cli/tests/cli.rs	942	C
+df1af1d	search_snapshots_amortize_new_queries	1042	assert_eq!(	formula_aliases_have_canonical_install_commands	crates/pkg-cli/tests/cli.rs	942	C
+df1af1d	search_snapshots_amortize_new_queries	1046	assert_eq!(	formula_aliases_have_canonical_install_commands	crates/pkg-cli/tests/cli.rs	942	C
+df1af1d	search_snapshots_amortize_new_queries	1055	"assert_eq!(code, 0, ""{stderr}"");"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1057	"assert_eq!(value[""result""][""total""], 26);"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1058	"assert_eq!(value[""result""][""results""].as_array().unwrap().len(), 2);"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1059	"assert_eq!(value[""result""][""sources""].as_array().unwrap().len(), 1);"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1062	"assert_eq!(code, 0, ""{stderr}"");"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1063	"assert!(stdout.contains(""disabled""), ""{stdout}"");"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1065	"assert_eq!(code, 0, ""{stderr}"");"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1066	assert!(	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1071	"assert_eq!(code, 0, ""{stderr}"");"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1072	assert!(	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1077	"assert_eq!(code, 0, ""{stderr}"");"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1078	assert!(	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1083	"assert!(!stdout.contains(""nixpkgs:""), ""{stdout}"");"	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1084	assert!(formulae.exists());	source_filters_and_exact_formula_queries_preserve_visibility	crates/pkg-cli/tests/cli.rs	960	C
+df1af1d	search_snapshots_amortize_new_queries	1100	"assert_eq!(code, 1, ""{stderr}"");"	invalid_formula_refresh_retains_previous_snapshot	crates/pkg-cli/tests/cli.rs	995	C
+df1af1d	search_snapshots_amortize_new_queries	1101	"assert!(stderr.contains(""formula catalog index""), ""{stderr}"");"	invalid_formula_refresh_retains_previous_snapshot	crates/pkg-cli/tests/cli.rs	995	C
+df1af1d	search_snapshots_amortize_new_queries	1102	assert_eq!(std::fs::read(&formula_snapshot).unwrap(), complete);	invalid_formula_refresh_retains_previous_snapshot	crates/pkg-cli/tests/cli.rs	995	C
+df1af1d	search_snapshots_amortize_new_queries	1104	assert!(	normal_aws_search_ranks_user_facing_packages	crates/pkg-cli/tests/cli.rs	878	C
+df1af1d	search_snapshots_amortize_new_queries	1114	"assert_eq!(value[""result""][""approximate""], false);"	normal_aws_search_ranks_user_facing_packages	crates/pkg-cli/tests/cli.rs	878	C
+df1af1d	search_snapshots_amortize_new_queries	1116	"assert_eq!(code, 0, ""{stderr}"");"	broad_search_includes_low_priority_matches	crates/pkg-cli/tests/cli.rs	1023	C
+df1af1d	search_snapshots_amortize_new_queries	1126	"assert!(stdout.contains(extra), ""{extra}: {stdout}"");"	broad_search_includes_low_priority_matches	crates/pkg-cli/tests/cli.rs	1023	C
+df1af1d	search_snapshots_amortize_new_queries	1130	"assert_eq!(code, 0, ""{stderr}"");"	explicit_source_filters_select_one_source	crates/pkg-cli/tests/cli.rs	1041	C
+df1af1d	search_snapshots_amortize_new_queries	1132	"assert_eq!(value[""result""][""sources""].as_array().unwrap().len(), 1);"	explicit_source_filters_select_one_source	crates/pkg-cli/tests/cli.rs	1041	C
+df1af1d	search_snapshots_amortize_new_queries	1133	assert_eq!(	explicit_source_filters_select_one_source	crates/pkg-cli/tests/cli.rs	1041	C
+df1af1d	search_snapshots_amortize_new_queries	1141	"assert_eq!(code, 0, ""{stderr}"");"	duplicate_native_names_keep_distinct_attributes	crates/pkg-cli/tests/cli.rs	1057	C
+df1af1d	search_snapshots_amortize_new_queries	1144	"assert_eq!(rows.len(), expected, ""{stdout}"");"	duplicate_native_names_keep_distinct_attributes	crates/pkg-cli/tests/cli.rs	1057	C
+df1af1d	search_snapshots_amortize_new_queries	1145	assert!(	duplicate_native_names_keep_distinct_attributes	crates/pkg-cli/tests/cli.rs	1057	C
+df1af1d	search_snapshots_amortize_new_queries	1151	assert!(	duplicate_native_names_keep_distinct_attributes	crates/pkg-cli/tests/cli.rs	1057	C
+df1af1d	search_snapshots_amortize_new_queries	1160	"assert_eq!(code, 0, ""{stderr}"");"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1162	"assert_eq!(value[""result""][""sources""].as_array().unwrap().len(), 1);"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1163	assert_eq!(	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1169	"assert_eq!(code, 0, ""{stderr}"");"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1170	"assert!(stdout.contains(""cask:homebrew/cask/aws-vault-binary""));"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1171	"assert!(stdout.contains(""cask:acme/tools/aws-console""));"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1172	"assert!(!stdout.contains(""nixpkgs:""));"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1174	"assert_eq!(code, 0, ""{stderr}"");"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1175	"assert!(stdout.contains(""cask:acme/tools/aws-console""));"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1176	"assert!(!stdout.contains(""homebrew/cask""));"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1178	"assert_eq!(code, 0, ""{stderr}"");"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1179	"assert!(stdout.contains(""nixpkgs:awscli2""));"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1180	"assert!(!stdout.contains(""cask:""));"	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1182	assert_eq!(code, 2);	query_prefixes_combine_with_source_filters	crates/pkg-cli/tests/cli.rs	1082	C
+df1af1d	search_snapshots_amortize_new_queries	1184	"assert_eq!(code, 0, ""{stderr}"");"	multiword_search_uses_description_terms	crates/pkg-cli/tests/cli.rs	1112	C
+df1af1d	search_snapshots_amortize_new_queries	1185	"assert!(stdout.contains(""cask:homebrew/cask/aws-vault-binary""));"	multiword_search_uses_description_terms	crates/pkg-cli/tests/cli.rs	1112	C
+df1af1d	search_snapshots_amortize_new_queries	1186	"assert!(!stdout.contains(""awscli2""));"	multiword_search_uses_description_terms	crates/pkg-cli/tests/cli.rs	1112	C
+df1af1d	search_snapshots_amortize_new_queries	1188	"assert_eq!(code, 0, ""{stderr}"");"	multiword_search_uses_description_terms	crates/pkg-cli/tests/cli.rs	1112	C
+df1af1d	search_snapshots_amortize_new_queries	1189	"assert!(stdout.contains(""nixpkgs:aws-sdk-cpp""));"	multiword_search_uses_description_terms	crates/pkg-cli/tests/cli.rs	1112	C
+df1af1d	search_snapshots_amortize_new_queries	1190	"assert!(!stdout.contains(""awscli2""));"	multiword_search_uses_description_terms	crates/pkg-cli/tests/cli.rs	1112	C
+df1af1d	search_snapshots_amortize_new_queries	1192	"assert_eq!(code, 0, ""{stderr}"");"	fuzzy_fallback_yields_to_later_literal_match	crates/pkg-cli/tests/cli.rs	1125	C
+df1af1d	search_snapshots_amortize_new_queries	1194	"assert_eq!(value[""result""][""approximate""], true);"	fuzzy_fallback_yields_to_later_literal_match	crates/pkg-cli/tests/cli.rs	1125	C
+df1af1d	search_snapshots_amortize_new_queries	1195	"assert_eq!(value[""result""][""results""][0][""id""], ""nixpkgs:ripgrep"");"	fuzzy_fallback_yields_to_later_literal_match	crates/pkg-cli/tests/cli.rs	1125	C
+df1af1d	search_snapshots_amortize_new_queries	1197	"assert_eq!(code, 0, ""{stderr}"");"	fuzzy_fallback_yields_to_later_literal_match	crates/pkg-cli/tests/cli.rs	1125	C
+df1af1d	search_snapshots_amortize_new_queries	1198	"assert!(stdout.contains(""No matches""));"	fuzzy_fallback_yields_to_later_literal_match	crates/pkg-cli/tests/cli.rs	1125	C
+df1af1d	search_snapshots_amortize_new_queries	1201	"assert_eq!(code, 0, ""{stderr}"");"	fuzzy_fallback_yields_to_later_literal_match	crates/pkg-cli/tests/cli.rs	1125	C
+df1af1d	search_snapshots_amortize_new_queries	1203	"assert_eq!(value[""result""][""approximate""], false);"	fuzzy_fallback_yields_to_later_literal_match	crates/pkg-cli/tests/cli.rs	1125	C
+df1af1d	search_snapshots_amortize_new_queries	1204	"assert_eq!(value[""result""][""total""], 1);"	fuzzy_fallback_yields_to_later_literal_match	crates/pkg-cli/tests/cli.rs	1125	C
+df1af1d	search_snapshots_amortize_new_queries	1205	assert_eq!(	fuzzy_fallback_yields_to_later_literal_match	crates/pkg-cli/tests/cli.rs	1125	C
+df1af1d	search_snapshots_amortize_new_queries	1210	assert_eq!(code, 2);	empty_query_is_usage_error	crates/pkg-cli/tests/cli.rs	1149	C
+df1af1d	search_snapshots_amortize_new_queries	1216	"assert_eq!(code, 0, ""{stderr}"");"	broken_registry_is_isolated_from_selected_sources	crates/pkg-cli/tests/cli.rs	1156	C
+df1af1d	search_snapshots_amortize_new_queries	1217	"assert!(stderr.is_empty(), ""{stderr}"");"	broken_registry_is_isolated_from_selected_sources	crates/pkg-cli/tests/cli.rs	1156	C
+df1af1d	search_snapshots_amortize_new_queries	1218	"assert!(stdout.contains(""brew:homebrew/core/awscli""));"	broken_registry_is_isolated_from_selected_sources	crates/pkg-cli/tests/cli.rs	1156	C
+df1af1d	search_snapshots_amortize_new_queries	1220	"assert_eq!(code, 0, ""{stderr}"");"	broken_registry_is_isolated_from_selected_sources	crates/pkg-cli/tests/cli.rs	1156	C
+df1af1d	search_snapshots_amortize_new_queries	1221	assert!(	broken_registry_is_isolated_from_selected_sources	crates/pkg-cli/tests/cli.rs	1156	C
+df1af1d	search_snapshots_amortize_new_queries	1225	"assert!(stdout.contains(""nixpkgs:ripgrep""));"	broken_registry_is_isolated_from_selected_sources	crates/pkg-cli/tests/cli.rs	1156	C
+df1af1d	search_snapshots_amortize_new_queries	1227	"assert_eq!(code, 0, ""healthy rows remain: {stderr}"");"	broken_registry_is_isolated_from_selected_sources	crates/pkg-cli/tests/cli.rs	1156	C
+df1af1d	search_snapshots_amortize_new_queries	1228	"assert!(stdout.contains(""nixpkgs:ripgrep""));"	broken_registry_is_isolated_from_selected_sources	crates/pkg-cli/tests/cli.rs	1156	C
+df1af1d	search_snapshots_amortize_new_queries	1229	"assert!(stderr.contains(""Results are incomplete""), ""{stderr}"");"	broken_registry_is_isolated_from_selected_sources	crates/pkg-cli/tests/cli.rs	1156	C
+df1af1d	search_snapshots_amortize_new_queries	1252	"assert_eq!(code, 0, ""{stderr}"");"	stale_snapshots_remain_visible_and_marked	crates/pkg-cli/tests/cli.rs	1181	C
+df1af1d	search_snapshots_amortize_new_queries	1254	"assert_eq!(value[""result""][""sources""][0][""status""], ""stale"");"	stale_snapshots_remain_visible_and_marked	crates/pkg-cli/tests/cli.rs	1181	C
+df1af1d	search_snapshots_amortize_new_queries	1255	"assert_eq!(value[""result""][""results""][0][""stale""], true);"	stale_snapshots_remain_visible_and_marked	crates/pkg-cli/tests/cli.rs	1181	C
+df1af1d	search_snapshots_amortize_new_queries	1259	"assert_eq!(code, 1, ""{stderr}"");"	bare_install_miss_uses_targeted_metadata_with_related_packages	crates/pkg-cli/tests/cli.rs	1211	C
+df1af1d	search_snapshots_amortize_new_queries	1260	assert!(stdout.is_empty());	bare_install_miss_uses_targeted_metadata_with_related_packages	crates/pkg-cli/tests/cli.rs	1211	C
+df1af1d	search_snapshots_amortize_new_queries	1261	"assert!(stderr.contains(""needs an exact package ID""), ""{stderr}"");"	bare_install_miss_uses_targeted_metadata_with_related_packages	crates/pkg-cli/tests/cli.rs	1211	C
+df1af1d	search_snapshots_amortize_new_queries	1262	assert!(	bare_install_miss_uses_targeted_metadata_with_related_packages	crates/pkg-cli/tests/cli.rs	1211	C
+df1af1d	search_snapshots_amortize_new_queries	1266	"assert!(!stderr.contains(""Installing:""));"	bare_install_miss_uses_targeted_metadata_with_related_packages	crates/pkg-cli/tests/cli.rs	1211	C
+df1af1d	search_snapshots_amortize_new_queries	1267	assert_eq!(	bare_install_miss_uses_targeted_metadata_with_related_packages	crates/pkg-cli/tests/cli.rs	1211	C
+df1af1d	search_snapshots_amortize_new_queries	1286	"assert_eq!(code, 1, ""{stderr}"");"	cold_bare_install_miss_uses_targeted_metadata	crates/pkg-cli/tests/cli.rs	1232	C
+df1af1d	search_snapshots_amortize_new_queries	1287	"assert!(stderr.contains(""no supported exact match""));"	cold_bare_install_miss_uses_targeted_metadata	crates/pkg-cli/tests/cli.rs	1232	C
+df1af1d	search_snapshots_amortize_new_queries	1288	assert_eq!(	cold_bare_install_miss_uses_targeted_metadata	crates/pkg-cli/tests/cli.rs	1232	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1700	"assert_eq!(output.status.code(), Some(1), ""{scenario}: {stderr}"");"	conflicts_name_one_verified_owner_and_hide_replacement_commands	crates/pkg-cli/tests/file_conflicts.rs	207	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1701	assert!(output.stdout.is_empty());	conflicts_name_one_verified_owner_and_hide_replacement_commands	crates/pkg-cli/tests/file_conflicts.rs	207	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1702	"assert!(stderr.contains(""bin/bat""), ""{scenario}: {stderr}"");"	conflicts_name_one_verified_owner_and_hide_replacement_commands	crates/pkg-cli/tests/file_conflicts.rs	207	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1704	one => assert!(	conflicts_name_one_verified_owner_and_hide_replacement_commands	crates/pkg-cli/tests/file_conflicts.rs	207	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1711	assert!(	conflicts_name_all_verified_owners	crates/pkg-cli/tests/file_conflicts.rs	220	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1715	assert!(	conflicts_name_all_verified_owners	crates/pkg-cli/tests/file_conflicts.rs	220	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1721	assert!(	conflicts_do_not_claim_unknown_or_unmatched_owners	crates/pkg-cli/tests/file_conflicts.rs	238	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1725	"assert!(!stderr.contains(""nixpkgs:bat""), ""{stderr}"");"	conflicts_do_not_claim_unknown_or_unmatched_owners	crates/pkg-cli/tests/file_conflicts.rs	238	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1733	"assert!(stderr.contains(state), ""{scenario}: {stderr}"");"	conflicts_do_not_claim_unknown_or_unmatched_owners	crates/pkg-cli/tests/file_conflicts.rs	238	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1734	assert!(	conflicts_do_not_claim_unknown_or_unmatched_owners	crates/pkg-cli/tests/file_conflicts.rs	238	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1746	assert!(	conflicts_do_not_claim_unknown_or_unmatched_owners	crates/pkg-cli/tests/file_conflicts.rs	238	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1751	"assert!(stderr.contains(""warning: a separate warning""), ""{stderr}"");"	conflicts_do_not_claim_unknown_or_unmatched_owners	crates/pkg-cli/tests/file_conflicts.rs	238	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1752	assert!(	conflicts_do_not_claim_unknown_or_unmatched_owners	crates/pkg-cli/tests/file_conflicts.rs	238	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1756	assert_eq!(	conflicts_do_not_claim_unknown_or_unmatched_owners	crates/pkg-cli/tests/file_conflicts.rs	238	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1764	"assert_eq!(output.status.code(), Some(1), ""{stderr}"");"	verbose_conflicts_include_native_repair_context	crates/pkg-cli/tests/file_conflicts.rs	268	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1765	"assert!(stderr.contains(""/nix/store/old-bat/bin/bat""), ""{stderr}"");"	verbose_conflicts_include_native_repair_context	crates/pkg-cli/tests/file_conflicts.rs	268	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1766	"assert!(stderr.contains(""--priority 4""), ""{stderr}"");"	verbose_conflicts_include_native_repair_context	crates/pkg-cli/tests/file_conflicts.rs	268	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1774	assert_eq!(	already_installed_package_skips_profile_add	crates/pkg-cli/tests/file_conflicts.rs	279	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1780	assert_eq!(	already_installed_package_skips_profile_add	crates/pkg-cli/tests/file_conflicts.rs	279	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1784	assert_eq!(	already_installed_package_skips_profile_add	crates/pkg-cli/tests/file_conflicts.rs	279	C
+df1af1d	file_conflicts_name_verified_owners_without_replacement_commands	1788	assert!(	already_installed_package_skips_profile_add	crates/pkg-cli/tests/file_conflicts.rs	279	C

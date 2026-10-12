@@ -550,162 +550,6 @@ fn doctor_forwards_verbose_and_no_color_to_native_children() {
     );
 }
 
-/// The cask lane answers from the generated catalog index through a fake
-/// Nix runtime: info reports an excluded token with its recorded reason,
-/// install refuses excluded and unknown tokens before any profile change,
-/// and search returns eligible cask rows without evaluating derivations.
-#[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one integration journey checks cask info, install gates, updates, and search"
-)]
-fn cask_flows_read_the_generated_index() {
-    let bin = tempfile::tempdir().expect("tempdir");
-    let home = tempfile::tempdir().expect("tempdir");
-    let nix = bin.path().join("nix");
-    let formula_file = formula_index_fixture(bin.path()).display().to_string();
-    let catalog = r#"{"schema":"pkg-cask-catalog/4",
-      "generator":{"name":"cask-catalog","version":"0.1.0"},
-      "inputs":{"homebrew/cask":{"url":"github:BatteredBunny/brew-api/245947c0","revision":"245947c0",
-        "sha256":"9f3b1c47ae5d2801c6a1b74f0e39c4d2a8f60c15d7e3b28a4c05f6e9d1a7b3c2",
-        "license":"Homebrew license"}},
-      "targets":["aarch64-darwin","x86_64-linux"],
-      "macosBaseline":"15.7.7",
-      "systems":{"aarch64-darwin":{"entries":{}},
-        "x86_64-linux":{"entries":{
-        "homebrew/cask/1password-cli":{"source":"homebrew/cask","token":"1password-cli","name":"1Password CLI",
-          "description":"The 1Password command-line tool","version":"2.39.0",
-          "homepage":"https://developer.1password.com/docs/cli/",
-          "status":"eligible","kind":"binary","reason":null,"detail":null},
-        "homebrew/cask/iterm2":{"source":"homebrew/cask","token":"iterm2","name":"iTerm2","description":null,
-          "version":"3.6.11","homepage":"https://iterm2.com/","status":"excluded",
-          "kind":null,"reason":"unsupported-platform","detail":null}}}}}"#;
-    std::fs::write(
-        &nix,
-        format!(
-            "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"2403040105060708090a0b0c0d0e0f1011121314\"}}}}';;\n  *'#formulaIndex'*) cat '{formula_file}' ;;\n  *'eval --json'*) cat <<'JSON'\n{catalog}\nJSON\n;;\n  *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n"
-        ),
-    )
-    .expect("write fake nix");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mut permissions = std::fs::metadata(&nix).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&nix, permissions).expect("chmod");
-    }
-    let run = |args: &[&str]| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
-        command
-            .args(args)
-            .env_remove("XDG_STATE_HOME")
-            .env_remove("XDG_CACHE_HOME")
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
-            .env("HOME", home.path())
-            .env("XDG_STATE_HOME", home.path().join("state"))
-            .env("XDG_CACHE_HOME", home.path().join("cache"));
-        let output = command.output().expect("spawn pkg");
-        (
-            output.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        )
-    };
-
-    // An excluded token reports its recorded reason through info.
-    let (code, stdout, _) = run(&["info", "cask:iterm2"]);
-    assert_eq!(code, 0, "info reports recorded exclusion");
-    assert!(stdout.contains("Cannot install"), "{stdout}");
-    assert!(stdout.contains("unsupported-platform"), "{stdout}");
-
-    // Install refuses the excluded token and an unknown token before any
-    // profile mutation; the unexpected-call guard proves no install ran.
-    // A bare token that matches no source is refused at resolution; the
-    // qualified form reaches the gate and names the generated catalog.
-    let (code, _, stderr) = run(&["install", "cask:iterm2"]);
-    assert_eq!(code, 1);
-    assert!(stderr.contains("unsupported-platform"), "{stderr}");
-    let (code, _, stderr) = run(&["install", "cask:missing-token"]);
-    assert_eq!(code, 1);
-    assert!(stderr.contains("missing-token"), "{stderr}");
-    let (code, _, stderr) = run(&["install", "cask:homebrew/cask/missing-token"]);
-    assert_eq!(code, 1);
-    assert!(stderr.contains("not in the generated catalog"), "{stderr}");
-
-    // Preparation can retain a healthy source when another source fails.
-    let (code, _, stderr) = run(&["update", "--catalogs-only"]);
-    assert_eq!(code, 1, "native fixture has no package outputs: {stderr}");
-    assert!(stderr.contains("Ready: cask"), "{stderr}");
-
-    // Explicit regex search lists eligible rows without any Nix call.
-    let (code, stdout, _) = run(&["search", "iterm|1password", "--regex", "--source", "cask"]);
-    assert_eq!(code, 0, "{stdout}");
-    assert!(
-        stdout.contains("cask:homebrew/cask/1password-cli"),
-        "{stdout}"
-    );
-    assert!(
-        !stdout.contains("cask:homebrew/cask/iterm2"),
-        "excluded rows stay hidden: {stdout}"
-    );
-    assert!(stdout.contains("2.39.0"), "{stdout}");
-    let (code, stdout, _) = run(&["search", "iterm2", "--source", "cask"]);
-    assert_eq!(code, 0);
-    assert!(
-        stdout.contains("excluded: unsupported-platform"),
-        "{stdout}"
-    );
-    let (code, stdout, _) = run(&["search", "iterm", "--source", "cask", "--unavailable"]);
-    assert_eq!(code, 0);
-    assert!(stdout.contains("cask:homebrew/cask/iterm2"), "{stdout}");
-
-    let profile = home.path().join("state/nix/profiles/pkg");
-    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
-    std::os::unix::fs::symlink("missing-generation", &profile).unwrap();
-    let script = std::fs::read_to_string(&nix).unwrap().replace(
-        "echo '{\"version\":3,\"elements\":{}}'",
-        "echo 'error: unreadable profile' >&2; exit 1",
-    );
-    std::fs::write(&nix, script).unwrap();
-    let (code, stdout, stderr) = run(&["info", "cask:homebrew/cask/iterm2", "--json"]);
-    assert_eq!(code, 1, "{stderr}");
-    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(value["result"]["installed_state"], "unknown");
-    assert!(
-        value["result"]["installed_error"]
-            .as_str()
-            .unwrap()
-            .contains("unreadable profile")
-    );
-    let (code, stdout, _) = run(&["doctor", "--json"]);
-    assert_eq!(code, 1);
-    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let profile_row = value["result"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|row| row["component"] == "pkg profile")
-        .unwrap();
-    assert_eq!(profile_row["status"], "unreadable");
-
-    let script = std::fs::read_to_string(&nix)
-        .unwrap()
-        .replace("*'eval --json'*) cat", "*'eval --json'*) exit 130; cat");
-    std::fs::write(&nix, script).unwrap();
-    for command in ["info", "install"] {
-        for id in ["cask:iterm2", "cask:homebrew/cask/iterm2"] {
-            let (code, stdout, stderr) = run(&[command, id]);
-            assert_eq!(code, 130, "{command} {id}: {stderr}");
-            assert!(stdout.is_empty(), "{stdout}");
-            assert!(stderr.contains("Discovery cancelled"), "{stderr}");
-            assert_eq!(
-                std::fs::read_link(&profile).unwrap(),
-                std::path::Path::new("missing-generation")
-            );
-        }
-    }
-}
-
 fn formula_index_fixture(bin: &std::path::Path) -> std::path::PathBuf {
     let payload = bin.join("formula-index.json");
     let names: Vec<String> = std::iter::once(String::from("awscli"))
@@ -801,33 +645,33 @@ fn publish_search_tap(state: &std::path::Path) {
     );
 }
 
-/// The nixpkgs lane amortizes evaluation with a revision snapshot: the
-/// setup builds the complete database in bounded batches, a
-/// different query at the same revision answers from the snapshot without
-/// a second native search or index evaluation, and an invalid pattern
-/// fails before any child runs. Proven by a fake Nix runtime that logs
-/// every search and eval call.
-#[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one integration journey proves snapshot reuse and cold-query evaluation counts"
-)]
-fn search_snapshots_amortize_new_queries() {
-    let bin = tempfile::tempdir().expect("tempdir");
-    let home = tempfile::tempdir().expect("tempdir");
-    let nix = bin.path().join("nix");
-    let formulae = formula_index_fixture(bin.path());
-    let log = bin.path().join("calls.log");
-    let index_file = bin.path().join("index.json");
-    let index = search_fixture_index(
-        "homebrew/cask",
-        &[
-            ("aws-vault-binary", "AWS Vault", "Stores AWS credentials"),
-            ("corretto@11", "AWS Corretto JDK", "Java runtime"),
-        ],
-    );
-    std::fs::write(&index_file, serde_json::to_string(&index).unwrap()).unwrap();
-    std::fs::write(&nix, format!(r#"#!/usr/bin/python3
+struct SearchContext {
+    bin: tempfile::TempDir,
+    home: tempfile::TempDir,
+    nix: std::path::PathBuf,
+    log: std::path::PathBuf,
+    cache: std::path::PathBuf,
+    formulae: std::path::PathBuf,
+    original_runtime: String,
+}
+
+impl SearchContext {
+    fn ready() -> Self {
+        let bin = tempfile::tempdir().expect("tempdir");
+        let home = tempfile::tempdir().expect("tempdir");
+        let nix = bin.path().join("nix");
+        let formulae = formula_index_fixture(bin.path());
+        let log = bin.path().join("calls.log");
+        let index_file = bin.path().join("index.json");
+        let index = search_fixture_index(
+            "homebrew/cask",
+            &[
+                ("aws-vault-binary", "AWS Vault", "Stores AWS credentials"),
+                ("corretto@11", "AWS Corretto JDK", "Java runtime"),
+            ],
+        );
+        std::fs::write(&index_file, serde_json::to_string(&index).unwrap()).unwrap();
+        std::fs::write(&nix, format!(r#"#!/usr/bin/python3
 import json,re,sys
 args=sys.argv[1:];text=" ".join(args)
 if "--version" in args: print("nix (Nix) 2.35.2")
@@ -835,7 +679,7 @@ elif "config show system" in text: print("x86_64-linux")
 elif "flake metadata" in text:
  owner,repo,rev=("NixOS","nixpkgs","a"*40) if "nixpkgs" in text else ("spa5k","pkg","b"*40)
  print(json.dumps({{"url":"github:"+owner+"/"+repo,"locked":{{"type":"github","owner":owner,"repo":repo,"rev":rev}}}}))
-elif "eval" in args and '#formulaIndex' in text: print(open({formulae:?}).read())
+elif "eval" in args and '#formulaIndex' in text: print(open({formulae_literal}).read())
 elif "eval" in args and ("--apply" in args or "--expr" in args):
  with open({log},"a") as log: log.write("batch\n")
  expression=args[args.index("--apply")+1] if "--apply" in args else args[args.index("--expr")+1]
@@ -856,60 +700,87 @@ elif "eval" in args and ("--apply" in args or "--expr" in args):
  print(json.dumps(rows))
 elif "eval" in args:
  with open({log},"a") as log: log.write("index\n")
- print(open({index_file:?}).read())
+ print(open({index_file_literal}).read())
 else: sys.exit(9)
-"#, log = format!("{:?}", log), index_file = index_file, formulae = formulae)).expect("write fake nix");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mut permissions = std::fs::metadata(&nix).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&nix, permissions).expect("chmod");
+"#, log = serde_json::to_string(log.to_str().unwrap()).unwrap(), index_file_literal = serde_json::to_string(index_file.to_str().unwrap()).unwrap(), formulae_literal = serde_json::to_string(formulae.to_str().unwrap()).unwrap())).expect("write fake nix");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut permissions = std::fs::metadata(&nix).expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&nix, permissions).expect("chmod");
+        }
+        let cache = home.path().join("cache");
+        let mut context = Self {
+            bin,
+            home,
+            nix,
+            log,
+            cache,
+            formulae,
+            original_runtime: String::new(),
+        };
+        let (code, _, stderr) = context.run(&["setup", "--no-background"]);
+        assert_eq!(code, 0, "{stderr}");
+        publish_search_tap(&context.home.path().join("state"));
+        context.original_runtime = std::fs::read_to_string(&context.nix).unwrap();
+        std::fs::write(
+            &context.nix,
+            "#!/bin/sh\necho unexpected-runtime-call >&2\nexit 99\n",
+        )
+        .unwrap();
+        context
     }
-    let cache = home.path().join("cache");
-    let run = |args: &[&str]| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
-        command
+
+    fn run(&self, args: &[&str]) -> (i32, String, String) {
+        let output = Command::new(env!("CARGO_BIN_EXE_pkg"))
             .args(args)
             .env_remove("XDG_STATE_HOME")
             .env_remove("XDG_CACHE_HOME")
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
-            .env("HOME", home.path())
-            .env("XDG_STATE_HOME", home.path().join("state"))
-            .env("XDG_CACHE_HOME", &cache);
-        let output = command.output().expect("spawn pkg");
+            .env(
+                "PATH",
+                format!("{}:/usr/bin:/bin", self.bin.path().display()),
+            )
+            .env("HOME", self.home.path())
+            .env("XDG_STATE_HOME", self.home.path().join("state"))
+            .env("XDG_CACHE_HOME", &self.cache)
+            .output()
+            .expect("spawn pkg");
         (
             output.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&output.stdout).into_owned(),
             String::from_utf8_lossy(&output.stderr).into_owned(),
         )
-    };
+    }
 
-    // Preparation: two roots, three metadata batches, and one index eval.
-    let (code, _, stderr) = run(&["setup", "--no-background"]);
-    assert_eq!(code, 0, "{stderr}");
-    publish_search_tap(&home.path().join("state"));
-    let original_runtime = std::fs::read_to_string(&nix).unwrap();
-    // Any attempted runtime call after preparation would now fail.
+    fn calls(&self) -> String {
+        std::fs::read_to_string(&self.log).expect("log written")
+    }
+
+    fn pkg_cache(&self) -> std::path::PathBuf {
+        self.cache.join("pkg")
+    }
+}
+
+#[test]
+fn prepared_catalogs_reuse_snapshot_without_runtime_calls() {
+    let context = SearchContext::ready();
     std::fs::write(
-        &nix,
+        &context.nix,
         "#!/bin/sh\necho unexpected-runtime-call >&2\nexit 99\n",
     )
     .unwrap();
-    let (code, stdout, stderr) = run(&["search", "ripgrep"]);
+    let (code, stdout, stderr) = context.run(&["search", "ripgrep"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");
-
-    let calls = std::fs::read_to_string(&log).expect("log written");
+    let calls = context.calls();
     assert_eq!(
         calls.lines().count(),
         6,
         "five batches + one index eval: {calls}"
     );
     assert!(calls.contains("batch"), "{calls}");
-    // A snapshot file was written for both sources.
-    let pkg_cache = cache.join("pkg");
-    let snapshots = std::fs::read_dir(&pkg_cache)
+    let snapshots = std::fs::read_dir(context.pkg_cache())
         .expect("cache dir")
         .flatten()
         .filter(|entry| {
@@ -918,76 +789,95 @@ else: sys.exit(9)
         })
         .count();
     assert_eq!(snapshots, 4, "three catalogs and one checked marker");
-
-    // A different query at the same revision: no new search, no new eval.
-    let (code, stdout, stderr) = run(&["search", "grep|searcher", "--regex"]);
+    let (code, stdout, stderr) = context.run(&["search", "grep|searcher", "--regex"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");
     assert!(stdout.contains("nixpkgs:gnugrep"), "{stdout}");
-    let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 6, "snapshot reused: {calls}");
-
-    // The zzz-empty fixture stays hidden here: its name and description
-    // (empty) do not match `grep|searcher`.
     assert!(!stdout.contains("zzz-empty"), "{stdout}");
+    assert_eq!(context.calls().lines().count(), 6, "snapshot reused");
+}
 
-    // Native matching fields, locally: a pattern anchored past the pname
-    // matches only through the full attribute path.
+#[test]
+fn native_regex_matches_attribute_and_empty_description() {
+    let context = SearchContext::ready();
     let (code, stdout, stderr) =
-        run(&["search", "^legacyPackages\\.x86_64-linux\\.zzz", "--regex"]);
+        context.run(&["search", "^legacyPackages\\.x86_64-linux\\.zzz", "--regex"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("nixpkgs:zzz-empty"), "{stdout}");
     assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");
-    let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 6, "no new calls: {calls}");
-
-    // `^$` matches an empty description natively; it is not skipped.
-    let (code, stdout, stderr) = run(&["search", "^$", "--regex"]);
+    let (code, stdout, stderr) = context.run(&["search", "^$", "--regex"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("nixpkgs:zzz-empty"), "{stdout}");
     assert!(!stdout.contains("nixpkgs:ripgrep"), "{stdout}");
     assert!(!stdout.contains("nixpkgs:gnugrep"), "{stdout}");
-    let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 6, "no new calls: {calls}");
+    assert_eq!(context.calls().lines().count(), 6, "no new runtime calls");
+}
 
-    // An invalid pattern fails before any child runs.
-    let (code, _, stderr) = run(&["search", "(", "--regex"]);
+#[test]
+fn invalid_regex_fails_before_runtime_calls() {
+    let context = SearchContext::ready();
+    let (code, _, stderr) = context.run(&["search", "(", "--regex"]);
     assert_eq!(code, 2);
     assert!(stderr.contains("Invalid search pattern"), "{stderr}");
-    let calls = std::fs::read_to_string(&log).expect("log written");
-    assert_eq!(calls.lines().count(), 6, "no new calls: {calls}");
-    let (code, stdout, stderr) = run(&["search", "grep", "--limit", "2", "--source", "nixpkgs"]);
+    assert_eq!(context.calls().lines().count(), 6, "no runtime call");
+}
+
+#[test]
+fn search_output_has_order_limits_and_json_totals() {
+    let context = SearchContext::ready();
+    let (code, stdout, stderr) =
+        context.run(&["search", "grep", "--limit", "2", "--source", "nixpkgs"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
         stdout.find("nixpkgs:gnugrep").unwrap() < stdout.find("nixpkgs:ripgrep").unwrap(),
         "{stdout}"
     );
     assert!(stdout.contains("Showing 2 of 27 matches"), "{stdout}");
-    let (code, stdout, stderr) = run(&["search", "grep", "--json"]);
+    let (code, stdout, stderr) = context.run(&["search", "grep", "--json"]);
     assert_eq!(code, 0, "{stderr}");
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(value["result"]["total"], 27);
     assert_eq!(value["result"]["results"].as_array().unwrap().len(), 27);
     assert_eq!(value["result"]["sources"][0]["status"], "cached");
-    let (code, stdout, stderr) = run(&["search", "grep|searcher"]);
+}
+
+#[test]
+fn literal_search_treats_regex_characters_as_text() {
+    let context = SearchContext::ready();
+    let (code, stdout, stderr) = context.run(&["search", "grep|searcher"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("No matches"), "literal pipe: {stdout}");
-    let (code, stdout, stderr) = run(&["search", "["]);
+    let (code, stdout, stderr) = context.run(&["search", "["]);
     assert_eq!(code, 0, "literal bracket: {stderr}");
-    assert!(stdout.contains("No matches"));
-    let (code, _, stderr) = run(&["update", "--catalogs-only"]);
+    assert!(stdout.contains("No matches"), "{stdout}");
+}
+
+#[test]
+fn failed_update_retains_complete_snapshot() {
+    let context = SearchContext::ready();
+    let (code, _, stderr) = context.run(&["update", "--catalogs-only"]);
     assert_eq!(code, 1, "refresh must fail: {stderr}");
-    let (code, stdout, stderr) = run(&["search", "ripgrep"]);
+    let (code, stdout, stderr) = context.run(&["search", "ripgrep"]);
     assert_eq!(code, 0, "old complete catalog survives: {stderr}");
-    assert!(stdout.contains("nixpkgs:ripgrep"));
-    let (code, stdout, stderr) = run(&["search", "grep", "--json", "--limit", "2"]);
+    assert!(stdout.contains("nixpkgs:ripgrep"), "{stdout}");
+}
+
+#[test]
+fn search_limit_preserves_total_and_rejects_conflicting_options() {
+    let context = SearchContext::ready();
+    let (code, stdout, stderr) = context.run(&["search", "grep", "--json", "--limit", "2"]);
     assert_eq!(code, 0, "{stderr}");
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(value["result"]["total"], 27);
     assert_eq!(value["result"]["results"].as_array().unwrap().len(), 2);
-    let (code, _, _) = run(&["search", "grep", "--all", "--limit", "2"]);
+    let (code, _, _) = context.run(&["search", "grep", "--all", "--limit", "2"]);
     assert_eq!(code, 2);
-    let (code, stdout, stderr) = run(&["search", "aws", "--json"]);
+}
+
+#[test]
+fn normal_aws_search_ranks_user_facing_packages() {
+    let context = SearchContext::ready();
+    let (code, stdout, stderr) = context.run(&["search", "aws", "--json"]);
     assert_eq!(code, 0, "{stderr}");
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let ids = value["result"]["results"]
@@ -1006,8 +896,20 @@ else: sys.exit(9)
     assert!(!ids.iter().any(|id| id.contains("aws-disabled")
         || id.contains("aws-deprecated")
         || id.contains("aws-framework")));
+    assert!(!ids.iter().any(|id| id.contains("aws-library")
+        || id.contains("aws-c-http")
+        || id.contains("aws-sdk-cpp")
+        || id.contains("claws")
+        || id.contains("python")
+        || id.contains('@')
+        || id.contains("unwrapped")));
+    assert_eq!(value["result"]["approximate"], false);
+}
 
-    let (code, stdout, stderr) = run(&["search", "aws", "--limit", "4"]);
+#[test]
+fn search_limit_keeps_source_groups() {
+    let context = SearchContext::ready();
+    let (code, stdout, stderr) = context.run(&["search", "aws", "--limit", "4"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
         stdout.contains("Nixpkgs (")
@@ -1034,9 +936,13 @@ else: sys.exit(9)
         4,
         "{stdout}"
     );
+}
 
+#[test]
+fn formula_aliases_have_canonical_install_commands() {
+    let context = SearchContext::ready();
     for query in ["brew:awscli@2", "brew:homebrew/core/awscli"] {
-        let (code, stdout, stderr) = run(&["search", query, "--json", "--limit", "1"]);
+        let (code, stdout, stderr) = context.run(&["search", query, "--json", "--limit", "1"]);
         assert_eq!(code, 0, "{stderr}");
         let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
         assert_eq!(
@@ -1048,8 +954,13 @@ else: sys.exit(9)
             serde_json::json!(["pkg", "install", "brew:homebrew/core/awscli"])
         );
     }
+}
+
+#[test]
+fn source_filters_and_exact_formula_queries_preserve_visibility() {
+    let context = SearchContext::ready();
     for source in ["brew", "homebrew/core"] {
-        let (code, stdout, stderr) = run(&[
+        let (code, stdout, stderr) = context.run(&[
             "search", "aws", "--source", source, "--json", "--limit", "2",
         ]);
         assert_eq!(code, 0, "{stderr}");
@@ -1058,22 +969,18 @@ else: sys.exit(9)
         assert_eq!(value["result"]["results"].as_array().unwrap().len(), 2);
         assert_eq!(value["result"]["sources"].as_array().unwrap().len(), 1);
     }
-    let (code, stdout, stderr) = run(&["search", "aws-disabled", "--source", "brew"]);
+    let (code, stdout, stderr) = context.run(&["search", "aws-disabled", "--source", "brew"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("disabled"), "{stdout}");
-    let (code, stdout, stderr) = run(&["search", "aws sdk", "--source", "brew"]);
-    assert_eq!(code, 0, "{stderr}");
-    assert!(
-        stdout.contains("brew:homebrew/core/aws-framework"),
-        "{stdout}"
-    );
-    let (code, stdout, stderr) = run(&["search", "aws-framework", "--source", "brew"]);
-    assert_eq!(code, 0, "{stderr}");
-    assert!(
-        stdout.contains("brew:homebrew/core/aws-framework"),
-        "{stdout}"
-    );
-    let (code, stdout, stderr) = run(&["search", "aws", "--source", "homebrew", "--all"]);
+    for query in ["aws sdk", "aws-framework"] {
+        let (code, stdout, stderr) = context.run(&["search", query, "--source", "brew"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            stdout.contains("brew:homebrew/core/aws-framework"),
+            "{stdout}"
+        );
+    }
+    let (code, stdout, stderr) = context.run(&["search", "aws", "--source", "homebrew", "--all"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
         stdout.contains("brew:homebrew/core/awscli")
@@ -1081,8 +988,13 @@ else: sys.exit(9)
         "{stdout}"
     );
     assert!(!stdout.contains("nixpkgs:"), "{stdout}");
-    assert!(formulae.exists());
-    let formula_snapshot = std::fs::read_dir(cache.join("pkg"))
+    assert!(context.formulae.exists());
+}
+
+#[test]
+fn invalid_formula_refresh_retains_previous_snapshot() {
+    let context = SearchContext::ready();
+    let formula_snapshot = std::fs::read_dir(context.pkg_cache())
         .unwrap()
         .filter_map(Result::ok)
         .map(|entry| entry.path())
@@ -1094,25 +1006,23 @@ else: sys.exit(9)
         })
         .unwrap();
     let complete = std::fs::read(&formula_snapshot).unwrap();
-    std::fs::write(&formulae, "invalid JSON").unwrap();
-    std::fs::write(&nix, original_runtime.replace("\"b\"*40", "\"c\"*40")).unwrap();
-    let (code, _, stderr) = run(&["update", "--catalogs-only"]);
+    std::fs::write(&context.formulae, "invalid JSON").unwrap();
+    std::fs::write(
+        &context.nix,
+        context.original_runtime.replace("\"b\"*40", "\"c\"*40"),
+    )
+    .unwrap();
+    let (code, _, stderr) = context.run(&["update", "--catalogs-only"]);
     assert_eq!(code, 1, "{stderr}");
     assert!(stderr.contains("formula catalog index"), "{stderr}");
     assert_eq!(std::fs::read(&formula_snapshot).unwrap(), complete);
-    std::fs::write(&nix, "#!/bin/sh\nexit 99\n").unwrap();
-    assert!(
-        !ids.iter().any(|id| id.contains("aws-library")
-            || id.contains("aws-c-http")
-            || id.contains("aws-sdk-cpp")
-            || id.contains("claws")
-            || id.contains("python")
-            || id.contains('@')
-            || id.contains("unwrapped")),
-        "{ids:?}"
-    );
-    assert_eq!(value["result"]["approximate"], false);
-    let (code, stdout, stderr) = run(&["search", "aws", "--broad", "--json"]);
+    std::fs::write(&context.nix, "#!/bin/sh\nexit 99\n").unwrap();
+}
+
+#[test]
+fn broad_search_includes_low_priority_matches() {
+    let context = SearchContext::ready();
+    let (code, stdout, stderr) = context.run(&["search", "aws", "--broad", "--json"]);
     assert_eq!(code, 0, "{stderr}");
     for extra in [
         "claws-mail",
@@ -1125,8 +1035,13 @@ else: sys.exit(9)
     ] {
         assert!(stdout.contains(extra), "{extra}: {stdout}");
     }
+}
+
+#[test]
+fn explicit_source_filters_select_one_source() {
+    let context = SearchContext::ready();
     for source in ["homebrew/cask", "acme/tools", "nixpkgs"] {
-        let (code, stdout, stderr) = run(&["search", "aws", "--source", source, "--json"]);
+        let (code, stdout, stderr) = context.run(&["search", "aws", "--source", source, "--json"]);
         assert_eq!(code, 0, "{stderr}");
         let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
         assert_eq!(value["result"]["sources"].as_array().unwrap().len(), 1);
@@ -1136,8 +1051,14 @@ else: sys.exit(9)
             "{stdout}"
         );
     }
+}
+
+#[test]
+fn duplicate_native_names_keep_distinct_attributes() {
+    let context = SearchContext::ready();
     for (query, expected) in [("probe", 2), ("probing", 1)] {
-        let (code, stdout, stderr) = run(&["search", query, "--source", "nixpkgs", "--json"]);
+        let (code, stdout, stderr) =
+            context.run(&["search", query, "--source", "nixpkgs", "--json"]);
         assert_eq!(code, 0, "{stderr}");
         let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
         let rows = value["result"]["results"].as_array().unwrap();
@@ -1155,8 +1076,13 @@ else: sys.exit(9)
             );
         }
     }
+}
+
+#[test]
+fn query_prefixes_combine_with_source_filters() {
+    let context = SearchContext::ready();
     for (query, source) in [("cask:aws", "acme/tools"), ("cask:acme/tools/aws", "cask")] {
-        let (code, stdout, stderr) = run(&["search", query, "--source", source, "--json"]);
+        let (code, stdout, stderr) = context.run(&["search", query, "--source", source, "--json"]);
         assert_eq!(code, 0, "{stderr}");
         let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
         assert_eq!(value["result"]["sources"].as_array().unwrap().len(), 1);
@@ -1165,39 +1091,50 @@ else: sys.exit(9)
             "cask:acme/tools/aws-console"
         );
     }
-    let (code, stdout, stderr) = run(&["search", "cask:aws"]);
+    let (code, stdout, stderr) = context.run(&["search", "cask:aws"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("cask:homebrew/cask/aws-vault-binary"));
     assert!(stdout.contains("cask:acme/tools/aws-console"));
     assert!(!stdout.contains("nixpkgs:"));
-    let (code, stdout, stderr) = run(&["search", "cask:acme/tools/aws"]);
+    let (code, stdout, stderr) = context.run(&["search", "cask:acme/tools/aws"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("cask:acme/tools/aws-console"));
     assert!(!stdout.contains("homebrew/cask"));
-    let (code, stdout, stderr) = run(&["search", "nixpkgs:aws"]);
+    let (code, stdout, stderr) = context.run(&["search", "nixpkgs:aws"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("nixpkgs:awscli2"));
     assert!(!stdout.contains("cask:"));
-    let (code, _, _) = run(&["search", "nixpkgs:aws", "--source", "cask"]);
+    let (code, _, _) = context.run(&["search", "nixpkgs:aws", "--source", "cask"]);
     assert_eq!(code, 2);
-    let (code, stdout, stderr) = run(&["search", "aws credentials"]);
+}
+
+#[test]
+fn multiword_search_uses_description_terms() {
+    let context = SearchContext::ready();
+    let (code, stdout, stderr) = context.run(&["search", "aws credentials"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("cask:homebrew/cask/aws-vault-binary"));
     assert!(!stdout.contains("awscli2"));
-    let (code, stdout, stderr) = run(&["search", "aws sdk", "--source", "nixpkgs"]);
+    let (code, stdout, stderr) = context.run(&["search", "aws sdk", "--source", "nixpkgs"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("nixpkgs:aws-sdk-cpp"));
     assert!(!stdout.contains("awscli2"));
-    let (code, stdout, stderr) = run(&["search", "ripgrpe", "--source", "nixpkgs", "--json"]);
+}
+
+#[test]
+fn fuzzy_fallback_yields_to_later_literal_match() {
+    let context = SearchContext::ready();
+    let (code, stdout, stderr) =
+        context.run(&["search", "ripgrpe", "--source", "nixpkgs", "--json"]);
     assert_eq!(code, 0, "{stderr}");
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(value["result"]["approximate"], true);
     assert_eq!(value["result"]["results"][0]["id"], "nixpkgs:ripgrep");
-    let (code, stdout, stderr) = run(&["search", "ripgrpe", "--source", "nixpkgs", "--no-fuzzy"]);
+    let (code, stdout, stderr) =
+        context.run(&["search", "ripgrpe", "--source", "nixpkgs", "--no-fuzzy"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("No matches"));
-    // A literal match in a later source removes earlier fuzzy alternatives.
-    let (code, stdout, stderr) = run(&["search", "ripgrpe", "--json", "--limit", "1"]);
+    let (code, stdout, stderr) = context.run(&["search", "ripgrpe", "--json", "--limit", "1"]);
     assert_eq!(code, 0, "{stderr}");
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(value["result"]["approximate"], false);
@@ -1206,29 +1143,44 @@ else: sys.exit(9)
         value["result"]["results"][0]["id"],
         "cask:acme/tools/ripgrpe"
     );
-    let (code, _, _) = run(&["search", " "]);
+}
+
+#[test]
+fn empty_query_is_usage_error() {
+    let context = SearchContext::ready();
+    let (code, _, _) = context.run(&["search", " "]);
     assert_eq!(code, 2);
-    let registry = home.path().join("state/pkg/taps/registry.json");
+}
+
+#[test]
+fn broken_registry_is_isolated_from_selected_sources() {
+    let context = SearchContext::ready();
+    let registry = context.home.path().join("state/pkg/taps/registry.json");
     std::fs::create_dir_all(registry.parent().unwrap()).unwrap();
     let healthy_registry = std::fs::read_to_string(&registry).unwrap();
     std::fs::write(&registry, "broken registry").unwrap();
-    let (code, stdout, stderr) = run(&["search", "aws", "--source", "brew"]);
+    let (code, stdout, stderr) = context.run(&["search", "aws", "--source", "brew"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stderr.is_empty(), "{stderr}");
     assert!(stdout.contains("brew:homebrew/core/awscli"));
-    let (code, stdout, stderr) = run(&["search", "ripgrep", "--source", "nixpkgs"]);
+    let (code, stdout, stderr) = context.run(&["search", "ripgrep", "--source", "nixpkgs"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
         stderr.is_empty(),
         "unrelated registry is not read: {stderr}"
     );
     assert!(stdout.contains("nixpkgs:ripgrep"));
-    let (code, stdout, stderr) = run(&["search", "ripgrep"]);
+    let (code, stdout, stderr) = context.run(&["search", "ripgrep"]);
     assert_eq!(code, 0, "healthy rows remain: {stderr}");
     assert!(stdout.contains("nixpkgs:ripgrep"));
     assert!(stderr.contains("Results are incomplete"), "{stderr}");
     std::fs::write(registry, healthy_registry).unwrap();
-    for path in std::fs::read_dir(&pkg_cache)
+}
+
+#[test]
+fn stale_snapshots_remain_visible_and_marked() {
+    let context = SearchContext::ready();
+    for path in std::fs::read_dir(context.pkg_cache())
         .unwrap()
         .flatten()
         .map(|entry| entry.path())
@@ -1248,14 +1200,19 @@ else: sys.exit(9)
             std::fs::write(path, serde_json::to_string(&value).unwrap()).unwrap();
         }
     }
-    let (code, stdout, stderr) = run(&["search", "ripgrep", "--json"]);
+    let (code, stdout, stderr) = context.run(&["search", "ripgrep", "--json"]);
     assert_eq!(code, 0, "{stderr}");
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(value["result"]["sources"][0]["status"], "stale");
     assert_eq!(value["result"]["results"][0]["stale"], true);
-    std::fs::write(&nix, &original_runtime).unwrap();
-    let before = std::fs::read_to_string(&log).unwrap().lines().count();
-    let (code, stdout, stderr) = run(&["install", "aws"]);
+}
+
+#[test]
+fn bare_install_miss_uses_targeted_metadata_with_related_packages() {
+    let context = SearchContext::ready();
+    std::fs::write(&context.nix, &context.original_runtime).unwrap();
+    let before = context.calls().lines().count();
+    let (code, stdout, stderr) = context.run(&["install", "aws"]);
     assert_eq!(code, 1, "{stderr}");
     assert!(stdout.is_empty());
     assert!(stderr.contains("needs an exact package ID"), "{stderr}");
@@ -1265,11 +1222,17 @@ else: sys.exit(9)
     );
     assert!(!stderr.contains("Installing:"));
     assert_eq!(
-        std::fs::read_to_string(&log).unwrap().lines().count() - before,
+        context.calls().lines().count() - before,
         2,
         "one exact metadata batch and one cask index; no full scan"
     );
-    for path in std::fs::read_dir(&pkg_cache)
+}
+
+#[test]
+fn cold_bare_install_miss_uses_targeted_metadata() {
+    let context = SearchContext::ready();
+    std::fs::write(&context.nix, &context.original_runtime).unwrap();
+    for path in std::fs::read_dir(context.pkg_cache())
         .unwrap()
         .flatten()
         .map(|entry| entry.path())
@@ -1281,14 +1244,14 @@ else: sys.exit(9)
             std::fs::remove_file(path).unwrap();
         }
     }
-    let before = std::fs::read_to_string(&log).unwrap().lines().count();
-    let (code, _, stderr) = run(&["install", "aws"]);
+    let before = context.calls().lines().count();
+    let (code, _, stderr) = context.run(&["install", "aws"]);
     assert_eq!(code, 1, "{stderr}");
-    assert!(stderr.contains("no supported exact match"));
+    assert!(stderr.contains("no supported exact match"), "{stderr}");
     assert_eq!(
-        std::fs::read_to_string(&log).unwrap().lines().count() - before,
+        context.calls().lines().count() - before,
         2,
-        "cold miss must use targeted metadata evaluation"
+        "cold miss uses targeted metadata evaluation"
     );
 }
 
@@ -1595,200 +1558,6 @@ esac
         "{stderr}"
     );
     assert!(!stderr.contains("sentry-endpoint"), "{stderr}");
-}
-
-#[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one integration journey covers verified conflicts across profile-state scenarios"
-)]
-fn file_conflicts_name_verified_owners_without_replacement_commands() {
-    let bin = tempfile::tempdir().unwrap();
-    let home = tempfile::tempdir().unwrap();
-    let nix = bin.path().join("nix");
-    let profile = home.path().join("state/nix/profiles/pkg");
-    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
-    std::fs::write(&profile, "profile stays unchanged").unwrap();
-    let manifest = bin.path().join("manifest.json");
-    let diagnostic = bin.path().join("conflict.txt");
-    let failed = bin.path().join("failed");
-    let unreadable = bin.path().join("unreadable");
-    let formula = bin.path().join("formula.json");
-    let mut index = search_fixture_index(
-        "homebrew/core",
-        &[("bat", "bat", "Cat with syntax highlighting")],
-    );
-    index["schema"] = serde_json::json!("pkg-formula-catalog/1");
-    index["aliases"] = serde_json::json!({});
-    index["executables"] = serde_json::json!({});
-    std::fs::write(&formula, index.to_string()).unwrap();
-    std::fs::write(&diagnostic, concat!(
-        "\x1b[31merror:\x1b[0m An existing package already provides the following file:\n\n",
-        "  \"/nix/store/old-bat/bin/bat\"\n\n",
-        "This is the conflicting file from the new package:\n\n",
-        "  \"/nix/store/new-bat/bin/bat\"\n\n",
-        "To remove the existing package:\n",
-        "  nix profile remove --profile '/tmp/pkg' bat\n",
-        "The new package can also be added next to the existing one by assigning a different priority.\n",
-        "To prioritise the new package:\n",
-        "  nix profile add --profile '/tmp/pkg' github:spa5k/pkg/main?dir=nix/formulae#packages.x86_64-linux.homebrew/core/bat --priority 4\n",
-        "warning: a separate warning\n",
-        "do you want to allow configuration setting 'extra-substituters' (y/N)? \n",
-    )).unwrap();
-    std::fs::write(&nix, format!(r#"#!/bin/sh
-case "$*" in
-  *--version*) echo 'nix (Nix) 2.35.2';;
-  *'config show system'*) echo 'x86_64-linux';;
-  *'flake metadata'*) echo '{{"url":"github:spa5k/pkg/main?dir=nix/formulae","locked":{{"type":"github","owner":"spa5k","repo":"pkg","rev":"1111111111111111111111111111111111111111","dir":"nix/formulae"}}}}';;
-  *'#formulaIndex'*) cat '{formula}';;
-  *'search '*'#bat'*) echo '{{"legacyPackages.x86_64-linux.bat":{{"pname":"bat","version":"0.26.1","description":"Cat with syntax highlighting"}}}}';;
-  *'eval --json'*'#bat'*) echo '["/nix/store/old-bat"]';;
-  *'profile list'*)
-    if [ -f '{failed}' ] && [ -f '{unreadable}' ]; then
-      echo 'error: unreadable profile' >&2; exit 1
-    fi
-    cat '{manifest}';;
-  *'profile add'*) cat '{diagnostic}' >&2; touch '{failed}'; exit 1;;
-  *) echo 'unexpected nix call' >&2; exit 9;;
-esac
-"#, formula=formula.display(), failed=failed.display(), unreadable=unreadable.display(), manifest=manifest.display(), diagnostic=diagnostic.display())).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&nix, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let run = |verbose: bool, id: &str| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
-        if verbose {
-            command.arg("--verbose");
-        }
-        command
-            .args(["install", id])
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
-            .env("HOME", home.path())
-            .env("XDG_CONFIG_HOME", home.path().join("config"))
-            .env("XDG_STATE_HOME", home.path().join("state"))
-            .env("XDG_CACHE_HOME", home.path().join("cache"))
-            .output()
-            .unwrap()
-    };
-    let owner = serde_json::json!({
-        "active": true, "attrPath": "legacyPackages.x86_64-linux.bat",
-        "originalUrl": "github:NixOS/nixpkgs/nixpkgs-unstable",
-        "url": "github:NixOS/nixpkgs/1111111111111111111111111111111111111111",
-        "storePaths": ["/nix/store/old-bat"],
-    });
-    for scenario in ["one", "multiple", "unknown", "unmatched"] {
-        let _ = std::fs::remove_file(&failed);
-        let mut entries = serde_json::json!({"bat": owner});
-        if scenario == "multiple" {
-            entries["bat-1"] = owner.clone();
-        } else if scenario == "unknown" {
-            std::fs::write(&unreadable, "").unwrap();
-        } else if scenario == "unmatched" {
-            entries["bat"]["active"] = serde_json::json!(false);
-            entries["lookalike"] = owner.clone();
-            entries["lookalike"]["storePaths"] = serde_json::json!(["/nix/store/old"]);
-        }
-        std::fs::write(
-            &manifest,
-            serde_json::json!({"version":3, "elements":entries}).to_string(),
-        )
-        .unwrap();
-        let output = run(false, "brew:homebrew/core/bat");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(output.status.code(), Some(1), "{scenario}: {stderr}");
-        assert!(output.stdout.is_empty());
-        assert!(stderr.contains("bin/bat"), "{scenario}: {stderr}");
-        match scenario {
-            "one" => assert!(
-                stderr.contains(
-                    "Cause: nixpkgs:bat (Nixpkgs) is already installed and provides bin/bat."
-                ),
-                "{stderr}"
-            ),
-            "multiple" => {
-                assert!(
-                    stderr.contains("nixpkgs:bat (Nixpkgs) (entry: bat)"),
-                    "{stderr}"
-                );
-                assert!(
-                    stderr.contains("nixpkgs:bat (Nixpkgs) (entry: bat-1)"),
-                    "{stderr}"
-                );
-            }
-            _ => {
-                assert!(
-                    stderr.contains("Cause: two packages provide bin/bat."),
-                    "{stderr}"
-                );
-                assert!(!stderr.contains("nixpkgs:bat"), "{stderr}");
-            }
-        }
-        let state = if scenario == "unknown" {
-            "Package state is unknown."
-        } else {
-            "Installed entries unchanged."
-        };
-        assert!(stderr.contains(state), "{scenario}: {stderr}");
-        assert!(
-            stderr.contains("Requested: brew:homebrew/core/bat (Homebrew Formula)."),
-            "{stderr}"
-        );
-        for hidden in [
-            "/nix/store/",
-            "nix profile",
-            "priority",
-            "To remove",
-            "pkg remove",
-            "pkg install",
-        ] {
-            assert!(
-                !stderr.contains(hidden),
-                "{scenario}: leaked {hidden}: {stderr}"
-            );
-        }
-        assert!(stderr.contains("warning: a separate warning"), "{stderr}");
-        assert!(
-            stderr.contains("do you want to allow configuration"),
-            "{stderr}"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&profile).unwrap(),
-            "profile stays unchanged"
-        );
-        let _ = std::fs::remove_file(&unreadable);
-    }
-    let output = run(true, "brew:homebrew/core/bat");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("/nix/store/old-bat/bin/bat"), "{stderr}");
-    assert!(stderr.contains("--priority 4"), "{stderr}");
-    std::fs::remove_file(&failed).unwrap();
-    std::fs::write(
-        &manifest,
-        serde_json::json!({"version":3, "elements":{"bat":owner}}).to_string(),
-    )
-    .unwrap();
-    let output = run(false, "nixpkgs:bat");
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "Already installed: nixpkgs:bat"
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr).trim(),
-        "Resolving: nixpkgs:bat"
-    );
-    assert!(
-        !failed.exists(),
-        "an identical installed package must not reach profile add"
-    );
 }
 
 /// A failed install keeps its diagnostics readable: the native error and
