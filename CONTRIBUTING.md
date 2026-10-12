@@ -34,6 +34,8 @@ Rust error and ownership changes follow
 [Improve Rust error handling and ownership](openspec/changes/improve-rust-quality/proposal.md).
 The strict lint and code audit work follows
 [Enforce Rust quality](openspec/changes/enforce-rust-quality/proposal.md).
+The remaining quality work follows
+[Complete the Rust quality plan](openspec/changes/complete-rust-quality-plan/proposal.md).
 The [module map](docs/architecture.md) shows the current code owners.
 
 ## 1. Before you open a PR
