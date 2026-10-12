@@ -10,6 +10,11 @@ use crate::tap::{registry, store};
 use super::{CommandError, Session, apps_refresh_after_mutation, installed_entries, lifecycle};
 
 pub(super) enum Request<'a> {
+    Profile(ProfileChange<'a>),
+    Prune { days: u64 },
+}
+
+pub(super) enum ProfileChange<'a> {
     Install {
         installables: Vec<String>,
         resolved_names: BTreeMap<String, String>,
@@ -25,9 +30,6 @@ pub(super) enum Request<'a> {
         exact_entry: bool,
     },
     Rollback(Option<u64>),
-    Prune {
-        days: u64,
-    },
 }
 
 enum Prepared {
@@ -45,9 +47,10 @@ enum Prepared {
 
 pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), CommandError> {
     let profile = crate::profile_lock::LockedProfile::acquire(&session.nix, &session.paths)?;
-    if let Request::Prune { days } = request {
-        return prune(session, days);
-    }
+    let request = match request {
+        Request::Prune { days } => return prune(session, days),
+        Request::Profile(request) => request,
+    };
     let before = installed_entries(session)?;
     let Some(prepared) = prepare(session, request, &before)? else {
         return Ok(());
@@ -65,16 +68,16 @@ pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), Com
 
 fn prepare(
     session: &Session,
-    request: Request<'_>,
+    request: ProfileChange<'_>,
     before: &BTreeMap<String, ProfileEntry>,
 ) -> Result<Option<Prepared>, CommandError> {
     match request {
-        Request::Install {
+        ProfileChange::Install {
             installables,
             resolved_names,
             system,
         } => prepare_install(session, before, installables, &resolved_names, system),
-        Request::Remove {
+        ProfileChange::Remove {
             entries,
             exact_entry,
         } => {
@@ -91,12 +94,12 @@ fn prepare(
             );
             Ok(Some(Prepared::Remove(targets)))
         }
-        Request::Upgrade {
+        ProfileChange::Upgrade {
             entries,
             all,
             exact_entry,
         } => prepare_upgrade(session, before, entries, all, exact_entry),
-        Request::Rollback(generation) => {
+        ProfileChange::Rollback(generation) => {
             let previous = lifecycle::active_generation(&session.paths.profile);
             report_rollback_target(session, generation, previous)?;
             Ok(Some(Prepared::Rollback {
@@ -104,7 +107,6 @@ fn prepare(
                 previous,
             }))
         }
-        Request::Prune { days } => prune(session, days).map(|()| None),
     }
 }
 

@@ -12,6 +12,7 @@ use crate::cli::Cli;
 use crate::nix::{self, ProfileEntry};
 use crate::tap::store;
 
+use super::change::{ProfileChange, Request};
 use super::{CommandError, session};
 
 pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
@@ -28,11 +29,11 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     let (installables, resolved_names) = resolve_installables(&session, parsed_ids, &system)?;
     super::change::execute(
         &session,
-        super::change::Request::Install {
+        Request::Profile(ProfileChange::Install {
             installables,
             resolved_names,
             system: &system,
-        },
+        }),
     )
 }
 
@@ -171,10 +172,10 @@ pub(super) fn remove(cli: &Cli, entries: &[String], exact_entry: bool) -> Result
     }
     super::change::execute(
         &session(cli)?,
-        super::change::Request::Remove {
+        Request::Profile(ProfileChange::Remove {
             entries,
             exact_entry,
-        },
+        }),
     )
 }
 
@@ -186,11 +187,11 @@ pub(super) fn upgrade(
 ) -> Result<(), CommandError> {
     super::change::execute(
         &session(cli)?,
-        super::change::Request::Upgrade {
+        Request::Profile(ProfileChange::Upgrade {
             entries,
             all,
             exact_entry,
-        },
+        }),
     )
 }
 
@@ -417,10 +418,13 @@ fn render_history(text: &str, active: Option<u64>) -> String {
 }
 
 pub(super) fn rollback(cli: &Cli, generation: Option<u64>) -> Result<(), CommandError> {
-    super::change::execute(&session(cli)?, super::change::Request::Rollback(generation))
+    super::change::execute(
+        &session(cli)?,
+        Request::Profile(ProfileChange::Rollback(generation)),
+    )
 }
 
 pub(super) fn prune(cli: &Cli, older_than: &str) -> Result<(), CommandError> {
     let days = crate::cli::parse_prune_age(older_than)?;
-    super::change::execute(&session(cli)?, super::change::Request::Prune { days })
+    super::change::execute(&session(cli)?, Request::Prune { days })
 }
