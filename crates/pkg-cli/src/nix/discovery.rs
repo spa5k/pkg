@@ -107,10 +107,10 @@ in map inspect paths"#
             let path = archive
                 .get("path")
                 .and_then(serde_json::Value::as_str)
-                .filter(|path| std::path::Path::new(path).starts_with("/nix/store/"))
+                .filter(|path| !path.is_empty() && std::path::Path::new(path).is_absolute())
                 .ok_or_else(|| NixError::Decode {
                     what: "exact source archive",
-                    detail: String::from("flake archive has no valid Nix store path"),
+                    detail: String::from("flake archive has no valid absolute source path"),
                 })?;
             path.to_string()
         };
@@ -317,8 +317,8 @@ mod tests {
     fn exact_path_reference_archives_when_metadata_omits_path() {
         let (_temp, nix) = fake_runtime(
             r#"*'flake metadata'*) echo '{"locked":{"dir":"sub flake?#","lastModified":1234567890,"rev":"0123456789abcdef0123456789abcdef01234567","revCount":7}}';;
-*'flake archive'*) echo '{"inputs":{},"path":"/nix/store/fixture-archive-source"}';;
-*'hash path --sri /nix/store/fixture-archive-source'*) echo 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';;"#,
+*'flake archive'*) echo '{"inputs":{},"path":"/alternate/store/fixture-archive-source"}';;
+*'hash path --sri /alternate/store/fixture-archive-source'*) echo 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';;"#,
         );
 
         let reference = nix
@@ -327,7 +327,7 @@ mod tests {
 
         assert_eq!(
             reference,
-            "path:/nix/store/fixture-archive-source?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D&dir=sub%20flake%3F%23&lastModified=1234567890&rev=0123456789abcdef0123456789abcdef01234567&revCount=7"
+            "path:/alternate/store/fixture-archive-source?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D&dir=sub%20flake%3F%23&lastModified=1234567890&rev=0123456789abcdef0123456789abcdef01234567&revCount=7"
         );
     }
 
@@ -352,22 +352,31 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn exact_path_reference_rejects_non_store_archive_path() {
-        let (_temp, nix) = fake_runtime(
-            r#"*'flake metadata'*) echo '{"locked":{}}';;
-*'flake archive'*) echo '{"path":"/tmp/mutable-source"}';;
-*'hash path'*) echo 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';;"#,
-        );
+    fn exact_path_reference_rejects_malformed_archive_paths() {
+        for archive_json in [
+            "{}",
+            r#"{"path":7}"#,
+            r#"{"path":""}"#,
+            r#"{"path":"relative/store/source"}"#,
+        ] {
+            let cases = format!(
+                "*'flake metadata'*) echo '{{\"locked\":{{}}}}';;\n*'flake archive'*) echo '{archive_json}';;\n*'hash path'*) exit 8;;"
+            );
+            let (_temp, nix) = fake_runtime(&cases);
 
-        let result = nix.exact_reference("path:/fixture");
+            let result = nix.exact_reference("path:/fixture");
 
-        assert!(matches!(
-            result,
-            Err(NixError::Decode {
-                what: "exact source archive",
-                ..
-            })
-        ));
+            assert!(
+                matches!(
+                    result,
+                    Err(NixError::Decode {
+                        what: "exact source archive",
+                        ..
+                    })
+                ),
+                "archive JSON must be rejected: {archive_json}"
+            );
+        }
     }
 
     #[cfg(unix)]
