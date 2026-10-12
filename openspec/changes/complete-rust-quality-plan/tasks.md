@@ -10,4 +10,4 @@
 - [x] RQ3-08 Replace snapshot diagnostic-text absence checks with structured outcomes.
 - [x] RQ3-09 Complete strict workspace and real Nix verification.
 - [x] RQ3-10 Complete separate reviews and the cross-model decision-trail check.
-- [ ] RQ3-11 Commit the complete result and record the remaining host limits.
+- [x] RQ3-11 Commit the complete result and record the remaining host limits.

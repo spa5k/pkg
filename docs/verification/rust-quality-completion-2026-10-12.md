@@ -7,8 +7,9 @@ This report covers the six items left after the first repair phase.
 All six items are implemented.
 Final Rust and native Nix verification passed on macOS and Linux at `36ddcba`.
 The independent code reviews have no required correction.
-The decision-trail review has no unresolved material finding.
-Its bounded closure check follows the report commit.
+The final decision-trail closure check has no unresolved material finding.
+All 11 plan tasks have supporting evidence.
+The result and its limits are committed on the current branch.
 
 ## Implemented outcomes
 

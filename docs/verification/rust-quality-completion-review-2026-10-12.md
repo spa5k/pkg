@@ -6,7 +6,7 @@ The two review axes used separate Luna agent contexts.
 The reports below remain separate.
 Final source verification passed on both hosts at `36ddcba`.
 The final Standards, Spec, and comment rechecks have no required correction.
-The bounded decision-trail closure check follows the report commit.
+The bounded decision-trail closure check passed after report commit `3cda171`.
 
 ## Standards
 
@@ -71,7 +71,7 @@ The final process, archive fallback, and RAII fixture recheck found no remaining
 ## Decision-trail review
 
 Reviewer: gpt-6-astra.
-The reviewer checked completion-phase rows 26 through 64 against this exact root transcript:
+The reviewer checked completion-phase rows 26 through 71 against this exact root transcript:
 `/Users/pacific/.codex/sessions/2026/10/12/rollout-2026-10-12T04-45-51-01a12d40-4c4b-7de2-bb4c-bf3b30d8a9f2.jsonl`.
 No unrelated chat was part of the review.
 The main author model was gpt-6.1-sol.
@@ -85,7 +85,17 @@ The final child-guard recheck is at line 4159.
 The final source Spec recheck is at line 4270.
 The comment recheck is at line 4260.
 The withdrawn error-contract finding is at line 4320.
-The bounded final record check will include the report rechecks, commit, and worktree cleanup.
+The bounded final record check passed.
+It verified all 11 task checkboxes against their evidence.
+It also confirmed that `3cda171` changes only Markdown and TSV after the tested source.
+The saved-document Standards pass is at transcript line 4385.
+The Spec closure pass is at line 4349.
+The report commit is at line 4440.
+The final archive observation is at line 4429.
+Five implementation archives are confirmed.
+Both older first-phase attachments remain active after archive requests.
+Their final removal is not claimed.
+No unresolved material trail gap remains.
 
 The reviewer retained the stated limits.
 PID reuse was not forced.
