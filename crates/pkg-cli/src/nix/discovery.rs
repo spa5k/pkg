@@ -28,6 +28,8 @@ pub enum MetadataValue {
     },
     /// A value outside the package traversal.
     Skip,
+    /// The requested output root or system is absent from this flake.
+    Absent,
     /// A legacy attribute whose evaluation failed.
     Error,
 }
@@ -168,36 +170,53 @@ in map inspect paths"#
         paths: &[Vec<String>],
         divisor: &str,
     ) -> Result<Vec<MetadataNode>, NixError> {
-        let paths = nix_json(&paths)?;
         let legacy = if root == "legacyPackages" {
             "true"
         } else {
             "false"
         };
-        let apply = format!(
-            r#"root:
-let
+        let reference = nix_json(&reference)?;
+        let system = nix_json(&system)?;
+        let root = nix_json(&root)?;
+        let paths = nix_json(&paths)?;
+        let expression = format!(
+            r#"let
+  flake = builtins.getFlake (builtins.fromJSON {reference});
+  system = builtins.fromJSON {system};
+  rootName = builtins.fromJSON {root};
   paths = builtins.fromJSON {paths};
   legacy = {legacy};
-  inspect = path:
-    let
-      value = builtins.foldl' (v: name: builtins.getAttr name v) root (builtins.tail (builtins.tail path));
-      row = if builtins.isAttrs value && value ? type && !builtins.isString value.type then
-        throw "package type must be a string"
-      else if builtins.isAttrs value && (value.type or null) == "derivation" then
-        let name = builtins.parseDrvName value.name;
-        in {{ inherit path; kind = "package"; meta = {{ pname = name.name; version = name.version; description = builtins.replaceStrings [ "\n" ] [ " " ] (value.meta.description or ""); }}; }}
-      else if builtins.length path == 2 || (builtins.isAttrs value && legacy && (value.recurseForDerivations or false)) then
-        {{ inherit path; kind = "children"; children = builtins.attrNames value; }}
-      else {{ inherit path; kind = "skip"; }};
-      attempt = builtins.tryEval (builtins.deepSeq row row);
-    in if !legacy then row else if attempt.success then attempt.value else {{ inherit path; kind = "error"; }};
-in map inspect paths"#
+  absent = path: {{ inherit path; kind = "absent"; }};
+  inspect = root: path:
+let
+  value = builtins.foldl' (v: name: builtins.getAttr name v) root (builtins.tail (builtins.tail path));
+  row = if builtins.isAttrs value && value ? type && !builtins.isString value.type then
+    throw "package type must be a string"
+  else if builtins.isAttrs value && (value.type or null) == "derivation" then
+    let name = builtins.parseDrvName value.name;
+    in {{ inherit path; kind = "package"; meta = {{ pname = name.name; version = name.version; description = builtins.replaceStrings [ "\n" ] [ " " ] (value.meta.description or ""); }}; }}
+  else if builtins.length path == 2 || (builtins.isAttrs value && legacy && (value.recurseForDerivations or false)) then
+    {{ inherit path; kind = "children"; children = builtins.attrNames value; }}
+  else {{ inherit path; kind = "skip"; }};
+  attempt = builtins.tryEval (builtins.deepSeq row row);
+in if !legacy then row else if attempt.success then attempt.value else {{ inherit path; kind = "error"; }};
+in if !builtins.isAttrs flake || !builtins.hasAttr rootName flake then
+  [ (absent [ rootName system ]) ]
+else let
+  output = builtins.getAttr rootName flake;
+in if !builtins.isAttrs output then
+  throw ("Nix output root " + rootName + " must be an attribute set")
+else if !builtins.hasAttr system output then
+  [ (absent [ rootName system ]) ]
+else let
+  selected = builtins.getAttr system output;
+in if !builtins.isAttrs selected then
+  throw ("Nix output system " + rootName + "." + system + " must be an attribute set")
+else map (inspect selected) paths"#
         );
-        let installable = format!("{reference}#{root}.{system}");
         self.discovery_json(
             "metadata batch",
-            &["eval", "--json", &installable, "--apply", &apply],
+            &["eval", "--json", "--expr", &expression],
             divisor,
         )
     }
