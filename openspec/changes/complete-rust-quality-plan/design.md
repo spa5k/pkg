@@ -41,7 +41,7 @@ The decision trail is append-only.
 | --- | --- |
 | Child lifetime | Native tests send real INT, TERM, and HUP across spawn, running, exit, and cleanup. The supervisor never signals a child after it relinquishes ownership. Unrelated sentinel processes survive the stress test. Existing mask, spawn failure, bounded output, timeout, and reaping contracts stay covered. |
 | App cancellation | Compiled CLI tests cancel helper probing, payload preparation, and launcher refresh. Each keeps the signal exit status, gives truthful partial-state output, and leaves unowned destinations unchanged. Real filesystem tests retain marker and source-map recovery. |
-| Command ordering | Compiled CLI tests prove one lock owner and ordered preflight, native mutation, postflight, and app refresh. A failed or canceled stage stops later stages. Each command keeps its own mutation and reporting policy. |
+| Command ordering | Compiled CLI tests prove one lock owner and ordered preflight, native mutation, postflight, and app refresh. A failed or canceled stage stops later mutation and app refresh. Read-only reconciliation may report partial native work. Each command keeps its own mutation and reporting policy. |
 | Public state | Invalid catalog IDs fail construction or decoding. Saved catalog keys must match their source identity. Valid IDs and source bindings round-trip. Callers use the checked interface. |
 | Test locality | Record old assertions and their new owners. Separate unrelated journeys with reusable real fixtures. Preserve cache reuse, output, conflict, cancellation, lock, and mutation-order contracts. A deleted test needs an exact keeper proof. |
 | Discovery | Missing output roots yield normal empty results. Existing values that throw evaluation errors return those errors. Searches after preparation make no runtime call. Snapshot and metadata cache policies remain distinct. |
@@ -88,7 +88,21 @@ Keep the existing index model and strict decoder. Close unchecked routes without
 
 Use structured root and system membership for discovery.
 Keep throwing and malformed present values as errors.
+If path-flake metadata omits its store path, materialize the source with the native flake archive command.
+Hash the archived path and preserve native subdirectory and revision fields.
+Do not substitute the original mutable source path or add a fixed store-root policy.
 Move test setup to real fixture owners and record every assertion keeper before deletion.
 
 The native macOS WNOWAIT probe passed. It proves non-consuming exit observation only.
-The child lifetime race remains a source risk until product tests run.
+Native product tests cover real signals, group descendants, output limits, and unrelated sentinels.
+They do not force PID reuse.
+Darwin reports EPERM for a group that contains only the exited, unreaped leader.
+A private member check accepts that case only when it finds no live members.
+Truncated or unreadable member data returns a cleanup error.
+On normal exit, cleanup uncertainty is returned as the run error after reaping.
+After an earlier run error, Drop attempts cleanup and keeps the original error.
+The owner disables all further signaling before any consuming wait attempt.
+It reaps the direct child even when group cleanup fails.
+A descendant with changed permissions can survive a denied group signal.
+Its process group keeps its own identity reserved until it disappears.
+The published XNU source used for the boundary check is older than the host kernel.

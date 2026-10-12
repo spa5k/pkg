@@ -1,5 +1,9 @@
 # Rust quality audit on 12 October 2026
 
+This report records the first repair phase.
+The six remaining plan items were then implemented.
+See the [completion report](rust-quality-completion-2026-10-12.md) for the final code and both-host checks.
+
 ## Result and scope
 
 The baseline is `8c1a58513d4049a99cdf4d56d892c1de0286802b` on `feat/rust-quality`.

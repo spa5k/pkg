@@ -76,6 +76,14 @@ Publication and recovery use exclusive renames to preserve existing destination 
 Failed or canceled helper work keeps the previous launchers and source map.
 Dock changes are reported separately.
 
+Commands routed through `nix/process.rs` have one synchronous child owner.
+Signal handlers record cancellation for that owner.
+The owner observes exit without consuming the wait status.
+Bounded metadata children have a dedicated process group.
+The owner finishes group cleanup before it starts the consuming wait.
+It disables further signaling before that wait can release the child identity.
+Each pipe read pass has a fixed budget so continuous output cannot block cancellation checks.
+
 The client and generator use the same identity and numeric version rules.
 The generator owns classification and build plans.
 The client validates generated indexes and reports their recorded status.
@@ -93,3 +101,6 @@ Their source links point to the last revision before removal.
 Current work follows [Simplify the native client](../openspec/changes/simplify-client/design.md).
 Rust ownership and error rules follow
 [Rust design](../openspec/changes/improve-rust-quality/design.md).
+The complete quality change follows
+[Complete the Rust quality plan](../openspec/changes/complete-rust-quality-plan/design.md).
+The [completion report](verification/rust-quality-completion-2026-10-12.md) records the final behavior and verification limits.
