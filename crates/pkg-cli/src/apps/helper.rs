@@ -183,11 +183,8 @@ fn helper_binary_in(store_paths: &[String]) -> Option<PathBuf> {
     })
 }
 
-/// Runs the one helper command this module needs. `sync-trampolines`
-/// rebuilds its target folder from the source view and refreshes Dock
-/// entries for the trampolined apps. The command goes through the shared
-/// signal forward/reap boundary, so an interrupted run is reaped and
-/// reported here instead of killing pkg.
+/// `sync-trampolines` rebuilds its target folder from the source view and
+/// refreshes Dock entries for the trampolined apps.
 pub(super) fn run_sync_trampolines(helper: &Path, from: &Path, to: &Path) -> Result<(), AppError> {
     let args = [
         String::from("sync-trampolines"),

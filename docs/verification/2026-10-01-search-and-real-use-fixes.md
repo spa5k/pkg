@@ -2,7 +2,7 @@
 
 Date: 1 October 2026. Client: `0.2.0-alpha.10`, built from the changed
 workspace. Base commit: `1f4903788d595a15293a29a29bdb1abd229d6b9d`.
-This work implements [the repair change](../../openspec/changes/repair-realistic-use-faults/proposal.md).
+This work implements [the repair change](../../openspec/changes/archive/2026-10-12-repair-realistic-use-faults/proposal.md).
 The [original findings](2026-10-01-realistic-use.md) remain unchanged.
 
 All implementation and verification tasks are complete. All required local

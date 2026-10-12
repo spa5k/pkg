@@ -4,10 +4,6 @@
 //! progress, and print a short final result. Nothing here retries silently
 //! or writes product state.
 //!
-//! Query commands live in `search`, `info`, and `list`. Package mutations
-//! are parsed in `lifecycle` and ordered in `change`. This module holds the shared session, dispatch,
-//! and failure-reporting rules.
-//!
 //! Error rule: every handler returns `Result<(), CommandError>` and uses
 //! `?` for ordinary diagnostics; [`run`] converts the result to an exit
 //! code in exactly one place. The change owner reports mutation failures
@@ -140,12 +136,6 @@ struct Session {
     nix: Nix,
 }
 
-/// Discover the external runtime with the user's output options applied.
-///
-/// `--verbose` traces every native call in the adapter; `--no-color` and
-/// the config color policy are forwarded to native children as `NO_COLOR`.
-/// Every command that runs native children goes through this one setup,
-/// doctor included.
 fn discover_runtime(cli: &Cli, config: &Config) -> Result<Nix, NixError> {
     let no_color = config.color_disabled(cli.no_color);
     Ok(nix::discover(config.runtime.nix.as_deref())?

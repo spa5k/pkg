@@ -28,7 +28,6 @@ const BUILDS_DIR: &str = "/nix/var/nix/builds";
 const CUSTOM_CONF: &str = "/etc/nix/nix.custom.conf";
 /// The generated global config; the client view needs it world-readable.
 const NIX_CONF: &str = "/etc/nix/nix.conf";
-/// The Determinate daemon `LaunchDaemon` on macOS.
 const DETERMINATE_PLIST: &str = "/Library/LaunchDaemons/systems.determinate.nix-daemon.plist";
 
 /// One administrator step, printed to the user before anything runs.

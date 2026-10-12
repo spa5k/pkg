@@ -748,7 +748,6 @@ mod tests {
         }
     }
 
-    /// A minimal valid schema-4 index envelope for one source.
     fn index(revision: &str) -> CatalogIndex {
         let raw = serde_json::json!({
             "schema": crate::nix::CATALOG_INDEX_SCHEMA,

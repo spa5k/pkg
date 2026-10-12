@@ -17,7 +17,7 @@ What it validates
 2. External schemes (`http:`, `https:`, `ftp:`, `mailto:`, ...) and autolinks
    are ignored — they are out of scope for a repo-local checker.
 3. Structural invariants:
-     * the OpenSpec change for the active design exists;
+     * the archived OpenSpec native Nix design baseline exists;
      * `README.md` and `CONTRIBUTING.md` link that OpenSpec proposal.
 
 Exit code is 0 only when every check passes; otherwise errors are aggregated and
@@ -47,12 +47,12 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 # Installed JavaScript dependencies are third-party files, not repository docs.
 IGNORED_DIR_COMPONENTS: Set[str] = {".git", "target", "dist", "node_modules", ".agents"}
 
-# The design authority is the OpenSpec change, not plans/.
 REQUIRED_DOCS: List[str] = [
-    "openspec/changes/simplify-to-native-nix/design.md",
-    "openspec/changes/simplify-to-native-nix/proposal.md",
+    "openspec/changes/archive/2026-10-12-simplify-to-native-nix/design.md",
+    "openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md",
+    "openspec/changes/archive/README.md",
 ]
-ACTIVE_PROPOSAL = "openspec/changes/simplify-to-native-nix/proposal.md"
+DESIGN_PROPOSAL = "openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md"
 
 # ----- Markdown parsing helpers ------------------------------------------------
 
@@ -407,19 +407,19 @@ def check_structure(report: Report) -> None:
     readme = REPO_ROOT / "README.md"
     if not readme.is_file():
         report.fail("required file missing: README.md")
-    elif not _links_to(readme, ACTIVE_PROPOSAL):
+    elif not _links_to(readme, DESIGN_PROPOSAL):
         report.fail(
-            "README.md must link the active OpenSpec proposal "
-            f"({ACTIVE_PROPOSAL})"
+            "README.md must link the native Nix design proposal "
+            f"({DESIGN_PROPOSAL})"
         )
 
     contributing = REPO_ROOT / "CONTRIBUTING.md"
     if not contributing.is_file():
         report.fail("required file missing: CONTRIBUTING.md")
-    elif not _links_to(contributing, ACTIVE_PROPOSAL):
+    elif not _links_to(contributing, DESIGN_PROPOSAL):
         report.fail(
-            "CONTRIBUTING.md must link the active OpenSpec proposal "
-            f"({ACTIVE_PROPOSAL})"
+            "CONTRIBUTING.md must link the native Nix design proposal "
+            f"({DESIGN_PROPOSAL})"
         )
 
 

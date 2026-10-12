@@ -63,4 +63,4 @@ each externally signed file, and then publishes the copy. APFS clones share
 file data with the store and retain independent attributes. `pkg apps setup`
 creates the private same-volume storage once. An unavailable clone operation
 fails without falling back to a full copy. It does not re-sign
-files. See the [design](../../../openspec/changes/harden-native-package-lifecycle/external-signatures.md).
+files. See the [design](../../../openspec/changes/archive/2026-10-12-harden-native-package-lifecycle/external-signatures.md).

@@ -2,7 +2,7 @@
 Status: Superseded
 
 > Superseded on 28 September 2026 by the native Nix design:
-> [Simplify pkg to native Nix](../../openspec/changes/simplify-to-native-nix/design.md).
+> [Simplify pkg to native Nix](../../openspec/changes/archive/2026-10-12-simplify-to-native-nix/design.md).
 > This record stays as history. It does not describe current or planned behavior.
 ---
 

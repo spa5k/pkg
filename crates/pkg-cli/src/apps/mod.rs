@@ -123,20 +123,33 @@ pub(crate) fn sync_locked(
     Ok(())
 }
 
-/// Reports launcher drift for doctor without changing anything.
-///
-/// Read-only: lists the active profile, scans its store outputs, inspects
-/// the destination, and compares both launcher names *and* their recorded
-/// source targets with the derived map written by the last successful sync.
-/// A destination pkg needs but does not own is reported as `unhealthy`,
-/// not as an operational failure. Returns a diagnostic string; lines are
-/// prefixed with `healthy:` or `unhealthy:` so callers can classify without
-/// parsing. Operational failures (an unreadable profile or destination)
-/// are returned as errors.
-/// # Errors
-///
-/// Returns an error if the host is not macOS, the profile cannot be read, app scanning fails, or destination state cannot be inspected or read.
-pub(crate) fn status(nix: &Nix, paths: &Paths) -> Result<String, AppError> {
+pub(crate) enum Health {
+    Healthy,
+    Unhealthy,
+}
+
+impl Health {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Unhealthy => "unhealthy",
+        }
+    }
+}
+
+pub(crate) struct AppStatus {
+    pub(crate) health: Health,
+    pub(crate) message: String,
+}
+
+impl AppStatus {
+    fn new(health: Health, detail: &str) -> Self {
+        let message = format!("{}: {detail}", health.as_str());
+        Self { health, message }
+    }
+}
+
+pub(crate) fn status(nix: &Nix, paths: &Paths) -> Result<AppStatus, AppError> {
     if !cfg!(target_os = "macos") {
         let _ = (nix.executable(), &paths.helper_profile);
         return Err("pkg apps status supports macOS only".to_string().into());
@@ -145,32 +158,40 @@ pub(crate) fn status(nix: &Nix, paths: &Paths) -> Result<String, AppError> {
     let apps = scan_apps(entries.iter())?;
     let dest = destination_path()?;
     let state = inspect_destination(&dest)?;
-    // With no active apps pkg needs no destination; an unowned folder is
-    // not a defect then.
     if apps.is_empty() && !matches!(state, DestinationState::Owned) {
-        return Ok("healthy: no active .app bundles; app launchers not needed".to_string());
+        return Ok(AppStatus::new(
+            Health::Healthy,
+            "no active .app bundles; app launchers not needed",
+        ));
     }
     match state {
         DestinationState::Missing => {
-            return Ok(format!(
-                "unhealthy: {} active .app bundle(s) but no launcher folder {}; \
+            return Ok(AppStatus::new(
+                Health::Unhealthy,
+                &format!(
+                    "{} active .app bundle(s) but no launcher folder {}; \
                  run `pkg apps sync`",
-                apps.len(),
-                dest.display()
+                    apps.len(),
+                    dest.display()
+                ),
             ));
         }
         DestinationState::Unowned { detail } => {
-            return Ok(format!(
-                "unhealthy: {detail}; remove the unowned folder and run `pkg apps sync`"
+            return Ok(AppStatus::new(
+                Health::Unhealthy,
+                &format!("{detail}; remove the unowned folder and run `pkg apps sync`"),
             ));
         }
         DestinationState::Owned => {}
     }
     let recorded = read_source_map(&dest)?;
     let Some(recorded) = recorded else {
-        return Ok(format!(
-            "unhealthy: {} has no recorded launcher source map; run `pkg apps sync`",
-            dest.display()
+        return Ok(AppStatus::new(
+            Health::Unhealthy,
+            &format!(
+                "{} has no recorded launcher source map; run `pkg apps sync`",
+                dest.display()
+            ),
         ));
     };
     let mut missing: Vec<&String> = Vec::new();
@@ -197,10 +218,13 @@ pub(crate) fn status(nix: &Nix, paths: &Paths) -> Result<String, AppError> {
         }
     }
     if missing.is_empty() && stale_sources.is_empty() && changed.is_empty() {
-        return Ok(format!(
-            "healthy: {} launcher(s) in sync (folder {})",
-            apps.len(),
-            dest.display()
+        return Ok(AppStatus::new(
+            Health::Healthy,
+            &format!(
+                "{} launcher(s) in sync (folder {})",
+                apps.len(),
+                dest.display()
+            ),
         ));
     }
     let list = |names: &[&String]| {
@@ -210,13 +234,16 @@ pub(crate) fn status(nix: &Nix, paths: &Paths) -> Result<String, AppError> {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    Ok(format!(
-        "unhealthy: app launcher drift in {} (missing: [{}]; stale: [{}]; changed source: [{}]); \
+    Ok(AppStatus::new(
+        Health::Unhealthy,
+        &format!(
+            "app launcher drift in {} (missing: [{}]; stale: [{}]; changed source: [{}]); \
          run `pkg apps sync`",
-        dest.display(),
-        list(&missing),
-        list(&stale_sources),
-        list(&changed)
+            dest.display(),
+            list(&missing),
+            list(&stale_sources),
+            list(&changed)
+        ),
     ))
 }
 

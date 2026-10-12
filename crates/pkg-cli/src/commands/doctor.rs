@@ -188,18 +188,16 @@ fn tap_rows(state_home: &std::path::Path) -> Vec<DoctorRow> {
         .collect()
 }
 
-/// The doctor row for macOS app launchers, mapped from the read-only apps
-/// status (`healthy:`/`unhealthy:` prefix, or an operational error).
 fn app_launchers_row(
     runtime: &nix::Nix,
     paths: &crate::config::Paths,
 ) -> Result<DoctorRow, CommandError> {
     match crate::apps::status(runtime, paths) {
-        Ok(text) if text.starts_with("healthy:") => Ok(observed("app launchers", "healthy", text)),
-        Ok(text) if text.starts_with("unhealthy:") => {
-            Ok(observed("app launchers", "unhealthy", text))
-        }
-        Ok(text) => Ok(observed("app launchers", "unreadable", text)),
+        Ok(status) => Ok(observed(
+            "app launchers",
+            status.health.as_str(),
+            status.message,
+        )),
         Err(error) if error.signal().is_some() => Err(error.into()),
         Err(error) => Ok(observed("app launchers", "unreadable", error.to_string())),
     }

@@ -1,5 +1,3 @@
-//! Staged launcher publication with exclusive rename and retained recovery.
-
 use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::fs;
@@ -29,7 +27,6 @@ pub(super) fn prepare_parent(destination: &Path) -> Result<&Path, AppError> {
             parent.display()
         )
     })?;
-    // SAFETY: geteuid takes no arguments and has no memory effects.
     let uid = unsafe { libc::geteuid() };
     if !metadata.is_dir() || metadata.uid() != uid {
         return Err(AppError::message(format!(
@@ -142,11 +139,9 @@ fn restore_previous(
     publish_error
 }
 
-// Publication and recovery must not overwrite an entry created after inspection.
 fn rename_exclusive(source: &Path, destination: &Path) -> io::Result<()> {
     let source = CString::new(source.as_os_str().as_bytes())?;
     let destination = CString::new(destination.as_os_str().as_bytes())?;
-    // SAFETY: both paths are valid C strings for the call. The syscall reads them only.
     #[cfg(target_os = "macos")]
     let result = unsafe {
         libc::renameatx_np(
@@ -157,7 +152,6 @@ fn rename_exclusive(source: &Path, destination: &Path) -> io::Result<()> {
             libc::RENAME_EXCL,
         )
     };
-    // SAFETY: both paths are valid C strings for the call. The syscall reads them only.
     #[cfg(target_os = "linux")]
     let result = unsafe {
         libc::renameat2(

@@ -146,64 +146,64 @@ class StructuralInvariantTests(unittest.TestCase):
         root = Path(td.name)
         _write(root / "README.md", readme)
         _write(root / "CONTRIBUTING.md", contributing)
-        _write(root / "openspec" / "changes" / "simplify-to-native-nix" / "proposal.md", "# Active change\n")
+        _write(root / "openspec" / "changes" / "archive" / "2026-10-12-simplify-to-native-nix" / "proposal.md", "# Native Nix baseline\n")
         return root
 
     # --- (b) a commented-only required link must NOT satisfy the invariant ---
 
     def test_commented_only_readme_plan_link_fails_invariant(self):
         root = self._make_repo(
-            readme="# pkg\n<!-- [plan](openspec/changes/simplify-to-native-nix/proposal.md) -->\n",
+            readme="# pkg\n<!-- [plan](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md) -->\n",
             contributing="# Contrib\n",
         )
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertFalse(
-                cdl._links_to(root / "README.md", "openspec/changes/simplify-to-native-nix/proposal.md")
+                cdl._links_to(root / "README.md", "openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md")
             )
 
     def test_commented_only_contributing_plan_link_fails_invariant(self):
         root = self._make_repo(
             readme="# pkg\n",
-            contributing="# Contrib\n<!-- [plan](openspec/changes/simplify-to-native-nix/proposal.md) -->\n",
+            contributing="# Contrib\n<!-- [plan](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md) -->\n",
         )
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertFalse(
-                cdl._links_to(root / "CONTRIBUTING.md", "openspec/changes/simplify-to-native-nix/proposal.md")
+                cdl._links_to(root / "CONTRIBUTING.md", "openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md")
             )
 
     def test_multiline_commented_only_plan_link_fails_invariant(self):
         readme = (
             "# pkg\n"
             "<!-- a multi-line note\n"
-            "[plan](openspec/changes/simplify-to-native-nix/proposal.md)\n"
+            "[plan](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md)\n"
             "end note -->\n"
         )
         root = self._make_repo(readme=readme, contributing="# Contrib\n")
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertFalse(
-                cdl._links_to(root / "README.md", "openspec/changes/simplify-to-native-nix/proposal.md")
+                cdl._links_to(root / "README.md", "openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md")
             )
 
     # --- (c) the existing visible links still satisfy the invariant --------
 
     def test_visible_readme_plan_link_satisfies_invariant(self):
         root = self._make_repo(
-            readme="# pkg\n[plan](openspec/changes/simplify-to-native-nix/proposal.md)\n",
+            readme="# pkg\n[plan](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md)\n",
             contributing="# Contrib\n",
         )
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertTrue(
-                cdl._links_to(root / "README.md", "openspec/changes/simplify-to-native-nix/proposal.md")
+                cdl._links_to(root / "README.md", "openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md")
             )
 
     def test_visible_contributing_plan_link_satisfies_invariant(self):
         root = self._make_repo(
             readme="# pkg\n",
-            contributing="# Contrib\n[plan](openspec/changes/simplify-to-native-nix/proposal.md)\n",
+            contributing="# Contrib\n[plan](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md)\n",
         )
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertTrue(
-                cdl._links_to(root / "CONTRIBUTING.md", "openspec/changes/simplify-to-native-nix/proposal.md")
+                cdl._links_to(root / "CONTRIBUTING.md", "openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md")
             )
 
     def test_visible_link_beats_commented_broken_link(self):
@@ -212,15 +212,15 @@ class StructuralInvariantTests(unittest.TestCase):
         readme = (
             "# pkg\n"
             "<!-- [broken](missing.md) -->\n"
-            "[plan](openspec/changes/simplify-to-native-nix/proposal.md)\n"
+            "[plan](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md)\n"
         )
         root = self._make_repo(readme=readme, contributing="# Contrib\n")
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertTrue(
-                cdl._links_to(root / "README.md", "openspec/changes/simplify-to-native-nix/proposal.md")
+                cdl._links_to(root / "README.md", "openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md")
             )
         targets = [lnk.target for lnk in cdl.extract_links(root / "README.md", readme)]
-        self.assertIn("openspec/changes/simplify-to-native-nix/proposal.md", targets)
+        self.assertIn("openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md", targets)
         self.assertNotIn("missing.md", targets)
 
 
@@ -241,7 +241,7 @@ class IterMarkdownFilesDiscoveryTests(unittest.TestCase):
 
         # Author-owned Markdown that must be discovered.
         _write(root / "README.md", "# pkg\n")
-        _write(root / "openspec" / "changes" / "simplify-to-native-nix" / "proposal.md", "# Active change\n")
+        _write(root / "openspec" / "changes" / "archive" / "2026-10-12-simplify-to-native-nix" / "proposal.md", "# Native Nix baseline\n")
         # Generated / ignored trees that must NOT be discovered.
         _write(
             root
@@ -263,14 +263,14 @@ class IterMarkdownFilesDiscoveryTests(unittest.TestCase):
 
         # Generated/VCS Markdown is excluded; repo Markdown survives.
         self.assertIn("README.md", found)
-        self.assertIn("openspec/changes/simplify-to-native-nix/proposal.md", found)
+        self.assertIn("openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md", found)
         self.assertNotIn(
             "target/doc/static.files/SourceSerif4-LICENSE-a2cfd9d5.md", found
         )
         self.assertNotIn(".git/notes/commentary.md", found)
         # Exactly the two author-owned files and nothing else.
         self.assertEqual(
-            found, {"README.md", "openspec/changes/simplify-to-native-nix/proposal.md"}
+            found, {"README.md", "openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md"}
         )
 
     def test_ignored_match_is_exact_component_not_substring(self):

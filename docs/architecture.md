@@ -98,9 +98,9 @@ Native, configuration, and cache errors keep their causes until command reportin
 
 Historical experiment findings remain under `spikes/`.
 Their source links point to the last revision before removal.
-Current work follows [Simplify the native client](../openspec/changes/simplify-client/design.md).
+Current work follows [Simplify the native client](../openspec/changes/archive/2026-10-12-simplify-client/design.md).
 Rust ownership and error rules follow
-[Rust design](../openspec/changes/improve-rust-quality/design.md).
+[Rust design](../openspec/changes/archive/2026-10-12-improve-rust-quality/design.md).
 The complete quality change follows
 [Complete the Rust quality plan](../openspec/changes/complete-rust-quality-plan/design.md).
 The [completion report](verification/rust-quality-completion-2026-10-12.md) records the final behavior and verification limits.

@@ -238,15 +238,6 @@ fn unique_exposed_forms<'a>(attrs: &[&'a str], system: Option<&str>) -> Vec<&'a 
         .collect()
 }
 
-/// Exposed forms for a filtered result set, counted against the FULL
-/// source namespace (`universe`), not the filtered rows.
-///
-/// A query that matches only one namespace's description must not earn
-/// the short form: the same short name is still claimed by another
-/// attribute in the full snapshot, and a short ID would map to a
-/// different or ambiguous package through `info` and `install`. Claims
-/// are therefore counted over the universe, and each matched result is
-/// exposed through `exposed_form` with those full-snapshot claims.
 /// Resolve a bare name to exactly one supported output.
 ///
 /// The Nixpkgs lane probes exact attributes at the current immutable source
@@ -445,10 +436,6 @@ fn exact_attribute_matches(
         .collect()
 }
 
-/// Compile the one shared query pattern.
-///
-/// Both lanes use the Rust regex engine, compiled case-insensitively; an
-/// invalid pattern is an honest error reported before any evaluation runs.
 /// Prepare a complete current snapshot before reporting update success.
 /// # Errors
 ///

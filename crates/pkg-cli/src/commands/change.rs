@@ -1,5 +1,3 @@
-//! One owner for locked native package changes and derived app refresh.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 
@@ -38,7 +36,7 @@ enum Prepared {
         requested: Vec<String>,
     },
     Remove(Vec<String>),
-    Upgrade(Vec<String>),
+    Upgrade(UpgradeTargets),
     Rollback {
         generation: Option<u64>,
         previous: Option<u64>,
@@ -166,7 +164,9 @@ impl Prepared {
         match self {
             Self::Install { targets, .. } => session.nix.profile_add(profile, targets),
             Self::Remove(targets) => session.nix.profile_remove(profile, targets),
-            Self::Upgrade(targets) => session.nix.profile_upgrade(profile, Some(targets)),
+            Self::Upgrade(targets) => session
+                .nix
+                .profile_upgrade(profile, Some(targets.as_slice())),
             Self::Rollback { generation, .. } => session.nix.profile_rollback(profile, *generation),
         }
     }
@@ -241,6 +241,7 @@ impl Prepared {
             },
             Self::Upgrade(targets) => Report {
                 names: targets
+                    .as_slice()
                     .iter()
                     .filter_map(|key| {
                         after
@@ -398,6 +399,145 @@ fn prune(session: &Session, days: u64) -> Result<(), CommandError> {
     Ok(())
 }
 
+enum UpgradeSelection<'a> {
+    All,
+    Explicit {
+        entries: &'a [String],
+        exact_entry: bool,
+    },
+}
+
+struct UpgradeTargets(Vec<String>);
+
+impl UpgradeTargets {
+    fn nonempty(ids: Vec<String>) -> Option<Self> {
+        (!ids.is_empty()).then_some(Self(ids))
+    }
+
+    fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+}
+
+struct UpgradePolicy<'a> {
+    session: &'a Session,
+    installed: &'a BTreeMap<String, ProfileEntry>,
+    registry: registry::Registry,
+}
+
+impl<'a> UpgradePolicy<'a> {
+    fn prepare(
+        session: &'a Session,
+        installed: &'a BTreeMap<String, ProfileEntry>,
+        selection: &UpgradeSelection<'_>,
+    ) -> Result<Option<UpgradeTargets>, CommandError> {
+        let selected = match selection {
+            UpgradeSelection::All => installed
+                .iter()
+                .filter(|(_, entry)| entry.active)
+                .map(|(key, _)| key.clone())
+                .collect(),
+            UpgradeSelection::Explicit {
+                entries,
+                exact_entry,
+            } => {
+                if entries.is_empty() {
+                    return Err(String::from("upgrade needs entry IDs or --all").into());
+                }
+                crate::installed::select(
+                    installed,
+                    &session.config,
+                    &session.paths.state_home,
+                    entries,
+                    *exact_entry,
+                )?
+            }
+        };
+        if matches!(selection, UpgradeSelection::All) && selected.is_empty() {
+            println!("No installed entries; nothing to upgrade.");
+            return Ok(None);
+        }
+        let policy = Self {
+            session,
+            installed,
+            registry: registry::Registry::load(&registry::registry_path(
+                &session.paths.state_home,
+            ))?,
+        };
+        let Some(targets) = policy.movable_targets(selected, selection)? else {
+            return Ok(None);
+        };
+        policy.require_eligible(&targets)?;
+        Ok(Some(targets))
+    }
+
+    fn removed_source(&self, entry: &str) -> Option<String> {
+        let source = store::source_of_reference(
+            &self.session.paths.state_home,
+            &self.installed[entry].original_url,
+        )?;
+        (source != nix::OFFICIAL_CASK_SOURCE && self.registry.origin(&source).is_none())
+            .then_some(source)
+    }
+
+    fn movable_targets(
+        &self,
+        mut selected: Vec<String>,
+        selection: &UpgradeSelection<'_>,
+    ) -> Result<Option<UpgradeTargets>, CommandError> {
+        match selection {
+            UpgradeSelection::All => {
+                selected.retain(|entry| match self.removed_source(entry) {
+                    None => true,
+                    Some(source) => {
+                        println!(
+                            "Skipped: {entry} (tap {source} was removed; keeping locked outputs)."
+                        );
+                        false
+                    }
+                });
+                if selected.is_empty() {
+                    println!("Nothing eligible to upgrade.");
+                    return Ok(None);
+                }
+            }
+            UpgradeSelection::Explicit { .. } => {
+                for entry in &selected {
+                    if let Some(source) = self.removed_source(entry) {
+                        return Err(format!(
+                            "pkg: {entry}: tap {source} is removed; upgrade refuses to follow it"
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+        let mut movable = Vec::new();
+        for entry in selected {
+            if nix::is_fixed_reference(&self.installed[&entry].original_url) {
+                println!("Skipped: {entry} (fixed source reference).");
+            } else {
+                movable.push(entry);
+            }
+        }
+        let targets = UpgradeTargets::nonempty(movable);
+        if targets.is_none() {
+            match selection {
+                UpgradeSelection::All => println!("Unchanged: no movable entries to upgrade."),
+                UpgradeSelection::Explicit { .. } => {
+                    println!("Unchanged: selected entries use fixed source references.");
+                }
+            }
+        }
+        Ok(targets)
+    }
+
+    fn require_eligible(&self, targets: &UpgradeTargets) -> Result<(), CommandError> {
+        lifecycle::gate_upgrade_formulae(self.session, self.installed, targets.as_slice())?;
+        lifecycle::gate_upgrade_macos_range(self.session, self.installed, targets.as_slice())
+    }
+}
+
 fn prepare_upgrade(
     session: &Session,
     installed: &BTreeMap<String, ProfileEntry>,
@@ -405,108 +545,22 @@ fn prepare_upgrade(
     all: bool,
     exact_entry: bool,
 ) -> Result<Option<Prepared>, CommandError> {
-    // `--all` combined with entry names is a usage error rejected by the
-    // parser; here the target set is either explicit names or everything.
-    let targets: Vec<String> = if all {
-        installed
-            .iter()
-            .filter(|(_, entry)| entry.active)
-            .map(|(key, _)| key.clone())
-            .collect()
+    let selection = if all {
+        UpgradeSelection::All
     } else {
-        if entries.is_empty() {
-            return Err(String::from("upgrade needs entry IDs or --all").into());
-        }
-        crate::installed::select(
-            installed,
-            &session.config,
-            &session.paths.state_home,
+        UpgradeSelection::Explicit {
             entries,
             exact_entry,
-        )?
-    };
-    if all && targets.is_empty() {
-        println!("No installed entries; nothing to upgrade.");
-        return Ok(None);
-    }
-    // Entries installed from a tap that has since been removed keep their
-    // locked outputs; an upgrade must never follow a reference the registry
-    // no longer holds. The local public source of an entry is identified
-    // solely from its original URL through the tap store - the attribute
-    // path is never parsed - so this works even when saved catalogs or the
-    // profile metadata are broken, and it works for a removed entry too.
-    // Only the registry is loaded here, never `TapState` or saved
-    // catalogs, so unrelated broken metadata cannot block the decision.
-    let registry = registry::Registry::load(&registry::registry_path(&session.paths.state_home))?;
-    let removed_source = |entry: &str| -> Option<String> {
-        let source =
-            store::source_of_reference(&session.paths.state_home, &installed[entry].original_url)?;
-        (source != nix::OFFICIAL_CASK_SOURCE && registry.origin(&source).is_none())
-            .then_some(source)
-    };
-    let targets = if all {
-        let mut remaining = targets;
-        remaining.retain(|entry| match removed_source(entry) {
-            None => true,
-            Some(source) => {
-                println!("Skipped: {entry} (tap {source} was removed; keeping locked outputs).");
-                false
-            }
-        });
-        if remaining.is_empty() {
-            println!("Nothing eligible to upgrade.");
-            return Ok(None);
         }
-        remaining
-    } else {
-        for entry in &targets {
-            if let Some(source) = removed_source(entry) {
-                return Err(format!(
-                    "pkg: {entry}: tap {source} is removed; upgrade refuses to follow it"
-                )
-                .into());
-            }
-        }
-        targets
     };
-    // Only explicit full-commit references count as fixed; tags, branches,
-    // and hex-looking branch names stay movable (design D4). Fixed entries
-    // are reported explicitly in both modes.
-    let mut movable: Vec<String> = Vec::new();
-    for entry in &targets {
-        if nix::is_fixed_reference(installed[entry].original_url.as_str()) {
-            println!("Skipped: {entry} (fixed source reference).");
-        } else {
-            movable.push(entry.clone());
-        }
-    }
-    if !all && movable.is_empty() {
-        println!("Unchanged: selected entries use fixed source references.");
+    let Some(targets) = UpgradePolicy::prepare(session, installed, &selection)? else {
         return Ok(None);
-    }
-    if movable.is_empty() {
-        println!("Unchanged: no movable entries to upgrade.");
-        return Ok(None);
-    }
-    // The remaining IDs are passed explicitly so fixed sources and removed
-    // taps are never followed.
-    //
-    // Each movable CASK entry is re-gated against its OWN current
-    // catalog record before `profile_upgrade`: the installed source is
-    // the entry's original URL — saved taps through the verified tap
-    // store, every other casks source loaded directly from that URL —
-    // and the cask identity is confirmed as the whole native attribute
-    // through `catalog::native_package_attribute`. Today's configured
-    // casks source never judges an entry installed from another one;
-    // Nixpkgs entries are never gated as casks. Unsupported, excluded,
-    // and unknown targets are gated with the install policy.
-    lifecycle::gate_upgrade_formulae(session, installed, &movable)?;
-    lifecycle::gate_upgrade_macos_range(session, installed, &movable)?;
+    };
     eprintln!(
         "Upgrading: {}",
-        selected_names(session, installed, &movable).join(", ")
+        selected_names(session, installed, targets.as_slice()).join(", ")
     );
-    Ok(Some(Prepared::Upgrade(movable)))
+    Ok(Some(Prepared::Upgrade(targets)))
 }
 
 fn already_installed(

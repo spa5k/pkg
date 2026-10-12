@@ -391,17 +391,6 @@ pub(super) struct BoundedOutput {
     pub(super) stderr: Vec<u8>,
 }
 
-/// Run one child command under the SHARED bounds: own process group,
-/// per-stream log caps that ABORT (never truncate into success), and a
-/// wall-time limit enforced by `SIGKILLing` the whole group. Both the
-/// config gate and the raw-export build use this runner; nothing in
-/// this module reads child output unbounded.
-///
-/// While the child owns its group, SIGINT/SIGTERM/SIGHUP sent to THIS
-/// process are caught (see [`signal_guard`]) so the poll loop below can
-/// tear the OWNED group down and report an interruption; without this,
-/// a default-disposition signal would kill the manager and leave the
-/// child plus any Nix builder running.
 /// Private RAII signal registration for [`run_bounded_child`]: while a
 /// bounded child owns a process group, SIGINT/SIGTERM/SIGHUP sent to
 /// THIS process only set a flag (async-signal-safe atomic store). The

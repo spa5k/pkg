@@ -47,7 +47,6 @@ impl ProfileLock {
     }
 }
 
-/// A native profile and its paths with their exclusive profile lock held.
 pub struct LockedProfile<'a> {
     nix: &'a crate::nix::Nix,
     paths: &'a crate::config::Paths,
@@ -55,7 +54,6 @@ pub struct LockedProfile<'a> {
 }
 
 impl<'a> LockedProfile<'a> {
-    /// Acquire the lock for these exact profile paths.
     pub fn acquire(
         nix: &'a crate::nix::Nix,
         paths: &'a crate::config::Paths,
@@ -68,12 +66,10 @@ impl<'a> LockedProfile<'a> {
         })
     }
 
-    /// The native adapter bound to this locked profile.
     pub const fn nix(&self) -> &crate::nix::Nix {
         self.nix
     }
 
-    /// The paths whose native profile is locked.
     pub const fn paths(&self) -> &crate::config::Paths {
         self.paths
     }

@@ -1,5 +1,4 @@
-//! Cancellation of optional reads must stop profile mutations.
-
+#![expect(missing_docs, reason = "integration test crates have no public API")]
 #![cfg(unix)]
 #![allow(
     clippy::expect_used,

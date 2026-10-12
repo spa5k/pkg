@@ -1,5 +1,4 @@
-//! Compiled CLI checks for search snapshots and query behavior.
-
+#![expect(missing_docs, reason = "integration test crates have no public API")]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

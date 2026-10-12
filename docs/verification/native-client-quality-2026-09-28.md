@@ -11,9 +11,9 @@ reviewed and verified by the parent manager.
 
 - Baseline: local commit `a1dc324` (parent branch
   `feat/native-nix-openspec-plan`), the implemented
-  [simplify-to-native-nix](../../openspec/changes/simplify-to-native-nix/proposal.md)
+  [simplify-to-native-nix](../../openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md)
   client.
-- Scope: [simplify-native-client-internals](../../openspec/changes/simplify-native-client-internals/proposal.md).
+- Scope: [simplify-native-client-internals](../../openspec/changes/archive/2026-10-12-simplify-native-client-internals/proposal.md).
 
 ## Final structure
 

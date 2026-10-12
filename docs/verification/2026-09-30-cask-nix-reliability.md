@@ -89,7 +89,7 @@ Install loads every saved tap before it handles qualified IDs. Strict loading
 is necessary for bare names: ignoring one failed source can select the wrong
 package. A qualified Nixpkgs request does not need that source set. This is a
 coupling problem against the
-[qualified-source isolation requirement](../../openspec/changes/import-public-cask-taps/specs/namespaced-cask-catalog/spec.md).
+[qualified-source isolation requirement](../../openspec/changes/archive/2026-10-12-import-public-cask-taps/specs/namespaced-cask-catalog/spec.md).
 
 Repair: load only the source data required by a qualified request. Keep strict
 loading for ambiguous bare-name resolution. Do not add a global ignore-error

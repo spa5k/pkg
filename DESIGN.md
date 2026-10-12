@@ -114,7 +114,7 @@ components:
 > **Historical record — superseded.** This design system served the old
 > control-room product surface, which the native Nix rewrite removed. The
 > active design is
-> [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md).
+> [Simplify pkg to native Nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md).
 > The file is kept as design history; it guides no current surface.
 
 ## Overview

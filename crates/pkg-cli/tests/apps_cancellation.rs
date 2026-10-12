@@ -1,4 +1,4 @@
-//! Compiled CLI cancellation and launcher publication tests.
+#![expect(missing_docs, reason = "integration test crates have no public API")]
 #![cfg(target_os = "macos")]
 #![allow(
     clippy::unwrap_used,
@@ -244,7 +244,6 @@ fn compiled_cli_preserves_signal_status_and_launcher_state_at_each_child_stage()
         let child = command.spawn().expect("spawn compiled pkg");
         let stage_marker = PathBuf::from(format!("{}.{}", fixture.ready.display(), stage));
         let child = wait_for_child_stage(child, &stage_marker);
-        // SAFETY: the PID belongs to this live child process.
         let result = unsafe { libc::kill(child.id().cast_signed(), signal) };
         assert_eq!(result, 0, "send signal {signal}");
         let output = child.wait_with_output().expect("wait for compiled pkg");
@@ -355,7 +354,6 @@ fn doctor_preserves_interruption_during_app_status() {
         child,
         &PathBuf::from(format!("{}.doctor", fixture.ready.display())),
     );
-    // SAFETY: the PID belongs to this live child process.
     let result = unsafe { libc::kill(child.id().cast_signed(), libc::SIGTERM) };
     assert_eq!(result, 0, "send SIGTERM");
     let output = child.wait_with_output().expect("wait for doctor");
@@ -363,6 +361,85 @@ fn doctor_preserves_interruption_during_app_status() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("signal 15"), "{stderr}");
     assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn doctor_reports_launcher_drift_and_health_without_writing() {
+    let fixture = Fixture::new(false, "#!/bin/sh\nexit 0\n", "");
+    let observe = || {
+        let output = fixture
+            .command_with(&["doctor", "--json"])
+            .output()
+            .expect("run doctor");
+        let result: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("doctor JSON");
+        result["result"]
+            .as_array()
+            .expect("doctor rows")
+            .iter()
+            .find(|row| row["component"] == "app launchers")
+            .expect("launcher observation")
+            .clone()
+    };
+    let drift = observe();
+    assert_eq!(drift["status"], "unhealthy");
+    assert_eq!(
+        drift["detail"],
+        format!(
+            "unhealthy: app launcher drift in {} (missing: [Stats.app]; stale: [Old.app]; changed source: []); run `pkg apps sync`",
+            fixture.launchers().display()
+        )
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.launchers().join(".pkg-launcher-sources")).unwrap(),
+        SOURCE_MAP
+    );
+    assert!(!fixture.launchers().join("Stats.app").exists());
+
+    fs::write(
+        fixture.launchers().join(".pkg-launcher-sources"),
+        "Stats.app\t/old/source/Stats.app\n",
+    )
+    .unwrap();
+    let changed = observe();
+    assert_eq!(changed["status"], "unhealthy");
+    assert_eq!(
+        changed["detail"],
+        format!(
+            "unhealthy: app launcher drift in {} (missing: []; stale: []; changed source: [Stats.app]); run `pkg apps sync`",
+            fixture.launchers().display()
+        )
+    );
+    assert!(!fixture.launchers().join("Stats.app").exists());
+
+    let source_map = format!(
+        "Stats.app\t{}\n",
+        fixture.app_root.join("Applications/Stats.app").display()
+    );
+    fs::write(
+        fixture.launchers().join(".pkg-launcher-sources"),
+        &source_map,
+    )
+    .unwrap();
+    fs::write(fixture.launchers().join("Stats.app"), "current launcher").unwrap();
+    let healthy = observe();
+    assert_eq!(healthy["status"], "healthy");
+    assert_eq!(
+        healthy["detail"],
+        format!(
+            "healthy: 1 launcher(s) in sync (folder {})",
+            fixture.launchers().display()
+        )
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.launchers().join(".pkg-launcher-sources")).unwrap(),
+        source_map
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.launchers().join("Stats.app")).unwrap(),
+        "current launcher"
+    );
+    assert!(!fixture.ready.exists());
 }
 
 #[test]
@@ -414,7 +491,6 @@ fn canceled_refresh_reports_the_completed_native_upgrade() {
             &PathBuf::from(format!("{}.sync", fixture.ready.display())),
         );
         assert!(mutation.exists());
-        // SAFETY: the PID belongs to this live child process.
         assert_eq!(unsafe { libc::kill(child.id().cast_signed(), signal) }, 0);
         let output = child.wait_with_output().expect("wait for upgrade");
         assert_eq!(output.status.code(), Some(128 + signal));

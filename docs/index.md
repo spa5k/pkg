@@ -9,7 +9,7 @@ Nix owns package state, generations, rollback, and roots. `pkg` owns names,
 commands, output, and desktop app launchers.
 
 The active design is
-[Simplify pkg to native Nix](../openspec/changes/simplify-to-native-nix/proposal.md).
+[Simplify pkg to native Nix](../openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md).
 The client is in development for x86_64 Linux and Apple silicon macOS.
 
 ## Start here

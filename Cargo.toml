@@ -16,7 +16,6 @@ rust-version = "1.96"
 license = "Apache-2.0"
 publish = false
 
-# Groups have lower priority so a specific, reasoned exception can override them.
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "deny"

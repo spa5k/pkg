@@ -1,7 +1,7 @@
 # Accepted audit repairs: verification
 
 Date: 1 October 2026. Change:
-[implement-audit-repairs](../../openspec/changes/implement-audit-repairs/proposal.md).
+[implement-audit-repairs](../../openspec/changes/archive/2026-10-12-implement-audit-repairs/proposal.md).
 Baseline: `120e9edd2730f647c6e1302bfaef4a5118030d5e`.
 Tested code: `de3f1daec90f1ae5e6347a570160750d2061ca76`.
 The later completion record changes documentation only.

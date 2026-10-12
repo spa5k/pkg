@@ -1,10 +1,3 @@
-//! Lifecycle commands: install, remove, update, upgrade, history,
-//! rollback, prune.
-//!
-//! These handlers resolve input and read profile history. Package changes
-//! use the shared change owner for locking, native mutation, postflight,
-//! launcher refresh, and reporting.
-
 use std::collections::BTreeMap;
 
 use crate::catalog::{self, ParsedId};

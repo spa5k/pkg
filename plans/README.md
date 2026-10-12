@@ -1,9 +1,11 @@
 # Plans and history
 
-Active design authority lives in OpenSpec:
-[Simplify pkg to native Nix](../openspec/changes/simplify-to-native-nix/proposal.md)
-with its [design](../openspec/changes/simplify-to-native-nix/design.md) and
-[tasks](../openspec/changes/simplify-to-native-nix/tasks.md).
+The native Nix design baseline is recorded in OpenSpec:
+[Simplify pkg to native Nix](../openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md)
+with its [design](../openspec/changes/archive/2026-10-12-simplify-to-native-nix/design.md) and
+[tasks](../openspec/changes/archive/2026-10-12-simplify-to-native-nix/tasks.md).
+The [OpenSpec archive](../openspec/changes/archive/README.md) lists completed
+and superseded changes.
 
 This directory keeps historical records only:
 

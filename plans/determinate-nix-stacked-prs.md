@@ -1,8 +1,8 @@
 # Previous alpha implementation plan
 
 > Superseded for future implementation on 28 September 2026 by
-> [Simplify pkg to native Nix](../openspec/changes/simplify-to-native-nix/proposal.md).
-> Use its [tasks](../openspec/changes/simplify-to-native-nix/tasks.md).
+> [Simplify pkg to native Nix](../openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md).
+> Use its [tasks](../openspec/changes/archive/2026-10-12-simplify-to-native-nix/tasks.md).
 > The record below describes the old alpha design and historical backlog.
 > It does not require the replacement to preserve old contracts or tests.
 > Some release prose below predates the alpha.58 entry now present on main.
@@ -204,7 +204,7 @@ hosted macOS builds. The final public checks passed. The release proof retains
 the earlier unexplained source-resolution failures; a later pass does not
 explain them. These fixture changes are complete.
 
-The [verification tasks](../openspec/changes/add-deterministic-verification-suite/tasks.md)
+The [verification tasks](../openspec/changes/archive/2026-10-12-add-deterministic-verification-suite/tasks.md)
 list the remaining work. Clock injection, hermetic checks, basic CLI process
 tests, and the Linux clean-host workflow already exist. Do not recreate them.
 
@@ -226,7 +226,7 @@ and credentials need verified operator decisions. Earlier proposals are not
 proof that these inputs exist. Application binaries and installer packages need
 separate Apple Application and Installer identities from the same team.
 
-The [production tasks](../openspec/changes/execute-production-trust-ceremony/tasks.md)
+The [production tasks](../openspec/changes/archive/2026-10-12-execute-production-trust-ceremony/tasks.md)
 contain only the remaining activation work. Signing helpers and the initial
 runbook already exist.
 

@@ -22,11 +22,6 @@ pub(super) enum IoMode {
     Filtered,
 }
 
-/// One reaped child: its complete output record and cancellation record.
-///
-/// One shape serves captured and streamed children. The synchronous owner
-/// polls output and reaps the child. Streamed children have empty buffers,
-/// so their exit status is what the caller needs.
 pub(super) struct Reaped {
     /// The child's output record; stdout and stderr buffers are empty for
     /// streamed children.
@@ -98,19 +93,14 @@ mod forward {
     /// Signals that cancel a native child and are forwarded to it.
     pub(super) const TERMINATION: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
-    /// The last termination signal received during a run (0 = none).
     static RECEIVED: AtomicI32 = AtomicI32::new(0);
-    /// Counts each termination signal received during a run.
     static SIGNAL_COUNTS: [AtomicUsize; 3] = [
         AtomicUsize::new(0),
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     ];
-    /// Whether the installed handler records signals for the active run.
     static ACTIVE: AtomicBool = AtomicBool::new(false);
-    /// Number of handlers that have started and have not returned.
     static HANDLERS: AtomicUsize = AtomicUsize::new(0);
-    /// Only one supervised child may run at a time.
     static RUN_LOCK: Mutex<()> = Mutex::new(());
 
     extern "C" fn record_cancellation(signum: libc::c_int) {
@@ -150,10 +140,6 @@ mod forward {
         Ok(())
     }
 
-    /// Install cancellation-recording dispositions for the termination signals.
-    ///
-    /// The handler records a signal. The child owner forwards it while the
-    /// child remains unreaped.
     pub(super) fn install() -> std::io::Result<Guard> {
         let mut previous = Vec::new();
         RECEIVED.store(0, Ordering::SeqCst);
@@ -163,8 +149,6 @@ mod forward {
         ACTIVE.store(true, Ordering::SeqCst);
         for signum in TERMINATION {
             let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
-            // SAFETY: registers `record_cancellation` for `signum` and captures
-            // the previous disposition in `old`.
             let handler = record_cancellation as *const () as usize;
             if unsafe { libc::sigaction(signum, &empty_action(handler), &raw mut old) } != 0 {
                 let error = std::io::Error::last_os_error();
@@ -183,7 +167,6 @@ mod forward {
     fn restore(previous: &[(libc::c_int, libc::sigaction)]) -> std::io::Result<()> {
         let mut first_error = None;
         for (signum, old) in previous.iter().rev() {
-            // SAFETY: restores a disposition captured before this run.
             if unsafe { libc::sigaction(*signum, &raw const *old, std::ptr::null_mut()) } != 0
                 && first_error.is_none()
             {
@@ -193,7 +176,6 @@ mod forward {
         first_error.map_or(Ok(()), Err)
     }
 
-    /// Restores prior dispositions after signal recording stops.
     pub(super) struct Guard(Option<Vec<(libc::c_int, libc::sigaction)>>);
 
     impl Guard {
@@ -221,7 +203,6 @@ mod forward {
         }
     }
 
-    /// Counts of each signal received since the owner last checked.
     pub(super) fn signals_since(seen: &mut [usize; 3]) -> Option<[usize; 3]> {
         let mut new_signals = [0; 3];
         for (index, count) in SIGNAL_COUNTS.iter().enumerate() {
@@ -235,9 +216,7 @@ mod forward {
         Some(new_signals)
     }
 
-    /// Block termination signals until the child owner can forward them.
     pub(super) fn block() -> std::io::Result<MaskGuard> {
-        // SAFETY: both masks are initialized; all signals are valid constants.
         let previous = unsafe {
             let mut set: libc::sigset_t = std::mem::zeroed();
             let mut previous: libc::sigset_t = std::mem::zeroed();
@@ -284,7 +263,6 @@ mod forward {
 
     impl Drop for MaskGuard {
         fn drop(&mut self) {
-            // SAFETY: this restores the calling thread's captured signal mask.
             unsafe {
                 libc::pthread_sigmask(
                     libc::SIG_SETMASK,
@@ -309,7 +287,8 @@ pub(super) trait StderrSink {
     fn chunk(&mut self, bytes: &[u8]);
     /// Update terminal progress while the child is quiet.
     fn tick(&mut self) {}
-    /// Called once after the child has exited and stderr reached EOF.
+    /// Called once when output processing stops. Normal completion follows
+    /// child reap; error cleanup can follow this call.
     fn finish(&mut self, success: bool);
 }
 
@@ -699,7 +678,6 @@ impl<'a> OutputPipes<'a> {
                 revents: 0,
             },
         ];
-        // SAFETY: both descriptors are initialized and remain owned by this value.
         let ready = unsafe { libc::poll(descriptors.as_mut_ptr(), 2, 10) };
         if ready < 0 {
             let error = std::io::Error::last_os_error();
@@ -1040,12 +1018,10 @@ fn append_output(bytes: &mut Vec<u8>, chunk: &[u8], bounded: bool, overflow: &mu
 
 #[cfg(unix)]
 fn set_nonblocking(fd: std::os::fd::RawFd) -> std::io::Result<()> {
-    // SAFETY: `fd` is an open child pipe owned by the caller.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    // SAFETY: this preserves existing flags and enables nonblocking pipe reads.
     if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
         return Err(std::io::Error::last_os_error());
     }
@@ -1089,9 +1065,6 @@ impl ChildOwner {
     }
 }
 
-/// Spawn one command, observe its exit without reaping, finish pipe and group
-/// cleanup, then consume its wait status. The signal handler records only.
-/// The synchronous owner forwards signals while the child identity is held.
 pub(super) fn run_child(
     command: Command,
     mode: IoMode,

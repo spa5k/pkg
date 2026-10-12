@@ -3,11 +3,11 @@
 Status: implemented and locally verified on both target systems, with
 verification results and limits recorded explicitly. This page is the
 readable plan. The full binding design is
-[openspec/changes/generate-cask-catalog-with-rust/design.md](../../openspec/changes/generate-cask-catalog-with-rust/design.md);
+[openspec/changes/archive/2026-10-12-generate-cask-catalog-with-rust/design.md](../../openspec/changes/archive/2026-10-12-generate-cask-catalog-with-rust/design.md);
 the contract is
-[contract.md](../../openspec/changes/generate-cask-catalog-with-rust/contract.md);
+[contract.md](../../openspec/changes/archive/2026-10-12-generate-cask-catalog-with-rust/contract.md);
 per-task truth is
-[tasks.md](../../openspec/changes/generate-cask-catalog-with-rust/tasks.md);
+[tasks.md](../../openspec/changes/archive/2026-10-12-generate-cask-catalog-with-rust/tasks.md);
 evidence is
 [docs/verification/2026-09-28-rust-cask-catalog.md](../verification/2026-09-28-rust-cask-catalog.md).
 An offline HTML mirror of this plan is

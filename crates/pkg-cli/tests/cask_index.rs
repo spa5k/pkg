@@ -1,5 +1,4 @@
-//! Compiled CLI checks for generated cask catalog behavior.
-
+#![expect(missing_docs, reason = "integration test crates have no public API")]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -51,6 +50,7 @@ impl CaskFixture {
                 format!("{}:/usr/bin:/bin", self.bin.path().display()),
             )
             .env("HOME", self.home.path())
+            .env("XDG_CONFIG_HOME", self.home.path().join("config"))
             .env("XDG_STATE_HOME", self.home.path().join("state"))
             .env("XDG_CACHE_HOME", self.home.path().join("cache"))
             .output()
@@ -79,6 +79,55 @@ const CATALOG: &str = r#"{"schema":"pkg-cask-catalog/4",
   "systems":{"aarch64-darwin":{"entries":{}},"x86_64-linux":{"entries":{
     "homebrew/cask/1password-cli":{"source":"homebrew/cask","token":"1password-cli","name":"1Password CLI","description":"The 1Password command-line tool","version":"2.39.0","homepage":"https://developer.1password.com/docs/cli/","status":"eligible","kind":"binary","reason":null,"detail":null},
     "homebrew/cask/iterm2":{"source":"homebrew/cask","token":"iterm2","name":"iTerm2","description":null,"version":"3.6.11","homepage":"https://iterm2.com/","status":"excluded","kind":null,"reason":"unsupported-platform","detail":null}}}}}"#;
+
+#[test]
+fn upgrade_gates_the_installed_cask_source_after_configuration_changes() {
+    let fixture = CaskFixture::new();
+    let config = fixture.home.path().join("config/pkg");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("config.toml"),
+        "[sources]\ncasks = 'github:fixture/current-casks'\n",
+    )
+    .unwrap();
+    let profile = fixture.profile();
+    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("pkg-1-link", &profile).unwrap();
+    let installed = serde_json::json!({"version": 3, "elements": {"opaque": {
+        "active": true,
+        "attrPath": "packages.x86_64-linux.homebrew/cask/iterm2",
+        "originalUrl": "github:fixture/installed-casks",
+        "url": "github:fixture/installed-casks/1111111111111111111111111111111111111111",
+        "storePaths": []
+    }}});
+    let calls = fixture.home.path().join("calls");
+    let script = std::fs::read_to_string(&fixture.nix)
+        .unwrap()
+        .replace(
+            "echo '{\"version\":3,\"elements\":{}}'",
+            &format!("echo '{installed}'"),
+        )
+        .replace(
+            "case \"$*\" in",
+            &format!(
+                "printf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in",
+                calls.display()
+            ),
+        );
+    fixture.set_nix_script(&script);
+    let (code, stdout, stderr) = fixture.run(&["upgrade", "opaque", "--entry"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("unsupported-platform"), "{stderr}");
+    let calls = std::fs::read_to_string(calls).unwrap();
+    assert!(
+        calls.lines().any(|line| line.contains("flake metadata")
+            && line.contains("github:fixture/installed-casks")),
+        "{calls}"
+    );
+    assert!(!calls.contains("github:fixture/current-casks"), "{calls}");
+    assert!(!calls.contains("profile upgrade"), "{calls}");
+}
 
 #[test]
 fn cask_info_reports_recorded_exclusion() {

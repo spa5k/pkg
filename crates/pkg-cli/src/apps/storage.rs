@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 /// Root-owned parent of private per-user app views on the Nix volume.
 const APP_CACHE_PARENT: &str = "/nix/var/pkg/cask-apps";
 
-/// The real user's identity, matching `os.getuid()` in the app materializer.
 fn app_uid() -> u32 {
     // SAFETY: getuid has no arguments and cannot fail.
     unsafe { libc::getuid() }

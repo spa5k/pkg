@@ -1,8 +1,4 @@
-//! Detect common literal shell-spawn forms in product sources.
-//!
-//! This source scan cannot resolve aliases or prove runtime behavior.
-//! The process tests separately verify literal argument handling.
-
+#![expect(missing_docs, reason = "integration test crates have no public API")]
 // This integration-test crate is built without `cfg(test)`, so the
 // crate-root test opt-out does not apply; the same reasoned exception
 // is declared here once.

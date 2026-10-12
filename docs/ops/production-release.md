@@ -1,6 +1,6 @@
 # Production release preparation
 > Superseded on 28 September 2026 by
-> [Simplify pkg to native Nix](../../openspec/changes/simplify-to-native-nix/design.md).
+> [Simplify pkg to native Nix](../../openspec/changes/archive/2026-10-12-simplify-to-native-nix/design.md).
 > This record describes the deleted TUF release pipeline.
 > It stays as history and does not describe current releases.
 

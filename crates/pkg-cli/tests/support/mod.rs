@@ -1,5 +1,3 @@
-//! Shared pure catalog fixture builders for compiled CLI tests.
-
 pub fn formula_index_fixture(bin: &std::path::Path) -> std::path::PathBuf {
     let payload = bin.join("formula-index.json");
     let names: Vec<String> = std::iter::once(String::from("awscli"))

@@ -36,7 +36,6 @@ impl StderrSink for MixedSignalSink {
         }
         self.raised = true;
         for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-            // SAFETY: `signal` is a valid, installed process signal handler.
             if unsafe { libc::raise(signal) } != 0 {
                 self.raise_failed = true;
                 return;
@@ -45,6 +44,18 @@ impl StderrSink for MixedSignalSink {
     }
 
     fn finish(&mut self, _success: bool) {}
+}
+
+struct ExitSignalSink(i32);
+
+impl StderrSink for ExitSignalSink {
+    fn chunk(&mut self, _bytes: &[u8]) {}
+
+    fn finish(&mut self, _success: bool) {
+        // SAFETY: the selected termination handler remains installed until
+        // run_child restores it after this completion callback returns.
+        assert_eq!(unsafe { libc::raise(self.0) }, 0);
+    }
 }
 
 extern "C" fn count_mixed_signal(signal: libc::c_int) {
@@ -163,7 +174,6 @@ fn auto_reap_supervisor() {
         return;
     }
     let marker = std::env::var(MARKER).unwrap();
-    // SAFETY: SIGCHLD is a valid signal and SIG_IGN is a valid disposition.
     assert_ne!(
         unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) },
         libc::SIG_ERR
@@ -206,9 +216,7 @@ fn setup_signal_supervisor() {
     // the signal before `spawn` returns and before the parent registers the pid.
     unsafe {
         command.pre_exec(move || {
-            // SAFETY: `getppid` reads the direct parent's process id.
             let parent = libc::getppid();
-            // SAFETY: `kill` sends a valid termination signal to the parent.
             if libc::kill(parent, signal) != 0 {
                 return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
             }
@@ -273,7 +281,6 @@ fn ignoring_signal_child() {
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
         action.sa_sigaction = libc::SIG_IGN;
-        // SAFETY: `action` is initialized and the signal is valid.
         unsafe {
             libc::sigemptyset(&raw mut action.sa_mask);
             assert_eq!(
@@ -329,32 +336,18 @@ fn exit_signal_supervisor() {
     if std::env::var(MODE).as_deref() != Ok("exit-supervisor") {
         return;
     }
-    let signal = std::env::var(SIGNAL).unwrap().parse::<i32>().unwrap();
     let ready = std::env::var(READY).unwrap();
-    // The supervisor is the direct child under test. Keep a separate process
-    // alive after it exits so its inherited pipe tests the post-exit drain.
-    let owner = unsafe { libc::getppid() };
-    // SAFETY: the child branch below uses only async-signal-safe libc calls
-    // and `_exit`; the parent owns and records the child's pid.
-    let sender = unsafe { libc::fork() };
-    assert!(sender >= 0, "fork exit signal sender");
-    if sender == 0 {
-        let request = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 150_000_000,
-        };
-        let mut remaining = request;
-        // SAFETY: nanosleep uses initialized stack storage and is async-signal-safe.
-        if unsafe { libc::nanosleep(&raw const remaining, &raw mut remaining) } != 0 {
-            // SAFETY: _exit is async-signal-safe and does not run parent destructors.
-            unsafe { libc::_exit(2) };
+    // SAFETY: the fork child uses only async-signal-safe pause. The outer
+    // GroupChildGuard retains its group leader until it stops these holders.
+    let holder = unsafe { libc::fork() };
+    assert!(holder >= 0, "fork post-exit pipe holder");
+    if holder == 0 {
+        loop {
+            // SAFETY: pause is async-signal-safe and allocates no Rust state.
+            unsafe { libc::pause() };
         }
-        // SAFETY: owner is the live test process that launched this supervisor.
-        let result = unsafe { libc::kill(owner, signal) };
-        // SAFETY: _exit is async-signal-safe and does not run parent destructors.
-        unsafe { libc::_exit(i32::from(result != 0)) };
     }
-    fs::write(&ready, sender.to_string()).expect("record exit signal sender pid");
+    fs::write(&ready, holder.to_string()).expect("record post-exit pipe holder pid");
 }
 
 #[test]
@@ -364,7 +357,7 @@ fn exit_signal_test_supervisor() {
     }
     let ready_dir = std::env::var(READY).unwrap();
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-        let ready = Path::new(&ready_dir).join(format!("sender-{signal}"));
+        let ready = Path::new(&ready_dir).join(format!("holder-{signal}"));
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args([
@@ -373,14 +366,16 @@ fn exit_signal_test_supervisor() {
                 "--nocapture",
             ])
             .env(MODE, "exit-supervisor")
-            .env(SIGNAL, signal.to_string())
             .env(READY, &ready);
+        let mut sink = ExitSignalSink(signal);
         let started = Instant::now();
-        let reaped = run_child(command, IoMode::Capture, None).expect("run exit signal child");
+        let reaped =
+            run_child(command, IoMode::Filtered, Some(&mut sink)).expect("run exit signal child");
         assert_eq!(reaped.classify(), Outcome::Interrupted { signal });
         assert!(started.elapsed() < Duration::from_secs(1));
-        let sender_pid = wait_for_marker(&ready).parse::<i32>().unwrap();
-        wait_for_process_exit(sender_pid);
+        let holder_pid = wait_for_marker(&ready).parse::<i32>().unwrap();
+        // SAFETY: signal zero only observes the holder in the owned test group.
+        assert_eq!(unsafe { libc::kill(holder_pid, 0) }, 0);
     }
 }
 
@@ -396,8 +391,8 @@ fn signals_after_child_exit_are_classified_without_reaping_pipe_holders() {
         ])
         .env(MODE, "exit-signal-test-supervisor")
         .env(READY, temp.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit());
     let mut supervisor =
         GroupChildGuard::spawn(command).expect("spawn post-exit signal supervisor");
     let status = supervisor
@@ -408,6 +403,10 @@ fn signals_after_child_exit_are_classified_without_reaping_pipe_holders() {
         status.success(),
         "post-exit signal supervisor failed: {status}"
     );
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        let ready = temp.path().join(format!("holder-{signal}"));
+        wait_for_process_exit(wait_for_marker(&ready).parse().unwrap());
+    }
 }
 
 #[test]
@@ -424,7 +423,6 @@ fn bounded_group_supervisor() {
     assert!(descendant >= 0, "fork bounded descendant");
     if descendant == 0 {
         loop {
-            // SAFETY: pause blocks this process until a signal arrives.
             unsafe { libc::pause() };
         }
     }
@@ -688,13 +686,11 @@ fn group_guard_supervisor() {
     assert!(descendant >= 0, "fork group-guard descendant");
     if descendant == 0 {
         loop {
-            // SAFETY: pause blocks until the parent group guard sends SIGKILL.
             unsafe { libc::pause() };
         }
     }
     fs::write(&ready, descendant.to_string()).expect("publish group-guard descendant");
     loop {
-        // SAFETY: pause blocks until the parent group guard sends SIGKILL.
         unsafe { libc::pause() };
     }
 }
@@ -859,10 +855,8 @@ fn direct_commands_preserve_arguments_without_shell_interpretation() {
 #[test]
 fn spawn_failure_restores_the_callers_signal_mask() {
     std::thread::spawn(|| {
-        // SAFETY: zeroed sigset_t buffers are initialized below before use.
         let mut previous: libc::sigset_t = unsafe { std::mem::zeroed() };
         let mut blocked: libc::sigset_t = unsafe { std::mem::zeroed() };
-        // SAFETY: both buffers are initialized and SIGINT is a valid signal.
         unsafe {
             libc::sigemptyset(&raw mut blocked);
             libc::sigaddset(&raw mut blocked, libc::SIGINT);
@@ -941,7 +935,6 @@ fn signal_child() {
     assert_eq!(status, 0);
     let blocked: Vec<_> = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP]
         .into_iter()
-        // SAFETY: mask is initialized and each signal is a valid constant.
         .map(|signal| unsafe { libc::sigismember(std::ptr::from_ref(&mask), signal) })
         .collect();
     fs::write(
@@ -1284,7 +1277,6 @@ fn direct_children_receive_each_forwarded_termination_signal() {
             text.split_whitespace().skip(1).collect::<Vec<_>>(),
             ["0", "0", "0"]
         );
-        // SAFETY: a completed supervisor has reaped this helper before returning.
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "child must be reaped");
         assert_eq!(
             std::io::Error::last_os_error().raw_os_error(),

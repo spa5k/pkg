@@ -1,6 +1,6 @@
 # public-tap-check
 
-Data-only fixture trees, an adversarial case matrix, and a metadata-only matrix of seven real pinned public taps for the accepted local public-tap import scope ([implementation contract](../../openspec/changes/import-public-cask-taps/implementation-contract.md), [design](../../openspec/changes/import-public-cask-taps/design.md)). Execution status and limits are summarized in [docs/verification/public-taps.md](../../docs/verification/public-taps.md).
+Data-only fixture trees, an adversarial case matrix, and a metadata-only matrix of seven real pinned public taps for the accepted local public-tap import scope ([implementation contract](../../openspec/changes/archive/2026-10-12-import-public-cask-taps/implementation-contract.md), [design](../../openspec/changes/archive/2026-10-12-import-public-cask-taps/design.md)). Execution status and limits are summarized in [docs/verification/public-taps.md](../../docs/verification/public-taps.md).
 
 This directory prepares verification assets. It is **not** an importer and makes **no** integration claim. Reader-stage success is never source acceptance (for example, the duplicate-token fixture exports two rows at the reader stage; the converter later rejects the duplicate identity).
 

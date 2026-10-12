@@ -342,27 +342,15 @@ impl From<String> for GateError {
     }
 }
 
-/// Query the LOCAL effective Nix settings and verify they are
-/// fail-closed BEFORE any Ruby runs. The query uses the exact isolated
-/// environment of the build (private HOME and `XDG_CONFIG_HOME`, empty
-/// `NIX_USER_CONF_FILES`, `env_clear`, whitelisted executable env) and NO
-/// client sandbox override: client --options are ignored for
-/// untrusted users anyway. This query reads the local effective
-/// settings only; it is not an authoritative statement of what the
-/// daemon enforces — the fresh in-build sandbox probe proves the
-/// actual behavior and stays mandatory. The full config is never
-/// printed (it may contain secret settings); only bounded error tails
-/// and offending setting names leave this function.
+/// The daemon can ignore restricted sandbox overrides from untrusted users.
+/// Local effective settings do not prove what the daemon enforces.
+/// The full configuration can contain secret settings.
 fn nix_config_gate_with_limits(
     nix: &Path,
     staging: &Path,
     walltime: Duration,
 ) -> Result<(), GateError> {
     let nix_exe = resolve_nix_exe(nix)?;
-    // Private per-gate roots (distinct from the build's): the shared
-    // constructor creates them and owns the environment/process setup;
-    // the gate keeps its own args, deadline, label, and NO sandbox
-    // override (client --options are ignored for untrusted users).
     let gate = staging.join("gate");
     let nix_home = gate.join("home");
     let nix_tmp = gate.join("tmp");
