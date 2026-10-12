@@ -1,4 +1,5 @@
 //! Pinned mac-app-util installation and supervised launcher updates.
+use super::error::AppError;
 use crate::config::Paths;
 use crate::nix::{Nix, Outcome, run_direct};
 use std::collections::BTreeMap;
@@ -39,24 +40,27 @@ const HELPER_BINARY_RELATIVE: &str = "bin/mac-app-util";
 /// resolve. A verified helper that cannot start because of the macOS 27
 /// SBCL address conflict is rebuilt with the fixed dependency pin. Other
 /// failures do not trigger a repair.
-pub(super) fn ensure_helper(nix: &Nix, paths: &Paths) -> Result<PathBuf, String> {
+pub(super) fn ensure_helper(nix: &Nix, paths: &Paths) -> Result<PathBuf, AppError> {
     let profile = &paths.helper_profile;
-    let mut entries = nix
-        .profile_list(profile)
-        .map_err(|e| format!("could not list helper profile {}: {e}", profile.display()))?;
+    let mut entries = nix.profile_list(profile).map_err(|e| {
+        AppError::native(
+            format!("could not list helper profile {}", profile.display()),
+            e,
+        )
+    })?;
     if entries.is_empty() {
         nix.profile_add_with_inputs(profile, &[HELPER_FLAKE_REF.to_string()], HELPER_INPUTS)
-            .map_err(|e| format!("could not install helper {HELPER_FLAKE_REF}: {e}"))?;
+            .map_err(|e| {
+                AppError::native(format!("could not install helper {HELPER_FLAKE_REF}"), e)
+            })?;
         entries = nix.profile_list(profile).map_err(|e| {
-            format!(
-                "could not re-read helper profile {}: {e}",
-                profile.display()
+            AppError::native(
+                format!("could not re-read helper profile {}", profile.display()),
+                e,
             )
         })?;
         if entries.is_empty() {
-            return Err(format!(
-                "installing {HELPER_FLAKE_REF} produced no profile entry"
-            ));
+            return Err(format!("installing {HELPER_FLAKE_REF} produced no profile entry").into());
         }
     }
     let helper = verify_pinned_helper(profile, &entries)?;
@@ -76,22 +80,24 @@ pub(super) fn ensure_helper(nix: &Nix, paths: &Paths) -> Result<PathBuf, String>
         &[HELPER_FLAKE_REF.to_string()],
         HELPER_INPUTS,
     )
-    .map_err(|e| format!("could not update app helper runtime: {e}"))?;
+    .map_err(|e| AppError::native("could not update app helper runtime", e))?;
     let staged_entries = nix
         .profile_list(&staged_profile)
-        .map_err(|e| format!("could not read staged app helper profile: {e}"))?;
+        .map_err(|e| AppError::native("could not read staged app helper profile", e))?;
     let staged_helper = verify_pinned_helper(&staged_profile, &staged_entries)?;
     if !helper_runtime_compatible(&staged_helper)? {
-        return Err("app helper still cannot start after updating its SBCL runtime".to_string());
+        return Err(AppError::message(
+            "app helper still cannot start after updating its SBCL runtime",
+        ));
     }
     let store_profile = fs::canonicalize(&staged_profile)
         .map_err(|e| format!("could not resolve staged app helper profile: {e}"))?;
     nix.profile_replace(profile, &store_profile)
-        .map_err(|e| format!("could not activate updated app helper: {e}"))?;
+        .map_err(|e| AppError::native("could not activate updated app helper", e))?;
     let entries = nix.profile_list(profile).map_err(|e| {
-        format!(
-            "could not re-read helper profile {}: {e}",
-            profile.display()
+        AppError::native(
+            format!("could not re-read helper profile {}", profile.display()),
+            e,
         )
     })?;
     verify_pinned_helper(profile, &entries)
@@ -100,7 +106,7 @@ pub(super) fn ensure_helper(nix: &Nix, paths: &Paths) -> Result<PathBuf, String>
 /// Probe only the verified helper. The exact SBCL static-address failure
 /// allows one dependency repair; interruption and unrelated failures stop
 /// the sync before any launcher is replaced.
-fn helper_runtime_compatible(helper: &Path) -> Result<bool, String> {
+fn helper_runtime_compatible(helper: &Path) -> Result<bool, AppError> {
     match run_direct(helper, &[String::from("--help")])? {
         Outcome::Success => Ok(true),
         Outcome::Failed { stderr, .. }
@@ -108,13 +114,10 @@ fn helper_runtime_compatible(helper: &Path) -> Result<bool, String> {
         {
             Ok(false)
         }
-        Outcome::Failed { status, stderr } => Err(format!(
-            "app helper could not start ({status}): {}",
-            stderr.trim()
-        )),
-        Outcome::Interrupted { signal } => Err(format!(
-            "app helper check was interrupted by signal {signal}"
-        )),
+        Outcome::Failed { status, stderr } => {
+            Err(format!("app helper could not start ({status}): {}", stderr.trim()).into())
+        }
+        Outcome::Interrupted { signal } => Err(AppError::interrupted("app helper check", signal)),
     }
 }
 
@@ -126,7 +129,7 @@ fn helper_runtime_compatible(helper: &Path) -> Result<bool, String> {
 fn verify_pinned_helper(
     profile: &Path,
     entries: &BTreeMap<String, crate::nix::ProfileEntry>,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, AppError> {
     if entries.len() != 1 {
         let ids: Vec<String> = entries.keys().cloned().collect();
         return Err(format!(
@@ -134,19 +137,19 @@ fn verify_pinned_helper(
              remove what you do not want and run `pkg apps sync` again",
             profile.display(),
             ids.join(", ")
-        ));
+        )
+        .into());
     }
     let Some(entry) = entries.values().next() else {
-        return Err(format!(
-            "installing {HELPER_FLAKE_REF} produced no profile entry"
-        ));
+        return Err(format!("installing {HELPER_FLAKE_REF} produced no profile entry").into());
     };
     if !entry.active {
         return Err(format!(
             "helper profile {} holds an inactive entry; remove it and rerun \
              `pkg apps sync`",
             profile.display()
-        ));
+        )
+        .into());
     }
     if !entry.original_url.starts_with(HELPER_REPO_PREFIX)
         || entry.locked_revision() != Some(HELPER_REVISION)
@@ -158,15 +161,18 @@ fn verify_pinned_helper(
             profile.display(),
             entry.original_url,
             entry.locked_revision().unwrap_or("none")
-        ));
-    }
-    helper_binary_in(&entry.store_paths).ok_or_else(|| {
-        format!(
-            "helper profile entry in {} has no {HELPER_BINARY_RELATIVE} binary in its \
-             store paths",
-            profile.display()
         )
-    })
+        .into());
+    }
+    helper_binary_in(&entry.store_paths)
+        .ok_or_else(|| {
+            format!(
+                "helper profile entry in {} has no {HELPER_BINARY_RELATIVE} binary in its \
+             store paths",
+                profile.display()
+            )
+        })
+        .map_err(Into::into)
 }
 
 /// Finds the helper executable inside the entry's store outputs.
@@ -178,11 +184,11 @@ fn helper_binary_in(store_paths: &[String]) -> Option<PathBuf> {
 }
 
 /// Runs the one helper command this module needs. `sync-trampolines`
-/// rebuilds the destination from the source view and refreshes Dock
+/// rebuilds its target folder from the source view and refreshes Dock
 /// entries for the trampolined apps. The command goes through the shared
 /// signal forward/reap boundary, so an interrupted run is reaped and
 /// reported here instead of killing pkg.
-pub(super) fn run_sync_trampolines(helper: &Path, from: &Path, to: &Path) -> Result<(), String> {
+pub(super) fn run_sync_trampolines(helper: &Path, from: &Path, to: &Path) -> Result<(), AppError> {
     let args = [
         String::from("sync-trampolines"),
         from.to_string_lossy().into_owned(),
@@ -190,21 +196,24 @@ pub(super) fn run_sync_trampolines(helper: &Path, from: &Path, to: &Path) -> Res
     ];
     match run_direct(helper, &args) {
         Ok(Outcome::Success) => Ok(()),
-        Ok(Outcome::Interrupted { signal }) => Err(format!(
-            "mac-app-util sync-trampolines was interrupted by signal {signal} \
-             ({} -> {}); the launcher folder may be partially replaced; \
-             run `pkg apps sync` again",
-            from.display(),
-            to.display()
-        )),
-        Ok(Outcome::Failed { status, stderr }) => Err(format!(
+        Ok(Outcome::Interrupted { signal }) => Err(AppError::interrupted(
+            format!(
+                "mac-app-util sync-trampolines ({} -> {})",
+                from.display(),
+                to.display()
+            ),
+            signal,
+        )
+        .with_dock_effect_possible()),
+        Ok(Outcome::Failed { status, stderr }) => Err(AppError::message(format!(
             "mac-app-util sync-trampolines failed ({} -> {}; {}): {}",
             from.display(),
             to.display(),
             status,
             stderr.trim()
-        )),
-        Err(detail) => Err(format!("could not run {}: {detail}", helper.display())),
+        ))
+        .with_dock_effect_possible()),
+        Err(detail) => Err(format!("could not run {}: {detail}", helper.display()).into()),
     }
 }
 

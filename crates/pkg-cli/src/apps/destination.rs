@@ -147,30 +147,28 @@ pub(super) fn write_marker(dest: &Path) -> Result<(), String> {
         .map_err(|e| format!("could not write {}: {e}", marker.display()))
 }
 
-/// Best-effort marker restoration after a partial helper failure, so the
-/// destination stays recognized as pkg-owned and a retry can proceed.
-pub(super) fn restore_marker(dest: &Path) {
-    if dest.is_dir() && !marker_is_valid(dest) {
-        let _ = write_marker(dest);
-    }
-}
-
 /// Records the derived launcher-name to source-bundle map.
 pub(super) fn write_source_map(
     dest: &Path,
     apps: &BTreeMap<String, PathBuf>,
 ) -> Result<(), String> {
+    use std::io::Write as _;
+
     let mut text = String::new();
     for (name, source) in apps {
         use std::fmt::Write as _;
         let _ = writeln!(text, "{name}\t{}", source.display());
     }
-    fs::write(dest.join(SOURCE_MAP_NAME), text).map_err(|e| {
-        format!(
-            "could not write {}: {e}",
-            dest.join(SOURCE_MAP_NAME).display()
-        )
-    })
+    let path = dest.join(SOURCE_MAP_NAME);
+    let mut temporary = tempfile::NamedTempFile::new_in(dest)
+        .map_err(|error| format!("could not stage {}: {error}", path.display()))?;
+    temporary
+        .write_all(text.as_bytes())
+        .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    temporary
+        .persist(&path)
+        .map_err(|error| format!("could not publish {}: {}", path.display(), error.error))?;
+    Ok(())
 }
 
 /// Reads the derived launcher-name to source-bundle map, if present.

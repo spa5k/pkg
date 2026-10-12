@@ -1,4 +1,5 @@
 //! Discovery and preparation of current generated private app payloads.
+use super::error::AppError;
 use super::storage::app_cache_root;
 use crate::nix::{Outcome, run_direct_captured};
 use std::collections::BTreeMap;
@@ -92,7 +93,7 @@ pub(super) fn restored_path(bundle: &Path) -> Result<Option<PathBuf>, String> {
 }
 
 /// Prepare and verify a private app copy through the shared child supervisor.
-pub(super) fn prepare_bundle(bundle: &Path) -> Result<PathBuf, String> {
+pub(super) fn prepare_bundle(bundle: &Path) -> Result<PathBuf, AppError> {
     let Some(expected) = restored_path(bundle)? else {
         return Ok(bundle.to_path_buf());
     };
@@ -112,13 +113,14 @@ pub(super) fn prepare_bundle(bundle: &Path) -> Result<PathBuf, String> {
         {
             Ok(expected)
         }
-        (Outcome::Success, _) => Err(String::from("app preparation returned an unexpected path")),
-        (Outcome::Failed { status, stderr }, _) => Err(format!(
-            "app preparation failed ({status}): {}",
-            stderr.trim()
-        )),
-        (Outcome::Interrupted { signal }, _) => Err(format!(
-            "app preparation was interrupted by signal {signal}"
-        )),
+        (Outcome::Success, _) => {
+            Err(String::from("app preparation returned an unexpected path").into())
+        }
+        (Outcome::Failed { status, stderr }, _) => {
+            Err(format!("app preparation failed ({status}): {}", stderr.trim()).into())
+        }
+        (Outcome::Interrupted { signal }, _) => {
+            Err(AppError::interrupted("app preparation", signal))
+        }
     }
 }

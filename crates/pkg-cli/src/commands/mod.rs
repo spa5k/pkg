@@ -71,6 +71,12 @@ fn finish(outcome: Result<(), CommandError>) -> ExitCode {
         Err(CommandError::Native(NixError::Interrupted { signal, .. })) => {
             error::signal_exit(signal)
         }
+        Err(CommandError::Apps(app_error)) => {
+            eprintln!("pkg: {app_error}");
+            app_error
+                .signal()
+                .map_or_else(|| ExitCode::from(FAILURE), error::signal_exit)
+        }
         Err(CommandError::Catalog(catalog::CatalogError::Interrupted(signal))) => {
             eprintln!("Discovery cancelled. The previous complete cache was retained.");
             error::signal_exit(signal)
@@ -431,9 +437,18 @@ fn apps_refresh_after_mutation(
                     names.join(", ")
                 );
             }
-            report_cause(&detail);
+            let detail_text = detail.to_string();
+            report_cause(&detail_text);
             eprintln!("Next: Resolve the cause, then run `pkg apps sync`.");
-            Err(CommandError::Reported(ExitCode::from(FAILURE)))
+            if detail.dock_effect_possible() {
+                eprintln!("Dock state may have changed.");
+            } else {
+                eprintln!("Dock state did not change.");
+            }
+            Err(detail.signal().map_or_else(
+                || CommandError::Reported(ExitCode::from(FAILURE)),
+                |signal| CommandError::Reported(error::signal_exit(signal)),
+            ))
         }
     }
 }
