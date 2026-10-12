@@ -10,6 +10,8 @@ pub use model::{
 use serde::Deserialize as _;
 use std::collections::BTreeMap;
 
+const FORMULA_INDEX_SCHEMA: &str = "pkg-formula-catalog/1";
+
 #[derive(serde::Deserialize)]
 struct IndexHeader {
     generator: CatalogGenerator,
@@ -37,7 +39,7 @@ pub fn decode_catalog_index(raw: &serde_json::Value) -> Result<CatalogIndex, sup
 ///
 /// Returns an error when the value has an unsupported schema or invalid Formula fields.
 pub fn decode_formula_index(raw: &serde_json::Value) -> Result<CatalogIndex, super::NixError> {
-    decode_index(raw, "pkg-formula-catalog/1", "formula catalog index")
+    decode_index(raw, FORMULA_INDEX_SCHEMA, "formula catalog index")
 }
 
 fn decode_index(
@@ -139,14 +141,14 @@ fn decode_index(
         }
         systems.insert(system.clone(), CatalogSystem { entries });
     }
-    Ok(CatalogIndex {
-        schema: expected.to_string(),
+    Ok(CatalogIndex::from_decoded(
+        expected.to_string(),
         generator,
         inputs,
         targets,
         macos_baseline,
         systems,
-    })
+    ))
 }
 
 /// Validate one index entry record against its full-id key and the inputs.

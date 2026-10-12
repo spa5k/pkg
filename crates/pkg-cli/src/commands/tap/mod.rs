@@ -335,9 +335,9 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
                 Ok(catalog) => TapRow {
                     source: source.clone(),
                     origin: entry.origin.clone(),
-                    revision: Some(catalog.provenance.revision.clone()),
-                    eligible: Some(catalog.provenance.eligible),
-                    excluded: Some(catalog.provenance.excluded),
+                    revision: Some(catalog.provenance().revision.clone()),
+                    eligible: Some(catalog.provenance().eligible),
+                    excluded: Some(catalog.provenance().excluded),
                     added_unix: entry.added_unix,
                     error: None,
                 },

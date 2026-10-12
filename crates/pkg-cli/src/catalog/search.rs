@@ -365,7 +365,7 @@ fn resolve_inner(
                             install_command: None,
                         };
                         requires_id |= query.rank(&row).is_none();
-                        choices.push(CatalogId::Nixpkgs(exposed));
+                        choices.push(CatalogId::nixpkgs(&exposed).map_err(CatalogError::Source)?);
                     }
                     Ok(())
                 })?;
@@ -373,7 +373,7 @@ fn resolve_inner(
         } else {
             let attrs: Vec<&str> = exact.keys().map(String::as_str).collect();
             for attr in unique_exposed_forms(&attrs, Some(system)) {
-                choices.push(CatalogId::Nixpkgs(attr.to_string()));
+                choices.push(CatalogId::nixpkgs(attr).map_err(CatalogError::Source)?);
             }
         }
     }
@@ -386,10 +386,8 @@ fn resolve_inner(
     sources.dedup();
     match sources.len() {
         0 => {}
-        1 => choices.push(CatalogId::Cask {
-            source: sources.swap_remove(0),
-            token: name.to_string(),
-        }),
+        1 => choices
+            .push(CatalogId::cask(&sources.swap_remove(0), name).map_err(CatalogError::Source)?),
         _ => {
             return Err(CatalogError::Ambiguous {
                 name: name.to_string(),

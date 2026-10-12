@@ -249,7 +249,7 @@ impl TapState {
             let catalog = self.saved_one(&source)?.clone();
             catalogs.insert(source, catalog);
         }
-        Ok(crate::tap::SavedCatalogs::from_catalogs(catalogs))
+        crate::tap::SavedCatalogs::from_catalogs(catalogs.into_values())
     }
 }
 

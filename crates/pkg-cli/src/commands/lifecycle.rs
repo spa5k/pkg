@@ -43,10 +43,10 @@ fn resolve_installables(
 ) -> Result<(Vec<String>, BTreeMap<String, String>), CommandError> {
     let only_formulae = parsed_ids
         .iter()
-        .all(|id| matches!(id, ParsedId::Qualified(catalog::CatalogId::Formula(_))));
+        .all(|id| matches!(id, ParsedId::Qualified(id) if matches!(id.kind(), catalog::CatalogIdKind::Formula(_))));
     let formula_view = if parsed_ids
         .iter()
-        .any(|id| matches!(id, ParsedId::Qualified(catalog::CatalogId::Formula(_))))
+        .any(|id| matches!(id, ParsedId::Qualified(id) if matches!(id.kind(), catalog::CatalogIdKind::Formula(_))))
     {
         Some(catalog::brew::FormulaView::load(
             &session.nix,
@@ -101,14 +101,16 @@ fn resolve_installables(
                 })?
             }
         };
-        if let (catalog::CatalogId::Formula(name), Some(view)) = (&resolved, &formula_view) {
+        if let (catalog::CatalogIdKind::Formula(name), Some(view)) =
+            (resolved.kind(), &formula_view)
+        {
             let canonical = view.resolve(system, name)?;
             view.availability(&catalog::CaskHost::default(), system, &canonical)
                 .require()
                 .map_err(|reason| format!("brew:homebrew/core/{canonical}: {reason}"))?;
-            resolved = catalog::CatalogId::Formula(canonical);
+            resolved = catalog::CatalogId::formula(&canonical).map_err(CommandError::Message)?;
         }
-        if let catalog::CatalogId::Cask { source, token } = &resolved {
+        if let catalog::CatalogIdKind::Cask { source, token } = resolved.kind() {
             gate_cask(&mut catalog_handle, &mut tap_state, system, source, token)?;
         }
         let installable = resolved

@@ -26,10 +26,10 @@ pub(crate) struct FormulaView {
 impl FormulaView {
     fn decode(identity: SourceIdentity, raw: &serde_json::Value) -> Result<Self, CatalogError> {
         let index = crate::nix::decode_formula_index(raw)?;
-        if index.inputs.len() != 1
-            || !index.inputs.contains_key(SOURCE)
+        if index.inputs().len() != 1
+            || !index.inputs().contains_key(SOURCE)
             || index
-                .systems
+                .systems()
                 .values()
                 .any(|system| system.entries.values().any(|entry| entry.source != SOURCE))
         {
@@ -51,7 +51,7 @@ impl FormulaView {
         .map_err(|error| CatalogError::Source(format!("invalid Formula executables: {error}")))?;
         let exists = |name: &str| {
             index
-                .systems
+                .systems()
                 .values()
                 .any(|system| system.entries.contains_key(&format!("{SOURCE}/{name}")))
         };

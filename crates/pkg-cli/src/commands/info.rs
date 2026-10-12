@@ -45,8 +45,8 @@ pub(super) fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
     } = collect_info(&session, parsed)?;
     // A cask identity is compared against the normalized
     // native form: `nix profile` records the attribute without quotes.
-    let identity_attribute = match &resolved {
-        catalog::CatalogId::Cask { source, token } => {
+    let identity_attribute = match resolved.kind() {
+        catalog::CatalogIdKind::Cask { source, token } => {
             catalog::native_package_attribute(&system, &nix::full_entry_id(source, token))
         }
         _ => data
@@ -107,8 +107,7 @@ fn collect_info(session: &super::Session, parsed: ParsedId) -> Result<InfoReques
     } else {
         super::TapState::load(session)?
     };
-    // Qualified IDs resolve without reading any saved tap; bare names
-    // load every source so their resolution stays strict.
+    // Qualified IDs read one source; bare IDs load every source.
     let mut resolved = match parsed {
         ParsedId::Qualified(qualified) => qualified,
         ParsedId::Bare(name) => {
@@ -128,19 +127,16 @@ fn collect_info(session: &super::Session, parsed: ParsedId) -> Result<InfoReques
             catalog::resolve_bare_cask(&session.nix, &saved, &token, &system, &mut catalog_handle)?
         }
     };
-    if let (catalog::CatalogId::Formula(name), Some(view)) = (&resolved, &formula_view) {
-        resolved = catalog::CatalogId::Formula(view.resolve(&system, name)?);
+    if let (catalog::CatalogIdKind::Formula(name), Some(view)) = (resolved.kind(), &formula_view) {
+        resolved = catalog::CatalogId::formula(&view.resolve(&system, name)?)?;
     }
     let (reference, attribute) = resolved
         .source_and_attribute(&tap_state.routing, &system)
         .map_err(CommandError::Message)?;
-    let installable = resolved
-        .installable(&tap_state.routing, &system)
-        .map_err(CommandError::Message)?;
-    // Cask status and metadata come from the generated index before any
-    // derivation lookup: excluded and unknown tokens report their recorded
-    // state without forcing a package evaluation.
-    let data = if let (catalog::CatalogId::Formula(name), Some(view)) = (&resolved, &formula_view) {
+    let installable = format!("{reference}#{attribute}");
+    let data = if let (catalog::CatalogIdKind::Formula(name), Some(view)) =
+        (resolved.kind(), &formula_view)
+    {
         let record = view.catalog.record(&system, "homebrew/core", name);
         let mut report = catalog::report_for(&reference, &view.catalog.identity);
         report.display = Some(String::from("Homebrew Formulae"));
@@ -156,7 +152,7 @@ fn collect_info(session: &super::Session, parsed: ParsedId) -> Result<InfoReques
             availability: Some(view.availability(&catalog::CaskHost::default(), &system, name)),
             formula_kind: record.and_then(|entry| entry.kind.clone()),
         }
-    } else if let catalog::CatalogId::Cask { source, token } = &resolved {
+    } else if let catalog::CatalogIdKind::Cask { source, token } = resolved.kind() {
         cask_info(
             &mut catalog_handle,
             &mut tap_state,
@@ -184,10 +180,7 @@ fn collect_info(session: &super::Session, parsed: ParsedId) -> Result<InfoReques
                 )));
             }
             Err(catalog::CatalogError::Ambiguous { name, mut choices }) => {
-                // Each choice becomes a CLI ID that round-trips through
-                // info and install for this request: `packages` and
-                // `legacyPackages` entries that share a short name stay
-                // full attribute paths, never two identical choices.
+                // Full attribute paths keep namespace-conflicting choices distinct.
                 for choice in &mut choices {
                     *choice = request_qualified(&resolved, choice);
                 }
@@ -213,7 +206,8 @@ fn formula_view(
     session: &super::Session,
     parsed: &ParsedId,
 ) -> Result<Option<catalog::brew::FormulaView>, CommandError> {
-    if matches!(parsed, ParsedId::Qualified(catalog::CatalogId::Formula(_))) {
+    if matches!(parsed, ParsedId::Qualified(id) if matches!(id.kind(), catalog::CatalogIdKind::Formula(_)))
+    {
         Ok(Some(catalog::brew::FormulaView::load(
             &session.nix,
             &session.config.sources.formulae,
@@ -241,8 +235,8 @@ fn info_json(
         })
     });
     let name = data.meta.as_ref().map_or_else(
-        || match resolved {
-            catalog::CatalogId::Cask { token, .. } => token.clone(),
+        || match resolved.kind() {
+            catalog::CatalogIdKind::Cask { token, .. } => token.to_string(),
             _ => data.attribute.clone(),
         },
         |meta| meta.pname.clone(),
@@ -328,8 +322,8 @@ fn info_text(
     use std::fmt::Write as _;
     let mut out = String::new();
     let name = data.meta.as_ref().map_or_else(
-        || match resolved {
-            catalog::CatalogId::Cask { token, .. } => token.clone(),
+        || match resolved.kind() {
+            catalog::CatalogIdKind::Cask { token, .. } => token.to_string(),
             _ => data.attribute.clone(),
         },
         |meta| meta.pname.clone(),
@@ -416,13 +410,13 @@ fn info_text(
 /// The attribute part is the choice the catalog layer produced — a full
 /// attribute path when namespaces collide — so the ID stays unambiguous.
 fn request_qualified(resolved: &catalog::CatalogId, attribute: &str) -> String {
-    match resolved {
-        catalog::CatalogId::Nixpkgs(_) => format!("nixpkgs:{attribute}"),
-        catalog::CatalogId::Formula(name) => format!("brew:homebrew/core/{name}"),
-        catalog::CatalogId::Explicit { reference, .. } => {
+    match resolved.kind() {
+        catalog::CatalogIdKind::Nixpkgs(_) => format!("nixpkgs:{attribute}"),
+        catalog::CatalogIdKind::Formula(name) => format!("brew:homebrew/core/{name}"),
+        catalog::CatalogIdKind::Explicit { reference, .. } => {
             format!("{reference}#{attribute}")
         }
-        catalog::CatalogId::Cask { source, token } => format!("cask:{source}/{token}"),
+        catalog::CatalogIdKind::Cask { source, token } => format!("cask:{source}/{token}"),
     }
 }
 

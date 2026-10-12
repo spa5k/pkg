@@ -135,7 +135,7 @@ pub fn search_local_casks(
         snapshot.revision.clone(),
         snapshot.saved_unix,
     );
-    report = platform_report(report, &snapshot.payload.targets, system);
+    report = platform_report(report, snapshot.payload.targets(), system);
     let view = CatalogView::from_parts(
         SourceIdentity {
             reference: source.to_string(),
@@ -162,12 +162,12 @@ pub fn search_local_saved(
 ) -> Result<SourceReport, CatalogError> {
     let report = platform_report(
         report(
-            &saved.source,
-            &saved.reference,
-            Some(saved.provenance.revision.clone()),
-            saved.provenance.published_unix,
+            saved.source(),
+            saved.reference(),
+            Some(saved.provenance().revision.clone()),
+            saved.provenance().published_unix,
         ),
-        &saved.index.targets,
+        saved.index().targets(),
         system,
     );
     visit_casks(

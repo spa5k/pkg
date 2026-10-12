@@ -178,8 +178,8 @@ fn tap_rows(state_home: &std::path::Path) -> Vec<DoctorRow> {
                     "ok",
                     format!(
                         "{} entries saved at revision {}",
-                        catalog.provenance.eligible + catalog.provenance.excluded,
-                        catalog.provenance.revision
+                        catalog.provenance().eligible + catalog.provenance().excluded,
+                        catalog.provenance().revision
                     ),
                 ),
                 Err(error) => observed(&format!("tap {source}"), "unhealthy", error),

@@ -355,6 +355,12 @@ impl SourceStore {
                 provenance.source, self.source
             ));
         }
+        super::validate_binding(index, provenance).map_err(|detail| {
+            format!(
+                "the catalog is not bound to the provenance for source `{}`: {detail}",
+                self.source
+            )
+        })?;
         let flake = guard.path.join("flake");
         let published = self.commit(&flake, provenance, index)?;
         match published {
@@ -736,13 +742,13 @@ mod tests {
             metadata_sha256: String::from(
                 "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251",
             ),
-            eligible: 2,
-            excluded: 1,
+            eligible: 1,
+            excluded: 0,
             published_unix: 1_800_000_000,
         }
     }
 
-    /// A minimal valid schema-3 index envelope for one source.
+    /// A minimal valid schema-4 index envelope for one source.
     fn index(revision: &str) -> CatalogIndex {
         let raw = serde_json::json!({
             "schema": crate::nix::CATALOG_INDEX_SCHEMA,
@@ -752,7 +758,12 @@ mod tests {
                     "url": "https://github.com/somebody/homebrew-apps",
                     "revision": revision,
                     "sha256": "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251",
-                    "license": "Homebrew data license"}
+                    "license": "Homebrew data license",
+                    "raw": {
+                        "archiveUrl": format!("https://api.github.com/repos/somebody/homebrew-apps/tarball/{revision}"),
+                        "archiveSha256": "2f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529252",
+                        "captureSha256": "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251",
+                        "envelopeSchema": "pkg-tap-raw-export/1"}}
             },
             "targets": ["x86_64-linux"],
             "macosBaseline": "15.7.7",
@@ -769,6 +780,7 @@ mod tests {
     fn first_publication_renames_and_undo_removes_it() {
         let state = tempfile::tempdir().expect("tempdir");
         let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
+        let revision = "0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a";
         assert!(!store.is_published());
         let staged = store.new_staging().expect("stages");
         let staging = staged.path().to_path_buf();
@@ -780,11 +792,7 @@ mod tests {
         std::fs::write(flake.join("flake.nix"), "first").expect("write");
         std::fs::create_dir(staging.join("captures")).expect("captures dir");
         let publication = store
-            .publish(
-                staged,
-                &provenance("0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a"),
-                &index("0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9d1a"),
-            )
+            .publish(staged, &provenance(revision), &index(revision))
             .expect("publishes");
         assert_eq!(publication.kind(), &Published::First);
         // The nested flake root became the active generation itself:
@@ -803,7 +811,7 @@ mod tests {
             store
                 .read_index()
                 .expect("index")
-                .targets
+                .targets()
                 .contains(&String::from("x86_64-linux"))
         );
         // Only the flake root became the active generation.
@@ -812,6 +820,35 @@ mod tests {
         // Undo removes the first publication and nothing else.
         publication.undo().expect("undoes");
         assert!(!store.is_published());
+    }
+
+    #[test]
+    fn publication_rejects_unbound_index_before_current_changes() {
+        let state = tempfile::tempdir().expect("tempdir");
+        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
+        let revision = "0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a";
+        let first = store.new_staging().expect("stages");
+        let first_flake = first.path().join("flake");
+        std::fs::create_dir(&first_flake).expect("flake dir");
+        std::fs::write(first_flake.join("flake.nix"), "valid").expect("write");
+        store
+            .publish(first, &provenance(revision), &index(revision))
+            .expect("publishes valid generation");
+        let current = store.current().join("flake.nix");
+
+        let staged = store.new_staging().expect("stages");
+        let flake = staged.path().join("flake");
+        std::fs::create_dir(&flake).expect("flake dir");
+        std::fs::write(flake.join("flake.nix"), "invalid").expect("write");
+        let mismatch = "1b56ceb53d693f3f3e0eaea0f9f4d5b8cf5b9b9d1b";
+        let Err(error) = store.publish(staged, &provenance(revision), &index(mismatch)) else {
+            panic!("an index with a different revision is refused");
+        };
+        assert!(error.contains("revision"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(current).expect("active remains"),
+            "valid"
+        );
     }
 
     #[test]
@@ -1179,7 +1216,7 @@ mod tests {
             reader
                 .read_index()
                 .expect("index")
-                .inputs
+                .inputs()
                 .contains_key("somebody/apps")
         );
     }

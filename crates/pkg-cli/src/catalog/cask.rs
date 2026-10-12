@@ -127,12 +127,12 @@ impl CatalogView {
     pub fn from_saved(saved: &crate::tap::SavedCatalog) -> Self {
         Self {
             identity: SourceIdentity {
-                reference: saved.reference.clone(),
-                locked_url: Some(saved.reference.clone()),
-                revision: Some(saved.provenance.revision.clone()),
-                display: saved.source.clone(),
+                reference: saved.reference().to_string(),
+                locked_url: Some(saved.reference().to_string()),
+                revision: Some(saved.provenance().revision.clone()),
+                display: saved.source().to_string(),
             },
-            index: saved.index.clone(),
+            index: saved.index().clone(),
         }
     }
 
@@ -161,7 +161,7 @@ impl CatalogView {
     /// The target systems declared by the envelope.
     #[must_use]
     pub fn targets(&self) -> &[String] {
-        &self.index.targets
+        self.index.targets()
     }
 
     /// Whether the envelope targets `system`.
@@ -170,14 +170,14 @@ impl CatalogView {
     /// client constant.
     #[must_use]
     pub fn targeted(&self, system: &str) -> bool {
-        self.index.targets.iter().any(|target| target == system)
+        self.index.targets().iter().any(|target| target == system)
     }
 
     /// The status entries for one system, when the system is targeted.
     #[must_use]
     pub fn entries(&self, system: &str) -> Option<&BTreeMap<String, CatalogEntry>> {
         self.index
-            .systems
+            .systems()
             .get(system)
             .map(|section| &section.entries)
     }
@@ -219,7 +219,7 @@ pub fn record<'a>(
     token: &str,
 ) -> Option<&'a CatalogEntry> {
     index
-        .systems
+        .systems()
         .get(system)?
         .entries
         .get(&crate::nix::full_entry_id(source, token))
@@ -238,7 +238,7 @@ pub fn status(index: &CatalogIndex, system: &str, source: &str, token: &str) -> 
 #[must_use]
 pub fn sources_with_token(index: &CatalogIndex, system: &str, token: &str) -> Vec<String> {
     let mut sources: Vec<String> = index
-        .systems
+        .systems()
         .get(system)
         .map(|section| {
             section
@@ -320,8 +320,8 @@ mod tests {
         assert!(!view.targeted("x86_64-darwin"));
         assert!(!view.targeted("aarch64-linux"));
         assert_eq!(view.targets(), ["aarch64-darwin", "x86_64-linux"]);
-        assert_eq!(view.index().generator.name, "cask-catalog");
-        assert_eq!(view.index().macos_baseline, "15.7.7");
+        assert_eq!(view.index().generator().name, "cask-catalog");
+        assert_eq!(view.index().macos_baseline(), "15.7.7");
     }
 
     #[test]
