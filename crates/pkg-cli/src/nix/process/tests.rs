@@ -1,9 +1,11 @@
 use std::fs;
+use std::io::Write as _;
+use std::os::unix::process::CommandExt as _;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
-use super::{IoMode, Outcome, run_child};
+use super::{ChildLimits, IoMode, Outcome, run_child, run_child_with_limits};
 
 const MODE: &str = "PKG_PROCESS_SIGNAL_TEST";
 const READY: &str = "PKG_PROCESS_SIGNAL_READY";
@@ -57,6 +59,465 @@ fn auto_reap_supervisor() {
         "the child must not be spawned"
     );
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn setup_signal_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("setup-supervisor") {
+        return;
+    }
+    let signal = std::env::var(SIGNAL).unwrap().parse::<i32>().unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::setup_signal_child",
+            "--nocapture",
+        ])
+        .env(MODE, "setup-child")
+        .env(SIGNAL, signal.to_string());
+    // SAFETY: the hook uses only async-signal-safe calls after fork. It sends
+    // the signal before `spawn` returns and before the parent registers the pid.
+    unsafe {
+        command.pre_exec(move || {
+            // SAFETY: `getppid` reads the direct parent's process id.
+            let parent = libc::getppid();
+            // SAFETY: `kill` sends a valid termination signal to the parent.
+            if libc::kill(parent, signal) != 0 {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+    let reaped = run_child(command, IoMode::Capture, None).expect("run setup signal child");
+    assert_eq!(reaped.classify(), Outcome::Interrupted { signal });
+}
+
+#[test]
+fn setup_signal_child() {
+    if std::env::var(MODE).as_deref() != Ok("setup-child") {
+        return;
+    }
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn signals_sent_during_child_setup_are_forwarded() {
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "nix::process::tests::setup_signal_supervisor",
+                "--nocapture",
+            ])
+            .env(MODE, "setup-supervisor")
+            .env(SIGNAL, signal.to_string())
+            .status()
+            .expect("run setup signal supervisor");
+        assert!(status.success(), "setup signal {signal} failed");
+    }
+}
+
+#[test]
+fn grace_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("grace-supervisor") {
+        return;
+    }
+    let signal = std::env::var(SIGNAL).unwrap().parse::<i32>().unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::ignoring_signal_child",
+            "--nocapture",
+        ])
+        .env(MODE, "ignoring-child")
+        .env(READY, std::env::var(READY).unwrap());
+    let reaped = run_child(command, IoMode::Capture, None).expect("run signal-ignoring child");
+    assert_eq!(reaped.classify(), Outcome::Interrupted { signal });
+}
+
+#[test]
+fn ignoring_signal_child() {
+    if std::env::var(MODE).as_deref() != Ok("ignoring-child") {
+        return;
+    }
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = libc::SIG_IGN;
+        // SAFETY: `action` is initialized and the signal is valid.
+        unsafe {
+            libc::sigemptyset(&raw mut action.sa_mask);
+            assert_eq!(
+                libc::sigaction(signal, &raw const action, std::ptr::null_mut()),
+                0
+            );
+        }
+    }
+    let ready = std::env::var(READY).unwrap();
+    fs::write(&ready, format!("{} 0 0 0", std::process::id()))
+        .expect("publish signal-ignoring child pid");
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn cancellation_grace_kills_and_reaps_a_signal_ignoring_child() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let ready = temp.path().join("ready");
+    let mut supervisor = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "nix::process::tests::grace_supervisor",
+            "--nocapture",
+        ])
+        .env(MODE, "grace-supervisor")
+        .env(SIGNAL, libc::SIGTERM.to_string())
+        .env(READY, &ready)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn cancellation grace supervisor");
+    let text = wait_ready(&ready);
+    let child_pid = text.split_whitespace().next().unwrap().parse().unwrap();
+    let started = Instant::now();
+    // SAFETY: the supervisor is a live child that this test has not reaped.
+    assert_eq!(
+        unsafe { libc::kill(supervisor.id().try_into().unwrap(), libc::SIGTERM) },
+        0
+    );
+    let status = supervisor.wait().expect("wait for grace supervisor");
+    assert!(status.success());
+    assert!(started.elapsed() >= Duration::from_millis(1500));
+    assert!(started.elapsed() < Duration::from_secs(4));
+    wait_for_process_exit(child_pid);
+}
+
+#[test]
+fn exit_signal_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("exit-supervisor") {
+        return;
+    }
+    let signal = std::env::var(SIGNAL).unwrap().parse::<i32>().unwrap();
+    let ready = std::env::var(READY).unwrap();
+    // The supervisor is the direct child under test. Keep a separate process
+    // alive after it exits so its inherited pipe tests the post-exit drain.
+    let owner = unsafe { libc::getppid() };
+    // SAFETY: the child branch below uses only async-signal-safe libc calls
+    // and `_exit`; the parent owns and records the child's pid.
+    let sender = unsafe { libc::fork() };
+    assert!(sender >= 0, "fork exit signal sender");
+    if sender == 0 {
+        let request = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 150_000_000,
+        };
+        let mut remaining = request;
+        // SAFETY: nanosleep uses initialized stack storage and is async-signal-safe.
+        if unsafe { libc::nanosleep(&raw const remaining, &raw mut remaining) } != 0 {
+            // SAFETY: _exit is async-signal-safe and does not run parent destructors.
+            unsafe { libc::_exit(2) };
+        }
+        // SAFETY: owner is the live test process that launched this supervisor.
+        let result = unsafe { libc::kill(owner, signal) };
+        // SAFETY: _exit is async-signal-safe and does not run parent destructors.
+        unsafe { libc::_exit(i32::from(result != 0)) };
+    }
+    fs::write(&ready, sender.to_string()).expect("record exit signal sender pid");
+}
+
+#[test]
+fn signals_after_child_exit_are_classified_without_reaping_pipe_holders() {
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ready = temp.path().join("sender");
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "nix::process::tests::exit_signal_supervisor",
+                "--nocapture",
+            ])
+            .env(MODE, "exit-supervisor")
+            .env(SIGNAL, signal.to_string())
+            .env(READY, &ready);
+        let started = Instant::now();
+        let reaped = run_child(command, IoMode::Capture, None).expect("run exit signal child");
+        assert_eq!(reaped.classify(), Outcome::Interrupted { signal });
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let sender_pid = wait_for_marker(&ready).parse::<i32>().unwrap();
+        wait_for_process_exit(sender_pid);
+    }
+}
+
+#[test]
+fn bounded_group_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("bounded-group-supervisor") {
+        return;
+    }
+    let ready = std::env::var(READY).unwrap();
+    // The forked process inherits the child's dedicated process group. It
+    // stays alive after this test process exits.
+    // SAFETY: the child branch loops in the async-signal-safe `pause` call;
+    // the parent records its pid and then returns to the test harness.
+    let descendant = unsafe { libc::fork() };
+    assert!(descendant >= 0, "fork bounded descendant");
+    if descendant == 0 {
+        loop {
+            // SAFETY: pause blocks this process until a signal arrives.
+            unsafe { libc::pause() };
+        }
+    }
+    fs::write(&ready, descendant.to_string()).expect("publish bounded descendant pid");
+}
+
+#[test]
+fn bounded_children_stop_group_descendants_and_preserve_unrelated_sentinels() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let ready = temp.path().join("descendant");
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::bounded_group_supervisor",
+            "--nocapture",
+        ])
+        .env(MODE, "bounded-group-supervisor")
+        .env(READY, &ready);
+    let mut sentinels = SentinelChildren(vec![
+        Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn first sentinel"),
+        Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn second sentinel"),
+    ]);
+    for _ in 0..32 {
+        let reaped = super::run_child_bounded(command_for_true(), 512 * 1024 * 1024)
+            .expect("run bounded short child");
+        assert_eq!(reaped.classify(), Outcome::Success);
+        for sentinel in &mut sentinels.0 {
+            assert!(sentinel.try_wait().unwrap().is_none());
+        }
+    }
+    let reaped =
+        super::run_child_bounded(command, 512 * 1024 * 1024).expect("run bounded group child");
+    assert_eq!(reaped.classify(), Outcome::Success);
+    wait_for_process_exit(wait_for_marker(&ready).parse().unwrap());
+}
+
+#[test]
+fn bounded_child_with_no_group_descendants_succeeds_after_exit() {
+    let reaped = super::run_child_bounded(command_for_true(), 512 * 1024 * 1024)
+        .expect("run bounded child with no descendants");
+    assert_eq!(reaped.classify(), Outcome::Success);
+}
+
+#[test]
+fn output_limit_child() {
+    if std::env::var(MODE).as_deref() != Ok("output-limit-child") {
+        return;
+    }
+    let bytes = vec![b'x'; 17 * 1024 * 1024];
+    std::io::stdout().write_all(&bytes).unwrap();
+}
+
+#[test]
+fn bounded_output_stops_at_the_existing_budget() {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::output_limit_child",
+            "--nocapture",
+        ])
+        .env(MODE, "output-limit-child");
+    let reaped = run_child_with_limits(
+        command,
+        IoMode::Capture,
+        None,
+        Some(ChildLimits {
+            resident_bytes: u64::MAX,
+            wall_time: Duration::from_secs(5),
+        }),
+    )
+    .expect("run output-limited child");
+    assert_eq!(
+        reaped.resource_limit,
+        Some("metadata output exceeded 16 MiB")
+    );
+    assert!(reaped.output.stdout.len() <= 16 * 1024 * 1024);
+}
+
+#[test]
+fn continuous_output_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("continuous-output-supervisor") {
+        return;
+    }
+    let ready = std::env::var(READY).unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::continuous_output_child",
+            "--nocapture",
+        ])
+        .env(MODE, "continuous-output-child")
+        .env(READY, &ready);
+    let started = Instant::now();
+    let reaped = run_child_with_limits(
+        command,
+        IoMode::Capture,
+        None,
+        Some(ChildLimits {
+            resident_bytes: u64::MAX,
+            wall_time: Duration::from_secs(5),
+        }),
+    )
+    .expect("stop continuous output child");
+    assert_eq!(
+        reaped.resource_limit,
+        Some("metadata output exceeded 16 MiB")
+    );
+    assert!(started.elapsed() < Duration::from_secs(4));
+}
+
+#[test]
+fn continuous_output_child() {
+    if std::env::var(MODE).as_deref() != Ok("continuous-output-child") {
+        return;
+    }
+    fs::write(
+        std::env::var(READY).unwrap(),
+        std::process::id().to_string(),
+    )
+    .expect("publish continuous output child pid");
+    let mut stdout = std::io::stdout().lock();
+    let bytes = [b'x'; 8192];
+    while stdout.write_all(&bytes).is_ok() {}
+}
+
+#[test]
+fn continuous_output_limit_stops_a_live_producer() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let ready = temp.path().join("continuous-output-child");
+    let mut supervisor = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "nix::process::tests::continuous_output_supervisor",
+            "--nocapture",
+        ])
+        .env(MODE, "continuous-output-supervisor")
+        .env(READY, &ready)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn continuous output supervisor");
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        if ready.exists() {
+            break;
+        }
+        if let Some(status) = supervisor.try_wait().expect("poll output supervisor") {
+            panic!("output supervisor exited before the child started: {status}");
+        }
+        if Instant::now() >= deadline {
+            supervisor.kill().expect("stop stuck output supervisor");
+            supervisor.wait().expect("reap output supervisor");
+            if let Ok(text) = fs::read_to_string(&ready)
+                && let Ok(pid) = text.parse()
+            {
+                wait_for_process_exit(pid);
+            }
+            panic!("continuous output child was not started in time");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let child_pid: i32 = wait_for_marker(&ready).parse().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        if let Some(status) = supervisor.try_wait().expect("poll output supervisor") {
+            assert!(status.success(), "continuous output limit failed");
+            break;
+        }
+        if Instant::now() >= deadline {
+            supervisor.kill().expect("stop stuck output supervisor");
+            supervisor.wait().expect("reap output supervisor");
+            wait_for_process_exit(child_pid);
+            panic!("continuous output child was not stopped by the limit");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    wait_for_process_exit(child_pid);
+}
+
+#[test]
+fn long_running_child() {
+    if std::env::var(MODE).as_deref() != Ok("long-running-child") {
+        return;
+    }
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn bounded_timeout_uses_the_private_wall_time_limit() {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::long_running_child",
+            "--nocapture",
+        ])
+        .env(MODE, "long-running-child");
+    let started = Instant::now();
+    let reaped = run_child_with_limits(
+        command,
+        IoMode::Capture,
+        None,
+        Some(ChildLimits {
+            resident_bytes: u64::MAX,
+            wall_time: Duration::from_millis(60),
+        }),
+    )
+    .expect("run time-limited child");
+    assert_eq!(
+        reaped.resource_limit,
+        Some("metadata batch exceeded 120 seconds")
+    );
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn bounded_rss_limit_stops_a_running_child() {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::long_running_child",
+            "--nocapture",
+        ])
+        .env(MODE, "long-running-child");
+    let reaped = run_child_with_limits(
+        command,
+        IoMode::Capture,
+        None,
+        Some(ChildLimits {
+            resident_bytes: 1,
+            wall_time: Duration::from_secs(5),
+        }),
+    )
+    .expect("run RSS-limited child");
+    assert_eq!(
+        reaped.resource_limit,
+        Some("evaluator approached 512 MiB RSS")
+    );
 }
 
 #[test]
@@ -216,12 +677,68 @@ fn wait_ready(path: &Path) -> String {
     }
 }
 
+fn wait_for_marker(path: &Path) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(text) = fs::read_to_string(path)
+            && !text.is_empty()
+        {
+            return text;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "child did not publish its marker"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_process_exit(pid: i32) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        // SAFETY: signal zero checks whether this recorded process still exists.
+        if unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            return;
+        }
+        assert!(Instant::now() < deadline, "process {pid} did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn command_for_true() -> Command {
+    Command::new("/usr/bin/true")
+}
+
+struct SentinelChildren(Vec<Child>);
+
+impl Drop for SentinelChildren {
+    fn drop(&mut self) {
+        for child in &mut self.0 {
+            match child.try_wait() {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    if let Err(error) = child.kill() {
+                        eprintln!("failed to stop sentinel: {error}");
+                    }
+                }
+                Err(error) => eprintln!("failed to poll sentinel: {error}"),
+            }
+            if let Err(error) = child.wait() {
+                eprintln!("failed to reap sentinel: {error}");
+            }
+        }
+    }
+}
+
 #[test]
 fn direct_children_receive_each_forwarded_termination_signal() {
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
         let temp = tempfile::tempdir().expect("tempdir");
         let ready = temp.path().join("ready");
-        let mut supervisor = Command::new(std::env::current_exe().unwrap())
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
             .args([
                 "--exact",
                 "nix::process::tests::signal_supervisor",
@@ -231,9 +748,9 @@ fn direct_children_receive_each_forwarded_termination_signal() {
             .env(READY, &ready)
             .env(SIGNAL, signal.to_string())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("spawn supervisor");
+            .stderr(std::process::Stdio::piped());
+        command.process_group(0);
+        let mut supervisor = command.spawn().expect("spawn supervisor");
         let text = wait_ready(&ready);
         let pid: i32 = text.split_whitespace().next().unwrap().parse().unwrap();
         let supervisor_pid = i32::try_from(supervisor.id()).unwrap();
@@ -245,10 +762,11 @@ fn direct_children_receive_each_forwarded_termination_signal() {
                 break Some(status);
             }
             if Instant::now() >= deadline {
-                // SAFETY: the blocked helper is still owned by the live supervisor.
-                unsafe { libc::kill(pid, libc::SIGKILL) };
-                supervisor.kill().expect("kill stuck supervisor");
+                // SAFETY: supervisor leads a dedicated group, and remains an
+                // unreaped child while the group signal is sent.
+                assert_eq!(unsafe { libc::kill(-supervisor_pid, libc::SIGKILL) }, 0);
                 supervisor.wait().expect("reap stuck supervisor");
+                wait_for_process_exit(pid);
                 break None;
             }
             std::thread::sleep(Duration::from_millis(10));
