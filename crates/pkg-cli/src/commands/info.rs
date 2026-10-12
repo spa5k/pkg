@@ -107,7 +107,6 @@ fn collect_info(session: &super::Session, parsed: ParsedId) -> Result<InfoReques
     } else {
         super::TapState::load(session)?
     };
-    // Qualified IDs read one source; bare IDs load every source.
     let mut resolved = match parsed {
         ParsedId::Qualified(qualified) => qualified,
         ParsedId::Bare(name) => {
@@ -180,7 +179,6 @@ fn collect_info(session: &super::Session, parsed: ParsedId) -> Result<InfoReques
                 )));
             }
             Err(catalog::CatalogError::Ambiguous { name, mut choices }) => {
-                // Full attribute paths keep namespace-conflicting choices distinct.
                 for choice in &mut choices {
                     *choice = request_qualified(&resolved, choice);
                 }
