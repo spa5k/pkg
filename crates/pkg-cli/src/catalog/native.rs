@@ -135,14 +135,7 @@ impl Snapshot {
         for root in ["packages", "legacyPackages"] {
             let initial = vec![vec![root.to_string(), system.to_string()]];
             match nix.metadata_batch(reference, system, root, &initial) {
-                Ok(nodes)
-                    if matches!(
-                        nodes.as_slice(),
-                        [MetadataNode {
-                            value: MetadataValue::Absent,
-                            ..
-                        }]
-                    ) => {}
+                Ok(nodes) if is_absent_at(&nodes, &initial[0]) => {}
                 Ok(nodes) => {
                     store_nodes(&mut connection, &initial, nodes, root, system)?;
                 }
@@ -266,6 +259,16 @@ impl Snapshot {
     }
 }
 
+fn is_absent_at(nodes: &[MetadataNode], requested_path: &[String]) -> bool {
+    matches!(
+        nodes,
+        [MetadataNode {
+            path,
+            value: MetadataValue::Absent,
+        }] if path == requested_path
+    )
+}
+
 fn evaluate(
     nix: &Nix,
     connection: &mut Connection,
@@ -285,10 +288,7 @@ fn evaluate(
             evaluate(nix, connection, reference, system, root, left)?;
             evaluate(nix, connection, reference, system, root, right)
         }
-        Err(error) => Err(CatalogError::Source(format!(
-            "{}: {error}",
-            paths[0].join(".")
-        ))),
+        Err(error) => Err(CatalogError::Native(error)),
     }
 }
 
@@ -364,6 +364,31 @@ mod tests {
 
     const SYSTEM: &str = "x86_64-linux";
 
+    #[test]
+    fn absent_metadata_for_a_different_path_fails_batch_validation() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        let requested = vec![vec![String::from("packages"), String::from(SYSTEM)]];
+        let absent = vec![MetadataNode {
+            path: vec![String::from("legacyPackages"), String::from(SYSTEM)],
+            value: MetadataValue::Absent,
+        }];
+        assert!(!is_absent_at(&absent, &requested[0]));
+
+        let error =
+            store_nodes(&mut connection, &requested, absent, "packages", SYSTEM).unwrap_err();
+
+        assert!(matches!(
+            error,
+            CatalogError::Source(detail) if detail == "incomplete metadata batch"
+        ));
+
+        let matching_absent = vec![MetadataNode {
+            path: requested[0].clone(),
+            value: MetadataValue::Absent,
+        }];
+        assert!(is_absent_at(&matching_absent, &requested[0]));
+    }
+
     fn fixture(nix: &Nix, outputs: &str) -> (tempfile::TempDir, String) {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -408,13 +433,16 @@ mod tests {
         )
     }
 
+    fn native_path() -> Vec<String> {
+        vec![String::from("packages"), String::from(SYSTEM)]
+    }
+
     #[cfg(unix)]
     #[test]
     #[ignore = "requires a native Nix runtime"]
-    fn native_flake_discovery_uses_structured_absence_and_evaluation_errors() {
+    fn native_flake_discovery_reports_absent_roots_and_systems() {
         let nix = crate::nix::discover(None).unwrap();
-        let path = vec![String::from("packages"), String::from(SYSTEM)];
-
+        let path = native_path();
         let (_fixture, reference) = fixture(&nix, "{ legacyPackages.x86_64-linux = {}; }");
         let absent_root = nix
             .metadata_batch(&reference, SYSTEM, "packages", std::slice::from_ref(&path))
@@ -441,20 +469,14 @@ mod tests {
                 ..
             }]
         ));
+    }
 
-        let (_fixture, reference) = fixture(&nix, "{}");
-        let cache_dir = tempfile::tempdir().unwrap();
-        let empty = snapshot(&nix, cache_dir.path(), &reference).unwrap();
-        assert!(empty.header.complete);
-        let mut packages = 0;
-        empty
-            .visit(|_, _, _| {
-                packages += 1;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(packages, 0);
-
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires a native Nix runtime"]
+    fn native_flake_discovery_preserves_present_root_and_system_errors() {
+        let nix = crate::nix::discover(None).unwrap();
+        let path = native_path();
         let (_fixture, reference) = fixture(
             &nix,
             "{ packages = throw \"does not provide attribute ROOT_THROW\"; legacyPackages.x86_64-linux = {}; }",
@@ -499,6 +521,25 @@ mod tests {
             malformed_system,
             Err(NixError::Failed { stderr, .. }) if stderr.contains("must be an attribute set")
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires a native Nix runtime"]
+    fn native_flake_discovery_completes_empty_snapshots_and_skips_legacy_errors() {
+        let nix = crate::nix::discover(None).unwrap();
+        let (_fixture, reference) = fixture(&nix, "{}");
+        let cache_dir = tempfile::tempdir().unwrap();
+        let empty = snapshot(&nix, cache_dir.path(), &reference).unwrap();
+        assert!(empty.header.complete);
+        let mut packages = 0;
+        empty
+            .visit(|_, _, _| {
+                packages += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(packages, 0);
 
         let (_fixture, reference) = fixture(
             &nix,
@@ -514,5 +555,26 @@ mod tests {
             })
             .unwrap();
         assert_eq!(packages, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires a native Nix runtime"]
+    fn native_flake_discovery_preserves_descendant_nix_error_cause() {
+        let nix = crate::nix::discover(None).unwrap();
+        let (_fixture, reference) = fixture(
+            &nix,
+            "{ packages.x86_64-linux.broken = throw \"PACKAGE_DESCENDANT_THROW\"; legacyPackages.x86_64-linux = {}; }",
+        );
+        let cache_dir = tempfile::tempdir().unwrap();
+        let Err(error) = snapshot(&nix, cache_dir.path(), &reference) else {
+            panic!("a packages descendant throw must fail snapshot discovery");
+        };
+        assert!(matches!(
+            &error,
+            CatalogError::Native(NixError::Failed { stderr, .. })
+                if stderr.contains("PACKAGE_DESCENDANT_THROW")
+        ));
+        assert!(std::error::Error::source(&error).is_some());
     }
 }
