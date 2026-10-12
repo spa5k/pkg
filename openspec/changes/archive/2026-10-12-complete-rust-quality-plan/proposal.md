@@ -1,7 +1,7 @@
 # Complete the remaining Rust quality plan
 
 The first repair phase ends at `df1af1d`.
-The [audit](../../../docs/verification/rust-quality-audit-2026-10-12.md) records six remaining items.
+The [audit](../../../../docs/verification/rust-quality-audit-2026-10-12.md) records six remaining items.
 Complete all six items in this change.
 
 1. Give the child supervisor full lifetime ownership. Prevent signaling a stale PID after reaping.

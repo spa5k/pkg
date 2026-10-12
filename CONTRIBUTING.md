@@ -6,22 +6,18 @@ with its [design](openspec/changes/archive/2026-10-12-simplify-to-native-nix/des
 [tasks](openspec/changes/archive/2026-10-12-simplify-to-native-nix/tasks.md).
 Completed and superseded changes are listed in the
 [OpenSpec archive](openspec/changes/archive/README.md).
-The current Rust quality work follows
-[Enforce Rust quality](openspec/changes/enforce-rust-quality/proposal.md).
-The remaining quality work follows
-[Complete the Rust quality plan](openspec/changes/complete-rust-quality-plan/proposal.md).
+The completed Rust quality work follows
+[Enforce Rust quality](openspec/changes/archive/2026-10-12-enforce-rust-quality/proposal.md).
+The completed quality plan follows
+[Complete the Rust quality plan](openspec/changes/archive/2026-10-12-complete-rust-quality-plan/proposal.md).
 The [module map](docs/architecture.md) shows the current code owners.
 
 ## 1. Before you open a PR
 
 - **Map your PR to a task.** Name the task ID of the relevant active
-  OpenSpec change in the PR description. Use each change's own IDs as
-  written in its `tasks.md`: `RQ2-xx` for
-  [Enforce Rust quality](openspec/changes/enforce-rust-quality/tasks.md)
-  and `RQ3-xx` for
-  [Complete the Rust quality plan](openspec/changes/complete-rust-quality-plan/tasks.md).
-  If your change is not covered by a task, propose a design change in
-  OpenSpec first.
+  OpenSpec change in the PR description. Use the IDs from its `tasks.md`.
+  Start a new change when no active plan covers the work.
+  Completed changes in the archive are history.
 - **One purpose per PR.** A reviewer must be able to hold the whole change
   in their head.
 - **Do not resurrect removed machinery.** The broker, root helper, package

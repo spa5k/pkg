@@ -4,7 +4,7 @@ Fixed point: `8c1a58513d4049a99cdf4d56d892c1de0286802b`.
 Implementation commit: `36abd67`.
 Review corrections are included in the commit that contains this report.
 The review command is `git diff 8c1a585...HEAD`.
-The source specification is `openspec/changes/enforce-rust-quality/`.
+The source specification is `openspec/changes/archive/2026-10-12-enforce-rust-quality/`.
 The repository has no issue-tracker mapping file.
 This review uses the explicit OpenSpec source.
 

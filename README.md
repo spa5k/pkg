@@ -10,9 +10,9 @@ and roots. `pkg` owns names, commands, output, and desktop app launchers.
 repair, or remove Nix. Install Determinate Nix from
 [the vendor](https://docs.determinate.systems/determinate-nix/) first.
 
-The current Rust quality work follows
-[Enforce Rust quality](openspec/changes/enforce-rust-quality/proposal.md) and
-[Complete the Rust quality plan](openspec/changes/complete-rust-quality-plan/proposal.md).
+The completed Rust quality work follows
+[Enforce Rust quality](openspec/changes/archive/2026-10-12-enforce-rust-quality/proposal.md) and
+[Complete the Rust quality plan](openspec/changes/archive/2026-10-12-complete-rust-quality-plan/proposal.md).
 Completed and superseded plans are listed in the
 [OpenSpec archive](openspec/changes/archive/README.md).
 
@@ -32,11 +32,11 @@ Completed and superseded plans are listed in the
 1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
    on your machine. `pkg` never does this step for you.
 2. Install the client from the
-   [v0.2.0-alpha.15 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.15):
+   [v0.2.0-alpha.16 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.16):
 
    ```sh
    curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.15/install.sh
+     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.16/install.sh
    sh pkg-install.sh
    ```
 
