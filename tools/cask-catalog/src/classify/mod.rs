@@ -432,6 +432,8 @@ const LOCAL_SUFFIXES: [&str; 7] = [
     "corp",
     "localdomain",
 ];
+const KNOWN_DEPENDENCY_KEYS: [&str; 6] =
+    ["formula", "cask", "macos", "maximum_macos", "arch", "linux"];
 
 /// Bound the URL text inside a diagnostic so an oversized record URL
 /// cannot flood the catalog detail field.
@@ -450,6 +452,11 @@ fn bounded(url: &str) -> &str {
 /// literals only (checked through the typed host so IPv6 brackets and
 /// IPv4-mapped addresses cannot hide a local destination). No DNS
 /// happens here: names are checked by shape only.
+///
+/// # Errors
+///
+/// Returns a policy reason when the URL is malformed or violates the
+/// safe-fetch destination rules.
 pub fn destination_allowed(url: &str) -> Result<(), String> {
     if url.is_empty() {
         return Err("URL is empty".to_string());
@@ -574,6 +581,61 @@ fn classify_gated(
     }
 }
 
+fn dependency_exclusion(eff: &Value) -> Option<TargetOutcome> {
+    let depends = eff.get("depends_on").filter(|v| !v.is_null())?;
+    let Some(depends) = depends.as_object() else {
+        return Some(excluded_malformed(
+            "depends_on is not an object".to_string(),
+        ));
+    };
+    for key in depends.keys() {
+        if !KNOWN_DEPENDENCY_KEYS.contains(&key.as_str()) {
+            return Some(excluded_malformed(format!(
+                "unhandled depends_on key {key:?}"
+            )));
+        }
+    }
+    for (key, reason) in [
+        ("formula", ExclusionReason::FormulaDependency),
+        ("cask", ExclusionReason::CaskDependencyIntegration),
+    ] {
+        let Some(list) = depends.get(key).filter(|v| !v.is_null()) else {
+            continue;
+        };
+        let Some(items) = list.as_array() else {
+            return Some(excluded_malformed(format!(
+                "depends_on.{key} is not an array"
+            )));
+        };
+        if items.iter().any(|item| !item.is_string()) {
+            return Some(excluded_malformed(format!(
+                "depends_on.{key} has a non-string entry"
+            )));
+        }
+        if !items.is_empty() {
+            return Some(excluded(reason));
+        }
+    }
+    None
+}
+
+fn unsupported_download_spec(eff: &Value) -> Option<TargetOutcome> {
+    let specs = eff.get("url_specs").filter(|v| !v.is_null())?;
+    let Some(map) = specs.as_object() else {
+        return Some(excluded_malformed("url_specs is not an object".to_string()));
+    };
+    let active = map.keys().filter(|key| key.as_str() != "verified");
+    let active: Vec<&str> = active.map(String::as_str).collect();
+    if active.is_empty() {
+        None
+    } else {
+        Some(excluded_with_detail(
+            ExclusionReason::UnsupportedDownloadSpec,
+            format!("url_specs: {}", active.join(", ")),
+        ))
+    }
+}
+
 fn classify_effective(
     eff: &Value,
     system: &str,
@@ -613,8 +675,6 @@ fn classify_effective(
             }
         }
     }
-    // A declared linux requirement scopes the cask away from macOS;
-    // an explicit null clears it, as null clears fields everywhere.
     if system == "aarch64-darwin"
         && eff
             .get("depends_on")
@@ -625,56 +685,11 @@ fn classify_effective(
     if let Some(detail) = arch_detail(eff, system) {
         return excluded_with_detail(ExclusionReason::ArchUnsupported, detail);
     }
-    // Download specs: inert `verified` only; malformed shapes exclude.
-    if let Some(specs) = eff.get("url_specs").filter(|v| !v.is_null()) {
-        let Some(map) = specs.as_object() else {
-            return excluded_malformed("url_specs is not an object".to_string());
-        };
-        let active: Vec<&str> = map
-            .keys()
-            .map(String::as_str)
-            .filter(|k| *k != "verified")
-            .collect();
-        if !active.is_empty() {
-            return excluded_with_detail(
-                ExclusionReason::UnsupportedDownloadSpec,
-                format!("url_specs: {}", active.join(", ")),
-            );
-        }
+    if let Some(outcome) = unsupported_download_spec(eff) {
+        return outcome;
     }
-    // Dependencies: this version excludes rather than resolving anything.
-    // Only the six known requirement keys are understood; every other key
-    // is an active requirement the generator cannot evaluate, so it is a
-    // malformed record, never a silently ignored extra. Non-array or
-    // non-string formula/cask lists are malformed shapes, not "no deps".
-    if let Some(depends) = eff.get("depends_on").filter(|v| !v.is_null()) {
-        let Some(depends) = depends.as_object() else {
-            return excluded_malformed("depends_on is not an object".to_string());
-        };
-        const KNOWN_KEYS: [&str; 6] =
-            ["formula", "cask", "macos", "maximum_macos", "arch", "linux"];
-        for key in depends.keys() {
-            if !KNOWN_KEYS.contains(&key.as_str()) {
-                return excluded_malformed(format!("unhandled depends_on key {key:?}"));
-            }
-        }
-        for (key, reason) in [
-            ("formula", ExclusionReason::FormulaDependency),
-            ("cask", ExclusionReason::CaskDependencyIntegration),
-        ] {
-            let Some(list) = depends.get(key).filter(|v| !v.is_null()) else {
-                continue;
-            };
-            let Some(items) = list.as_array() else {
-                return excluded_malformed(format!("depends_on.{key} is not an array"));
-            };
-            if items.iter().any(|item| !item.is_string()) {
-                return excluded_malformed(format!("depends_on.{key} has a non-string entry"));
-            }
-            if !items.is_empty() {
-                return excluded(reason);
-            }
-        }
+    if let Some(outcome) = dependency_exclusion(eff) {
+        return outcome;
     }
     let url = eff.get("url").and_then(Value::as_str).unwrap_or("");
     if url.is_empty() {

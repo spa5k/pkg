@@ -3,6 +3,7 @@
 use std::fmt;
 use std::process::ExitCode;
 
+use crate::apps::error::AppError;
 use crate::catalog::CatalogError;
 use crate::config::ConfigError;
 use crate::nix::NixError;
@@ -14,6 +15,7 @@ pub(super) enum CommandError {
     Native(NixError),
     Catalog(CatalogError),
     Config(ConfigError),
+    Apps(AppError),
     /// The handler already printed diagnostics and checked native state.
     Reported(ExitCode),
 }
@@ -42,6 +44,12 @@ impl From<ConfigError> for CommandError {
     }
 }
 
+impl From<AppError> for CommandError {
+    fn from(error: AppError) -> Self {
+        Self::Apps(error)
+    }
+}
+
 impl fmt::Display for CommandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -49,6 +57,7 @@ impl fmt::Display for CommandError {
             Self::Native(error) => error.fmt(f),
             Self::Catalog(error) => error.fmt(f),
             Self::Config(error) => error.fmt(f),
+            Self::Apps(error) => error.fmt(f),
             Self::Reported(_) => f.write_str("command failure already reported"),
         }
     }
@@ -60,6 +69,7 @@ impl std::error::Error for CommandError {
             Self::Native(source) => Some(source),
             Self::Catalog(source) => Some(source),
             Self::Config(source) => Some(source),
+            Self::Apps(source) => Some(source),
             Self::Message(_) | Self::Reported(_) => None,
         }
     }
@@ -67,11 +77,20 @@ impl std::error::Error for CommandError {
 
 impl CommandError {
     pub(super) fn is_interrupted(&self) -> bool {
-        matches!(
-            self,
-            Self::Native(NixError::Interrupted { .. })
-                | Self::Catalog(CatalogError::Interrupted(_))
-        )
+        self.signal().is_some()
+    }
+
+    pub(super) fn signal(&self) -> Option<i32> {
+        match self {
+            Self::Native(NixError::Interrupted { signal, .. })
+            | Self::Catalog(CatalogError::Interrupted(signal)) => Some(*signal),
+            Self::Apps(error) => error.signal(),
+            Self::Native(_)
+            | Self::Message(_)
+            | Self::Catalog(_)
+            | Self::Config(_)
+            | Self::Reported(_) => None,
+        }
     }
 }
 

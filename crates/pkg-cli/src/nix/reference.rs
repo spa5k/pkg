@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 /// Flake reference schemes that pin a commit as the final path segment
 /// (`owner/repo/<commit>`): the forge reference syntax shared by GitHub,
-/// GitLab, and SourceHut.
+/// GitLab, and `SourceHut`.
 const FINAL_SEGMENT_COMMIT_SCHEMES: [&str; 3] = ["github", "gitlab", "sourcehut"];
 
 /// The reference scheme prefix of `text`, when it starts with one.
@@ -135,7 +135,8 @@ pub fn encode_path_reference(path: &Path) -> String {
         if kept_path_byte(byte) {
             encoded.push(byte as char);
         } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+            use std::fmt::Write as _;
+            let _ = write!(encoded, "%{byte:02X}");
         }
     }
     encoded

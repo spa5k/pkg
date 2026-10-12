@@ -1,6 +1,6 @@
 # Package conflict verification — 2026-10-12
 
-Change: [Explain package file conflicts](../../openspec/changes/improve-package-conflicts/proposal.md).
+Change: [Explain package file conflicts](../../openspec/changes/archive/2026-10-12-improve-package-conflicts/proposal.md).
 Base revision: `ddf6f66b3a9d3fbd61f1534f77e6a2d8b18d42b5`.
 Client candidate: `0.2.0-alpha.14`.
 Host: Apple silicon macOS.

@@ -55,6 +55,9 @@ pub fn missing_report(source: &str, detail: &str) -> SourceReport {
 }
 
 /// Visit a complete native catalog using only local files.
+/// # Errors
+///
+/// Returns an error when the cached database cannot be visited or result delivery fails.
 pub fn search_local_native(
     cache_dir: &Path,
     source: &str,
@@ -73,7 +76,7 @@ pub fn search_local_native(
         source,
         system,
         &snapshot.header.reference,
-        &snapshot.header.revision,
+        snapshot.header.revision.as_ref(),
         snapshot.header.saved_unix,
     );
     let report = report(
@@ -106,6 +109,9 @@ pub fn search_local_native(
 }
 
 /// Visit a complete cached cask index using only local files and host metadata.
+/// # Errors
+///
+/// Returns an error when result delivery fails.
 pub fn search_local_casks(
     cache_dir: &Path,
     source: &str,
@@ -129,7 +135,7 @@ pub fn search_local_casks(
         snapshot.revision.clone(),
         snapshot.saved_unix,
     );
-    report = platform_report(report, &snapshot.payload.targets, system);
+    report = platform_report(report, snapshot.payload.targets(), system);
     let view = CatalogView::from_parts(
         SourceIdentity {
             reference: source.to_string(),
@@ -144,6 +150,9 @@ pub fn search_local_casks(
 }
 
 /// Visit one saved tap capture with the same search and host rules.
+/// # Errors
+///
+/// Returns an error when result delivery fails.
 pub fn search_local_saved(
     saved: &crate::tap::SavedCatalog,
     system: &str,
@@ -153,12 +162,12 @@ pub fn search_local_saved(
 ) -> Result<SourceReport, CatalogError> {
     let report = platform_report(
         report(
-            &saved.source,
-            &saved.reference,
-            Some(saved.provenance.revision.clone()),
-            saved.provenance.published_unix,
+            saved.source(),
+            saved.reference(),
+            Some(saved.provenance().revision.clone()),
+            saved.provenance().published_unix,
         ),
-        &saved.index.targets,
+        saved.index().targets(),
         system,
     );
     visit_casks(
@@ -267,16 +276,24 @@ fn checked_at(
     source: &str,
     system: &str,
     reference: &str,
-    revision: &Option<String>,
+    revision: Option<&String>,
     fallback: u64,
 ) -> u64 {
-    let snap =
-        cache::read_snapshot::<()>(cache_dir, "checked", source, system, revision.as_deref());
+    let snap = cache::read_snapshot::<()>(
+        cache_dir,
+        "checked",
+        source,
+        system,
+        revision.map(String::as_str),
+    );
     snap.filter(|snap| snap.locked_reference.as_deref() == Some(reference))
         .map_or(fallback, |snap| snap.saved_unix)
 }
 
 /// Prepare and publish a cask index for a freshly resolved immutable source.
+/// # Errors
+///
+/// Returns an error when the source has no locked reference or revision, Nix evaluation fails, or the cache cannot be written.
 pub fn prepare_catalog(
     nix: &crate::nix::Nix,
     cache_dir: &Path,
@@ -324,6 +341,9 @@ fn platform() -> String {
 }
 
 /// Record the system selected by Nix for subsequent runtime-free searches.
+/// # Errors
+///
+/// Returns an error when the host record cannot be created, encoded, or written.
 pub fn record_search_system(cache_dir: &Path, system: &str) -> Result<(), CatalogError> {
     use std::io::Write as _;
     std::fs::create_dir_all(cache_dir).map_err(CatalogError::cache_write)?;

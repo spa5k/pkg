@@ -5,7 +5,7 @@ It builds on [PR #113](https://github.com/spa5k/pkg/pull/113).
 The change is [PR #114](https://github.com/spa5k/pkg/pull/114).
 The tested source commit is `5028885e242d2c765581212d83ba7538dd8d139d`.
 The task IDs are RQ-01 through RQ-06 in
-[Improve Rust error handling and ownership](../../openspec/changes/improve-rust-quality/tasks.md).
+[Improve Rust error handling and ownership](../../openspec/changes/archive/2026-10-12-improve-rust-quality/tasks.md).
 
 ## Changes
 

@@ -29,7 +29,7 @@ pub const KIND_INDEX: &str = "cask-index";
 ///
 /// `payload` is the complete generated index envelope for the cask
 /// source and system. Queries filter it locally. Native discovery rows
-/// use the separate SQLite snapshot module.
+/// use the separate `SQLite` snapshot module.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot<P> {
     /// The snapshot schema version.

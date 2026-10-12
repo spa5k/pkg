@@ -4,16 +4,13 @@
 //! progress, and print a short final result. Nothing here retries silently
 //! or writes product state.
 //!
-//! Query commands live in `search`, `info`, and `list`. Package mutations
-//! live in `lifecycle`. This module holds the shared session, dispatch,
-//! and failure-reporting rules.
-//!
 //! Error rule: every handler returns `Result<(), CommandError>` and uses
 //! `?` for ordinary diagnostics; [`run`] converts the result to an exit
-//! code in exactly one place. Handlers report mutation failures themselves
+//! code in exactly one place. The change owner reports mutation failures
 //! — re-read native state included — and end with the reported variant of
 //! `CommandError`, so diagnostics are never duplicated.
 
+mod change;
 mod conflict;
 mod doctor;
 mod error;
@@ -69,6 +66,12 @@ fn finish(outcome: Result<(), CommandError>) -> ExitCode {
         Err(CommandError::Reported(code)) => code,
         Err(CommandError::Native(NixError::Interrupted { signal, .. })) => {
             error::signal_exit(signal)
+        }
+        Err(CommandError::Apps(app_error)) => {
+            eprintln!("pkg: {app_error}");
+            app_error
+                .signal()
+                .map_or_else(|| ExitCode::from(FAILURE), error::signal_exit)
         }
         Err(CommandError::Catalog(catalog::CatalogError::Interrupted(signal))) => {
             eprintln!("Discovery cancelled. The previous complete cache was retained.");
@@ -133,12 +136,6 @@ struct Session {
     nix: Nix,
 }
 
-/// Discover the external runtime with the user's output options applied.
-///
-/// `--verbose` traces every native call in the adapter; `--no-color` and
-/// the config color policy are forwarded to native children as NO_COLOR.
-/// Every command that runs native children goes through this one setup,
-/// doctor included.
 fn discover_runtime(cli: &Cli, config: &Config) -> Result<Nix, NixError> {
     let no_color = config.color_disabled(cli.no_color);
     Ok(nix::discover(config.runtime.nix.as_deref())?
@@ -242,7 +239,7 @@ impl TapState {
             let catalog = self.saved_one(&source)?.clone();
             catalogs.insert(source, catalog);
         }
-        Ok(crate::tap::SavedCatalogs::from_catalogs(catalogs))
+        crate::tap::SavedCatalogs::from_catalogs(catalogs.into_values())
     }
 }
 
@@ -273,8 +270,8 @@ fn report_failed_mutation(
     requested: Option<&[String]>,
 ) -> CommandError {
     let current = installed_entries(session);
-    match &current {
-        Ok(entries) => match before {
+    if let Ok(entries) = &current {
+        match before {
             Some(previous) if previous == entries => {
                 if interrupted {
                     eprintln!("Interrupted: {action} stopped.");
@@ -289,28 +286,23 @@ fn report_failed_mutation(
                 } else {
                     eprintln!("Partial: {action} changed the profile before it stopped.");
                 }
-                let added: Vec<_> = entries
+                let added = entries
                     .keys()
                     .filter(|key| !previous.contains_key(*key))
-                    .collect();
-                let removed: Vec<_> = previous
+                    .count();
+                let removed = previous
                     .keys()
                     .filter(|key| !entries.contains_key(*key))
-                    .collect();
-                let changed: Vec<_> = entries
+                    .count();
+                let changed = entries
                     .keys()
                     .filter(|key| {
                         previous
                             .get(*key)
                             .is_some_and(|old| Some(old) != entries.get(*key))
                     })
-                    .collect();
-                eprintln!(
-                    "Profile: {} added, {} removed, {} updated.",
-                    added.len(),
-                    removed.len(),
-                    changed.len()
-                );
+                    .count();
+                eprintln!("Profile: {added} added, {removed} removed, {changed} updated.");
                 eprintln!("Next: run `pkg list` to inspect the active profile.");
             }
             None => {
@@ -321,24 +313,22 @@ fn report_failed_mutation(
                 }
                 eprintln!("Profile checked: {} entries are active.", entries.len());
             }
-        },
-        Err(_) => {
-            if interrupted {
-                eprintln!("Interrupted: {action} stopped.");
-            } else {
-                eprintln!("Failed: {action} did not complete.");
-            }
-            eprintln!("Package state is unknown. Next: run `pkg doctor`.");
         }
+    } else {
+        if interrupted {
+            eprintln!("Interrupted: {action} stopped.");
+        } else {
+            eprintln!("Failed: {action} did not complete.");
+        }
+        eprintln!("Package state is unknown. Next: run `pkg doctor`.");
     }
     if !interrupted && !conflict::report(session, error, current.as_ref().ok(), requested) {
         report_cause(&error.to_string());
     }
-    CommandError::Reported(ExitCode::from(if interrupted {
-        INTERRUPTED
-    } else {
-        FAILURE
-    }))
+    CommandError::Reported(match error {
+        NixError::Interrupted { signal, .. } => error::signal_exit(*signal),
+        _ => ExitCode::from(FAILURE),
+    })
 }
 
 /// Classify a mutation error, report re-read native state, and end the
@@ -417,14 +407,14 @@ fn installed_entries(session: &Session) -> Result<BTreeMap<String, ProfileEntry>
 /// nonzero exit and `pkg apps sync` named as the retry (design D4). On other
 /// systems app exposure does not apply and this is a no-op.
 fn apps_refresh_after_mutation(
-    session: &Session,
+    profile: &crate::profile_lock::LockedProfile<'_>,
     action: &str,
     names: &[String],
 ) -> Result<(), CommandError> {
     if !cfg!(target_os = "macos") {
         return Ok(());
     }
-    match crate::apps::sync_locked(&session.nix, &session.paths) {
+    match crate::apps::sync_locked(profile) {
         Ok(()) => Ok(()),
         Err(detail) => {
             if names.is_empty() {
@@ -437,9 +427,18 @@ fn apps_refresh_after_mutation(
                     names.join(", ")
                 );
             }
-            report_cause(&detail);
+            let detail_text = detail.to_string();
+            report_cause(&detail_text);
             eprintln!("Next: Resolve the cause, then run `pkg apps sync`.");
-            Err(CommandError::Reported(ExitCode::from(FAILURE)))
+            if detail.dock_effect_possible() {
+                eprintln!("Dock state may have changed.");
+            } else {
+                eprintln!("Dock state did not change.");
+            }
+            Err(detail.signal().map_or_else(
+                || CommandError::Reported(ExitCode::from(FAILURE)),
+                |signal| CommandError::Reported(error::signal_exit(signal)),
+            ))
         }
     }
 }

@@ -96,7 +96,7 @@ pub fn short_source(source: &str) -> String {
     }
     let stripped = source.strip_prefix("github:").unwrap_or(source);
     let no_query = stripped.split('?').next().unwrap_or(stripped);
-    let normalized = no_query.replace(":", "/");
+    let normalized = no_query.replace(':', "/");
     match normalized.find('/') {
         Some(first) => match normalized[first + 1..].find('/') {
             Some(second) => normalized[..first + 1 + second].to_string(),
@@ -190,14 +190,13 @@ pub fn render_search_row(
     let mut out = String::new();
     let stale = if row.stale { " [cached]" } else { "" };
     let support = match &row.support {
-        Some(crate::catalog::SupportBadge::Eligible) => "",
+        Some(crate::catalog::SupportBadge::Eligible) | None => "",
         Some(crate::catalog::SupportBadge::Unknown { reason }) => {
             &format!(" [availability unknown: {reason}]")
         }
         Some(crate::catalog::SupportBadge::Excluded { reason, .. }) => {
             &format!(" [excluded: {reason}]")
         }
-        None => "",
     };
     let _ = writeln!(
         out,

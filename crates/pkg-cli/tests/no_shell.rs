@@ -1,12 +1,4 @@
-//! Shell strings are denied in product code.
-//!
-//! Every external process is spawned through an argument vector, so the
-//! quoting, globbing, and equals-expansion bug classes cannot exist. This
-//! check keeps it that way: product Rust sources must not name a shell
-//! program in a Command::new call or use sh -c, and the Python cask
-//! helpers must not enable shell mode. Test code is exempt; tests may
-//! legitimately drive real shells.
-
+#![expect(missing_docs, reason = "integration test crates have no public API")]
 // This integration-test crate is built without `cfg(test)`, so the
 // crate-root test opt-out does not apply; the same reasoned exception
 // is declared here once.
@@ -27,10 +19,15 @@ const SHELLS: [&str; 8] = ["sh", "zsh", "bash", "dash", "ksh", "fish", "csh", "t
 /// cask build helpers.
 fn roots() -> Vec<PathBuf> {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    ["crates", "tools/cask-catalog", "nix/casks/lib"]
-        .into_iter()
-        .map(|dir| workspace.join(dir))
-        .collect()
+    [
+        "crates",
+        "tools/cask-catalog",
+        "nix/casks/lib",
+        "nix/formulae/lib",
+    ]
+    .into_iter()
+    .map(|dir| workspace.join(dir))
+    .collect()
 }
 
 /// Collect files with one extension, skipping build output and tests.
@@ -81,7 +78,7 @@ fn rust_offenders(file: &Path, text: &str) -> Vec<String> {
 }
 
 #[test]
-fn product_sources_never_spawn_a_shell() {
+fn product_sources_have_no_known_literal_shell_spawns() {
     let mut rust_files = Vec::new();
     let mut python_files = Vec::new();
     for root in roots() {
@@ -99,8 +96,12 @@ fn product_sources_never_spawn_a_shell() {
     }
     for file in &python_files {
         let text = product_text(file);
+        let compact: String = text
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
         for needle in ["shell=True", "os.system("] {
-            if text.contains(needle) {
+            if compact.contains(needle) {
                 offenders.push(format!("{} uses {needle}", file.display()));
             }
         }

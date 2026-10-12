@@ -16,7 +16,7 @@ with Nix 2.35.2. The proven macOS host is 15.7.7 on arm64. Breaking
 changes can occur before v1.
 
 The active design is the OpenSpec change
-[Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md).
+[Simplify pkg to native Nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md).
 macOS app exposure uses the external `mac-app-util` helper through Nix in a
 separate helper profile. It is pinned at revision
 `039f33deef21782d4db97087f426504951239887`, is AGPL-3.0-only, and is not

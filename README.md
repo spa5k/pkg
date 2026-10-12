@@ -10,25 +10,18 @@ and roots. `pkg` owns names, commands, output, and desktop app launchers.
 repair, or remove Nix. Install Determinate Nix from
 [the vendor](https://docs.determinate.systems/determinate-nix/) first.
 
-The current reliability work follows
-[Repair faults found through real package use](openspec/changes/repair-realistic-use-faults/proposal.md).
-The CLI discovery change is
-[Improve package states and discovery](openspec/changes/improve-cli-discovery/proposal.md).
-Homebrew formula discovery and source sections follow
-[Show Homebrew formulae and source sections](openspec/changes/improve-homebrew-discovery/proposal.md).
-Package command output follows
-[Improve package command output](openspec/changes/improve-package-command-experience/proposal.md).
-Code cleanup follows
-[Simplify the native client](openspec/changes/simplify-client/proposal.md).
-Rust error and ownership changes follow
-[Improve Rust error handling and ownership](openspec/changes/improve-rust-quality/proposal.md).
+The current Rust quality work follows
+[Enforce Rust quality](openspec/changes/enforce-rust-quality/proposal.md) and
+[Complete the Rust quality plan](openspec/changes/complete-rust-quality-plan/proposal.md).
+Completed and superseded plans are listed in the
+[OpenSpec archive](openspec/changes/archive/README.md).
 
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.
 > [v0.2.0-alpha.3](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.3)
 > starts from a fresh state: old alpha installations are not migrated,
 > adopted, or erased. See
-> [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
+> [Simplify pkg to native Nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md)
 > and its [verification record](docs/verification/native-nix-2026-09-28.md).
 > The current release gives shorter CLI output and reports partial package
 > changes when macOS app launcher setup fails. See the
@@ -136,22 +129,10 @@ Catalog eligibility is a metadata claim, not a verification promise. See
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain, checks, and the
 OpenSpec workflow. Read the [module map](docs/architecture.md) to find code owners.
-The active design is
-[Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md);
-the [plan index](plans/README.md) separates historical material.
-The current change is
-[improve runtime discovery and shell setup](openspec/changes/improve-runtime-discovery-and-shell-setup/proposal.md).
-Search cost is amortized by
-[revision snapshots](openspec/changes/amortize-search-with-revision-snapshots/proposal.md):
-one cached catalog per source answers every later query locally.
-The Cask extension is
-[import of public taps](openspec/changes/import-public-cask-taps/design.md).
-Native lifecycle and archive repairs are specified in
-[harden native package lifecycle](openspec/changes/harden-native-package-lifecycle/proposal.md).
-The accepted audit repairs are
-[implement audit repairs](openspec/changes/implement-audit-repairs/proposal.md).
-Package conflict reporting follows
-[explain package file conflicts](openspec/changes/improve-package-conflicts/proposal.md).
+The native Nix design baseline is
+[Simplify pkg to native Nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md);
+the [OpenSpec archive](openspec/changes/archive/README.md) records earlier changes.
+The [plan index](plans/README.md) records the earlier alpha plans.
 
 ## License
 

@@ -2,7 +2,7 @@
 
 This context defines the words used for the native Nix design. The active
 design authority is the OpenSpec change
-[simplify-to-native-nix](openspec/changes/simplify-to-native-nix/proposal.md).
+[simplify-to-native-nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md).
 
 ## Products and Sources
 

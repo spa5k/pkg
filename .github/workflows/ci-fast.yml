@@ -44,21 +44,21 @@ jobs:
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
 
       - name: Build (all targets, locked)
-        run: cargo build --locked --all-targets
+        run: cargo build --locked --workspace --all-targets --all-features
 
       - name: Test (locked)
-        run: cargo test --locked
+        run: cargo test --locked --workspace --all-features
 
       - name: Format check
         run: cargo fmt --all --check
 
       - name: Clippy (all targets, deny warnings)
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Docs (warnings deny)
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --no-deps --document-private-items
+        run: cargo doc --locked --workspace --all-features --no-deps --document-private-items
 
       - name: Install cargo-deny (0.20.2, locked)
         run: cargo install --locked cargo-deny@0.20.2
@@ -112,7 +112,11 @@ jobs:
       # the same all-targets set on macOS so that code is checked too.
       - name: Clippy (all targets, deny warnings)
         if: matrix.os == 'macos-15'
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: Workspace tests (macOS)
+        if: matrix.os == 'macos-15'
+        run: cargo test --locked --workspace --all-features
 
       - name: Build release client
         run: cargo build --locked --release -p pkg-cli
@@ -176,6 +180,9 @@ jobs:
           github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#_7zz
           github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#libarchive
           --command python3 tools/cask-build-check/plan_tests.py
+
+      - name: Native discovery boundary checks
+        run: cargo test --locked -p pkg-cli --lib --all-features native_flake_discovery -- --ignored
 
       - name: Native package lifecycle and regression checks
         run: python3 tools/native-cli-check.py --pkg target/release/pkg

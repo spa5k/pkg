@@ -1,0 +1,38 @@
+{
+  "signal_mask": {
+    "baseline": "8c1a58513d4049a99cdf4d56d892c1de0286802b",
+    "platform": "Darwin",
+    "machine": "arm64",
+    "rust": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "source": "Exact git-show copy of nix/process.rs; no source edits; libc from existing target/debug/deps",
+    "observations": [
+      {
+        "kind": "direct-control",
+        "ready": "pid=92938 INT=0 TERM=0 HUP=0",
+        "terminated_within_one_second": true,
+        "returncode": -15,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "kind": "baseline-supervised",
+        "ready": "pid=92968 INT=1 TERM=1 HUP=1",
+        "terminated_within_one_second": false,
+        "cleanup": "SIGKILL sent to native helper PID only",
+        "returncode": 0,
+        "stdout": "Ok(Interrupted { signal: 15 })\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "shell_guard": {
+    "baseline": "8c1a58513d4049a99cdf4d56d892c1de0286802b",
+    "original_owner_sha256": "c2b8b882267b51ec0a0049af67b00f93992596a6572e911c636cfb66d1558b62",
+    "baseline_guard_code": 0,
+    "mutation_guard_code": 0,
+    "mutation_compile_code": 0,
+    "mutation_execution": "Ok((Success, \"injected\"))",
+    "mutation": "Replace direct helper target by alias to /bin/sh, with argv -c printf injected",
+    "restored_byte_for_byte": true
+  }
+}

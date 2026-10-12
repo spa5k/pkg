@@ -11,13 +11,13 @@ import-from-derivation, no hosted API, no WASM runtime, no formula solver,
 no per-app allowlists, and no second installer.
 
 The base design is the OpenSpec change
-[Generate the Cask catalog with a Rust tool](../openspec/changes/generate-cask-catalog-with-rust/proposal.md).
+[Generate the Cask catalog with a Rust tool](../openspec/changes/archive/2026-10-12-generate-cask-catalog-with-rust/proposal.md).
 Public tap ingestion is specified in
-[Import public cask taps locally](../openspec/changes/import-public-cask-taps/proposal.md).
+[Import public cask taps locally](../openspec/changes/archive/2026-10-12-import-public-cask-taps/proposal.md).
 The current schema-4 and native lifecycle results are recorded in the
 [reliability verification](verification/2026-09-30-native-package-reliability-fixes.md).
 External vendor signatures use a verified private app copy as specified in
-the [signature preservation design](../openspec/changes/harden-native-package-lifecycle/external-signatures.md).
+the [signature preservation design](../openspec/changes/archive/2026-10-12-harden-native-package-lifecycle/external-signatures.md).
 
 ## What this source is
 
@@ -274,7 +274,7 @@ These are Nix-only proofs for the daemon settings themselves. The
 product reader runs, the Linux product refusal of
 `sandbox-fallback = true`, and the final Linux whole import passed. See
 the
-[OpenSpec design](../openspec/changes/import-public-cask-taps/design.md)
+[OpenSpec design](../openspec/changes/archive/2026-10-12-import-public-cask-taps/design.md)
 and the
 [verification summary](verification/public-taps.md).
 

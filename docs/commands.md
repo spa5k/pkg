@@ -74,7 +74,7 @@ locally into ordinary Nix packages. Saved taps live in a per-user state
 directory. Catalog format, publication, and sandbox prerequisites are in
 [casks](casks.md). The accepted behavior is specified in the OpenSpec
 change
-[Import public cask taps locally](../openspec/changes/import-public-cask-taps/proposal.md).
+[Import public cask taps locally](../openspec/changes/archive/2026-10-12-import-public-cask-taps/proposal.md).
 
 - `SOURCE` is a public GitHub `owner/tap` repository. The canonical
   repository is `owner/homebrew-<tap>`; the common short source
@@ -114,7 +114,7 @@ This example shows the accepted flow. The final verification passed the
 whole import on both hosts (Linux 13 eligible / 17 excluded; macOS
 7 eligible / 23 excluded) and the negative product gates on both hosts
 (C6/C7). The parent review is complete. The implementation is in [PR #82](https://github.com/spa5k/pkg/pull/82). See
-the [plan](../openspec/changes/import-public-cask-taps/design.md) and the
+the [plan](../openspec/changes/archive/2026-10-12-import-public-cask-taps/design.md) and the
 [verification status](verification/public-taps.md).
 
 ## JSON query output

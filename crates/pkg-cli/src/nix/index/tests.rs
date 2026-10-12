@@ -1,5 +1,34 @@
 use super::*;
 
+#[test]
+fn direct_deserialization_uses_the_strict_catalog_decoder() {
+    let manifest = include_str!("../../../tests/fixtures/catalog-index.json");
+    let raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
+    let decoded: CatalogIndex = serde_json::from_value(raw.clone()).expect("valid strict index");
+    assert_eq!(decoded.schema(), CATALOG_INDEX_SCHEMA);
+    let encoded = serde_json::to_value(&decoded).expect("serializes");
+    assert_eq!(
+        serde_json::from_value::<CatalogIndex>(encoded).expect("strict round trip"),
+        decoded
+    );
+
+    let mut invalid = raw;
+    let (system, id) = invalid["systems"]
+        .as_object()
+        .and_then(|systems| {
+            systems.keys().next().map(|system| {
+                let id = systems[system]["entries"]
+                    .as_object()
+                    .and_then(|entries| entries.keys().next().cloned())
+                    .expect("fixture entry");
+                (system.clone(), id)
+            })
+        })
+        .expect("fixture system");
+    invalid["systems"][&system]["entries"][&id]["kind"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<CatalogIndex>(invalid).is_err());
+}
+
 /// Invalid declared ranges fail the whole decode, named by entry.
 #[test]
 fn invalid_macos_ranges_fail_closed() {
@@ -37,7 +66,7 @@ fn invalid_macos_ranges_fail_closed() {
     raw["systems"][&system]["entries"][&id]["minMacos"] = serde_json::json!("15");
     raw["systems"][&system]["entries"][&id]["maxMacos"] = serde_json::json!("16");
     let index = decode_catalog_index(&raw).expect("coherent range decodes");
-    let entry = &index.systems[&system].entries[&id];
+    let entry = &index.systems()[&system].entries[&id];
     assert_eq!(entry.min_macos.as_deref(), Some("15"));
     assert_eq!(entry.max_macos.as_deref(), Some("16"));
 }
@@ -72,7 +101,7 @@ fn raw_provenance_accepts_the_backend_envelope_shape() {
                 "reason": null, "detail": null}}}},
     });
     let index = decode_catalog_index(&raw).expect("decodes the backend shape");
-    let input = &index.inputs["somebody/apps"];
+    let input = &index.inputs()["somebody/apps"];
     let raw = input.raw.as_ref().expect("raw preserved");
     assert_eq!(raw.envelope_schema.as_deref(), Some("pkg-tap-raw-export/1"));
     assert_eq!(
@@ -97,7 +126,7 @@ fn raw_provenance_accepts_the_backend_envelope_shape() {
                 "reason": null, "detail": null}}}},
     });
     let index = decode_catalog_index(&official).expect("official raw stays absent");
-    assert!(index.inputs["homebrew/cask"].raw.is_none());
+    assert!(index.inputs()["homebrew/cask"].raw.is_none());
 }
 
 /// Decodes the fixture: an actual generated-catalog slice (revision
@@ -111,9 +140,9 @@ fn decodes_the_actual_catalog_index_slice() {
     let manifest = include_str!("../../../tests/fixtures/catalog-index.json");
     let raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
     let index = decode_catalog_index(&raw).expect("decodes actual slice");
-    assert_eq!(index.generator.name, "cask-catalog");
-    assert_eq!(index.generator.version, "0.1.0");
-    let official = &index.inputs[OFFICIAL_CASK_SOURCE];
+    assert_eq!(index.generator().name, "cask-catalog");
+    assert_eq!(index.generator().version, "0.1.0");
+    let official = &index.inputs()[OFFICIAL_CASK_SOURCE];
     assert_eq!(
         official.revision,
         "245947c0b920cbe83f4003bb7c6be737352c8314"
@@ -123,10 +152,10 @@ fn decodes_the_actual_catalog_index_slice() {
         "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251"
     );
     assert_eq!(official.license, "BSD-2-Clause (Homebrew Cask data)");
-    assert_eq!(index.targets, ["aarch64-darwin", "x86_64-linux"]);
-    assert_eq!(index.macos_baseline, "15.7.7");
+    assert_eq!(index.targets(), ["aarch64-darwin", "x86_64-linux"]);
+    assert_eq!(index.macos_baseline(), "15.7.7");
 
-    let macos = &index.systems["aarch64-darwin"].entries;
+    let macos = &index.systems()["aarch64-darwin"].entries;
     let iterm2 = &macos["homebrew/cask/iterm2"];
     assert_eq!(iterm2.source, OFFICIAL_CASK_SOURCE);
     assert_eq!(iterm2.token, "iterm2");
@@ -145,10 +174,10 @@ fn decodes_the_actual_catalog_index_slice() {
     );
     // One token can be eligible on one target and excluded on another,
     // with a target-effective version that differs from the entry.
-    let cursor_linux = &index.systems["x86_64-linux"].entries["homebrew/cask/cursor"];
+    let cursor_linux = &index.systems()["x86_64-linux"].entries["homebrew/cask/cursor"];
     assert_eq!(cursor_linux.status, EntryStatus::Eligible);
     assert_eq!(cursor_linux.kind.as_deref(), Some("appimage"));
-    let raycast_linux = &index.systems["x86_64-linux"].entries["homebrew/cask/raycast"];
+    let raycast_linux = &index.systems()["x86_64-linux"].entries["homebrew/cask/raycast"];
     assert_eq!(raycast_linux.status, EntryStatus::Excluded);
     assert_eq!(
         raycast_linux.reason.as_deref(),
@@ -165,7 +194,7 @@ fn decodes_the_actual_catalog_index_slice() {
     assert_eq!(zoom.reason.as_deref(), Some("installer-script"));
     assert_eq!(zoom.kind, None);
     // The Linux lane that was probed for real is eligible here.
-    let koreader = &index.systems["x86_64-linux"].entries["homebrew/cask/koreader"];
+    let koreader = &index.systems()["x86_64-linux"].entries["homebrew/cask/koreader"];
     assert_eq!(koreader.status, EntryStatus::Eligible);
     assert_eq!(koreader.version.as_deref(), Some("2026.07.1"));
 }
@@ -210,7 +239,7 @@ fn nullable_metadata_stays_null_and_tokens_coexist_per_source() {
             "somebody/apps/bare": record("somebody/apps", "excluded")}}}
     });
     let index = decode_catalog_index(&raw).expect("decodes nullable records");
-    let entries = &index.systems["x86_64-linux"].entries;
+    let entries = &index.systems()["x86_64-linux"].entries;
     let bare = &entries["homebrew/cask/bare"];
     assert_eq!(bare.name, None);
     assert_eq!(bare.description, None);
@@ -222,7 +251,7 @@ fn nullable_metadata_stays_null_and_tokens_coexist_per_source() {
     let tap_bare = &entries["somebody/apps/bare"];
     assert_eq!(tap_bare.status, EntryStatus::Excluded);
     assert_eq!(tap_bare.source, "somebody/apps");
-    assert_eq!(index.inputs.len(), 2);
+    assert_eq!(index.inputs().len(), 2);
 }
 
 /// The envelope serializes back to the exact decode shape — published
@@ -242,7 +271,7 @@ fn envelope_round_trips_and_full_catalog_layout_is_refused() {
 
     // A layout without per-system `systems` sections is backend data;
     // this client refuses it instead of projecting it.
-    let mut full = raw.clone();
+    let mut full = raw;
     let systems = full["systems"].clone();
     full.as_object_mut()
         .expect("object")
@@ -306,7 +335,7 @@ fn broken_records_fail_the_whole_decode_named() {
     assert!(error.to_string().contains("source"));
 
     // A record whose source carries no provenance fails the decode.
-    let mut unprovenanced = pristine.clone();
+    let mut unprovenanced = pristine;
     unprovenanced["systems"]["x86_64-linux"]["entries"]
         .as_object_mut()
         .unwrap()

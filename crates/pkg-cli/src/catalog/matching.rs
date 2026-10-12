@@ -18,6 +18,9 @@ pub struct SearchQuery {
 
 impl SearchQuery {
     /// Compile explicit regex input before reading sources.
+    /// # Errors
+    ///
+    /// Returns an error when the literal query is empty or the regular expression is invalid.
     pub fn new(text: &str, regex: bool, unavailable: bool) -> Result<Self, regex::Error> {
         let text = if regex { text } else { text.trim() };
         if !regex && text.is_empty() {
@@ -157,7 +160,9 @@ impl SearchQuery {
             worst = worst.max(tier);
             sum += tier;
         }
-        let length = names.iter().map(String::len).min().unwrap_or(0).min(1023) as u32;
+        let length = u32::try_from(names.iter().map(String::len).min().unwrap_or(0))
+            .unwrap_or(u32::MAX)
+            .min(1023);
         Some(
             worst * 1_000_000
                 + preference(row, &names[0], &description, &self.terms)
@@ -331,21 +336,22 @@ fn match_text(text: &str, term: &str, name: bool, broad: bool) -> Option<u32> {
 fn edit_distance(left: &str, right: &str, max: u32) -> Option<u32> {
     let a: Vec<char> = left.chars().collect();
     let b: Vec<char> = right.chars().take(51).collect();
-    if b.len() > 50 || a.len().abs_diff(b.len()) > max as usize {
+    let max = usize::try_from(max).ok()?;
+    if b.len() > 50 || a.len().abs_diff(b.len()) > max {
         return None;
     }
-    let mut older = [0_u32; 51];
-    let mut previous = [0_u32; 51];
+    let mut older = [0_usize; 51];
+    let mut previous = [0_usize; 51];
     for (column, cell) in previous.iter_mut().enumerate().take(b.len() + 1) {
-        *cell = column as u32;
+        *cell = column;
     }
     for (i, first) in a.iter().enumerate() {
-        let mut current = [0_u32; 51];
-        current[0] = i as u32 + 1;
+        let mut current = [0_usize; 51];
+        current[0] = i + 1;
         for (j, second) in b.iter().enumerate() {
             current[j + 1] = (current[j] + 1)
                 .min(previous[j + 1] + 1)
-                .min(previous[j] + u32::from(first != second));
+                .min(previous[j] + usize::from(first != second));
             if i > 0 && j > 0 && *first == b[j - 1] && a[i - 1] == *second {
                 current[j + 1] = current[j + 1].min(older[j - 1] + 1);
             }
@@ -353,7 +359,9 @@ fn edit_distance(left: &str, right: &str, max: u32) -> Option<u32> {
         older = previous;
         previous = current;
     }
-    (previous[b.len()] <= max).then_some(previous[b.len()])
+    (previous[b.len()] <= max)
+        .then(|| u32::try_from(previous[b.len()]).ok())
+        .flatten()
 }
 
 #[cfg(test)]
@@ -449,6 +457,21 @@ mod tests {
                 .rank(&row("nixpkgs:claws-mail", "claws-mail", "Email client"))
                 .is_some()
         );
+        assert!(
+            broad
+                .rank(&row(
+                    "nixpkgs:python312Packages.awscli",
+                    "awscli",
+                    "AWS tool"
+                ))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn short_library_matches_are_hidden_unless_query_is_exact_or_broad() {
+        let query = SearchQuery::new("aws", false, false).unwrap();
+        let broad = SearchQuery::new("aws", false, false).unwrap().broad(true);
         for (id, description) in [
             ("aws-lc", "Cryptographic library maintained by AWS"),
             ("aws-c-http", "C99 implementation of HTTP"),
@@ -475,15 +498,6 @@ mod tests {
                     "nixpkgs:aws-sdk-cpp",
                     "aws-sdk-cpp",
                     "C++ interface for Amazon Web Services"
-                ))
-                .is_some()
-        );
-        assert!(
-            broad
-                .rank(&row(
-                    "nixpkgs:python312Packages.awscli",
-                    "awscli",
-                    "AWS tool"
                 ))
                 .is_some()
         );

@@ -14,6 +14,9 @@ use serde_json::Value;
 /// The duplicate rule is checked while the JSON streams; the typed decode
 /// of `T` then runs over the checked value, so field-level strictness
 /// (denied unknown fields, exact types) stays with each type.
+/// # Errors
+///
+/// Returns an error when the text is invalid JSON, has duplicate keys, or does not match `T`.
 pub fn from_str<T: de::DeserializeOwned>(what: &str, text: &str) -> Result<T, String> {
     let mut deserializer = serde_json::Deserializer::from_str(text);
     let value = StrictSeed

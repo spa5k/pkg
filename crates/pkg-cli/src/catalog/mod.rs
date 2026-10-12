@@ -33,7 +33,7 @@ pub use cask::{
     CaskStatus, CatalogOnce, CatalogView, INDEX_ATTRIBUTE, native_package_attribute,
     package_attribute, record, sources_with_token, status,
 };
-pub use id::{CatalogId, ParsedId, canonical_source, parse_id};
+pub use id::{CatalogId, CatalogIdKind, ParsedId, canonical_source, parse_id};
 pub use local::{
     missing_report, prepare_catalog, record_search_system, search_local_casks, search_local_native,
     search_local_saved, search_system,

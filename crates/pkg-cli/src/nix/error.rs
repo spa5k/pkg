@@ -18,7 +18,7 @@ pub enum NixError {
         /// The configured executable name or path.
         requested: String,
         /// The native probe failure.
-        source: Box<NixError>,
+        source: Box<Self>,
     },
     /// Default discovery found no usable `nix` in `PATH` or the stable
     /// profile paths (discovery design D1, D3).
@@ -155,9 +155,8 @@ impl fmt::Display for NixError {
 impl std::error::Error for NixError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Spawn(source) => Some(source),
+            Self::Spawn(source) | Self::Io { source, .. } => Some(source),
             Self::ConfiguredProbe { source, .. } => Some(source.as_ref()),
-            Self::Io { source, .. } => Some(source),
             Self::Json { source, .. } => Some(source),
             _ => None,
         }

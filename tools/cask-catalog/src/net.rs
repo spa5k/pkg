@@ -11,6 +11,7 @@
 //! at install time, never here.
 
 use std::collections::BTreeSet;
+use std::io::Read as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -27,7 +28,7 @@ pub const GITHUB_HOSTS: [&str; 4] = [
 /// Default body size limit for source material (tap tarballs, API JSON).
 pub const MAX_BODY_BYTES: usize = 96 * 1024 * 1024;
 /// Default total time limit per request.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+pub const REQUEST_TIMEOUT: Duration = Duration::from_mins(3);
 /// Connect timeout.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -102,10 +103,10 @@ fn ipv4_public(ip: Ipv4Addr) -> bool {
 
 /// Whether one IPv6 address is public.
 ///
-/// Conservative allowlist: only global unicast 2000::/3 is fetchable,
-/// minus the IETF special-purpose blocks inside it (2001::/23, which
-/// covers Teredo, benchmarking, and the former OID space; 2001:db8::/32
-/// documentation; 2002::/16 6to4 derived from arbitrary IPv4; 3fff::/20
+/// Conservative allowlist: only global unicast `2000::/3` is fetchable,
+/// minus the IETF special-purpose blocks inside it (`2001::/23`, which
+/// covers Teredo, benchmarking, and the former OID space; `2001:db8::/32`
+/// documentation; `2002::/16` 6to4 derived from arbitrary IPv4; `3fff::/20`
 /// documentation). IPv4-mapped addresses follow the IPv4 table. Every
 /// other IPv6 shape (reserved, unique-local, link-local, multicast,
 /// loopback, discard-only, translation) is refused.
@@ -245,8 +246,7 @@ impl SafeClient {
             return Err(format!("HTTP {status} fetching {url}"));
         }
         let mut body = Vec::new();
-        let mut chunk = [0u8; 64 * 1024];
-        use std::io::Read as _;
+        let mut chunk = vec![0u8; 64 * 1024].into_boxed_slice();
         loop {
             let read = response
                 .read(&mut chunk)
@@ -256,8 +256,7 @@ impl SafeClient {
             }
             if body.len() + read > MAX_BODY_BYTES {
                 return Err(format!(
-                    "body exceeds the {} byte limit: {url}",
-                    MAX_BODY_BYTES
+                    "body exceeds the {MAX_BODY_BYTES} byte limit: {url}"
                 ));
             }
             body.extend_from_slice(&chunk[..read]);

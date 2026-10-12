@@ -103,5 +103,5 @@ Apple documents same-volume clones and their independent later writes in
 [About Apple File System](https://developer.apple.com/documentation/foundation/about-apple-file-system).
 The native API and extent layout were checked against the installed Apple
 SDK headers and `clonefile(2)` manual. The
-[NR-08 design](../../openspec/changes/harden-native-package-lifecycle/external-signatures.md)
+[NR-08 design](../../openspec/changes/archive/2026-10-12-harden-native-package-lifecycle/external-signatures.md)
 records the setup and no-full-copy requirement.

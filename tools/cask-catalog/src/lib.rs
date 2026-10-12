@@ -101,6 +101,10 @@ pub fn package_attribute(id: &str) -> String {
 /// Decode a `packages` attribute name back into the catalog entry id.
 /// One pass over `_u_`/`_d_` escapes; any other underscore sequence
 /// (including a trailing `_` or an unknown escape) is rejected.
+///
+/// # Errors
+///
+/// Returns an error when `attr` contains an unknown or truncated escape.
 pub fn decode_package_attribute(attr: &str) -> Result<String, String> {
     let mut out = String::with_capacity(attr.len());
     let mut chars = attr.chars();
@@ -130,10 +134,11 @@ pub fn valid_sha256(sha: &str) -> bool {
     sha.len() == 64 && is_hex(sha)
 }
 
-/// Whether a URL is an http/https URL.
+/// Whether a URL parses as HTTP or HTTPS and has a host.
 #[must_use = "the result states whether the URL scheme is fetchable"]
 pub fn valid_url(url: &str) -> bool {
-    url.starts_with("https://") || url.starts_with("http://")
+    url::Url::parse(url)
+        .is_ok_and(|parsed| matches!(parsed.scheme(), "http" | "https") && parsed.host().is_some())
 }
 
 /// Load and strictly decode the committed pin file.
@@ -141,6 +146,11 @@ pub fn valid_url(url: &str) -> bool {
 /// A malformed pin is a hard error; there is no fallback pin. The pin
 /// must name an exact 40-hex revision, an http/https URL, and a 64-hex
 /// content hash.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read or decoded, or if any pin
+/// field fails validation.
 pub fn load_pin(path: &Path) -> Result<Pin, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read pin {}: {e}", path.display()))?;
@@ -174,6 +184,10 @@ pub fn load_pin(path: &Path) -> Result<Pin, String> {
 ///
 /// The error carries the actual hash, so each caller reports its own
 /// context around the mismatch.
+///
+/// # Errors
+///
+/// Returns the actual digest when it does not match `expected`.
 pub fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), String> {
     use sha2::{Digest, Sha256};
     let actual = format!("{:x}", Sha256::digest(bytes));
@@ -185,6 +199,11 @@ pub fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), String> {
 }
 
 /// Read the raw snapshot bytes and verify them against the pin.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read or its digest does not match
+/// the pin.
 pub fn read_verified_input(path: &Path, pin: &Pin) -> Result<Vec<u8>, String> {
     let bytes =
         std::fs::read(path).map_err(|e| format!("cannot read input {}: {e}", path.display()))?;
@@ -251,5 +270,28 @@ mod tests {
                 "{id} roundtrip"
             );
         }
+    }
+
+    #[test]
+    fn valid_url_requires_http_scheme_and_host() {
+        assert!(valid_url("https://example.com/cask.json"));
+        assert!(valid_url("http://127.0.0.1/cask.json"));
+        assert!(!valid_url("https://"));
+        assert!(!valid_url("http://?query"));
+        assert!(!valid_url("file:///tmp/cask.json"));
+    }
+
+    #[test]
+    fn load_pin_rejects_http_url_without_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pin.json");
+        std::fs::write(
+            &path,
+            r#"{"url":"https://","revision":"0123456789abcdef0123456789abcdef01234567","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","license":"MIT"}"#,
+        )
+        .unwrap();
+
+        let error = load_pin(&path).unwrap_err();
+        assert!(error.contains("not an http/https URL"));
     }
 }

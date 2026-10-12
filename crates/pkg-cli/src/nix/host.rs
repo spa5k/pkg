@@ -20,6 +20,9 @@ pub use cask_catalog::version::{in_range, parse as parse_numeric_version};
 /// closed on that error. This function must only be called for a macOS
 /// cask gate decision — never for Linux, Nixpkgs, or untargeted
 /// catalogs.
+/// # Errors
+///
+/// Returns an error if `/usr/bin/sw_vers` cannot start or complete, its output cannot be read, or it does not return one numeric version line.
 pub fn macos_product_version() -> Result<String, String> {
     let args = vec![String::from("-productVersion")];
     let (outcome, stdout) =

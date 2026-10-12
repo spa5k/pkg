@@ -208,11 +208,11 @@ fn check_staged_index(
             provenance.source
         )
     })?;
-    if index.targets[0] != system {
+    if index.targets()[0] != system {
         return Err(format!(
             "the staged catalog must target exactly this system ({system}) and \
              nothing else; it targets [{}]",
-            index.targets.join(", ")
+            index.targets().join(", ")
         )
         .into());
     }

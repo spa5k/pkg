@@ -2,7 +2,7 @@
 
 > **Historical record — superseded.** This grounding supports the deleted
 > channel engine's repeat-proof work (DN-1). The active design is
-> [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md).
+> [Simplify pkg to native Nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md).
 > The file is kept as research history; it describes no current behavior.
 
 Recon completed 2026-09-03 against `verify/dn1-pr6-repeat-proof` (base b1cbc84).

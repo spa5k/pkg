@@ -1,4 +1,5 @@
 //! Read-only signature and Gatekeeper checks for public tap apps.
+use super::error::AppError;
 use super::{payload::prepare_bundle, scan::scan_apps};
 use crate::nix::{Outcome, run_direct, run_direct_captured};
 use std::collections::BTreeMap;
@@ -49,7 +50,7 @@ fn public_tap_entries<'a>(
 pub(super) fn assess_public_tap_apps(
     state_home: &Path,
     entries: &BTreeMap<String, crate::nix::ProfileEntry>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let apps = scan_apps(public_tap_entries(state_home, entries))?;
     if apps.is_empty() {
         // CLI-only public outputs carry no vendor bundle to expose.
@@ -83,7 +84,7 @@ fn confirms_enabled_assessment(stdout: &str) -> bool {
 /// nonzero exit, or a failed execution refuses; system policy is never
 /// changed, bypassed, or recorded — the user enables assessment in System
 /// Settings.
-fn require_assessments_enabled() -> Result<(), String> {
+fn require_assessments_enabled() -> Result<(), AppError> {
     let args = [String::from("--status")];
     match run_direct_captured(Path::new(SPCTL_BIN), &args) {
         Ok((Outcome::Success, stdout)) if confirms_enabled_assessment(&stdout) => Ok(()),
@@ -93,20 +94,22 @@ fn require_assessments_enabled() -> Result<(), String> {
              public tap app bundles; enable assessment in System Settings and \
              run `pkg apps sync` again",
             stdout.trim()
-        )),
-        Ok((Outcome::Interrupted { signal }, _)) => Err(format!(
-            "{SPCTL_STATUS_CHECK} was interrupted by signal {signal}; \
-             no launcher was changed; run `pkg apps sync` again"
-        )),
+        )
+        .into()),
+        Ok((Outcome::Interrupted { signal }, _)) => {
+            Err(AppError::interrupted(SPCTL_STATUS_CHECK, signal))
+        }
         Ok((Outcome::Failed { status, stderr }, _)) => Err(format!(
             "cannot confirm that Gatekeeper assessment is enabled; {SPCTL_STATUS_CHECK} \
              failed ({status}): {}; no launcher was changed",
             stderr.trim()
-        )),
+        )
+        .into()),
         Err(detail) => Err(format!(
             "cannot confirm that Gatekeeper assessment is enabled; could not run \
              {SPCTL_STATUS_CHECK}: {detail}; no launcher was changed"
-        )),
+        )
+        .into()),
     }
 }
 
@@ -117,7 +120,7 @@ fn require_assessments_enabled() -> Result<(), String> {
 /// signature is changed or re-created, the bundle is never opened, and
 /// a failed check has no bypass. Success records only that both checks
 /// passed; it does not claim the bundle is free of malware.
-fn assess_bundle(bundle: &Path) -> Result<(), String> {
+fn assess_bundle(bundle: &Path) -> Result<(), AppError> {
     let bundle_arg = || bundle.to_string_lossy().into_owned();
     run_assessment_check(
         Path::new(CODESIGN_BIN),
@@ -151,24 +154,23 @@ fn run_assessment_check(
     args: &[String],
     bundle: &Path,
     check: &str,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     match run_direct(tool, args) {
         Ok(Outcome::Success) => Ok(()),
-        Ok(Outcome::Interrupted { signal }) => Err(format!(
-            "{check} on {} was interrupted by signal {signal}; \
-             no launcher was changed; run `pkg apps sync` again",
-            bundle.display()
+        Ok(Outcome::Interrupted { signal }) => Err(AppError::interrupted(
+            format!("{check} on {}", bundle.display()),
+            signal,
         )),
         Ok(Outcome::Failed { status, stderr }) => Err(format!(
             "{check} rejected {}: {}; {}; no launcher was changed",
             bundle.display(),
             status,
             stderr.trim()
-        )),
-        Err(detail) => Err(format!(
-            "could not run {check} on {}: {detail}",
-            bundle.display()
-        )),
+        )
+        .into()),
+        Err(detail) => {
+            Err(format!("could not run {check} on {}: {detail}", bundle.display()).into())
+        }
     }
 }
 
@@ -282,19 +284,21 @@ mod tests {
         // exists and confirms assessment, the bundle's own signature
         // refusal names the signature check instead. Either way the
         // refusal names an exact read-only check and no bypass.
+        let detail = error.to_string();
         assert!(
-            error.contains(SPCTL_STATUS_CHECK) || error.contains(CODESIGN_CHECK),
+            detail.contains(SPCTL_STATUS_CHECK) || detail.contains(CODESIGN_CHECK),
             "{error}"
         );
-        assert!(!error.contains("bypass"), "{error}");
+        assert!(!detail.contains("bypass"), "{error}");
 
         // The bundle check also names the bundle and its check: an
         // unsigned synthetic bundle fails the signature check on macOS;
         // where the tool is absent the run itself fails. Both shapes
         // refuse.
         let error = assess_bundle(&bundle).expect_err("an unsigned synthetic bundle must not pass");
-        assert!(error.contains("Vendor.app"), "{error}");
-        assert!(error.contains(CODESIGN_CHECK), "{error}");
+        let detail = error.to_string();
+        assert!(detail.contains("Vendor.app"), "{error}");
+        assert!(detail.contains(CODESIGN_CHECK), "{error}");
 
         // Nothing about the destination changed: this proves the gate
         // itself is read-only. It calls the gate directly and does not
@@ -345,9 +349,8 @@ mod tests {
             ),
         ]);
 
-        assert_eq!(
-            assess_public_tap_apps(&home, &entries),
-            Ok(()),
+        assert!(
+            assess_public_tap_apps(&home, &entries).is_ok(),
             "no codesign check must run for a Nixpkgs bundle or a CLI-only public output"
         );
     }

@@ -52,6 +52,13 @@ pub struct Plan {
     pub max_macos: Option<String>,
 }
 
+struct CollectedArtifacts {
+    artifacts: Vec<PlanArtifact>,
+    has_app_image: bool,
+    has_other_installable: bool,
+    naked: bool,
+}
+
 /// Why a plan could not be built for the effective record's artifacts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {
@@ -257,9 +264,7 @@ fn item_pairs(items: &[Value]) -> Result<Vec<(String, Option<String>)>, PlanErro
 
 /// True when the URL's path (ignoring any query) ends in `.AppImage`.
 fn url_path_ends_with_appimage(url: &str) -> bool {
-    url::Url::parse(url)
-        .map(|parsed| parsed.path().ends_with(".AppImage"))
-        .unwrap_or(false)
+    url::Url::parse(url).is_ok_and(|parsed| parsed.path().ends_with(".AppImage"))
 }
 
 /// Build the plan for one effective record on one target system.
@@ -269,6 +274,11 @@ fn url_path_ends_with_appimage(url: &str) -> bool {
 /// are checked by the caller (classify) before this runs. `minMacos` is
 /// owned by classify (the single strict parser of `depends_on macos`); the
 /// plan is built with it null and classify fills it in.
+///
+/// # Errors
+///
+/// Returns a `PlanError` when the record has malformed, unsupported, or
+/// conflicting artifact declarations.
 pub fn build_plan(eff: &Value, system: &str) -> Result<Plan, PlanError> {
     let url = eff
         .get("url")
@@ -280,100 +290,14 @@ pub fn build_plan(eff: &Value, system: &str) -> Result<Plan, PlanError> {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let raw_entries: Vec<&Value> = eff
-        .get("artifacts")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().collect())
-        .unwrap_or_default();
-    // Every artifact entry must be an object; malformed pieces never
-    // disappear silently.
-    let mut entries: Vec<(String, &Value)> = Vec::new();
-    for (index, entry) in raw_entries.iter().enumerate() {
-        let Some(map) = entry.as_object() else {
-            return Err(PlanError::Malformed(format!(
-                "artifact entry {index} is not an object: {entry}"
-            )));
-        };
-        for (key, value) in map {
-            entries.push((key.clone(), value));
-        }
-    }
+    let collected = collect_artifacts(eff, system)?;
+    let CollectedArtifacts {
+        mut artifacts,
+        has_app_image,
+        has_other_installable,
+        naked,
+    } = collected;
 
-    let mut unsupported: Vec<String> = Vec::new();
-    let mut artifacts: Vec<PlanArtifact> = Vec::new();
-    let mut has_app_image = false;
-    let mut has_other_installable = false;
-
-    // Container handling: `naked` means the download is a bare file
-    // (raw-binary); `nested` selects a path inside a wrapping archive the
-    // builders do not extract, so the record is excluded, not guessed.
-    // Only the clearly inert `allow_untrusted` flag is ignored here.
-    let container = eff.get("container").filter(|v| !v.is_null());
-    let mut naked = false;
-    if let Some(container) = container {
-        let kind = container.get("type").and_then(Value::as_str);
-        let inert = container
-            .as_object()
-            .map(|m| m.keys().all(|k| k == "type" || k == "allow_untrusted"))
-            .unwrap_or(false);
-        if kind == Some("naked") && inert {
-            naked = true;
-        } else if container.get("nested").is_some() {
-            let nested = container
-                .get("nested")
-                .and_then(Value::as_str)
-                .unwrap_or("?");
-            return Err(PlanError::UnsupportedContainer(format!("nested: {nested}")));
-        } else {
-            return Err(PlanError::UnsupportedContainer(container.to_string()));
-        }
-    }
-
-    for (kind, value) in &entries {
-        // `target` is the outer destination anchor; `allow_untrusted` is
-        // clearly inert for payload-only extraction. No other side key is
-        // handled: active options (for example pkg choices) must not
-        // silently disappear.
-        if kind == "target" || kind == "allow_untrusted" || INERT.contains(&kind.as_str()) {
-            continue;
-        }
-        if EXECUTION.contains(&kind.as_str()) {
-            return Err(PlanError::InstallerScript(kind.clone()));
-        }
-        let Some(plan_kind) = plan_kind(kind) else {
-            unsupported.push(kind.clone());
-            continue;
-        };
-        if !kind_allowed(kind, system) {
-            unsupported.push(kind.clone());
-            continue;
-        }
-        let Some(items) = value.as_array() else {
-            return Err(PlanError::Malformed(format!(
-                "artifact {kind} is not a list"
-            )));
-        };
-        for (source, rename) in item_pairs(items)? {
-            let (source, target) =
-                normalize_item(kind, &source, rename.as_deref()).map_err(PlanError::Malformed)?;
-            if kind == "app_image" {
-                has_app_image = true;
-            } else {
-                has_other_installable = true;
-            }
-            artifacts.push(PlanArtifact {
-                kind: plan_kind,
-                source,
-                target,
-            });
-        }
-    }
-
-    if !unsupported.is_empty() {
-        unsupported.sort();
-        unsupported.dedup();
-        return Err(PlanError::UnsupportedKinds(unsupported));
-    }
     if has_app_image && has_other_installable {
         return Err(PlanError::UnsupportedKinds(vec![
             "app_image mixed with other artifacts".to_string(),
@@ -444,6 +368,93 @@ pub fn build_plan(eff: &Value, system: &str) -> Result<Plan, PlanError> {
     })
 }
 
+fn collect_artifacts(eff: &Value, system: &str) -> Result<CollectedArtifacts, PlanError> {
+    let raw_entries = eff
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let mut entries = Vec::new();
+    for (index, entry) in raw_entries.iter().enumerate() {
+        let Some(map) = entry.as_object() else {
+            return Err(PlanError::Malformed(format!(
+                "artifact entry {index} is not an object: {entry}"
+            )));
+        };
+        entries.extend(map.iter().map(|(key, value)| (key.clone(), value)));
+    }
+    let container = eff.get("container").filter(|v| !v.is_null());
+    let naked = match container {
+        None => false,
+        Some(container) => {
+            let kind = container.get("type").and_then(Value::as_str);
+            let inert = container
+                .as_object()
+                .is_some_and(|m| m.keys().all(|k| k == "type" || k == "allow_untrusted"));
+            if kind == Some("naked") && inert {
+                true
+            } else if container.get("nested").is_some() {
+                let nested = container
+                    .get("nested")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
+                return Err(PlanError::UnsupportedContainer(format!("nested: {nested}")));
+            } else {
+                return Err(PlanError::UnsupportedContainer(container.to_string()));
+            }
+        }
+    };
+    let mut unsupported = Vec::new();
+    let mut artifacts = Vec::new();
+    let mut has_app_image = false;
+    let mut has_other_installable = false;
+    for (kind, value) in entries {
+        if kind == "target" || kind == "allow_untrusted" || INERT.contains(&kind.as_str()) {
+            continue;
+        }
+        if EXECUTION.contains(&kind.as_str()) {
+            return Err(PlanError::InstallerScript(kind));
+        }
+        let Some(plan_kind) = plan_kind(&kind) else {
+            unsupported.push(kind);
+            continue;
+        };
+        if !kind_allowed(&kind, system) {
+            unsupported.push(kind);
+            continue;
+        }
+        let Some(items) = value.as_array() else {
+            return Err(PlanError::Malformed(format!(
+                "artifact {kind} is not a list"
+            )));
+        };
+        for (source, rename) in item_pairs(items)? {
+            let (source, target) =
+                normalize_item(&kind, &source, rename.as_deref()).map_err(PlanError::Malformed)?;
+            if kind == "app_image" {
+                has_app_image = true;
+            } else {
+                has_other_installable = true;
+            }
+            artifacts.push(PlanArtifact {
+                kind: plan_kind,
+                source,
+                target,
+            });
+        }
+    }
+    if !unsupported.is_empty() {
+        unsupported.sort();
+        unsupported.dedup();
+        return Err(PlanError::UnsupportedKinds(unsupported));
+    }
+    Ok(CollectedArtifacts {
+        artifacts,
+        has_app_image,
+        has_other_installable,
+        naked,
+    })
+}
+
 /// Fail-closed AppImage-as-binary normalization on Linux. A direct
 /// `.AppImage` download whose only installable is exactly one binary
 /// with a matching source is promoted to the appimage plan (target
@@ -489,6 +500,10 @@ fn normalize_appimage_binaries(
 }
 
 /// Normalize one artifact item into (source, target) plan fields.
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "the app builder requires the exact case-sensitive .app bundle suffix"
+)]
 fn normalize_item(
     kind: &str,
     source: &str,
@@ -497,9 +512,7 @@ fn normalize_item(
     match kind {
         "app" => {
             safe_source(source, false)?;
-            let bundle = rename
-                .map(ToString::to_string)
-                .unwrap_or_else(|| basename(source));
+            let bundle = rename.map_or_else(|| basename(source), ToString::to_string);
             if !bundle.ends_with(".app") {
                 return Err(format!("app target {bundle:?} does not end in .app"));
             }
@@ -508,9 +521,7 @@ fn normalize_item(
         }
         "binary" => {
             safe_source(source, true)?;
-            let target = rename
-                .map(ToString::to_string)
-                .unwrap_or_else(|| basename(source));
+            let target = rename.map_or_else(|| basename(source), ToString::to_string);
             safe_target_name(&target)?;
             Ok((source.to_string(), Some(target)))
         }
@@ -535,9 +546,7 @@ fn normalize_item(
         // shell-specific normalization is applied and re-validated.
         "bash_completion" | "zsh_completion" | "fish_completion" => {
             safe_source(source, false)?;
-            let original = rename
-                .map(ToString::to_string)
-                .unwrap_or_else(|| basename(source));
+            let original = rename.map_or_else(|| basename(source), ToString::to_string);
             safe_target_name(&original)?;
             let stripped = strip_final_extension(&original).to_string();
             let target = match kind {
@@ -546,7 +555,7 @@ fn normalize_item(
                     format!("{stripped}.fish")
                 }
                 "bash_completion" => stripped,
-                _ => original.clone(),
+                _ => original,
             };
             safe_target_name(&target)?;
             Ok((source.to_string(), Some(target)))
@@ -555,9 +564,7 @@ fn normalize_item(
         // is kept as the target.
         _ => {
             safe_source(source, false)?;
-            let target = rename
-                .map(ToString::to_string)
-                .unwrap_or_else(|| basename(source));
+            let target = rename.map_or_else(|| basename(source), ToString::to_string);
             safe_target_name(&target)?;
             Ok((source.to_string(), Some(target)))
         }

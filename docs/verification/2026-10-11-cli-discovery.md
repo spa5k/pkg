@@ -1,6 +1,6 @@
 # CLI discovery verification — 2026-10-11
 
-Change: [Improve package states and discovery](../../openspec/changes/improve-cli-discovery/proposal.md).
+Change: [Improve package states and discovery](../../openspec/changes/archive/2026-10-12-improve-cli-discovery/proposal.md).
 Working branch: `feat/cli-discovery-experience`.
 Base commit: `befc18325acd1d0d374d05417e79d8c7e7e4c646`.
 Client version: `0.2.0-alpha.12`, prepared for the next release.

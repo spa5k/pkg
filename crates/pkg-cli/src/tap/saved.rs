@@ -23,13 +23,60 @@ use super::store::{self, Provenance};
 #[derive(Debug, Clone)]
 pub struct SavedCatalog {
     /// The canonical `owner/tap` source identity.
-    pub source: String,
+    source: String,
     /// The stable moving reference installs use for this source.
-    pub reference: String,
+    reference: String,
     /// The provenance recorded inside the active generation.
-    pub provenance: Provenance,
+    provenance: Provenance,
     /// The immutable index shared by saved catalogs and query views.
-    pub index: Rc<CatalogIndex>,
+    index: Rc<CatalogIndex>,
+}
+
+impl SavedCatalog {
+    fn checked(
+        state_home: &Path,
+        source: &str,
+        provenance: Provenance,
+        index: CatalogIndex,
+    ) -> Result<Self, String> {
+        if provenance.source != source {
+            return Err(format!(
+                "provenance names source `{}` instead of `{source}`",
+                provenance.source
+            ));
+        }
+        super::validate_binding(&index, &provenance)?;
+        Ok(Self {
+            source: source.to_string(),
+            reference: store::current_ref(state_home, source)?,
+            provenance,
+            index: Rc::new(index),
+        })
+    }
+
+    /// The canonical source identity for this saved catalog.
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// The stable moving reference for this source.
+    #[must_use]
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+
+    /// Provenance checked against the captured index.
+    #[must_use]
+    pub const fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+
+    /// The immutable catalog index.
+    #[must_use]
+    pub const fn index(&self) -> &Rc<CatalogIndex> {
+        &self.index
+    }
 }
 
 /// Every registered source's saved catalog, loaded strictly.
@@ -43,13 +90,16 @@ impl SavedCatalogs {
     ///
     /// One unreadable or malformed capture fails the whole load: a query
     /// must never skip a failed source and answer from the rest.
+    /// # Errors
+    ///
+    /// Returns an error if any registered source cannot be opened, locked, read, or validated.
     pub fn load(registry: &Registry, state_home: &Path) -> Result<Self, String> {
-        let mut catalogs = BTreeMap::new();
+        let mut catalogs = Vec::new();
         for source in registry.sources.keys() {
             let catalog = Self::load_one(registry, state_home, source)?;
-            catalogs.insert(source.clone(), catalog);
+            catalogs.push(catalog);
         }
-        Ok(Self { catalogs })
+        Self::from_catalogs(catalogs)
     }
 
     /// Load one registered source's saved catalog under a shared
@@ -59,6 +109,9 @@ impl SavedCatalogs {
     /// publication exchange can land between them. Taking the lock
     /// creates no file: a source without published state fails closed
     /// instead of being skipped.
+    /// # Errors
+    ///
+    /// Returns an error if `source` is invalid or unregistered, its generation cannot be locked or read, or its provenance and index do not match the registry.
     pub fn load_one(
         registry: &Registry,
         state_home: &Path,
@@ -103,15 +156,8 @@ impl SavedCatalogs {
         // that claims it: source, origin, revision, capture hash, one
         // target, and the entry counts. A corrupt capture fails closed
         // here, before any query or bare resolution can use it.
-        super::validate_binding(&index, &provenance)
-            .map_err(|detail| corrupt("holds an inconsistent saved catalog", detail))?;
-        let reference = store::current_ref(state_home, source)?;
-        Ok(SavedCatalog {
-            source: source.to_string(),
-            reference,
-            provenance,
-            index: Rc::new(index),
-        })
+        SavedCatalog::checked(state_home, source, provenance, index)
+            .map_err(|detail| corrupt("holds an inconsistent saved catalog", detail))
     }
 
     /// Assemble saved catalogs that were loaded individually.
@@ -120,9 +166,16 @@ impl SavedCatalogs {
     /// [`SavedCatalogs::load_one`]; this constructor builds the same
     /// strict set from those loads, so a caller that needs every source
     /// (bare-name resolution) reuses the per-source errors unchanged.
-    #[must_use]
-    pub fn from_catalogs(catalogs: BTreeMap<String, SavedCatalog>) -> Self {
-        Self { catalogs }
+    /// # Errors
+    /// Returns an error when two catalogs name the same source.
+    pub fn from_catalogs(catalogs: impl IntoIterator<Item = SavedCatalog>) -> Result<Self, String> {
+        let mut keyed = BTreeMap::new();
+        for catalog in catalogs {
+            if keyed.insert(catalog.source.clone(), catalog).is_some() {
+                return Err(String::from("saved catalogs contain a duplicate source"));
+            }
+        }
+        Ok(Self { catalogs: keyed })
     }
 
     /// Iterate every saved catalog in source order.
@@ -144,11 +197,21 @@ impl SavedCatalogs {
     #[must_use]
     pub fn sources_with_token(&self, system: &str, token: &str) -> Vec<String> {
         self.iter()
-            .filter(|catalog| catalog.index.targets.iter().any(|target| target == system))
             .filter(|catalog| {
-                catalog.index.systems.get(system).is_some_and(|section| {
-                    section.entries.values().any(|entry| entry.token == token)
-                })
+                catalog
+                    .index
+                    .targets()
+                    .iter()
+                    .any(|target| target == system)
+            })
+            .filter(|catalog| {
+                catalog
+                    .index()
+                    .systems()
+                    .get(system)
+                    .is_some_and(|section| {
+                        section.entries.values().any(|entry| entry.token == token)
+                    })
             })
             .map(|catalog| catalog.source.clone())
             .collect()
@@ -156,6 +219,9 @@ impl SavedCatalogs {
 }
 
 /// Load the registry and every saved catalog in one strict step.
+/// # Errors
+///
+/// Returns an error when registry loading or any saved catalog read, lock, or validation fails.
 pub fn load_all(state_home: &Path) -> Result<(Registry, SavedCatalogs), String> {
     let registry = Registry::load(&registry::registry_path(state_home))?;
     let saved = SavedCatalogs::load(&registry, state_home)?;
@@ -171,15 +237,23 @@ pub fn load_all(state_home: &Path) -> Result<(Registry, SavedCatalogs), String> 
 /// provenance, target exactly one system, and hold exactly the eligible
 /// and excluded entry counts the provenance claims. Staged import callers
 /// additionally require the one target to be the native system.
+/// # Errors
+///
+/// Returns an error when the source, origin, revision, capture hash, sole target or target section, or eligible and excluded entry counts disagree.
 pub fn validate_binding(index: &CatalogIndex, provenance: &Provenance) -> Result<(), String> {
     let source = provenance.source.as_str();
-    if index.inputs.len() != 1 || !index.inputs.contains_key(source) {
+    if index.inputs().len() != 1 || !index.inputs().contains_key(source) {
         return Err(format!(
             "the catalog must describe exactly the source {source}; it names [{}]",
-            index.inputs.keys().cloned().collect::<Vec<_>>().join(", ")
+            index
+                .inputs()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
-    let input = &index.inputs[source];
+    let input = &index.inputs()[source];
     if input.url != provenance.origin {
         return Err(format!(
             "the catalog claims origin {} but the generation recorded {}",
@@ -204,16 +278,16 @@ pub fn validate_binding(index: &CatalogIndex, provenance: &Provenance) -> Result
             raw.capture_sha256, provenance.metadata_sha256
         ));
     }
-    if index.targets.len() != 1 {
+    if index.targets().len() != 1 {
         return Err(format!(
             "the catalog must target exactly one system; it targets [{}]",
-            index.targets.join(", ")
+            index.targets().join(", ")
         ));
     }
-    let Some(section) = index.systems.get(&index.targets[0]) else {
+    let Some(section) = index.systems().get(&index.targets()[0]) else {
         return Err(format!(
             "the catalog has no section for its target {}",
-            index.targets[0]
+            index.targets()[0]
         ));
     };
     let eligible = section
@@ -397,8 +471,11 @@ mod tests {
         // The per-source load reads exactly the source it names.
         let catalog = SavedCatalogs::load_one(&registry, state.path(), "somebody/apps")
             .expect("a healthy source loads alone");
-        assert_eq!(catalog.source, "somebody/apps");
-        assert!(catalog.index.systems.contains_key("x86_64-linux"));
+        assert_eq!(catalog.source(), "somebody/apps");
+        assert!(catalog.index().systems().contains_key("x86_64-linux"));
+        let catalogs = SavedCatalogs::from_catalogs([catalog.clone()]).expect("keys derive");
+        assert!(catalogs.get("somebody/apps").is_some());
+        assert!(SavedCatalogs::from_catalogs([catalog.clone(), catalog]).is_err());
 
         // The broken source still fails its own qualified read.
         let error = SavedCatalogs::load_one(&registry, state.path(), "other/cli")
@@ -479,7 +556,7 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            saved.get("somebody/apps").expect("present").reference,
+            saved.get("somebody/apps").expect("present").reference(),
             format!(
                 "path:{}/pkg/taps/src/somebody/apps/current",
                 state.path().display()
@@ -567,7 +644,7 @@ mod tests {
         const CAPTURE: &str = "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251";
         const OTHER_HASH: &str = "5f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529255";
 
-        let corrupt = |index: crate::nix::CatalogIndex, prov: Provenance| {
+        let corrupt = |index: crate::nix::CatalogIndex| {
             let state = tempfile::tempdir().expect("tempdir");
             let mut registry = Registry::empty();
             registry.approve(
@@ -580,36 +657,38 @@ mod tests {
                 let staged = store.new_staging().expect("stages");
                 let flake = staged.path().join("flake");
                 std::fs::create_dir(&flake).expect("flake dir");
-                store.publish(staged, &prov, &index).expect("publishes");
+                store
+                    .publish(
+                        staged,
+                        &provenance(REV, CAPTURE),
+                        &index_variant(REV, CAPTURE, false, 1),
+                    )
+                    .expect("publishes valid generation");
             }
+            let index_path = super::store::source_dir(state.path(), "somebody/apps")
+                .expect("valid source")
+                .join("current/index.json");
+            std::fs::write(
+                index_path,
+                serde_json::to_vec(&index).expect("encodes corrupt capture"),
+            )
+            .expect("corrupt saved capture");
             SavedCatalogs::load_one(&registry, state.path(), "somebody/apps")
                 .err()
                 .unwrap_or_else(|| panic!("the corruption must fail the load"))
         };
 
         // A capture pinned to a different revision than its generation.
-        let error = corrupt(
-            index_variant(OTHER_REV, CAPTURE, false, 1),
-            provenance(REV, CAPTURE),
-        );
+        let error = corrupt(index_variant(OTHER_REV, CAPTURE, false, 1));
         assert!(error.contains("revision"), "{error}");
         // A capture hash that disagrees with the recorded provenance.
-        let error = corrupt(
-            index_variant(REV, OTHER_HASH, false, 1),
-            provenance(REV, CAPTURE),
-        );
+        let error = corrupt(index_variant(REV, OTHER_HASH, false, 1));
         assert!(error.contains("capture hash"), "{error}");
         // An extra input source smuggled into the saved capture.
-        let error = corrupt(
-            index_variant(REV, CAPTURE, true, 1),
-            provenance(REV, CAPTURE),
-        );
+        let error = corrupt(index_variant(REV, CAPTURE, true, 1));
         assert!(error.contains("exactly"), "{error}");
         // Entry counts that disagree with the recorded counts.
-        let error = corrupt(
-            index_variant(REV, CAPTURE, false, 2),
-            provenance(REV, CAPTURE),
-        );
+        let error = corrupt(index_variant(REV, CAPTURE, false, 2));
         assert!(error.contains("counts"), "{error}");
         // The healthy envelope still loads: the checks are not vacuous.
         let state = tempfile::tempdir().expect("tempdir");

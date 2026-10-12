@@ -144,23 +144,96 @@ pub struct CatalogSystem {
 /// `schema` identity and the `macosBaseline` field name included — so a
 /// published generation's capture file is the same strict schema-4 index
 /// the decoder consumes. No parallel encoding exists in this client.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CatalogIndex {
-    /// The schema identity written on encode. Decoding gates on the raw
-    /// JSON `schema` value before this type is built, so the field is not
-    /// read back from input.
-    #[serde(skip_deserializing)]
-    pub schema: String,
+    /// The schema identity accepted by the strict decoder and written on encode.
+    schema: String,
     /// The generator provenance.
-    pub generator: CatalogGenerator,
+    generator: CatalogGenerator,
     /// The pinned input provenance of every source in this catalog, keyed
     /// by source identity (`owner/tap`, or `homebrew/cask`).
-    pub inputs: BTreeMap<String, CatalogInput>,
+    inputs: BTreeMap<String, CatalogInput>,
     /// The target systems the catalog was generated for.
-    pub targets: Vec<String>,
+    targets: Vec<String>,
     /// The declared macOS baseline, for example `15.7.7`.
     #[serde(rename = "macosBaseline")]
-    pub macos_baseline: String,
+    macos_baseline: String,
     /// The per-system status sections.
-    pub systems: BTreeMap<String, CatalogSystem>,
+    systems: BTreeMap<String, CatalogSystem>,
+}
+
+impl CatalogIndex {
+    /// The schema accepted by the strict decoder.
+    #[must_use]
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
+
+    /// Generator provenance from the decoded envelope.
+    #[must_use]
+    pub const fn generator(&self) -> &CatalogGenerator {
+        &self.generator
+    }
+
+    /// Pinned input provenance from the decoded envelope.
+    #[must_use]
+    pub const fn inputs(&self) -> &BTreeMap<String, CatalogInput> {
+        &self.inputs
+    }
+
+    /// Target systems from the decoded envelope.
+    #[must_use]
+    pub fn targets(&self) -> &[String] {
+        &self.targets
+    }
+
+    /// Declared macOS baseline from the decoded envelope.
+    #[must_use]
+    pub fn macos_baseline(&self) -> &str {
+        &self.macos_baseline
+    }
+
+    /// Per-system entry sections from the decoded envelope.
+    #[must_use]
+    pub const fn systems(&self) -> &BTreeMap<String, CatalogSystem> {
+        &self.systems
+    }
+
+    pub(super) fn from_decoded(
+        schema: String,
+        generator: CatalogGenerator,
+        inputs: BTreeMap<String, CatalogInput>,
+        targets: Vec<String>,
+        macos_baseline: String,
+        systems: BTreeMap<String, CatalogSystem>,
+    ) -> Self {
+        Self {
+            schema,
+            generator,
+            inputs,
+            targets,
+            macos_baseline,
+            systems,
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CatalogIndex {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let schema = raw.get("schema").and_then(serde_json::Value::as_str);
+        let result = match schema {
+            Some(super::CATALOG_INDEX_SCHEMA) => super::decode_catalog_index(&raw),
+            Some(super::FORMULA_INDEX_SCHEMA) => super::decode_formula_index(&raw),
+            _ => {
+                return Err(<D::Error as serde::de::Error>::custom(
+                    "catalog index has no supported schema",
+                ));
+            }
+        };
+        result.map_err(<D::Error as serde::de::Error>::custom)
+    }
 }

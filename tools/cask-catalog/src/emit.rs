@@ -19,6 +19,9 @@ use crate::{
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 /// Provenance for one source under the catalog's `inputs` map.
@@ -119,6 +122,10 @@ struct Catalog<'a> {
 /// Shared by the official snapshot driver and the raw tap driver so both
 /// emit byte-identical envelope shapes. The document always ends with
 /// exactly one newline.
+///
+/// # Errors
+///
+/// Returns an error if the catalog cannot be encoded as JSON.
 pub fn assemble_catalog(
     inputs: &BTreeMap<String, InputProvenance>,
     entries: &BTreeMap<String, Entry>,
@@ -198,6 +205,11 @@ fn safe_relative_path(path: &str) -> bool {
 /// duplicate tokens, records without a token, and tokens that cannot be
 /// catalog keys. One malformed record is isolated: it is excluded, never
 /// a whole-catalog failure.
+///
+/// # Errors
+///
+/// Returns an error when the snapshot root is invalid, identity checks fail,
+/// or the final catalog cannot be encoded.
 pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
     let records = snapshot
         .as_array()
@@ -283,7 +295,6 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
     let catalog = assemble_catalog(&inputs, &entries, &TARGETS)?;
 
     let mut coverage = String::new();
-    use std::fmt::Write as _;
     for system in TARGETS {
         let eligible = eligible_counts.get(system).copied().unwrap_or(0);
         let _ = writeln!(
@@ -307,6 +318,11 @@ pub use crate::token::full_entry_id as qualified_id;
 /// file, persisted over the target once the document is complete.
 ///
 /// A failure leaves the previously committed catalog untouched.
+///
+/// # Errors
+///
+/// Returns an error when the directory cannot be created, the staged file
+/// cannot be written or synced, or publication fails.
 pub fn write_catalog(dir: &Path, catalog: &str) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)
@@ -317,7 +333,6 @@ pub fn write_catalog(dir: &Path, catalog: &str) -> Result<(), String> {
     // Set public data permissions before replacing the old catalog.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
         let permissions = std::fs::Permissions::from_mode(0o644);
         tmp.as_file()
             .set_permissions(permissions)
@@ -517,7 +532,6 @@ mod tests {
         let subdir = dir.path().join("locked");
         std::fs::create_dir(&subdir).expect("mkdir");
         let mut permissions = std::fs::metadata(&subdir).unwrap().permissions();
-        use std::os::unix::fs::PermissionsExt as _;
         permissions.set_mode(0o555);
         std::fs::set_permissions(&subdir, permissions).unwrap();
         let failed = write_catalog(&subdir, "new");

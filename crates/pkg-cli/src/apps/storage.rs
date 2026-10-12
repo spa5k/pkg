@@ -1,4 +1,5 @@
 //! Private app storage on the Nix volume.
+use super::error::AppError;
 use crate::nix::{Outcome, run_direct};
 use std::fs;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
@@ -6,7 +7,6 @@ use std::path::{Path, PathBuf};
 /// Root-owned parent of private per-user app views on the Nix volume.
 const APP_CACHE_PARENT: &str = "/nix/var/pkg/cask-apps";
 
-/// The real user's identity, matching os.getuid() in the app materializer.
 fn app_uid() -> u32 {
     // SAFETY: getuid has no arguments and cannot fail.
     unsafe { libc::getuid() }
@@ -44,15 +44,19 @@ fn check_storage_directory(path: &Path, owner: u32, private: bool) -> Result<(),
 
 /// Set up the private same-volume cache. This explicit command is the only
 /// administrator operation; normal installation and app use stay unprivileged.
-pub fn setup_storage() -> Result<(), String> {
+/// # Errors
+///
+/// Returns an error when the host is not macOS, the caller is root, storage is unsafe or off-volume, or setup commands and file operations fail or are interrupted.
+pub fn setup_storage() -> Result<(), AppError> {
     if !cfg!(target_os = "macos") {
-        return Err(String::from("shared app storage supports macOS only"));
+        return Err(String::from("shared app storage supports macOS only").into());
     }
     let uid = app_uid();
     if uid == 0 {
         return Err(String::from(
             "run `pkg apps setup` as your user; it will request administrator access",
-        ));
+        )
+        .into());
     }
     let root = app_cache_root()?;
     if std::env::var_os("PKG_APP_CACHE_DIR").is_none() {
@@ -77,22 +81,12 @@ pub fn setup_storage() -> Result<(), String> {
                         owner.to_string(),
                         path.to_string_lossy().into_owned(),
                     ];
-                    match run_direct(Path::new("/usr/bin/sudo"), &args)? {
-                        Outcome::Success => check_storage_directory(&path, owner, owner == uid)?,
-                        Outcome::Failed { status, stderr } => {
-                            return Err(format!(
-                                "app storage setup failed ({status}): {}",
-                                stderr.trim()
-                            ));
-                        }
-                        Outcome::Interrupted { signal } => {
-                            return Err(format!(
-                                "app storage setup was interrupted by signal {signal}"
-                            ));
-                        }
-                    }
+                    setup_outcome(run_direct(Path::new("/usr/bin/sudo"), &args)?)?;
+                    check_storage_directory(&path, owner, owner == uid)?;
                 }
-                Err(error) => return Err(format!("could not inspect {}: {error}", path.display())),
+                Err(error) => {
+                    return Err(format!("could not inspect {}: {error}", path.display()).into());
+                }
             }
         }
     }
@@ -100,9 +94,19 @@ pub fn setup_storage() -> Result<(), String> {
     if fs::metadata(&root).map_err(|e| e.to_string())?.dev()
         != fs::metadata("/nix/store").map_err(|e| e.to_string())?.dev()
     {
-        return Err(String::from("app storage must be on the Nix store volume"));
+        return Err(String::from("app storage must be on the Nix store volume").into());
     }
     Ok(())
+}
+
+fn setup_outcome(outcome: Outcome) -> Result<(), AppError> {
+    match outcome {
+        Outcome::Success => Ok(()),
+        Outcome::Failed { status, stderr } => {
+            Err(format!("app storage setup failed ({status}): {}", stderr.trim()).into())
+        }
+        Outcome::Interrupted { signal } => Err(AppError::interrupted("app storage setup", signal)),
+    }
 }
 
 #[cfg(test)]
@@ -123,5 +127,15 @@ mod tests {
         let link = dir.path().join("link");
         symlink(&cache, &link).expect("create link");
         assert!(check_storage_directory(&link, app_uid(), true).is_err());
+    }
+
+    #[test]
+    fn storage_setup_preserves_each_child_signal() {
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            let error = setup_outcome(Outcome::Interrupted { signal })
+                .expect_err("interrupted setup must stay typed");
+            assert_eq!(error.signal(), Some(signal));
+            assert!(error.to_string().contains(&format!("signal {signal}")));
+        }
     }
 }

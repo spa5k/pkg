@@ -26,6 +26,9 @@ pub enum Availability {
 
 impl Availability {
     /// Refuse unavailable or unknown records before a profile mutation.
+    /// # Errors
+    ///
+    /// Returns the recorded reason when the record is unavailable or its status is unknown.
     pub fn require(&self) -> Result<(), String> {
         match self {
             Self::Available => Ok(()),

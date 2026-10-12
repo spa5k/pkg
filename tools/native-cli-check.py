@@ -130,6 +130,33 @@ def main():
         return json.loads(run(pkg, "--json", "list"))["result"]
 
     flake("1")
+    flake_file = source / "flake.nix"
+    valid_flake = flake_file.read_text()
+    flake_file.write_text(valid_flake.replace(
+        "probe = ", 'broken = throw "missing attribute dependency fixture"; probe = ', 1))
+    run(pkg, "info", "broken", code=1)
+    assert "missing attribute dependency fixture" in results[-1]["stderr"], results[-1]
+    subflake = source / "sub flake"
+    subflake.mkdir()
+    (subflake / "flake.nix").write_text(
+        '{ outputs = {self}: { packages.' + system
+        + '.broken = throw "subflake evaluation fixture"; }; }')
+    config.write_text(f"[sources]\nnixpkgs = {json.dumps(reference + '?dir=sub%20flake')}\n"
+                      f"casks = {json.dumps(reference)}\n")
+    run(pkg, "info", "broken", code=1)
+    assert "subflake evaluation fixture" in results[-1]["stderr"], results[-1]
+    (subflake / "flake.nix").write_text(
+        '{ outputs = {self}: { packages.' + system
+        + '.broken = throw "identity:${self.shortRev}:${toString self.lastModified}:${toString self.revCount}"; }; }')
+    identity_reference = (reference + '?dir=sub%20flake&lastModified=1234567890'
+                          '&rev=0123456789abcdef0123456789abcdef01234567&revCount=7')
+    config.write_text(f"[sources]\nnixpkgs = {json.dumps(identity_reference)}\n"
+                      f"casks = {json.dumps(reference)}\n")
+    run(pkg, "info", "broken", code=1)
+    assert "identity:0123456:1234567890:7" in results[-1]["stderr"], results[-1]
+    config.write_text(f"[sources]\nnixpkgs = {json.dumps(reference)}\n"
+                      f"casks = {json.dumps(reference)}\n")
+    flake_file.write_text(valid_flake)
     installed = run(pkg, "add", "nixpkgs:probe")
     assert "Installed: nixpkgs:probe" in installed, installed
     assert "Commands: probe" in installed, installed

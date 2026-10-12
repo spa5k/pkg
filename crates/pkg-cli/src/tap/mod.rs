@@ -34,6 +34,9 @@ pub use store::{Provenance, Publication, Published, SourceStore, StagedGeneratio
 /// assets; the captured `catalogIndex` output is decoded by the ordinary
 /// strict schema-3 decoder, so no second classifier exists in the client.
 /// The decoded envelope is returned for the generation's capture file.
+/// # Errors
+///
+/// Returns an error if Nix cannot evaluate the staging catalog or its JSON envelope and catalog fields are invalid.
 pub fn validate_staging(
     nix: &crate::nix::Nix,
     flake_path: &std::path::Path,
@@ -99,7 +102,7 @@ mod tests {
         // one percent-encoded reference text, never a raw path string.
         let flake = PathBuf::from("/tmp/staging we#ird?50%/flake");
         let index = validate_staging(&nix, &flake).expect("validates");
-        assert!(index.inputs.contains_key("somebody/apps"));
+        assert!(index.inputs().contains_key("somebody/apps"));
         let args = std::fs::read_to_string(&capture_file).expect("captured args");
         let installable = args
             .lines()

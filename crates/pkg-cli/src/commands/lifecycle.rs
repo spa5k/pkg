@@ -1,28 +1,17 @@
-//! Lifecycle commands: install, remove, update, upgrade, history,
-//! rollback, prune.
-//!
-//! These commands mutate or read the native profile. Every mutation goes
-//! through one native operation, reports the re-read profile afterwards,
-//! and refreshes derived launchers on success.
-
 use std::collections::BTreeMap;
-use std::process::ExitCode;
 
 use crate::catalog::{self, ParsedId};
 use crate::cli::Cli;
 use crate::nix::{self, ProfileEntry};
-use crate::tap::{registry, store};
+use crate::tap::store;
 
-use super::{
-    CommandError, apps_refresh_after_mutation, installed_entries, mutation_failed, session,
-};
+use super::change::{ProfileChange, Request};
+use super::{CommandError, session};
 
 pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     if ids.is_empty() {
         return Err(String::from("install needs at least one ID").into());
     }
-    // IDs are validated before the runtime is touched, so malformed input is
-    // refused identically with or without Nix present.
     let parsed_ids = ids
         .iter()
         .map(|id| catalog::parse_id(id))
@@ -30,12 +19,28 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     eprintln!("Resolving: {}", ids.join(", "));
     let session = session(cli)?;
     let system = session.nix.system()?;
+    let (installables, resolved_names) = resolve_installables(&session, parsed_ids, &system)?;
+    super::change::execute(
+        &session,
+        Request::Profile(ProfileChange::Install {
+            installables,
+            resolved_names,
+            system: &system,
+        }),
+    )
+}
+
+fn resolve_installables(
+    session: &super::Session,
+    parsed_ids: Vec<ParsedId>,
+    system: &str,
+) -> Result<(Vec<String>, BTreeMap<String, String>), CommandError> {
     let only_formulae = parsed_ids
         .iter()
-        .all(|id| matches!(id, ParsedId::Qualified(catalog::CatalogId::Formula(_))));
+        .all(|id| matches!(id, ParsedId::Qualified(id) if matches!(id.kind(), catalog::CatalogIdKind::Formula(_))));
     let formula_view = if parsed_ids
         .iter()
-        .any(|id| matches!(id, ParsedId::Qualified(catalog::CatalogId::Formula(_))))
+        .any(|id| matches!(id, ParsedId::Qualified(id) if matches!(id.kind(), catalog::CatalogIdKind::Formula(_))))
     {
         Some(catalog::brew::FormulaView::load(
             &session.nix,
@@ -45,9 +50,9 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
         None
     };
     let mut tap_state = if only_formulae {
-        super::TapState::official(&session)
+        super::TapState::official(session)
     } else {
-        super::TapState::load(&session)?
+        super::TapState::load(session)?
     };
     // One index evaluation is shared by every bare resolution and every
     // cask gate in this command run.
@@ -69,11 +74,11 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                     &tap_state.routing,
                     &saved,
                     &name,
-                    &system,
+                    system,
                     &mut catalog_handle,
                 )
                 .map_err(|error| {
-                    super::search::install_resolution_error(&session, &name, None, error)
+                    super::search::install_resolution_error(session, &name, None, error)
                 })?
             }
             ParsedId::BareCask(token) => {
@@ -82,128 +87,33 @@ pub(super) fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
                     &session.nix,
                     &saved,
                     &token,
-                    &system,
+                    system,
                     &mut catalog_handle,
                 )
                 .map_err(|error| {
-                    super::search::install_resolution_error(&session, &token, Some("cask"), error)
+                    super::search::install_resolution_error(session, &token, Some("cask"), error)
                 })?
             }
         };
-        if let (catalog::CatalogId::Formula(name), Some(view)) = (&resolved, &formula_view) {
-            let canonical = view.resolve(&system, name)?;
-            view.availability(&catalog::CaskHost::default(), &system, &canonical)
+        if let (catalog::CatalogIdKind::Formula(name), Some(view)) =
+            (resolved.kind(), &formula_view)
+        {
+            let canonical = view.resolve(system, name)?;
+            view.availability(&catalog::CaskHost::default(), system, &canonical)
                 .require()
                 .map_err(|reason| format!("brew:homebrew/core/{canonical}: {reason}"))?;
-            resolved = catalog::CatalogId::Formula(canonical);
+            resolved = catalog::CatalogId::formula(&canonical).map_err(CommandError::Message)?;
         }
-        if let catalog::CatalogId::Cask { source, token } = &resolved {
-            gate_cask(&mut catalog_handle, &mut tap_state, &system, source, token)?;
+        if let catalog::CatalogIdKind::Cask { source, token } = resolved.kind() {
+            gate_cask(&mut catalog_handle, &mut tap_state, system, source, token)?;
         }
         let installable = resolved
-            .installable(&tap_state.routing, &system)
+            .installable(&tap_state.routing, system)
             .map_err(CommandError::Message)?;
         resolved_names.insert(installable.clone(), resolved.qualified());
         installables.push(installable);
     }
-    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
-    let before = installed_entries(&session)?;
-    let mut selected = std::collections::BTreeSet::new();
-    installables.retain(|installable| selected.insert(installable.clone()));
-    let mut pending = Vec::new();
-    for installable in installables {
-        if already_installed(&session.nix, &before, &installable, &system)? {
-            println!("Already installed: {}", resolved_names[&installable]);
-        } else {
-            pending.push(installable);
-        }
-    }
-    if pending.is_empty() {
-        return Ok(());
-    }
-    let requested: Vec<_> = pending
-        .iter()
-        .map(|installable| resolved_names[installable].clone())
-        .collect();
-    eprintln!("Installing: {}", requested.join(", "));
-    session
-        .nix
-        .profile_add(&session.paths.profile, &pending)
-        .map_err(|error| {
-            mutation_failed(&session, "install", &error, Some(&before), Some(&requested))
-        })?;
-    let after = installed_entries(&session)?;
-    let changed: Vec<_> = after
-        .iter()
-        .filter(|(key, entry)| before.get(*key) != Some(*entry))
-        .map(|(_, entry)| entry)
-        .collect();
-    let names: Vec<_> = changed
-        .iter()
-        .map(|entry| package_id(&session, entry))
-        .collect();
-    apps_refresh_after_mutation(&session, "install", &names)?;
-    report_names("Installed", &names);
-    let commands: std::collections::BTreeSet<_> = changed
-        .iter()
-        .flat_map(|entry| crate::installed::commands(entry, &session.paths.profile))
-        .collect();
-    if !commands.is_empty() {
-        let shown = commands
-            .iter()
-            .take(10)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        let remaining = commands.len().saturating_sub(10);
-        if remaining == 0 {
-            println!("Commands: {shown}");
-        } else {
-            println!("Commands: {shown} (+{remaining} more)");
-        }
-    }
-    Ok(())
-}
-
-fn already_installed(
-    nix: &nix::Nix,
-    installed: &BTreeMap<String, ProfileEntry>,
-    installable: &str,
-    system: &str,
-) -> Result<bool, nix::NixError> {
-    let Some((reference, attribute)) = installable.split_once('#') else {
-        return Ok(false);
-    };
-    let attribute = attribute
-        .split_once('^')
-        .map_or(attribute, |(base, _)| base)
-        .replace('"', "");
-    let candidates: Vec<_> = installed
-        .values()
-        .filter(|entry| {
-            entry.active
-                && entry.original_url == reference
-                && (entry.attr_path == attribute
-                    || catalog::exposed_attribute(&entry.attr_path, system) == attribute)
-        })
-        .collect();
-    if candidates.is_empty() {
-        return Ok(false);
-    }
-    let selected = installable
-        .split_once('^')
-        .map_or(installable, |(base, _)| base);
-    let exact = nix.search(selected, ".")?;
-    if exact.len() != 1 {
-        return Ok(false);
-    }
-    let mut paths = nix.default_output_paths(installable)?;
-    paths.sort();
-    Ok(candidates.iter().any(|entry| {
-        let mut existing = entry.store_paths.clone();
-        existing.sort();
-        exact.contains_key(&entry.attr_path) && existing == paths
-    }))
+    Ok((installables, resolved_names))
 }
 
 /// Refuse cask installs the generated or saved catalog excludes or does not
@@ -249,51 +159,17 @@ fn gate_view(
         .map_err(|reason| format!("cask:{source}/{token} {reason}"))
 }
 
-fn package_id(session: &super::Session, entry: &ProfileEntry) -> String {
-    crate::installed::package_id(entry, &session.config, &session.paths.state_home)
-}
-
-/// Report one completed transaction: one line, only what changed.
-fn report_names(verb: &str, names: &[String]) {
-    match names {
-        [] => println!("Unchanged: profile did not change."),
-        [one] => println!("{verb}: {one}"),
-        many => println!("{verb}: {}", many.join(", ")),
-    }
-}
-
 pub(super) fn remove(cli: &Cli, entries: &[String], exact_entry: bool) -> Result<(), CommandError> {
-    let session = session(cli)?;
     if entries.is_empty() {
         return Err(String::from("remove needs at least one installed entry ID").into());
     }
-    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
-    let installed = installed_entries(&session)?;
-    let entries = crate::installed::select(
-        &installed,
-        &session.config,
-        &session.paths.state_home,
-        entries,
-        exact_entry,
-    )?;
-    let selected: Vec<_> = entries
-        .iter()
-        .map(|key| package_id(&session, &installed[key]))
-        .collect();
-    eprintln!("Removing: {}", selected.join(", "));
-    session
-        .nix
-        .profile_remove(&session.paths.profile, &entries)
-        .map_err(|error| mutation_failed(&session, "remove", &error, Some(&installed), None))?;
-    let after = installed_entries(&session)?;
-    let names: Vec<String> = entries
-        .iter()
-        .filter(|entry| !after.contains_key(*entry))
-        .map(|entry| package_id(&session, &installed[entry]))
-        .collect();
-    apps_refresh_after_mutation(&session, "remove", &names)?;
-    report_names("Removed", &names);
-    Ok(())
+    super::change::execute(
+        &session(cli)?,
+        Request::Profile(ProfileChange::Remove {
+            entries,
+            exact_entry,
+        }),
+    )
 }
 
 pub(super) fn upgrade(
@@ -302,133 +178,17 @@ pub(super) fn upgrade(
     all: bool,
     exact_entry: bool,
 ) -> Result<(), CommandError> {
-    let session = session(cli)?;
-    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
-    let installed = installed_entries(&session)?;
-    // `--all` combined with entry names is a usage error rejected by the
-    // parser; here the target set is either explicit names or everything.
-    let targets: Vec<String> = if all {
-        installed
-            .iter()
-            .filter(|(_, entry)| entry.active)
-            .map(|(key, _)| key.clone())
-            .collect()
-    } else {
-        if entries.is_empty() {
-            return Err(String::from("upgrade needs entry IDs or --all").into());
-        }
-        crate::installed::select(
-            &installed,
-            &session.config,
-            &session.paths.state_home,
+    super::change::execute(
+        &session(cli)?,
+        Request::Profile(ProfileChange::Upgrade {
             entries,
+            all,
             exact_entry,
-        )?
-    };
-    if all && targets.is_empty() {
-        println!("No installed entries; nothing to upgrade.");
-        return Ok(());
-    }
-    // Entries installed from a tap that has since been removed keep their
-    // locked outputs; an upgrade must never follow a reference the registry
-    // no longer holds. The local public source of an entry is identified
-    // solely from its original URL through the tap store - the attribute
-    // path is never parsed - so this works even when saved catalogs or the
-    // profile metadata are broken, and it works for a removed entry too.
-    // Only the registry is loaded here, never `TapState` or saved
-    // catalogs, so unrelated broken metadata cannot block the decision.
-    let registry = registry::Registry::load(&registry::registry_path(&session.paths.state_home))?;
-    let removed_source = |entry: &str| -> Option<String> {
-        let source =
-            store::source_of_reference(&session.paths.state_home, &installed[entry].original_url)?;
-        (source != nix::OFFICIAL_CASK_SOURCE && registry.origin(&source).is_none())
-            .then_some(source)
-    };
-    let targets = if !all {
-        // An explicitly named entry from a removed tap is a hard refusal
-        // before any Nix upgrade runs.
-        for entry in &targets {
-            if let Some(source) = removed_source(entry) {
-                return Err(format!(
-                    "pkg: {entry}: tap {source} is removed; upgrade refuses to follow it"
-                )
-                .into());
-            }
-        }
-        targets
-    } else {
-        let mut remaining = targets;
-        remaining.retain(|entry| match removed_source(entry) {
-            None => true,
-            Some(source) => {
-                println!("Skipped: {entry} (tap {source} was removed; keeping locked outputs).");
-                false
-            }
-        });
-        if remaining.is_empty() {
-            println!("Nothing eligible to upgrade.");
-            return Ok(());
-        }
-        remaining
-    };
-    // Only explicit full-commit references count as fixed; tags, branches,
-    // and hex-looking branch names stay movable (design D4). Fixed entries
-    // are reported explicitly in both modes.
-    let mut movable: Vec<String> = Vec::new();
-    for entry in &targets {
-        if nix::is_fixed_reference(installed[entry].original_url.as_str()) {
-            println!("Skipped: {entry} (fixed source reference).");
-        } else {
-            movable.push(entry.clone());
-        }
-    }
-    if !all && movable.is_empty() {
-        println!("Unchanged: selected entries use fixed source references.");
-        return Ok(());
-    }
-    if movable.is_empty() {
-        println!("Unchanged: no movable entries to upgrade.");
-        return Ok(());
-    }
-    // The remaining IDs are passed explicitly so fixed sources and removed
-    // taps are never followed.
-    //
-    // Each movable CASK entry is re-gated against its OWN current
-    // catalog record before `profile_upgrade`: the installed source is
-    // the entry's original URL — saved taps through the verified tap
-    // store, every other casks source loaded directly from that URL —
-    // and the cask identity is confirmed as the whole native attribute
-    // through `catalog::native_package_attribute`. Today's configured
-    // casks source never judges an entry installed from another one;
-    // Nixpkgs entries are never gated as casks. Unsupported, excluded,
-    // and unknown targets are gated with the install policy.
-    gate_upgrade_formulae(&session, &installed, &movable)?;
-    gate_upgrade_macos_range(&session, &installed, &movable)?;
-    let selected: Vec<_> = movable
-        .iter()
-        .map(|key| package_id(&session, &installed[key]))
-        .collect();
-    eprintln!("Upgrading: {}", selected.join(", "));
-    session
-        .nix
-        .profile_upgrade(&session.paths.profile, Some(&movable))
-        .map_err(|error| mutation_failed(&session, "upgrade", &error, Some(&installed), None))?;
-    let after = installed_entries(&session)?;
-    let names: Vec<String> = movable
-        .iter()
-        .filter(|entry| {
-            after
-                .get(*entry)
-                .is_some_and(|new| Some(new) != installed.get(*entry))
-        })
-        .map(|entry| package_id(&session, &after[entry]))
-        .collect();
-    apps_refresh_after_mutation(&session, "upgrade", &names)?;
-    report_names("Upgraded", &names);
-    Ok(())
+        }),
+    )
 }
 
-fn gate_upgrade_formulae(
+pub(super) fn gate_upgrade_formulae(
     session: &super::Session,
     installed: &BTreeMap<String, ProfileEntry>,
     movable: &[String],
@@ -486,7 +246,7 @@ fn gate_upgrade_formulae(
 /// upgrade follows the original URL; this gate judges the same source,
 /// never today's configured one. Tap state loads lazily, only when a
 /// movable entry is actually a saved tap cask.
-fn gate_upgrade_macos_range(
+pub(super) fn gate_upgrade_macos_range(
     session: &super::Session,
     installed: &BTreeMap<String, ProfileEntry>,
     movable: &[String],
@@ -613,7 +373,7 @@ pub(super) fn history(cli: &Cli) -> Result<(), CommandError> {
 }
 
 /// Read the active generation from the native profile link when available.
-fn active_generation(profile: &std::path::Path) -> Option<u64> {
+pub(super) fn active_generation(profile: &std::path::Path) -> Option<u64> {
     let link = std::fs::read_link(profile).ok()?;
     let name = link.file_name()?.to_str()?;
     name.strip_suffix("-link")?.rsplit('-').next()?.parse().ok()
@@ -651,127 +411,13 @@ fn render_history(text: &str, active: Option<u64>) -> String {
 }
 
 pub(super) fn rollback(cli: &Cli, generation: Option<u64>) -> Result<(), CommandError> {
-    let session = session(cli)?;
-    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
-    let before = installed_entries(&session)?;
-    let previous_generation = active_generation(&session.paths.profile);
-    match generation {
-        Some(number) => eprintln!("Restoring: generation {number}"),
-        None => {
-            let destination = session
-                .nix
-                .profile_history(&session.paths.profile)
-                .ok()
-                .and_then(|text| {
-                    let current = previous_generation?;
-                    history_numbers(&text)
-                        .into_iter()
-                        .filter(|number| *number < current)
-                        .max()
-                });
-            if let Some(number) = destination {
-                eprintln!("Restoring: generation {number} (native previous generation)");
-            } else {
-                eprintln!("Restoring: native previous generation");
-            }
-        }
-    }
-    if let Err(error) = session
-        .nix
-        .profile_rollback(&session.paths.profile, generation)
-    {
-        let active = active_generation(&session.paths.profile);
-        if let Some(number) = active.filter(|_| active != previous_generation) {
-            eprintln!("Partial: generation {number} is active. App launchers may need an update.");
-            if !matches!(&error, nix::NixError::Interrupted { .. }) {
-                super::report_cause(&error.to_string());
-            }
-            if cfg!(target_os = "macos") {
-                eprintln!("Next: run `pkg apps sync`.");
-            } else {
-                eprintln!("Next: run `pkg history` to inspect generations.");
-            }
-            return Err(CommandError::Reported(ExitCode::from(
-                if matches!(&error, nix::NixError::Interrupted { .. }) {
-                    super::INTERRUPTED
-                } else {
-                    super::FAILURE
-                },
-            )));
-        }
-        return Err(mutation_failed(
-            &session,
-            "rollback",
-            &error,
-            Some(&before),
-            None,
-        ));
-    }
-    let current_generation = active_generation(&session.paths.profile);
-    let destination = match current_generation.or(generation) {
-        Some(number) => format!("generation {number}"),
-        None => String::from("the previous generation"),
-    };
-    let affected = if current_generation.is_some() && current_generation == previous_generation {
-        Vec::new()
-    } else {
-        vec![destination.clone()]
-    };
-    apps_refresh_after_mutation(&session, "rollback", &affected)?;
-    if current_generation.is_some() && current_generation == previous_generation {
-        println!("Unchanged: {destination} is still active.");
-    } else {
-        println!("Restored: {destination}.");
-    }
-    Ok(())
+    super::change::execute(
+        &session(cli)?,
+        Request::Profile(ProfileChange::Rollback(generation)),
+    )
 }
 
 pub(super) fn prune(cli: &Cli, older_than: &str) -> Result<(), CommandError> {
-    // The age is validated before the runtime is touched.
     let days = crate::cli::parse_prune_age(older_than)?;
-    let session = session(cli)?;
-    let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)?;
-    let before = session
-        .nix
-        .profile_history(&session.paths.profile)
-        .ok()
-        .map(|text| history_numbers(&text));
-    eprintln!("Pruning: generations older than {days} days");
-    session
-        .nix
-        .profile_wipe_history(&session.paths.profile, &format!("{days}d"))
-        .map_err(|error| mutation_failed(&session, "prune", &error, None, None))?;
-    // Eligibility stays with Nix: which generations are old enough is native
-    // behavior and is not assumed by pkg.
-    let after = session
-        .nix
-        .profile_history(&session.paths.profile)
-        .ok()
-        .map(|text| history_numbers(&text));
-    match (before, after) {
-        (Some(before), Some(after)) if !before.is_empty() && !after.is_empty() => {
-            let removed = before.difference(&after).count();
-            if removed == 0 {
-                println!("No old generations to prune.");
-            } else {
-                println!("Pruned: {removed} old generation(s). Current generation kept.");
-            }
-        }
-        _ => println!("Prune complete: generations older than {days} days were checked."),
-    }
-    Ok(())
-}
-
-/// Parse only Nix's `Version N (DATE)` headers.
-fn history_numbers(text: &str) -> std::collections::BTreeSet<u64> {
-    crate::output::strip_ansi(text)
-        .lines()
-        .filter_map(|line| {
-            line.strip_prefix("Version ")?
-                .split_once(" (")?
-                .0
-                .parse()
-                .ok()
-        })
-        .collect()
+    super::change::execute(&session(cli)?, Request::Prune { days })
 }

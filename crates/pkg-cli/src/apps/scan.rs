@@ -44,15 +44,17 @@ pub(super) fn scan_apps<'a>(
                 let item =
                     item.map_err(|e| format!("could not read {}: {e}", applications.display()))?;
                 let path = item.path();
-                let name = match item.file_name().into_string() {
-                    Ok(name) => name,
-                    Err(_) => continue,
+                let Ok(name) = item.file_name().into_string() else {
+                    continue;
                 };
-                if !name.ends_with(".app") || name == ".app" {
+                if Path::new(&name)
+                    .extension()
+                    .is_none_or(|extension| extension != "app")
+                {
                     continue;
                 }
-                let is_bundle_dir = item.file_type().map(|t| t.is_dir()).unwrap_or(false)
-                    && path.join("Contents").is_dir();
+                let is_bundle_dir =
+                    item.file_type().is_ok_and(|t| t.is_dir()) && path.join("Contents").is_dir();
                 if !is_bundle_dir {
                     continue;
                 }

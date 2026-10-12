@@ -12,16 +12,17 @@ use std::process::ExitCode;
 
 pub(super) fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), CommandError> {
     let (text, source) = search_input(options)?;
-    let query = catalog::SearchQuery::new(&text, options.regex, options.unavailable)
-        .map_err(|error| {
-            eprintln!("Invalid search pattern `{text}`: {error}");
-            CommandError::Reported(ExitCode::from(super::USAGE))
-        })?
-        .broad(options.broad)
-        .fuzzy(!options.no_fuzzy);
+    let query =
+        catalog::SearchQuery::new(&text, options.matching.regex, options.results.unavailable)
+            .map_err(|error| {
+                eprintln!("Invalid search pattern `{text}`: {error}");
+                CommandError::Reported(ExitCode::from(super::USAGE))
+            })?
+            .broad(options.matching.broad)
+            .fuzzy(!options.matching.no_fuzzy);
     let paths = crate::config::paths()?;
     let config = crate::config::Config::load(&paths.config_file)?;
-    let limit = if options.all || cli.json && options.limit.is_none() {
+    let limit = if options.results.all || cli.json && options.limit.is_none() {
         None
     } else {
         Some(options.limit.unwrap_or(20))
@@ -70,9 +71,7 @@ fn local_search(
 ) -> Result<(String, Vec<catalog::SourceReport>, SearchSpool), CommandError> {
     let system = catalog::search_system(&paths.cache_dir);
     let mut reports = Vec::new();
-    let registry = if !source.needs_registry() {
-        crate::tap::Registry::empty()
-    } else {
+    let registry = if source.needs_registry() {
         match crate::tap::Registry::load(&crate::tap::registry::registry_path(&paths.state_home)) {
             Ok(registry) => registry,
             Err(error) => {
@@ -83,6 +82,8 @@ fn local_search(
                 crate::tap::Registry::empty()
             }
         }
+    } else {
+        crate::tap::Registry::empty()
     };
     if let Some(source) = source.tap()
         && !registry.sources.contains_key(source)

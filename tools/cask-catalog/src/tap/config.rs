@@ -18,7 +18,7 @@ use std::time::Duration;
 // ---------------------------------------------------------------------------
 
 /// Wall-time limit for the `nix config show --json` query.
-const NIX_CONFIG_WALLTIME: Duration = Duration::from_secs(120);
+const NIX_CONFIG_WALLTIME: Duration = Duration::from_mins(2);
 
 /// The ONLY mac sandbox paths accepted when self-mapped: the minimal
 /// system set the raw-export runtime needs. Omitted (minimal) entries
@@ -111,6 +111,11 @@ fn config_bool(config: &Value, name: &str) -> Option<bool> {
 /// `extra-sandbox-paths` mappings must be mandatory (optional = false)
 /// and limited to the OS-specific allowlist. `allowed-impure-host-deps`
 /// must be empty on Linux and a subset of the mac allowlist on macOS.
+///
+/// # Errors
+///
+/// Returns an error when a required setting is missing, has the wrong shape,
+/// or violates the host-specific sandbox policy.
 pub fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
     let mac = os == "macos";
     match config_bool(config, "sandbox") {
@@ -210,9 +215,18 @@ pub fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
         }
     };
 
+    validate_host_paths(&paths, &impure, os, mac)
+}
+
+fn validate_host_paths(
+    paths: &BTreeMap<String, String>,
+    impure: &[String],
+    os: &str,
+    mac: bool,
+) -> Result<(), String> {
     match os {
         "linux" => {
-            for (target, source) in &paths {
+            for (target, source) in paths {
                 if target != "/bin/sh" {
                     return Err(config_setup_error(
                         &format!(
@@ -240,7 +254,7 @@ pub fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
             }
         }
         "macos" => {
-            for (target, source) in &paths {
+            for (target, source) in paths {
                 if !MAC_ALLOWED_SANDBOX_PATHS.contains(&target.as_str()) {
                     return Err(config_setup_error(
                         &format!(
@@ -257,7 +271,7 @@ pub fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
                     ));
                 }
             }
-            for dep in &impure {
+            for dep in impure {
                 if !MAC_ALLOWED_IMPURE_DEPS.contains(&dep.as_str()) {
                     return Err(config_setup_error(
                         &format!("mac allowed-impure-host-deps carries {dep:?}"),
@@ -277,6 +291,11 @@ pub fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
 
 /// Settings that repair known macOS defaults without removing custom grants.
 /// Unknown grants require an administrator's manual review.
+///
+/// # Errors
+///
+/// Returns an error when a custom temporary-directory mapping needs review
+/// or the normalized configuration fails validation.
 pub fn mac_setup_settings(config: &Value) -> Result<Option<String>, String> {
     let mut normalized = config.clone();
     normalized["sandbox"] = serde_json::json!({"value": true});
@@ -323,27 +342,15 @@ impl From<String> for GateError {
     }
 }
 
-/// Query the LOCAL effective Nix settings and verify they are
-/// fail-closed BEFORE any Ruby runs. The query uses the exact isolated
-/// environment of the build (private HOME and XDG_CONFIG_HOME, empty
-/// NIX_USER_CONF_FILES, env_clear, whitelisted executable env) and NO
-/// client sandbox override: client --options are ignored for
-/// untrusted users anyway. This query reads the local effective
-/// settings only; it is not an authoritative statement of what the
-/// daemon enforces — the fresh in-build sandbox probe proves the
-/// actual behavior and stays mandatory. The full config is never
-/// printed (it may contain secret settings); only bounded error tails
-/// and offending setting names leave this function.
+/// The daemon can ignore restricted sandbox overrides from untrusted users.
+/// Local effective settings do not prove what the daemon enforces.
+/// The full configuration can contain secret settings.
 fn nix_config_gate_with_limits(
     nix: &Path,
     staging: &Path,
     walltime: Duration,
 ) -> Result<(), GateError> {
     let nix_exe = resolve_nix_exe(nix)?;
-    // Private per-gate roots (distinct from the build's): the shared
-    // constructor creates them and owns the environment/process setup;
-    // the gate keeps its own args, deadline, label, and NO sandbox
-    // override (client --options are ignored for untrusted users).
     let gate = staging.join("gate");
     let nix_home = gate.join("home");
     let nix_tmp = gate.join("tmp");
@@ -704,7 +711,7 @@ mod tests {
     fn config_gate_aborts_on_a_config_log_flood() {
         let dir = tempfile::tempdir().expect("tempdir");
         let nix = fake_nix(dir.path(), "yes 0123456789abcdef | head -c 4194304; exit 0");
-        let err = nix_config_gate_with_limits(&nix, dir.path(), Duration::from_secs(60))
+        let err = nix_config_gate_with_limits(&nix, dir.path(), Duration::from_mins(1))
             .expect_err("flood");
         let GateError::Unverifiable(detail) = &err else {
             panic!("the settings were never observed: {err:?}");

@@ -1,47 +1,25 @@
 # Contributing to `pkg`
 
-**OpenSpec is the source of truth.** The active design is
-[Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/proposal.md)
-with its [design](openspec/changes/simplify-to-native-nix/design.md) and
-[tasks](openspec/changes/simplify-to-native-nix/tasks.md). The cask source
-redesign is
-[Generate the Cask catalog with a Rust tool](openspec/changes/generate-cask-catalog-with-rust/proposal.md).
-The proposed next phase is
-[Import raw Ruby casks from public taps](openspec/changes/import-public-cask-taps/proposal.md).
-The alpha.4 runtime discovery and installer shell setup change is
-[Improve runtime discovery and shell setup](openspec/changes/improve-runtime-discovery-and-shell-setup/proposal.md).
-Search amortization is
-[Amortize search with revision snapshots](openspec/changes/amortize-search-with-revision-snapshots/proposal.md)
-with its [design](openspec/changes/amortize-search-with-revision-snapshots/design.md) and
-[tasks](openspec/changes/amortize-search-with-revision-snapshots/tasks.md).
-The native lifecycle reliability repair is
-[Harden native package lifecycle](openspec/changes/harden-native-package-lifecycle/proposal.md).
-The accepted audit repairs are
-[Implement the accepted pkg audit repairs](openspec/changes/implement-audit-repairs/proposal.md).
-The real-use repairs are
-[Repair faults found through real package use](openspec/changes/repair-realistic-use-faults/proposal.md).
-The CLI discovery change is
-[Improve package states and discovery](openspec/changes/improve-cli-discovery/proposal.md).
-Homebrew formula discovery and source sections follow
-[Show Homebrew formulae and source sections](openspec/changes/improve-homebrew-discovery/proposal.md).
-File conflict reporting follows
-[Explain package file conflicts](openspec/changes/improve-package-conflicts/proposal.md).
-Package command output follows
-[Improve package command output](openspec/changes/improve-package-command-experience/proposal.md).
-Code cleanup follows
-[Simplify the native client](openspec/changes/simplify-client/proposal.md).
-Rust error and ownership changes follow
-[Improve Rust error handling and ownership](openspec/changes/improve-rust-quality/proposal.md).
+**OpenSpec records the design.** The native Nix baseline is
+[Simplify pkg to native Nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md)
+with its [design](openspec/changes/archive/2026-10-12-simplify-to-native-nix/design.md) and
+[tasks](openspec/changes/archive/2026-10-12-simplify-to-native-nix/tasks.md).
+Completed and superseded changes are listed in the
+[OpenSpec archive](openspec/changes/archive/README.md).
+The current Rust quality work follows
+[Enforce Rust quality](openspec/changes/enforce-rust-quality/proposal.md).
+The remaining quality work follows
+[Complete the Rust quality plan](openspec/changes/complete-rust-quality-plan/proposal.md).
 The [module map](docs/architecture.md) shows the current code owners.
 
 ## 1. Before you open a PR
 
 - **Map your PR to a task.** Name the task ID of the relevant active
   OpenSpec change in the PR description. Use each change's own IDs as
-  written in its `tasks.md`: `NN-xx` for
-  [Simplify pkg to native Nix](openspec/changes/simplify-to-native-nix/tasks.md)
-  and the numbered sections (`1.1`, `2.1`, …) for
-  [Implement the accepted pkg audit repairs](openspec/changes/implement-audit-repairs/tasks.md).
+  written in its `tasks.md`: `RQ2-xx` for
+  [Enforce Rust quality](openspec/changes/enforce-rust-quality/tasks.md)
+  and `RQ3-xx` for
+  [Complete the Rust quality plan](openspec/changes/complete-rust-quality-plan/tasks.md).
   If your change is not covered by a task, propose a design change in
   OpenSpec first.
 - **One purpose per PR.** A reviewer must be able to hold the whole change
@@ -49,9 +27,10 @@ The [module map](docs/architecture.md) shows the current code owners.
 - **Do not resurrect removed machinery.** The broker, root helper, package
   state engine, build approval, TUF channel, central index, and their tests
   are deleted by design. New work builds on the native Nix profile.
-- **Old plans are history.** Files under `plans/` are superseded or
-  completed records. Do not treat them as requirements. Do not mark
-  superseded proposals as delivered.
+- **Old plans are history.** Files under `plans/` and
+  `openspec/changes/archive/` record completed or superseded work.
+  Use the native Nix design baseline and current changes for new work.
+  Do not mark superseded proposals as delivered.
 
 ## 2. Required checks
 
@@ -60,21 +39,44 @@ The [module map](docs/architecture.md) shows the current code owners.
   toolchain (currently Rust 1.96.1 via `rust-toolchain.toml`), plus a small
   client smoke job on Linux and macOS.
 - All PRs: the **docs-linkcheck** workflow is green. It validates Markdown
-  cross-references and requires README/CONTRIBUTING to link the active
-  OpenSpec change.
+  cross-references and requires README/CONTRIBUTING to link the native Nix
+  design baseline.
 - Run locally:
 
 ```sh
-cargo build --locked --all-targets
-cargo test --locked
+just check
+# Equivalent Rust commands:
+cargo build --locked --workspace --all-targets --all-features
+cargo test --locked --workspace --all-features
 cargo fmt --all --check
-cargo clippy --locked --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps --document-private-items
+cargo deny check
 sh -n install.sh
 shellcheck install.sh
 python3 docs/tests/test_install_script.py
 python3 .github/scripts/check_docs_links.py
 ```
+
+Use the [Rust Style Guide](https://doc.rust-lang.org/style-guide/).
+Use the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/checklist.html)
+for naming, ownership, and public API contracts.
+`rustfmt` is the format authority.
+The workspace denies Clippy `all` and `pedantic`.
+It also selects specific nursery and restriction lints in `Cargo.toml`.
+Do not enable a whole restriction group.
+Document the actual failure conditions in each public `# Errors` section.
+Keep the original error cause until the reporting boundary.
+Preserve cancellation until the command decides its exit status.
+Use checked conversions at operating system and database boundaries.
+
+Keep an intentional lint exception on its smallest valid scope.
+Use `#[expect(..., reason = "...")]` for a specific intentional finding.
+Do not suppress correctness or safety checks to make a build pass.
+An obsolete expectation fails the build.
+Test fixture failures may use the existing reasoned `unwrap`, `expect`, and `panic` exceptions.
+Run Cargo tests on Linux and macOS.
+Clippy compiles test targets but does not execute them.
 
 ## 3. Tests and evidence
 

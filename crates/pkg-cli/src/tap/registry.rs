@@ -73,6 +73,9 @@ impl Registry {
     /// source that is not exactly its canonical form, an origin that is
     /// not the canonical origin of that source, or the reserved official
     /// source — fails closed with the reason.
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or its JSON, schema, source identities, or origins are invalid. A missing file returns an empty registry.
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -87,7 +90,7 @@ impl Registry {
             }
         };
         let registry =
-            strict::from_str::<Registry>(&format!("tap registry {}", path.display()), &text)?;
+            strict::from_str::<Self>(&format!("tap registry {}", path.display()), &text)?;
         if registry.schema != REGISTRY_SCHEMA {
             return Err(format!(
                 "tap registry {} reports schema {:?}; \
@@ -164,6 +167,9 @@ impl Registry {
     ///
     /// The caller must hold the [`GlobalLock`] so registry writes across
     /// sources cannot lose each other's updates.
+    /// # Errors
+    ///
+    /// Returns an error if registry encoding, temporary-file creation or writing, or the final rename fails.
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let prepared = self.prepare(path)?;
         commit_prepared(prepared, path)
@@ -175,6 +181,9 @@ impl Registry {
     /// `add` prepares the next registry state *before* publication, so a
     /// publication is only committed when the registry replacement is a
     /// single already-prepared rename away.
+    /// # Errors
+    ///
+    /// Returns an error if registry encoding, parent-directory creation, or temporary-file creation, writing, or syncing fails.
     pub fn prepare(&self, path: &Path) -> Result<tempfile::NamedTempFile, String> {
         let text = self.encode()?;
         let parent = path
@@ -201,6 +210,9 @@ impl Registry {
 ///
 /// One rename commits the prepared state; the directory flush is best
 /// effort. The caller holds the [`GlobalLock`].
+/// # Errors
+///
+/// Returns an error if replacing the registry with the prepared file fails.
 pub fn commit_prepared(prepared: tempfile::NamedTempFile, path: &Path) -> Result<(), String> {
     prepared
         .persist(path)
@@ -223,6 +235,9 @@ pub struct GlobalLock {
 
 impl GlobalLock {
     /// Create the tap namespace if needed and take the global lock.
+    /// # Errors
+    ///
+    /// Returns an error if creating the registry directory, opening the lock file, or acquiring the lock fails.
     pub fn acquire(state_home: &Path) -> Result<Self, String> {
         let dir = taps_root(state_home);
         std::fs::create_dir_all(&dir)
@@ -305,7 +320,7 @@ mod tests {
                 "empty origin",
                 r#"{"schema":"pkg-tap-registry/1","sources":{"a/b":{"origin":"  ","added_unix":1}}}"#,
             ),
-            ("not an object", r#"[]"#),
+            ("not an object", r"[]"),
         ] {
             std::fs::write(&path, text).expect("write");
             let error = Registry::load(&path)
@@ -328,10 +343,10 @@ mod tests {
     fn saves_atomically_under_the_global_lock() {
         let state = tempfile::tempdir().expect("tempdir");
         let path = registry_path(state.path());
-        let _global = GlobalLock::acquire(state.path()).expect("locks");
+        let global = GlobalLock::acquire(state.path()).expect("locks");
         // A second acquisition in one process would block forever; the
         // guard releases on drop.
-        drop(_global);
+        drop(global);
         let _global = GlobalLock::acquire(state.path()).expect("relocks");
         let mut registry = Registry::empty();
         registry.approve(
@@ -367,7 +382,11 @@ mod tests {
             })
             .collect();
         assert!(
-            !entries.iter().any(|name| name.ends_with(".new")),
+            !entries.iter().any(|name| {
+                Path::new(name)
+                    .extension()
+                    .is_some_and(|extension| extension == "new")
+            }),
             "{entries:?}"
         );
     }

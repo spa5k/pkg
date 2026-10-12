@@ -122,4 +122,4 @@ credentials, and model traces.
 
 Apple describes this signature format in
 [TN3126](https://developer.apple.com/documentation/technotes/tn3126-inside-code-signing-hashes).
-The implementation follows the [NR-08 design](../../openspec/changes/harden-native-package-lifecycle/external-signatures.md).
+The implementation follows the [NR-08 design](../../openspec/changes/archive/2026-10-12-harden-native-package-lifecycle/external-signatures.md).

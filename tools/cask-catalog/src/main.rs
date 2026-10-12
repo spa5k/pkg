@@ -250,7 +250,7 @@ fn import_tap(
 
 /// Write the pin through a unique same-directory temporary file.
 fn write_pin(path: &Path, pin: &Pin) -> Result<(), String> {
-    let parent = path.parent().unwrap_or(Path::new("."));
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)
         .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     let text = serde_json::to_string_pretty(pin).map_err(|e| e.to_string())?;

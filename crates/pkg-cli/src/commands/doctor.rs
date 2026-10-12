@@ -92,7 +92,7 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
                         format!("{} ({} entries)", paths.profile.display(), entries.len()),
                     )),
                     Err(error) => {
-                        rows.push(observed("pkg profile", "unreadable", error.to_string()))
+                        rows.push(observed("pkg profile", "unreadable", error.to_string()));
                     }
                 },
             }
@@ -100,7 +100,7 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
             // reports it and never fixes it (design D7). Auto-skipped on
             // non-macOS systems.
             if cfg!(target_os = "macos") {
-                rows.push(app_launchers_row(&runtime, &paths));
+                rows.push(app_launchers_row(&runtime, &paths)?);
             } else {
                 rows.push(observed(
                     "app launchers",
@@ -178,8 +178,8 @@ fn tap_rows(state_home: &std::path::Path) -> Vec<DoctorRow> {
                     "ok",
                     format!(
                         "{} entries saved at revision {}",
-                        catalog.provenance.eligible + catalog.provenance.excluded,
-                        catalog.provenance.revision
+                        catalog.provenance().eligible + catalog.provenance().excluded,
+                        catalog.provenance().revision
                     ),
                 ),
                 Err(error) => observed(&format!("tap {source}"), "unhealthy", error),
@@ -188,14 +188,18 @@ fn tap_rows(state_home: &std::path::Path) -> Vec<DoctorRow> {
         .collect()
 }
 
-/// The doctor row for macOS app launchers, mapped from the read-only apps
-/// status (`healthy:`/`unhealthy:` prefix, or an operational error).
-fn app_launchers_row(runtime: &nix::Nix, paths: &crate::config::Paths) -> DoctorRow {
+fn app_launchers_row(
+    runtime: &nix::Nix,
+    paths: &crate::config::Paths,
+) -> Result<DoctorRow, CommandError> {
     match crate::apps::status(runtime, paths) {
-        Ok(text) if text.starts_with("healthy:") => observed("app launchers", "healthy", text),
-        Ok(text) if text.starts_with("unhealthy:") => observed("app launchers", "unhealthy", text),
-        Ok(text) => observed("app launchers", "unreadable", text),
-        Err(error) => observed("app launchers", "unreadable", error),
+        Ok(status) => Ok(observed(
+            "app launchers",
+            status.health.as_str(),
+            status.message,
+        )),
+        Err(error) if error.signal().is_some() => Err(error.into()),
+        Err(error) => Ok(observed("app launchers", "unreadable", error.to_string())),
     }
 }
 

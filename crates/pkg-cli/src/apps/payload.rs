@@ -1,4 +1,5 @@
 //! Discovery and preparation of current generated private app payloads.
+use super::error::AppError;
 use super::storage::app_cache_root;
 use crate::nix::{Outcome, run_direct_captured};
 use std::collections::BTreeMap;
@@ -6,6 +7,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 /// Read generated app data without executing vendor code or writing state.
 pub(super) fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+    #[derive(serde::Deserialize)]
+    struct AppData {
+        source: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        schema: String,
+        apps: BTreeMap<String, AppData>,
+    }
+
     let namespace = output
         .join("libexec/pkg-casks")
         .join(output.file_name().ok_or("app output has no name")?);
@@ -17,15 +28,6 @@ pub(super) fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, Pat
     };
     if !metadata.is_file() || metadata.len() > 8 * 1024 * 1024 {
         return Err(format!("invalid cask app data: {}", path.display()));
-    }
-    #[derive(serde::Deserialize)]
-    struct AppData {
-        source: String,
-    }
-    #[derive(serde::Deserialize)]
-    struct Manifest {
-        schema: String,
-        apps: BTreeMap<String, AppData>,
     }
     let data: Manifest = serde_json::from_slice(
         &fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?,
@@ -43,8 +45,9 @@ pub(super) fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, Pat
     );
     let mut apps = BTreeMap::new();
     for (name, entry) in data.apps {
-        if name == ".app"
-            || !name.ends_with(".app")
+        if Path::new(&name)
+            .extension()
+            .is_none_or(|extension| extension != "app")
             || name.contains(['/', '\0', '\n', '\r'])
             || entry.source != format!("{source_dir}/{name}")
         {
@@ -90,7 +93,7 @@ pub(super) fn restored_path(bundle: &Path) -> Result<Option<PathBuf>, String> {
 }
 
 /// Prepare and verify a private app copy through the shared child supervisor.
-pub(super) fn prepare_bundle(bundle: &Path) -> Result<PathBuf, String> {
+pub(super) fn prepare_bundle(bundle: &Path) -> Result<PathBuf, AppError> {
     let Some(expected) = restored_path(bundle)? else {
         return Ok(bundle.to_path_buf());
     };
@@ -110,13 +113,14 @@ pub(super) fn prepare_bundle(bundle: &Path) -> Result<PathBuf, String> {
         {
             Ok(expected)
         }
-        (Outcome::Success, _) => Err(String::from("app preparation returned an unexpected path")),
-        (Outcome::Failed { status, stderr }, _) => Err(format!(
-            "app preparation failed ({status}): {}",
-            stderr.trim()
-        )),
-        (Outcome::Interrupted { signal }, _) => Err(format!(
-            "app preparation was interrupted by signal {signal}"
-        )),
+        (Outcome::Success, _) => {
+            Err(String::from("app preparation returned an unexpected path").into())
+        }
+        (Outcome::Failed { status, stderr }, _) => {
+            Err(format!("app preparation failed ({status}): {}", stderr.trim()).into())
+        }
+        (Outcome::Interrupted { signal }, _) => {
+            Err(AppError::interrupted("app preparation", signal))
+        }
     }
 }

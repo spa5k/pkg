@@ -51,16 +51,24 @@ pub(super) fn apps_sync(cli: &Cli) -> Result<(), CommandError> {
     eprintln!("Checking installed apps…");
     crate::apps::sync(&session.nix, &session.paths).map_err(|detail| {
         eprintln!("Failed: app launchers could not be updated.");
-        super::report_cause(&detail);
-        eprintln!("Installed packages did not change.");
-        CommandError::Reported(std::process::ExitCode::from(super::FAILURE))
+        let detail_text = detail.to_string();
+        super::report_cause(&detail_text);
+        if detail.dock_effect_possible() {
+            eprintln!("The package profile did not change. Dock state may have changed.");
+        } else {
+            eprintln!("The package profile and Dock state did not change.");
+        }
+        CommandError::Reported(detail.signal().map_or_else(
+            || std::process::ExitCode::from(super::FAILURE),
+            super::error::signal_exit,
+        ))
     })?;
     println!("App launchers synced.");
     Ok(())
 }
 
 pub(super) fn apps_setup() -> Result<(), CommandError> {
-    crate::apps::setup_storage().map_err(CommandError::Message)?;
+    crate::apps::setup_storage()?;
     println!("Shared app storage is ready.");
     Ok(())
 }

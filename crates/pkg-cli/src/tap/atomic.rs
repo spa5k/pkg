@@ -19,6 +19,9 @@ use std::path::Path;
 /// path names the other's former directory. The caller verifies both paths
 /// first and holds the per-source lock, so no third party renames between
 /// the check and the exchange.
+/// # Errors
+///
+/// Returns an error when either path is not a real directory, contains a NUL byte, or the platform exchange operation fails.
 pub fn exchange_directories(a: &Path, b: &Path) -> Result<(), String> {
     // Everything fallible — the real-directory checks and the C string
     // conversions — happens before the syscall. Nothing fallible runs

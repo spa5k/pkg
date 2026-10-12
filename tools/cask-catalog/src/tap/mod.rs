@@ -119,7 +119,7 @@ pub struct ImportRequest {
 }
 
 /// The outcome of one successful import. Serialized by the CLI in
-/// snake_case (`metadata_sha256`, `flake_path`).
+/// `snake_case` (`metadata_sha256`, `flake_path`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImportResult {
     /// Canonical source id `owner/tap`.
@@ -163,6 +163,11 @@ fn safe_segment(segment: &str) -> bool {
 /// ports, extra slashes, and non-GitHub hosts are refused. The
 /// function is idempotent: a canonical id and the canonical origin URL
 /// both canonicalize to the same id.
+///
+/// # Errors
+///
+/// Returns an error when the source has unsafe segments, an invalid URL,
+/// or an ambiguous repository prefix.
 pub fn canonicalize_source(source: &str) -> Result<String, String> {
     if source.trim() != source {
         return Err(format!("source {source:?} has leading/trailing whitespace"));
@@ -244,6 +249,11 @@ pub fn canonicalize_source(source: &str) -> Result<String, String> {
 }
 
 /// The single native catalog target for THIS build host.
+///
+/// # Errors
+///
+/// Returns an error when the host operating system and architecture are not
+/// supported catalog targets.
 pub fn native_target() -> Result<&'static str, String> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Ok("aarch64-darwin"),
@@ -257,6 +267,10 @@ pub fn native_target() -> Result<&'static str, String> {
 
 /// The canonical approved origin URL for a canonical source id:
 /// `https://github.com/owner/homebrew-tap`.
+///
+/// # Errors
+///
+/// Returns an error when `source` is not a valid owner/tap identity.
 #[must_use = "the result is the catalog inputs url contract"]
 pub fn source_origin(source: &str) -> Result<String, String> {
     let canonical = canonicalize_source(source)?;
@@ -279,10 +293,7 @@ fn archive_url(source: &str, revision: &str) -> Result<String, String> {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// Prepare the caller-owned output directory: precreated is fine, but
@@ -334,12 +345,48 @@ fn prepare_output_dir(output_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn convert_and_publish_flake(
+    capture: &Capture,
+    staging: tempfile::TempDir,
+    output_dir: &Path,
+) -> Result<ImportResult, String> {
+    let mut result = convert_capture(capture, staging.path())?;
+    let staged_flake = staging.path().join("flake");
+    let published_flake = output_dir.join("flake");
+    std::fs::rename(&staged_flake, &published_flake).map_err(|error| {
+        format!(
+            "cannot publish flake {}: {error}",
+            published_flake.display()
+        )
+    })?;
+    result.flake_path = published_flake;
+    drop(staging);
+    Ok(result)
+}
+
+fn resolve_requested_revision(revision: Option<&str>) -> Result<String, String> {
+    let Some(revision) = revision else {
+        return Ok(String::new());
+    };
+    if !valid_revision(revision) {
+        return Err(format!(
+            "revision {revision:?} is not an exact 40-hex commit id"
+        ));
+    }
+    Ok(revision.to_ascii_lowercase())
+}
+
 /// Import one raw public tap through the ACTUAL public flow.
 ///
 /// Steps: identity check, archive fetch and strict unpack,
 /// canary/listener positive controls, sandboxed Nix raw-export build,
 /// envelope validation, and flake tree generation into
 /// `request.output_dir/flake/`.
+///
+/// # Errors
+///
+/// Returns an error when identity validation, source retrieval, archive
+/// checks, sandbox verification, export validation, or output writing fails.
 pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
     let source = canonicalize_source(&request.source)?;
     let origin = source_origin(&source)?;
@@ -352,17 +399,7 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
         )
         .into());
     }
-    let revision = match &request.revision {
-        Some(revision) => {
-            if !valid_revision(revision) {
-                return Err(
-                    format!("revision {revision:?} is not an exact 40-hex commit id").into(),
-                );
-            }
-            revision.to_ascii_lowercase()
-        }
-        None => String::new(),
-    };
+    let revision = resolve_requested_revision(request.revision.as_deref())?;
     prepare_output_dir(&request.output_dir)?;
     let staging = tempfile::TempDir::new_in(&request.output_dir).map_err(|e| {
         ImportError::Failed(format!(
@@ -452,7 +489,7 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
     let capture = Capture {
         source,
         origin,
-        revision: revision.clone(),
+        revision,
         system: native.to_string(),
         export,
         metadata_sha256,
@@ -461,7 +498,9 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
         license,
         tree: tree_inventory(&tap_tree)?,
     };
-    let result = convert_capture(&capture, &request.output_dir)?;
+    let flake_staging = tempfile::TempDir::new_in(staging.path())
+        .map_err(|error| ImportError::Failed(format!("cannot create flake staging: {error}")))?;
+    let result = convert_and_publish_flake(&capture, flake_staging, &request.output_dir)?;
     drop(staging);
     Ok(result)
 }
@@ -602,6 +641,58 @@ mod tests {
         assert!(
             matches!(error, ImportError::Failed(_)),
             "an unusable output dir is no refusal"
+        );
+    }
+
+    #[test]
+    fn late_asset_write_failure_leaves_output_empty_and_allows_retry() {
+        let output = tempfile::tempdir().expect("output tempdir");
+        let capture = Capture {
+            source: "example/foo".to_string(),
+            origin: "https://github.com/example/homebrew-foo".to_string(),
+            revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            system: "aarch64-darwin".to_string(),
+            export: serde_json::json!({"casks": []}),
+            metadata_sha256: "a".repeat(64),
+            archive_url: "https://codeload.github.com/example/homebrew-foo/tar.gz/revision"
+                .to_string(),
+            archive_sha256: "b".repeat(64),
+            license: "NOASSERTION".to_string(),
+            tree: std::collections::BTreeMap::new(),
+        };
+
+        let failed_staging = tempfile::TempDir::new_in(output.path()).expect("failed staging");
+        let blocked_asset_parent = failed_staging.path().join("flake/lib/licenses");
+        std::fs::create_dir_all(blocked_asset_parent.parent().expect("asset parent"))
+            .expect("create staged lib directory");
+        std::fs::write(&blocked_asset_parent, b"blocks the final license directory")
+            .expect("block the final asset's parent directory");
+
+        let error = convert_and_publish_flake(&capture, failed_staging, output.path())
+            .expect_err("late asset write must fail");
+        assert!(
+            error.contains("lib/licenses"),
+            "expected final license asset write to fail: {error}"
+        );
+        assert!(!output.path().join("flake").exists());
+        assert_eq!(
+            std::fs::read_dir(output.path())
+                .expect("list output after failed conversion")
+                .count(),
+            0
+        );
+
+        let retry_staging = tempfile::TempDir::new_in(output.path()).expect("retry staging");
+        let result = convert_and_publish_flake(&capture, retry_staging, output.path())
+            .expect("retry should publish the complete flake");
+
+        assert_eq!(result.flake_path, output.path().join("flake"));
+        assert!(result.flake_path.join("flake.nix").is_file());
+        assert!(
+            result
+                .flake_path
+                .join("lib/licenses/homebrew-cask-LICENSE.txt")
+                .is_file()
         );
     }
 
