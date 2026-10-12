@@ -358,10 +358,13 @@ fn exit_signal_supervisor() {
 }
 
 #[test]
-fn signals_after_child_exit_are_classified_without_reaping_pipe_holders() {
+fn exit_signal_test_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("exit-signal-test-supervisor") {
+        return;
+    }
+    let ready_dir = std::env::var(READY).unwrap();
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let ready = temp.path().join("sender");
+        let ready = Path::new(&ready_dir).join(format!("sender-{signal}"));
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args([
@@ -379,6 +382,32 @@ fn signals_after_child_exit_are_classified_without_reaping_pipe_holders() {
         let sender_pid = wait_for_marker(&ready).parse::<i32>().unwrap();
         wait_for_process_exit(sender_pid);
     }
+}
+
+#[test]
+fn signals_after_child_exit_are_classified_without_reaping_pipe_holders() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::exit_signal_test_supervisor",
+            "--nocapture",
+        ])
+        .env(MODE, "exit-signal-test-supervisor")
+        .env(READY, temp.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut supervisor =
+        GroupChildGuard::spawn(command).expect("spawn post-exit signal supervisor");
+    let status = supervisor
+        .wait_for_exit(Duration::from_secs(5))
+        .expect("observe post-exit signal supervisor")
+        .expect("post-exit signal supervisor must finish within five seconds");
+    assert!(
+        status.success(),
+        "post-exit signal supervisor failed: {status}"
+    );
 }
 
 #[test]
@@ -696,6 +725,9 @@ fn long_running_child() {
     if std::env::var(MODE).as_deref() != Ok("long-running-child") {
         return;
     }
+    if let Ok(ready) = std::env::var(READY) {
+        fs::write(ready, std::process::id().to_string()).expect("publish running child pid");
+    }
     loop {
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -711,17 +743,24 @@ fn bounded_timeout_uses_the_private_wall_time_limit() {
             "--nocapture",
         ])
         .env(MODE, "long-running-child");
+    let temp = tempfile::tempdir().expect("tempdir");
+    let ready = temp.path().join("running-child");
+    command.env(READY, &ready);
+    let run = std::thread::spawn(move || {
+        run_child_with_limits(
+            command,
+            IoMode::Capture,
+            None,
+            Some(ChildLimits {
+                resident_bytes: u64::MAX,
+                wall_time: Duration::from_millis(60),
+            }),
+        )
+        .expect("run time-limited child")
+    });
+    let _child_pid = wait_for_marker(&ready).parse::<i32>().unwrap();
     let started = Instant::now();
-    let reaped = run_child_with_limits(
-        command,
-        IoMode::Capture,
-        None,
-        Some(ChildLimits {
-            resident_bytes: u64::MAX,
-            wall_time: Duration::from_millis(60),
-        }),
-    )
-    .expect("run time-limited child");
+    let reaped = run.join().expect("join time-limited child owner");
     assert_eq!(
         reaped.resource_limit,
         Some("metadata batch exceeded 120 seconds")
@@ -1065,8 +1104,7 @@ impl GroupChildGuard {
                 if unsafe { info.si_pid() } == 0 {
                     return Ok(None);
                 }
-                self.state = GroupChildState::Reaping;
-                return self.wait_owned().map(Some);
+                return self.stop_group_and_wait().map(Some);
             }
             let error = std::io::Error::last_os_error();
             if error.kind() == std::io::ErrorKind::Interrupted {
@@ -1082,11 +1120,22 @@ impl GroupChildGuard {
     fn stop_group_and_wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
         let mut group_error = None;
         if self.state == GroupChildState::Owned {
-            if let Err(error) = self.signal_group(libc::SIGKILL)
-                && error.raw_os_error() != Some(libc::ESRCH)
-            {
-                group_error = Some(error);
-                let _ = self.signal_process(libc::SIGKILL);
+            if let Err(error) = self.signal_group(libc::SIGKILL) {
+                let no_live_members = {
+                    #[cfg(target_os = "macos")]
+                    {
+                        error.raw_os_error() == Some(libc::EPERM)
+                            && matches!(super::macos_group_has_live_members(self.pid), Ok(false))
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        false
+                    }
+                };
+                if error.raw_os_error() != Some(libc::ESRCH) && !no_live_members {
+                    group_error = Some(error);
+                    let _ = self.signal_process(libc::SIGKILL);
+                }
             }
             self.state = GroupChildState::Reaping;
         }

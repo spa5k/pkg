@@ -117,12 +117,7 @@ mod forward {
         // Async-signal-safe: lock-free atomics only. The owner forwards later.
         HANDLERS.fetch_add(1, Ordering::SeqCst);
         if ACTIVE.load(Ordering::SeqCst) {
-            let index = match signum {
-                libc::SIGINT => Some(0),
-                libc::SIGTERM => Some(1),
-                libc::SIGHUP => Some(2),
-                _ => None,
-            };
+            let index = TERMINATION.iter().position(|&signal| signal == signum);
             if let Some(index) = index {
                 RECEIVED.store(signum, Ordering::SeqCst);
                 SIGNAL_COUNTS[index].fetch_add(1, Ordering::SeqCst);
