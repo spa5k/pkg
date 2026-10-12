@@ -102,5 +102,5 @@ Current work follows [Simplify the native client](../openspec/changes/archive/20
 Rust ownership and error rules follow
 [Rust design](../openspec/changes/archive/2026-10-12-improve-rust-quality/design.md).
 The complete quality change follows
-[Complete the Rust quality plan](../openspec/changes/complete-rust-quality-plan/design.md).
+[Complete the Rust quality plan](../openspec/changes/archive/2026-10-12-complete-rust-quality-plan/design.md).
 The [completion report](verification/rust-quality-completion-2026-10-12.md) records the final behavior and verification limits.

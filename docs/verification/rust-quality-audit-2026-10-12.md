@@ -91,8 +91,8 @@ Existing fixture-only unwrap, expect, and panic exceptions remain.
 
 ## Overall plan
 
-The first phase is implemented in [Enforce Rust quality](../../openspec/changes/enforce-rust-quality/proposal.md).
-The [tasks](../../openspec/changes/enforce-rust-quality/tasks.md) record completion.
+The first phase is implemented in [Enforce Rust quality](../../openspec/changes/archive/2026-10-12-enforce-rust-quality/proposal.md).
+The [tasks](../../openspec/changes/archive/2026-10-12-enforce-rust-quality/tasks.md) record completion.
 The [decision trail](rust-quality-decisions-2026-10-12.tsv) records choices and evidence.
 
 Further work must use small verifiable changes.

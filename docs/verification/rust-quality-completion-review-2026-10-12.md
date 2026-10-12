@@ -1,7 +1,7 @@
 # Review of the complete Rust quality plan
 
 Fixed baseline: `df1af1d741774ecdafbb26c517a056c6ae34631b`.
-Source specification: `openspec/changes/complete-rust-quality-plan/`.
+Source specification: `openspec/changes/archive/2026-10-12-complete-rust-quality-plan/`.
 The two review axes used separate Luna agent contexts.
 The reports below remain separate.
 Final source verification passed on both hosts at `36ddcba`.

@@ -22,5 +22,5 @@ Add focused tests for changed behavior.
 Keep Nix as the owner of installed state.
 
 The [design](design.md) defines the work sequence and completion checks.
-The [audit](../../../docs/verification/rust-quality-audit-2026-10-12.md)
+The [audit](../../../../docs/verification/rust-quality-audit-2026-10-12.md)
 records findings, decisions, and results.

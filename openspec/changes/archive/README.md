@@ -14,6 +14,8 @@ Superseded changes are history. They were not delivered.
 | --- | --- |
 | [Add deterministic verification suite](2026-10-12-add-deterministic-verification-suite/proposal.md) | Superseded; 22 tasks remain unchecked |
 | [Amortize search with revision snapshots](2026-10-12-amortize-search-with-revision-snapshots/proposal.md) | Completed |
+| [Complete the Rust quality plan](2026-10-12-complete-rust-quality-plan/proposal.md) | Completed; merged in PR #115 |
+| [Enforce Rust quality](2026-10-12-enforce-rust-quality/proposal.md) | Completed; merged in PR #115 |
 | [Execute production trust ceremony](2026-10-12-execute-production-trust-ceremony/proposal.md) | Superseded; 16 tasks remain unchecked |
 | [Generate Cask catalog with Rust](2026-10-12-generate-cask-catalog-with-rust/proposal.md) | Completed |
 | [Harden native package lifecycle](2026-10-12-harden-native-package-lifecycle/proposal.md) | Completed |
@@ -34,10 +36,7 @@ These historical changes were archived with `--skip-specs`.
 Their delta specs were not applied to `openspec/specs/`.
 Some older deltas describe removed package engines and trust systems.
 
-The two changes in the current Rust quality PR remain outside the archive:
-
-- [Enforce Rust quality](../enforce-rust-quality/proposal.md)
-- [Complete the Rust quality plan](../complete-rust-quality-plan/proposal.md)
-
-Archive these changes after the PR is merged.
+The two Rust quality changes were archived after
+[PR #115](https://github.com/spa5k/pkg/pull/115) was merged.
+No active change remains from that PR.
 Keep all new work in a separate active change.
