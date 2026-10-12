@@ -5,15 +5,16 @@
 //! or writes product state.
 //!
 //! Query commands live in `search`, `info`, and `list`. Package mutations
-//! live in `lifecycle`. This module holds the shared session, dispatch,
+//! are parsed in `lifecycle` and ordered in `change`. This module holds the shared session, dispatch,
 //! and failure-reporting rules.
 //!
 //! Error rule: every handler returns `Result<(), CommandError>` and uses
 //! `?` for ordinary diagnostics; [`run`] converts the result to an exit
-//! code in exactly one place. Handlers report mutation failures themselves
+//! code in exactly one place. The change owner reports mutation failures
 //! — re-read native state included — and end with the reported variant of
 //! `CommandError`, so diagnostics are never duplicated.
 
+mod change;
 mod conflict;
 mod doctor;
 mod error;
@@ -328,11 +329,10 @@ fn report_failed_mutation(
     if !interrupted && !conflict::report(session, error, current.as_ref().ok(), requested) {
         report_cause(&error.to_string());
     }
-    CommandError::Reported(ExitCode::from(if interrupted {
-        INTERRUPTED
-    } else {
-        FAILURE
-    }))
+    CommandError::Reported(match error {
+        NixError::Interrupted { signal, .. } => error::signal_exit(*signal),
+        _ => ExitCode::from(FAILURE),
+    })
 }
 
 /// Classify a mutation error, report re-read native state, and end the

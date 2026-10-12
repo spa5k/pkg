@@ -9,7 +9,8 @@ flowchart TD
     CLI[cli: parse arguments] --> Commands[commands: dispatch and session]
     Commands --> Search[search: source selection and results]
     Commands --> Info[info and list: package queries]
-    Commands --> Lifecycle[lifecycle: install, remove, upgrade, rollback]
+    Commands --> Lifecycle[lifecycle: parse and resolve change requests]
+    Lifecycle --> Change[change: lock, preflight, mutate, postflight]
     Search --> Catalog[catalog: IDs, routing, snapshots, matching]
     Info --> Catalog
     Lifecycle --> Catalog
@@ -17,7 +18,7 @@ flowchart TD
     Lifecycle --> Nix
     Nix --> Process[process: supervise children and cancellation]
     Process --> Runtime[External Nix]
-    Lifecycle --> Apps[apps: assess and sync launchers]
+    Change --> Apps[apps: assess and sync launchers]
     Apps --> Process
     Apps --> Profile[Native profile outputs]
     Runtime --> Profile
@@ -38,7 +39,8 @@ Paths below start at the repository root.
 | Search collection | `crates/pkg-cli/src/commands/search/mod.rs` |
 | Bounded result storage and output | `crates/pkg-cli/src/commands/search/results.rs` |
 | Package information and installed entries | `crates/pkg-cli/src/commands/info.rs`, `list.rs` |
-| Native package changes | `crates/pkg-cli/src/commands/lifecycle.rs` |
+| Package request resolution and history | `crates/pkg-cli/src/commands/lifecycle.rs` |
+| Locked native package changes and app refresh ordering | `crates/pkg-cli/src/commands/change.rs` |
 | Name resolution and disposable snapshots | `crates/pkg-cli/src/catalog/` |
 | External Nix discovery | `crates/pkg-cli/src/nix/runtime.rs` |
 | Native command interface | `crates/pkg-cli/src/nix/mod.rs` |
