@@ -96,12 +96,16 @@ mod forward {
     use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
     /// Signals that cancel a native child and are forwarded to it.
-    const TERMINATION: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
+    pub(super) const TERMINATION: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
     /// The last termination signal received during a run (0 = none).
     static RECEIVED: AtomicI32 = AtomicI32::new(0);
-    /// The number of termination signals received during a run.
-    static SIGNAL_COUNT: AtomicUsize = AtomicUsize::new(0);
+    /// Counts each termination signal received during a run.
+    static SIGNAL_COUNTS: [AtomicUsize; 3] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
     /// Whether the installed handler records signals for the active run.
     static ACTIVE: AtomicBool = AtomicBool::new(false);
     /// Number of handlers that have started and have not returned.
@@ -113,8 +117,16 @@ mod forward {
         // Async-signal-safe: lock-free atomics only. The owner forwards later.
         HANDLERS.fetch_add(1, Ordering::SeqCst);
         if ACTIVE.load(Ordering::SeqCst) {
-            RECEIVED.store(signum, Ordering::SeqCst);
-            SIGNAL_COUNT.fetch_add(1, Ordering::SeqCst);
+            let index = match signum {
+                libc::SIGINT => Some(0),
+                libc::SIGTERM => Some(1),
+                libc::SIGHUP => Some(2),
+                _ => None,
+            };
+            if let Some(index) = index {
+                RECEIVED.store(signum, Ordering::SeqCst);
+                SIGNAL_COUNTS[index].fetch_add(1, Ordering::SeqCst);
+            }
         }
         HANDLERS.fetch_sub(1, Ordering::SeqCst);
     }
@@ -150,7 +162,9 @@ mod forward {
     pub(super) fn install() -> std::io::Result<Guard> {
         let mut previous = Vec::new();
         RECEIVED.store(0, Ordering::SeqCst);
-        SIGNAL_COUNT.store(0, Ordering::SeqCst);
+        for count in &SIGNAL_COUNTS {
+            count.store(0, Ordering::SeqCst);
+        }
         ACTIVE.store(true, Ordering::SeqCst);
         for signum in TERMINATION {
             let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
@@ -212,15 +226,18 @@ mod forward {
         }
     }
 
-    /// Signals received since the owner last checked, with the last signal.
-    pub(super) fn signals_since(seen: &mut usize) -> Option<(i32, usize)> {
-        let count = SIGNAL_COUNT.load(Ordering::SeqCst);
-        let new_signals = count.wrapping_sub(*seen);
-        if new_signals == 0 {
+    /// Counts of each signal received since the owner last checked.
+    pub(super) fn signals_since(seen: &mut [usize; 3]) -> Option<[usize; 3]> {
+        let mut new_signals = [0; 3];
+        for (index, count) in SIGNAL_COUNTS.iter().enumerate() {
+            let current = count.load(Ordering::SeqCst);
+            new_signals[index] = current.wrapping_sub(seen[index]);
+            seen[index] = current;
+        }
+        if new_signals.iter().all(|count| *count == 0) {
             return None;
         }
-        *seen = count;
-        Some((RECEIVED.load(Ordering::SeqCst), new_signals))
+        Some(new_signals)
     }
 
     /// Block termination signals until the child owner can forward them.
@@ -438,12 +455,12 @@ impl ChildOwner {
         if error.raw_os_error() == Some(libc::ESRCH) {
             return Ok(());
         }
-        if error.raw_os_error() == Some(libc::EPERM)
-            && signal == libc::SIGKILL
-            && self.state == ChildState::Exited
-        {
-            #[cfg(target_os = "macos")]
-            if !macos_group_has_live_members(self.pid)? {
+        #[cfg(target_os = "macos")]
+        if error.raw_os_error() == Some(libc::EPERM) && signal == libc::SIGKILL {
+            if self.state == ChildState::Running && !self.observe()? {
+                return Err(error);
+            }
+            if self.state == ChildState::Exited && !macos_group_has_live_members(self.pid)? {
                 return Ok(());
             }
         }
@@ -824,7 +841,7 @@ impl<'a> OutputPipes<'a> {
 struct ChildMonitor {
     started: std::time::Instant,
     unmeasured_since: Option<std::time::Instant>,
-    signal_count: usize,
+    signal_counts: [usize; 3],
     cancellation_deadline: Option<std::time::Instant>,
     cancellation_expired: bool,
     stop_sent: bool,
@@ -840,7 +857,7 @@ impl ChildMonitor {
         Self {
             started: std::time::Instant::now(),
             unmeasured_since: None,
-            signal_count: 0,
+            signal_counts: [0; 3],
             cancellation_deadline: None,
             cancellation_expired: false,
             stop_sent: false,
@@ -880,15 +897,16 @@ impl ChildMonitor {
     }
 
     fn forward_signals(&mut self, owner: &mut ChildOwner) {
-        let Some((signal, count)) = forward::signals_since(&mut self.signal_count) else {
+        let Some(counts) = forward::signals_since(&mut self.signal_counts) else {
             return;
         };
         self.cancellation_deadline
             .get_or_insert_with(|| std::time::Instant::now() + CANCELLATION_GRACE);
-        for _ in 0..count {
-            if let Err(error) = owner.signal_child(signal) {
-                self.read_error.get_or_insert(error);
-                break;
+        for (signal, count) in forward::TERMINATION.into_iter().zip(counts) {
+            for _ in 0..count {
+                if let Err(error) = owner.signal_child(signal) {
+                    self.read_error.get_or_insert(error);
+                }
             }
         }
     }
