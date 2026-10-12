@@ -721,6 +721,28 @@ fn group_guard_stops_and_reaps_an_early_supervisor_group() {
 }
 
 #[test]
+fn group_guard_stops_a_live_supervisor_before_reaping() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let ready = temp.path().join("running-supervisor");
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "nix::process::tests::long_running_child",
+            "--nocapture",
+        ])
+        .env(MODE, "long-running-child")
+        .env(READY, &ready);
+    let mut supervisor = GroupChildGuard::spawn(command).expect("spawn live supervisor");
+    wait_for_marker(&ready);
+    let status = supervisor
+        .stop_group_and_wait()
+        .expect("stop and reap live supervisor group");
+    assert!(!status.success(), "SIGKILL must stop the live supervisor");
+    assert!(supervisor.state == GroupChildState::Reaped);
+}
+
+#[test]
 fn long_running_child() {
     if std::env::var(MODE).as_deref() != Ok("long-running-child") {
         return;
@@ -1076,6 +1098,13 @@ impl GroupChildGuard {
     }
 
     fn observe_and_reap(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        if !self.observe_exit()? {
+            return Ok(None);
+        }
+        self.stop_group_and_wait().map(Some)
+    }
+
+    fn observe_exit(&mut self) -> std::io::Result<bool> {
         if self.state != GroupChildState::Owned {
             return Err(std::io::Error::other(
                 "supervisor wait ownership is no longer active",
@@ -1101,10 +1130,7 @@ impl GroupChildGuard {
             } == 0
             {
                 // SAFETY: successful waitid initialized the process id field.
-                if unsafe { info.si_pid() } == 0 {
-                    return Ok(None);
-                }
-                return self.stop_group_and_wait().map(Some);
+                return Ok(unsafe { info.si_pid() } != 0);
             }
             let error = std::io::Error::last_os_error();
             if error.kind() == std::io::ErrorKind::Interrupted {
@@ -1118,27 +1144,43 @@ impl GroupChildGuard {
     }
 
     fn stop_group_and_wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        if self.state != GroupChildState::Owned {
+            return Err(std::io::Error::other(
+                "supervisor wait ownership is no longer active",
+            ));
+        }
         let mut group_error = None;
-        if self.state == GroupChildState::Owned {
-            if let Err(error) = self.signal_group(libc::SIGKILL) {
-                let no_live_members = {
-                    #[cfg(target_os = "macos")]
-                    {
-                        error.raw_os_error() == Some(libc::EPERM)
-                            && matches!(super::macos_group_has_live_members(self.pid), Ok(false))
+        if let Err(error) = self.signal_group(libc::SIGKILL) {
+            #[cfg(target_os = "macos")]
+            let mut no_live_members = false;
+            #[cfg(not(target_os = "macos"))]
+            let no_live_members = false;
+            #[cfg(target_os = "macos")]
+            if error.raw_os_error() == Some(libc::EPERM) {
+                match self.observe_exit() {
+                    Ok(true) => match super::macos_group_has_live_members(self.pid) {
+                        Ok(false) => no_live_members = true,
+                        Ok(true) => {}
+                        Err(proof_error) => group_error = Some(proof_error),
+                    },
+                    Ok(false) => {}
+                    Err(observe_error) => {
+                        if self.state == GroupChildState::Lost {
+                            return Err(observe_error);
+                        }
+                        group_error = Some(observe_error);
                     }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        false
-                    }
-                };
-                if error.raw_os_error() != Some(libc::ESRCH) && !no_live_members {
-                    group_error = Some(error);
-                    let _ = self.signal_process(libc::SIGKILL);
                 }
             }
-            self.state = GroupChildState::Reaping;
+
+            if error.raw_os_error() != Some(libc::ESRCH) && !no_live_members {
+                if group_error.is_none() {
+                    group_error = Some(error);
+                }
+                let _ = self.signal_process(libc::SIGKILL);
+            }
         }
+        self.state = GroupChildState::Reaping;
         let status = self.wait_owned()?;
         if let Some(error) = group_error {
             return Err(error);
