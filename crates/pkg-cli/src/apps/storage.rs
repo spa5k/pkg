@@ -72,14 +72,14 @@ pub fn setup_storage() -> Result<(), AppError> {
                 Ok(_) => check_storage_directory(&path, owner, owner == uid)?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     eprintln!("Preparing app storage at {}…", path.display());
-                    let args = vec![
-                        String::from("/usr/bin/install"),
-                        String::from("-d"),
-                        String::from("-m"),
-                        String::from(mode),
-                        String::from("-o"),
-                        owner.to_string(),
-                        path.to_string_lossy().into_owned(),
+                    let args = [
+                        "/usr/bin/install",
+                        "-d",
+                        "-m",
+                        mode,
+                        "-o",
+                        &owner.to_string(),
+                        &path.to_string_lossy(),
                     ];
                     setup_outcome(run_direct(Path::new("/usr/bin/sudo"), &args)?)?;
                     check_storage_directory(&path, owner, owner == uid)?;

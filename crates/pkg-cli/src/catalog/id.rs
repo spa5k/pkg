@@ -9,31 +9,9 @@ use crate::nix::{self, full_entry_id, split_entry_id};
 use super::cask::package_attribute;
 use super::routing::Routing;
 
-/// The read-only kind and payload of a checked catalog identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CatalogIdKind<'a> {
-    /// An official Formula converted to a native Nix package.
-    Formula(&'a str),
-    /// An attribute in the configured Nixpkgs source.
-    Nixpkgs(&'a str),
-    /// A token in one cask catalog.
-    Cask {
-        /// The cask source identity.
-        source: &'a str,
-        /// The bare cask token.
-        token: &'a str,
-    },
-    /// An explicit public GitHub flake reference with an attribute.
-    Explicit {
-        /// The public GitHub flake reference.
-        reference: &'a str,
-        /// The installable attribute.
-        attribute: &'a str,
-    },
-}
-
+/// The kind and checked payload of a catalog identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CatalogIdValue {
+pub enum CatalogIdKind {
     /// An official Formula converted to a native Nix package.
     Formula(String),
     /// An attribute in the configured Nixpkgs source.
@@ -58,7 +36,7 @@ enum CatalogIdValue {
 
 /// A routed catalog identity whose payload passed its kind's validator.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CatalogId(CatalogIdValue);
+pub struct CatalogId(CatalogIdKind);
 
 impl CatalogId {
     /// Check and build an official Formula identity.
@@ -68,7 +46,7 @@ impl CatalogId {
         if !super::brew::valid_formula_name(name) {
             return Err(String::from("brew: needs a valid Homebrew formula name"));
         }
-        Ok(Self(CatalogIdValue::Formula(name.to_string())))
+        Ok(Self(CatalogIdKind::Formula(name.to_string())))
     }
 
     /// Check and build a Nixpkgs attribute identity.
@@ -76,7 +54,7 @@ impl CatalogId {
     /// Returns an error when `attribute` is not a valid attribute path.
     pub fn nixpkgs(attribute: &str) -> Result<Self, String> {
         validate_attr_path(attribute, "nixpkgs:")?;
-        Ok(Self(CatalogIdValue::Nixpkgs(attribute.to_string())))
+        Ok(Self(CatalogIdKind::Nixpkgs(attribute.to_string())))
     }
 
     /// Check and build a cask identity.
@@ -87,7 +65,7 @@ impl CatalogId {
             return Err(format!("`{source}` is not a valid cask source"));
         }
         validate_cask_token(token, "cask:")?;
-        Ok(Self(CatalogIdValue::Cask {
+        Ok(Self(CatalogIdKind::Cask {
             source: source.to_string(),
             token: token.to_string(),
         }))
@@ -102,7 +80,7 @@ impl CatalogId {
         };
         validate_github_reference(rest)?;
         validate_attr_path(attribute, "`github:` installables ")?;
-        Ok(Self(CatalogIdValue::Explicit {
+        Ok(Self(CatalogIdKind::Explicit {
             reference: reference.to_string(),
             attribute: attribute.to_string(),
         }))
@@ -110,19 +88,8 @@ impl CatalogId {
 
     /// Borrow the checked identity kind and its payloads.
     #[must_use]
-    pub fn kind(&self) -> CatalogIdKind<'_> {
-        match &self.0 {
-            CatalogIdValue::Formula(name) => CatalogIdKind::Formula(name),
-            CatalogIdValue::Nixpkgs(attribute) => CatalogIdKind::Nixpkgs(attribute),
-            CatalogIdValue::Cask { source, token } => CatalogIdKind::Cask { source, token },
-            CatalogIdValue::Explicit {
-                reference,
-                attribute,
-            } => CatalogIdKind::Explicit {
-                reference,
-                attribute,
-            },
-        }
+    pub const fn kind(&self) -> &CatalogIdKind {
+        &self.0
     }
 
     /// The source-qualified display name.
@@ -164,9 +131,9 @@ impl CatalogId {
         system: &str,
     ) -> Result<(String, String), String> {
         match self.kind() {
-            CatalogIdKind::Nixpkgs(attr) => Ok((routing.nixpkgs.clone(), attr.to_string())),
+            CatalogIdKind::Nixpkgs(attr) => Ok((routing.sources.nixpkgs.clone(), attr.clone())),
             CatalogIdKind::Formula(name) => Ok((
-                routing.formulae.clone(),
+                routing.sources.formulae.clone(),
                 package_attribute(system, &format!("homebrew/core/{name}")),
             )),
             CatalogIdKind::Cask { source, token } => {
@@ -179,20 +146,8 @@ impl CatalogId {
             CatalogIdKind::Explicit {
                 reference,
                 attribute,
-            } => Ok((reference.to_string(), attribute.to_string())),
+            } => Ok((reference.clone(), attribute.clone())),
         }
-    }
-
-    /// The Nix installable for this identity.
-    ///
-    /// Installation always uses the original moving reference; locking is
-    /// native behavior at install time.
-    /// # Errors
-    ///
-    /// Returns an error when this ID names a cask source that is not present in the routing table.
-    pub fn installable(&self, routing: &Routing, system: &str) -> Result<String, String> {
-        let (reference, attribute) = self.source_and_attribute(routing, system)?;
-        Ok(format!("{reference}#{attribute}"))
     }
 }
 
@@ -252,18 +207,12 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
     if let Some(attr) = input.strip_prefix("nixpkgs:") {
         return CatalogId::nixpkgs(attr).map(ParsedId::Qualified);
     }
-    if let Some(rest) = input.strip_prefix("cask:") {
-        if rest.contains('/') {
-            return match split_entry_id(rest) {
-                Some((source, token)) => CatalogId::cask(source, token).map(ParsedId::Qualified),
-                None => Err(format!(
-                    "`{input}` is not a valid cask entry ID; \
-                     the full form is owner/tap/token, for example somebody/apps/tool"
-                )),
-            };
-        }
-        validate_cask_token(rest, "cask:")?;
-        return Ok(ParsedId::BareCask(rest.to_string()));
+    let cask = input.strip_prefix("cask:");
+    if let Some(token) = cask
+        && !token.contains('/')
+    {
+        validate_cask_token(token, "cask:")?;
+        return Ok(ParsedId::BareCask(token.to_string()));
     }
     if let Some(rest) = input.strip_prefix("github:") {
         let Some((reference, attribute)) = rest.split_once('#') else {
@@ -276,13 +225,7 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
             .map(ParsedId::Qualified)
             .map_err(|error| format!("`{input}`: {error}"));
     }
-    if input.contains('#') {
-        return Err(format!(
-            "`{input}` is not a supported explicit source; \
-             only public github: references are supported"
-        ));
-    }
-    if input.contains("://") {
+    if cask.is_none() && (input.contains('#') || input.contains("://")) {
         return Err(format!(
             "`{input}` is not a supported explicit source; \
              only public github: references are supported"
@@ -291,12 +234,13 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
     // A slash-bearing name can only be a full cask entry identity; Nixpkgs
     // attributes never contain one, so the form is refused with the rule
     // instead of becoming a bare name that quietly matches nothing.
-    if input.contains('/') {
-        return match split_entry_id(input) {
+    let entry = cask.unwrap_or(input);
+    if entry.contains('/') {
+        return match split_entry_id(entry) {
             Some((source, token)) => CatalogId::cask(source, token).map(ParsedId::Qualified),
             None => Err(format!(
-                "`{input}` is not a valid catalog ID; \
-                 a cask entry ID is owner/tap/token, for example somebody/apps/tool"
+                "`{input}` is not a valid cask entry ID; \
+                 the full form is owner/tap/token, for example somebody/apps/tool"
             )),
         };
     }
@@ -552,35 +496,47 @@ mod tests {
         let official = CatalogId::cask("homebrew/cask", "iterm2").expect("valid ID");
         assert_eq!(
             official
-                .installable(&routing, "aarch64-darwin")
+                .source_and_attribute(&routing, "aarch64-darwin")
                 .expect("routes"),
-            "github:spa5k/pkg/main?dir=nix/casks#packages.aarch64-darwin.\"homebrew/cask/iterm2\""
+            (
+                String::from("github:spa5k/pkg/main?dir=nix/casks"),
+                String::from("packages.aarch64-darwin.\"homebrew/cask/iterm2\"")
+            )
         );
         // A token with special characters stays inside the one quoted full
         // identity segment; the identity never becomes a nested path.
         let versioned = CatalogId::cask("somebody/apps", "firefox@beta").expect("valid ID");
         assert_eq!(
             versioned
-                .installable(&routing, "x86_64-linux")
+                .source_and_attribute(&routing, "x86_64-linux")
                 .expect("routes"),
-            "path:/state/pkg/taps/somebody/apps/current#packages.x86_64-linux.\"somebody/apps/firefox@beta\""
+            (
+                String::from("path:/state/pkg/taps/somebody/apps/current"),
+                String::from("packages.x86_64-linux.\"somebody/apps/firefox@beta\"")
+            )
         );
         // A token with dots encodes inside the one quoted full identity
         // segment; the identity never becomes a nested path.
         let dotted = CatalogId::cask("somebody/apps", "tool@1.2").expect("valid ID");
         assert_eq!(
             dotted
-                .installable(&routing, "x86_64-linux")
+                .source_and_attribute(&routing, "x86_64-linux")
                 .expect("routes"),
-            "path:/state/pkg/taps/somebody/apps/current#packages.x86_64-linux.\"somebody/apps/tool@1_d_2\""
+            (
+                String::from("path:/state/pkg/taps/somebody/apps/current"),
+                String::from("packages.x86_64-linux.\"somebody/apps/tool@1_d_2\"")
+            )
         );
         // Other identity forms ignore the cask routing.
         let nixpkgs = CatalogId::nixpkgs("ripgrep").expect("valid ID");
         assert_eq!(
             nixpkgs
-                .installable(&routing, "aarch64-darwin")
+                .source_and_attribute(&routing, "aarch64-darwin")
                 .expect("routes"),
-            "github:NixOS/nixpkgs/nixpkgs-unstable#ripgrep"
+            (
+                String::from("github:NixOS/nixpkgs/nixpkgs-unstable"),
+                String::from("ripgrep")
+            )
         );
     }
 
@@ -589,7 +545,7 @@ mod tests {
         let routing = routing();
         let unknown = CatalogId::cask("nobody/tools", "tool").expect("valid ID");
         let error = unknown
-            .installable(&routing, "x86_64-linux")
+            .source_and_attribute(&routing, "x86_64-linux")
             .expect_err("unknown sources must not route");
         assert!(error.contains("nobody/tools"), "{error}");
         assert!(error.contains("pkg tap add nobody/tools"), "{error}");

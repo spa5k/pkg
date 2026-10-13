@@ -15,7 +15,7 @@ from collections import Counter
 
 SYSTEMS = ("aarch64-darwin", "x86_64-linux")
 TOKEN = re.compile(r"[a-z0-9][a-z0-9+._@-]*\Z")
-REVISION = "567a49d1913ce81ac6e9582e3553dd90a955875f"
+REVISION = "8edc0c72e3a38faf5434e40d1f19431125fe4b30"
 API = "https://formulae.brew.sh/api/formula.json"
 INPUT = pathlib.Path(__file__).resolve().parent / "inputs/formula.json.gz"
 MAX_INPUT = 64 * 1024 * 1024

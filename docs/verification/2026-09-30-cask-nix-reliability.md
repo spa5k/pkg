@@ -32,7 +32,7 @@ the final classification. Raw delegated notes can contain earlier conclusions.
 
 ### P2 — Default cancellation is reported as a start failure
 
-Owner: [native stderr reader](../../crates/pkg-cli/src/nix/process.rs), line 236.
+Owner: [native stderr reader](https://github.com/spa5k/pkg/blob/1c1164b42052e09dd1dfa544987d5f38d100d81f/crates/pkg-cli/src/nix/process.rs), line 236.
 
 Trigger: start a real slow Nix build through normal `pkg install`. Send SIGINT
 to the pkg PID while it waits for stderr. Do not use `--verbose`.

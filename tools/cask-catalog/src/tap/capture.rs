@@ -2,11 +2,11 @@
 //! self-contained flake tree.
 
 use super::runtime::write_asset;
-use super::{EXPORT_SCHEMA, ImportResult, safe_segment, sha256_hex};
-use crate::classify::{self, ExclusionReason, TargetDecision};
-use crate::effective::{self, RawRecord};
+use super::{EXPORT_SCHEMA, ImportResult, sha256_hex};
+use crate::MACOS_BASELINE;
+use crate::classify::{ExclusionReason, PlatformGate, TargetDecision, classify_target};
+use crate::effective;
 use crate::emit::{self, Entry, InputProvenance, Origin};
-use crate::{MACOS_BASELINE, valid_sha256};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -30,18 +30,20 @@ const FLAKE_LOCK: &str = include_str!("../../../../nix/casks/flake.lock");
 const BREW_NIX_LICENSE: &str = include_str!("../../../../nix/casks/lib/brew-nix-LICENSE");
 const HOMEBREW_LICENSE: &str =
     include_str!("../../../../nix/casks/lib/licenses/homebrew-cask-LICENSE.txt");
+const ASSETS: &[(&str, &str)] = &[
+    ("lib/builders.nix", BUILDERS_NIX),
+    ("lib/plan.py", PLAN_PY),
+    ("lib/app-runtime.py", APP_RUNTIME_PY),
+    ("lib/public-fetch.nix", PUBLIC_FETCH_NIX),
+    ("lib/safe-fetch.py", SAFE_FETCH_PY),
+    ("lib/catalog.nix", CATALOG_NIX),
+    ("flake.lock", FLAKE_LOCK),
+    ("lib/brew-nix-LICENSE", BREW_NIX_LICENSE),
+    ("lib/licenses/homebrew-cask-LICENSE.txt", HOMEBREW_LICENSE),
+];
+
 /// export.json byte limit (bounded read BEFORE the JSON parse).
 pub(super) const MAX_EXPORT_BYTES: usize = 32 * 1024 * 1024;
-
-/// Whether a source-relative path is plain and inside the tree (same
-/// rule as the snapshot driver; see emit.rs).
-fn safe_relative_path(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.contains('\\')
-        && !path.chars().any(|c| c.is_ascii_control())
-        && path.split('/').all(safe_segment)
-}
 
 /// Validate one raw-export `pkg_origin` against the ACTUAL extracted
 /// source tree: the path must exist (exact spelling), the SHA-256 must
@@ -54,16 +56,14 @@ fn validate_pkg_origin(
 ) -> Result<Origin, String> {
     let path = origin.get("path").and_then(Value::as_str).unwrap_or("");
     let sha = origin.get("sha256").and_then(Value::as_str).unwrap_or("");
-    if !valid_sha256(sha) || !safe_relative_path(path) {
-        return Err(format!("pkg_origin is malformed (path {path:?})"));
-    }
-    let sha = sha.to_ascii_lowercase();
+    let origin = Origin::checked(path, sha)
+        .ok_or_else(|| format!("pkg_origin is malformed (path {path:?})"))?;
     let Some(actual) = tree.get(path) else {
         return Err(format!(
             "pkg_origin path {path:?} is not a file in the extracted source tree"
         ));
     };
-    if actual != &sha {
+    if actual != &origin.sha256 {
         return Err(format!(
             "pkg_origin sha256 for {path:?} does not match the extracted source tree"
         ));
@@ -75,15 +75,30 @@ fn validate_pkg_origin(
             "pkg_origin file {path:?} does not name token {token:?}"
         ));
     }
-    Ok(Origin {
-        path: path.to_string(),
-        sha256: sha,
-    })
+    Ok(origin)
 }
 
 // ---------------------------------------------------------------------------
 // Envelope validation and capture conversion
 // ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct ExportEnvelope {
+    schema: String,
+    source: String,
+    revision: String,
+    system: String,
+    probe: String,
+    files: ExportInventory,
+    casks: Vec<Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct ExportInventory {
+    total: u64,
+    ok: u64,
+    failed: u64,
+}
 
 /// Validate the raw-export envelope bytes against the import identity.
 pub(super) fn validate_export(
@@ -91,93 +106,69 @@ pub(super) fn validate_export(
     source: &str,
     revision: &str,
     system: &str,
-) -> Result<(Value, String), String> {
+) -> Result<(Vec<Value>, String), String> {
     if bytes.len() > MAX_EXPORT_BYTES {
         return Err(format!(
             "export is {} bytes; refusing envelopes over {MAX_EXPORT_BYTES} bytes",
             bytes.len()
         ));
     }
-    let metadata_sha256 = sha256_hex(bytes);
     let export: Value = serde_json::from_slice(bytes)
         .map_err(|e| format!("export envelope is malformed JSON: {e}"))?;
-    let schema = export
-        .get("schema")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "export envelope has no schema string".to_string())?;
-    if schema != EXPORT_SCHEMA {
+    if !export.is_object() || !export.get("files").is_some_and(Value::is_object) {
+        return Err("export envelope and files inventory must be objects".to_string());
+    }
+    let export: ExportEnvelope = serde::Deserialize::deserialize(export)
+        .map_err(|e| format!("export envelope is malformed JSON: {e}"))?;
+    for (field, actual, expected, matches) in [
+        (
+            "schema",
+            export.schema.as_str(),
+            EXPORT_SCHEMA,
+            export.schema == EXPORT_SCHEMA,
+        ),
+        (
+            "source",
+            export.source.as_str(),
+            source,
+            export.source.eq_ignore_ascii_case(source),
+        ),
+        (
+            "revision",
+            export.revision.as_str(),
+            revision,
+            export.revision.eq_ignore_ascii_case(revision),
+        ),
+        (
+            "system",
+            export.system.as_str(),
+            system,
+            export.system == system,
+        ),
+    ] {
+        if !matches {
+            return Err(format!(
+                "export {field} {actual:?} does not match the requested {field} {expected:?}"
+            ));
+        }
+    }
+    if export.probe != "denied: host-read, host-write, loopback" {
         return Err(format!(
-            "export envelope schema {schema:?} is not {EXPORT_SCHEMA:?}"
+            "export probe marker {:?} is not the authoritative denied marker; refusing an unproven sandbox export",
+            export.probe
         ));
     }
-    let export_source = export
-        .get("source")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "export envelope has no source string".to_string())?;
-    if export_source.to_ascii_lowercase() != source {
+    let ExportInventory { total, ok, failed } = export.files;
+    if total != export.casks.len() as u64 || ok.checked_add(failed) != Some(total) {
         return Err(format!(
-            "export source {export_source:?} does not match the requested source {source:?}"
-        ));
-    }
-    let export_revision = export
-        .get("revision")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "export envelope has no revision string".to_string())?;
-    if !export_revision.eq_ignore_ascii_case(revision) {
-        return Err(format!(
-            "export revision {export_revision:?} does not match the requested revision \
-             {revision:?}"
-        ));
-    }
-    let export_system = export
-        .get("system")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "export envelope has no system string".to_string())?;
-    if export_system != system {
-        return Err(format!(
-            "export system {export_system:?} does not match the requested system {system:?}"
-        ));
-    }
-    // The sandbox probe is authoritative: only the exact DENIED marker
-    // from the in-build probe is acceptable.
-    let probe = export
-        .get("probe")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "export envelope has no probe marker".to_string())?;
-    if probe != "denied: host-read, host-write, loopback" {
-        return Err(format!(
-            "export probe marker {probe:?} is not the authoritative denied marker; \
-             refusing an unproven sandbox export"
-        ));
-    }
-    let casks = export
-        .get("casks")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "export envelope has no casks array".to_string())?;
-    let files = export
-        .get("files")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "export envelope has no files inventory".to_string())?;
-    let total = files
-        .get("total")
-        .and_then(Value::as_u64)
-        .unwrap_or(u64::MAX);
-    let ok = files.get("ok").and_then(Value::as_u64).unwrap_or(0);
-    let failed = files
-        .get("failed")
-        .and_then(Value::as_u64)
-        .unwrap_or(u64::MAX);
-    if total != casks.len() as u64 || ok.checked_add(failed) != Some(total) {
-        return Err(format!(
-            "export file inventory (total {total}, ok {ok}, failed {failed}) does not \
-             match the {} cask records",
-            casks.len()
+            "export file inventory (total {total}, ok {ok}, failed {failed}) does not match the {} cask records",
+            export.casks.len()
         ));
     }
     if ok == 0 {
         return Err("every cask file failed to export; refusing an all-error capture".to_string());
     }
-    Ok((export, metadata_sha256))
+    Ok((export.casks, sha256_hex(bytes)))
 }
 
 /// Classify one raw-exported cask for the single native target.
@@ -193,8 +184,7 @@ fn tap_status(cask: &Value, system: &str) -> TargetDecision {
     };
     // Flat upstream metadata: the exporter emits every field
     // (name/version/url/...) directly on the cask record.
-    let record = RawRecord::new(cask.clone());
-    classify::classify_tap_target(&record, system, MACOS_BASELINE, supported)
+    classify_target(cask, system, MACOS_BASELINE, PlatformGate::Bool(supported))
 }
 
 fn excluded_status(reason: ExclusionReason, detail: &str) -> TargetDecision {
@@ -211,7 +201,7 @@ pub(super) struct Capture {
     pub(super) origin: String,
     pub(super) revision: String,
     pub(super) system: String,
-    pub(super) export: Value,
+    pub(super) casks: Vec<Value>,
     pub(super) metadata_sha256: String,
     pub(super) archive_url: String,
     pub(super) archive_sha256: String,
@@ -219,66 +209,6 @@ pub(super) struct Capture {
     /// SHA-256 inventory of the extracted tap tree; every cask origin
     /// is validated against it (path, hash, and token spelling).
     pub(super) tree: BTreeMap<String, String>,
-}
-
-struct CaptureEntryBuilder<'a> {
-    source: &'a str,
-    system: &'a str,
-    entries: BTreeMap<String, Entry>,
-    eligible: usize,
-    excluded: usize,
-}
-
-impl CaptureEntryBuilder<'_> {
-    fn record(
-        &mut self,
-        token: String,
-        status: TargetDecision,
-        origin: Option<Origin>,
-        raw: Option<&Value>,
-    ) -> Result<(), String> {
-        let raw = raw.filter(|value| value.is_object());
-        if !crate::token::is_valid_token(&token) {
-            return Err(format!(
-                "integrity: exported token {token:?} is not a usable catalog key"
-            ));
-        }
-        let id = emit::qualified_id(self.source, &token);
-        if self.entries.contains_key(&id) {
-            return Err(format!("integrity: duplicate token {token} in export"));
-        }
-        let record = raw.cloned().map(RawRecord::new);
-        let (name, description, version, homepage) = match &record {
-            Some(record) => (
-                effective::name_field(&record.raw),
-                effective::str_field(&record.raw, "desc"),
-                effective::str_field(&record.raw, "version"),
-                effective::str_field(&record.raw, "homepage"),
-            ),
-            None => (None, None, None, None),
-        };
-        if status.is_eligible() {
-            self.eligible += 1;
-        } else {
-            self.excluded += 1;
-        }
-        let mut targets = BTreeMap::new();
-        targets.insert(self.system.to_string(), status);
-        self.entries.insert(
-            id,
-            Entry {
-                source: self.source.to_string(),
-                token,
-                name,
-                description,
-                version,
-                homepage,
-                origin,
-                targets,
-            },
-        );
-        Ok(())
-    }
 }
 
 fn input_provenance(capture: &Capture) -> InputProvenance {
@@ -297,6 +227,10 @@ fn input_provenance(capture: &Capture) -> InputProvenance {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one conversion loop preserves origin, token, and duplicate refusal order"
+)]
 pub(super) fn convert_capture(
     capture: &Capture,
     output_dir: &Path,
@@ -306,25 +240,16 @@ pub(super) fn convert_capture(
         origin,
         revision,
         system,
-        export,
+        casks,
         metadata_sha256,
         tree,
         ..
     } = capture;
-    let casks = export
-        .get("casks")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut entry_builder = CaptureEntryBuilder {
-        source,
-        system,
-        entries: BTreeMap::new(),
-        eligible: 0,
-        excluded: 0,
-    };
+    let mut entries = BTreeMap::new();
+    let mut eligible = 0;
+    let mut excluded = 0;
 
-    for cask in &casks {
+    for cask in casks {
         let token = cask
             .get("token")
             .and_then(Value::as_str)
@@ -382,15 +307,46 @@ pub(super) fn convert_capture(
             };
             (status, origin_field, Some(cask))
         };
-        entry_builder.record(token, status, origin_field, raw)?;
+        if !crate::token::is_valid_token(&token) {
+            return Err(format!(
+                "integrity: exported token {token:?} is not a usable catalog key"
+            ));
+        }
+        let id = emit::qualified_id(source, &token);
+        if entries.contains_key(&id) {
+            return Err(format!("integrity: duplicate token {token} in export"));
+        }
+        let (name, description, version, homepage) = match raw {
+            Some(record) => (
+                effective::name_field(record),
+                effective::str_field(record, "desc"),
+                effective::str_field(record, "version"),
+                effective::str_field(record, "homepage"),
+            ),
+            None => (None, None, None, None),
+        };
+        if status.is_eligible() {
+            eligible += 1;
+        } else {
+            excluded += 1;
+        }
+        let mut targets = BTreeMap::new();
+        targets.insert(system.clone(), status);
+        entries.insert(
+            id,
+            Entry {
+                source: source.clone(),
+                token,
+                name,
+                description,
+                version,
+                homepage,
+                origin: origin_field,
+                targets,
+            },
+        );
     }
 
-    let CaptureEntryBuilder {
-        entries,
-        eligible,
-        excluded,
-        ..
-    } = entry_builder;
     let inputs = BTreeMap::from([(source.clone(), input_provenance(capture))]);
     write_flake_tree(capture, output_dir, &inputs, &entries)?;
     let flake_dir = output_dir.join("flake");
@@ -424,35 +380,9 @@ fn write_flake_tree(
         &flake_dir.join("catalog"),
         &emit::assemble_catalog(inputs, entries, &[system])?,
     )?;
-    write_asset(&flake_dir.join("lib").join("builders.nix"), BUILDERS_NIX)?;
-    write_asset(&flake_dir.join("lib").join("plan.py"), PLAN_PY)?;
-    write_asset(
-        &flake_dir.join("lib").join("app-runtime.py"),
-        APP_RUNTIME_PY,
-    )?;
-    // Both vendor-source network fetches route through the shared
-    // safe-fetch FOD; the generated flake is self-contained.
-    write_asset(
-        &flake_dir.join("lib").join("public-fetch.nix"),
-        PUBLIC_FETCH_NIX,
-    )?;
-    write_asset(&flake_dir.join("lib").join("safe-fetch.py"), SAFE_FETCH_PY)?;
-    // Shared projection helper + committed lock + license attributions:
-    // the generated flake is standalone (evaluates with no outside
-    // paths and no implicit lock write).
-    write_asset(&flake_dir.join("lib").join("catalog.nix"), CATALOG_NIX)?;
-    write_asset(&flake_dir.join("flake.lock"), FLAKE_LOCK)?;
-    write_asset(
-        &flake_dir.join("lib").join("brew-nix-LICENSE"),
-        BREW_NIX_LICENSE,
-    )?;
-    write_asset(
-        &flake_dir
-            .join("lib")
-            .join("licenses")
-            .join("homebrew-cask-LICENSE.txt"),
-        HOMEBREW_LICENSE,
-    )?;
+    for (path, contents) in ASSETS {
+        write_asset(&flake_dir.join(path), contents)?;
+    }
     let flake_nix = FLAKE_TEMPLATE.replace(
         "@DESCRIPTION@",
         &format!("pkg raw tap import: {source} at {revision} ({system}, native only)"),
@@ -462,20 +392,11 @@ fn write_flake_tree(
     // Complete asset inventory: the generated tree must carry every
     // asset the shared helper and builders reference. A missing file
     // fails the import instead of surfacing later at client eval.
-    let inventory = [
-        "flake.nix",
-        "flake.lock",
-        "catalog/catalog.json",
-        "lib/catalog.nix",
-        "lib/builders.nix",
-        "lib/plan.py",
-        "lib/app-runtime.py",
-        "lib/public-fetch.nix",
-        "lib/safe-fetch.py",
-        "lib/brew-nix-LICENSE",
-        "lib/licenses/homebrew-cask-LICENSE.txt",
-    ];
-    for asset in inventory {
+    for asset in ASSETS
+        .iter()
+        .map(|(path, _)| *path)
+        .chain(["flake.nix", "catalog/catalog.json"])
+    {
         let path = flake_dir.join(asset);
         if !path.is_file() {
             return Err(format!(
@@ -537,7 +458,7 @@ mod tests {
     fn capture(dir: &Path, system: &str) -> ImportResult {
         let envelope = export_envelope();
         let bytes = serde_json::to_vec(&envelope).unwrap();
-        let (export, metadata_sha256) = validate_export(&bytes, "example/foo", REVISION, system)
+        let (casks, metadata_sha256) = validate_export(&bytes, "example/foo", REVISION, system)
             .expect("fixture envelope validates");
         convert_capture(
             &Capture {
@@ -545,7 +466,7 @@ mod tests {
                 origin: "https://github.com/example/homebrew-foo".to_string(),
                 revision: REVISION.to_string(),
                 system: system.to_string(),
-                export,
+                casks,
                 metadata_sha256,
                 archive_url: format!(
                     "https://codeload.github.com/example/homebrew-foo/tar.gz/{REVISION}"
@@ -640,7 +561,7 @@ mod tests {
             include_str!("../../../../nix/casks/lib/catalog.nix")
         );
         let lock = std::fs::read_to_string(dir.path().join("flake/flake.lock")).unwrap();
-        assert!(lock.contains("567a49d1913ce81ac6e9582e3553dd90a955875f"));
+        assert!(lock.contains("8edc0c72e3a38faf5434e40d1f19431125fe4b30"));
     }
 
     /// Locate `nix` on PATH (guarded helper; the eval test skips
@@ -706,7 +627,7 @@ mod tests {
         // only lock in the generated tree.
         let lock = std::fs::read_to_string(result.flake_path.join("flake.lock"))
             .expect("committed lock survives the eval");
-        assert!(lock.contains("567a49d1913ce81ac6e9582e3553dd90a955875f"));
+        assert!(lock.contains("8edc0c72e3a38faf5434e40d1f19431125fe4b30"));
     }
 
     #[test]
@@ -735,9 +656,27 @@ mod tests {
         assert!(err.contains("does not name token"), "{err}");
     }
 
+    #[test]
+    fn origin_integrity_failure_precedes_duplicate_token_failure() {
+        let mut envelope = export_envelope();
+        envelope["casks"][2]["token"] = json!("good");
+        envelope["casks"][2]["pkg_origin"] =
+            json!({"path": "Casks/g/good.rb", "sha256": "e".repeat(64)});
+        assert_eq!(
+            convert_with(&envelope).unwrap_err(),
+            "integrity: pkg_error record \"good\": pkg_origin sha256 for \"Casks/g/good.rb\" does not match the extracted source tree"
+        );
+
+        envelope["casks"][2]["pkg_origin"]["sha256"] = json!("B".repeat(64));
+        assert_eq!(
+            convert_with(&envelope).unwrap_err(),
+            "integrity: duplicate token good in export"
+        );
+    }
+
     fn convert_with(envelope: &Value) -> Result<ImportResult, String> {
         let bytes = serde_json::to_vec(envelope).unwrap();
-        let (export, metadata_sha256) =
+        let (casks, metadata_sha256) =
             validate_export(&bytes, "example/foo", REVISION, "aarch64-darwin")
                 .expect("fixture envelope validates");
         let dir = tempfile::tempdir().expect("tempdir");
@@ -747,7 +686,7 @@ mod tests {
                 origin: "https://github.com/example/homebrew-foo".to_string(),
                 revision: REVISION.to_string(),
                 system: "aarch64-darwin".to_string(),
-                export,
+                casks,
                 metadata_sha256,
                 archive_url: format!(
                     "https://codeload.github.com/example/homebrew-foo/tar.gz/{REVISION}"
@@ -766,6 +705,50 @@ mod tests {
     }
 
     #[test]
+    fn envelope_required_fields_and_counts_fail_closed() {
+        for field in [
+            "schema", "source", "revision", "system", "probe", "files", "casks",
+        ] {
+            for replacement in [None, Some(json!(false))] {
+                let mut envelope = export_envelope();
+                if let Some(value) = replacement {
+                    envelope[field] = value;
+                } else {
+                    envelope.as_object_mut().unwrap().remove(field);
+                }
+                assert!(
+                    validate_export(
+                        &serde_json::to_vec(&envelope).unwrap(),
+                        "example/foo",
+                        REVISION,
+                        "aarch64-darwin"
+                    )
+                    .is_err(),
+                    "{field}"
+                );
+            }
+        }
+        for files in [
+            json!({"total": 3, "ok": 0, "failed": 3}),
+            json!({"total": 3, "ok": u64::MAX, "failed": 4}),
+            json!({"total": 3, "ok": 2}),
+            json!({"total": 3, "ok": "2", "failed": 1}),
+        ] {
+            let mut envelope = export_envelope();
+            envelope["files"] = files;
+            assert!(
+                validate_export(
+                    &serde_json::to_vec(&envelope).unwrap(),
+                    "example/foo",
+                    REVISION,
+                    "aarch64-darwin"
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn envelope_validation_fails_closed_on_identity_and_inventory() {
         let mut envelope = export_envelope();
         envelope["source"] = json!("other/bar");
@@ -781,5 +764,76 @@ mod tests {
         envelope["files"] = json!({"total": 9, "ok": 9, "failed": 0});
         let bytes = serde_json::to_vec(&envelope).unwrap();
         assert!(validate_export(&bytes, "example/foo", REVISION, "aarch64-darwin").is_err());
+    }
+
+    #[test]
+    fn envelope_and_inventory_require_objects() {
+        let envelope = export_envelope();
+        let positional = json!([
+            envelope["schema"],
+            envelope["source"],
+            envelope["revision"],
+            envelope["system"],
+            envelope["probe"],
+            envelope["files"],
+            envelope["casks"]
+        ]);
+        let mut inventory_array = envelope.clone();
+        inventory_array["files"] = json!([
+            envelope["files"]["total"],
+            envelope["files"]["ok"],
+            envelope["files"]["failed"]
+        ]);
+        for candidate in [positional, inventory_array] {
+            let bytes = serde_json::to_vec(&candidate).unwrap();
+            assert!(
+                validate_export(&bytes, "example/foo", REVISION, "aarch64-darwin").is_err(),
+                "positional objects must be refused: {candidate}"
+            );
+        }
+    }
+
+    #[test]
+    fn envelope_retains_last_duplicate_key_values() {
+        let envelope = export_envelope();
+        let text = serde_json::to_string(&envelope).unwrap();
+        let expected_casks =
+            validate_export(text.as_bytes(), "example/foo", REVISION, "aarch64-darwin")
+                .unwrap()
+                .0;
+        let mut envelopes = Vec::new();
+        for (key, wrong) in [
+            ("schema", json!("wrong")),
+            ("source", json!(null)),
+            ("revision", json!(0)),
+            ("system", json!(false)),
+            ("probe", json!("allowed")),
+            ("files", json!([])),
+            ("casks", json!([])),
+        ] {
+            envelopes.push(format!(
+                "{{{}:{wrong},{}",
+                serde_json::to_string(key).unwrap(),
+                &text[1..]
+            ));
+        }
+        for key in ["total", "ok", "failed"] {
+            envelopes.push(text.replacen(
+                "\"files\":{",
+                &format!("\"files\":{{\"{key}\":null,"),
+                1,
+            ));
+        }
+        for candidate in envelopes {
+            let (casks, digest) = validate_export(
+                candidate.as_bytes(),
+                "example/foo",
+                REVISION,
+                "aarch64-darwin",
+            )
+            .unwrap_or_else(|error| panic!("last duplicate values must be retained: {error}"));
+            assert_eq!(casks, expected_casks);
+            assert_eq!(digest, sha256_hex(candidate.as_bytes()));
+        }
     }
 }

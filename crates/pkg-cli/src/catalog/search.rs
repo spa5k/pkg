@@ -11,10 +11,10 @@ use crate::nix::{CatalogEntry, Nix, SearchMeta};
 use super::CatalogError;
 use super::cask::CatalogOnce;
 use super::id::CatalogId;
-use super::routing::Routing;
 
 /// Which supported source a discovery query ran against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum SourceKind {
     /// The configured Nixpkgs source.
     Nixpkgs,
@@ -26,10 +26,7 @@ impl SourceKind {
     /// The qualified display prefix for this source.
     #[must_use]
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Nixpkgs => "nixpkgs",
-            Self::Cask => "cask",
-        }
+        self.into()
     }
 }
 
@@ -48,8 +45,6 @@ pub struct SourceReport {
     pub status: SourceStatus,
     /// Failure or limitation detail, when present.
     pub detail: Option<String>,
-    /// Why cask support badges are absent, when they are.
-    pub support_detail: Option<String>,
 }
 
 impl SourceReport {
@@ -67,7 +62,6 @@ impl SourceReport {
             revision: None,
             status: SourceStatus::SkippedPlatform,
             detail: Some(format!("catalog targets {} only", targets.join(", "))),
-            support_detail: None,
         }
     }
 }
@@ -75,6 +69,8 @@ impl SourceReport {
 /// The outcome of one source query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(strum_macros::IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum SourceStatus {
     /// Live results produced or a revision-exact cache was reused.
     Fresh,
@@ -92,13 +88,7 @@ impl SourceStatus {
     /// The JSON status string for this outcome.
     #[must_use]
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Fresh => "fresh",
-            Self::Cached => "cached",
-            Self::Stale => "stale",
-            Self::Failed => "failed",
-            Self::SkippedPlatform => "skipped-platform",
-        }
+        self.into()
     }
 }
 
@@ -158,6 +148,32 @@ pub struct SearchResult {
     pub install_command: Option<Vec<String>>,
 }
 
+impl SearchResult {
+    pub(super) fn catalog(
+        entry: &CatalogEntry,
+        source: &str,
+        system: &str,
+        report: &SourceReport,
+    ) -> Self {
+        let full_id = format!("{}/{}", entry.source, entry.token);
+        let meta = catalog_meta(&entry.token, entry);
+        Self {
+            id: format!("{source}:{full_id}"),
+            attribute: super::package_attribute(system, &full_id),
+            name: meta.pname,
+            version: meta.version,
+            description: meta.description,
+            source: source.to_string(),
+            reference: report.locked_reference.clone(),
+            revision: report.revision.clone(),
+            system: system.to_string(),
+            stale: report.status == SourceStatus::Stale,
+            support: None,
+            install_command: None,
+        }
+    }
+}
+
 /// Normalize a native attribute path to its exposed catalog ID suffix.
 ///
 /// Only the standard `packages.<system>.` and `legacyPackages.<system>.`
@@ -178,25 +194,17 @@ pub fn exposed_attribute<'a>(attr: &'a str, system: &str) -> &'a str {
 /// prefix identifies the output set, not a user choice. No other rewriting
 /// happens, and a nested path such as `python312Packages.pip` stays intact.
 fn strip_output_set<'a>(attr: &'a str, system: Option<&str>) -> &'a str {
-    for prefix in ["packages", "legacyPackages"] {
-        let Some(rest) = attr.strip_prefix(prefix) else {
-            continue;
-        };
-        let Some(rest) = rest.strip_prefix('.') else {
-            continue;
-        };
-        let Some((named, tail)) = rest.split_once('.') else {
-            continue;
-        };
-        if named.is_empty() || tail.is_empty() {
-            continue;
+    let mut parts = attr.splitn(3, '.');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some("packages" | "legacyPackages"), Some(named), Some(tail))
+            if !named.is_empty()
+                && !tail.is_empty()
+                && system.is_none_or(|system| system == named) =>
+        {
+            tail
         }
-        if system.is_some_and(|system| system != named) {
-            continue;
-        }
-        return tail;
+        _ => attr,
     }
-    attr
 }
 
 /// The exposed suffix of every attribute in one result set, with full
@@ -254,52 +262,13 @@ fn unique_exposed_forms<'a>(attrs: &[&'a str], system: Option<&str>) -> Vec<&'a 
 ///
 /// On a system the catalogs do not target, a source contributes no
 /// choices at all, so it can never be a fatal requirement there.
+/// `nixpkgs` supplies the Source Reference and cache directory for the native
+/// lane. `None` selects cask-only resolution.
+///
 /// # Errors
 ///
 /// Returns an error when a source fails to load, a bare name is missing or ambiguous, or the catalog handle fails.
 pub fn resolve_bare(
-    nix: &Nix,
-    cache_dir: &Path,
-    routing: &Routing,
-    saved: &crate::tap::SavedCatalogs,
-    name: &str,
-    system: &str,
-    catalog: &mut CatalogOnce<'_>,
-) -> Result<CatalogId, CatalogError> {
-    resolve_inner(
-        nix,
-        Some((&routing.nixpkgs, cache_dir)),
-        saved,
-        name,
-        system,
-        catalog,
-    )
-}
-
-/// Resolve one bare cask token (`cask:token`) across every cask source.
-///
-/// The official source and every registered tap count, including excluded
-/// entries. Exactly one source may carry the token; more than one is an
-/// ambiguity that names the full `cask:owner/tap/token` form, and none is
-/// a miss. Failed sources fail the resolution instead of being skipped.
-/// # Errors
-///
-/// Returns an error when a cask source fails to load or the token is missing or present in more than one source.
-pub fn resolve_bare_cask(
-    nix: &Nix,
-    saved: &crate::tap::SavedCatalogs,
-    token: &str,
-    system: &str,
-    catalog: &mut CatalogOnce<'_>,
-) -> Result<CatalogId, CatalogError> {
-    resolve_inner(nix, None, saved, token, system, catalog)
-}
-
-/// The shared resolver behind both bare forms.
-///
-/// `nixpkgs` names the configured Nixpkgs source to also search, or
-/// `None` for the cask-only form.
-fn resolve_inner(
     nix: &Nix,
     nixpkgs: Option<(&str, &Path)>,
     saved: &crate::tap::SavedCatalogs,
@@ -371,7 +340,7 @@ fn resolve_inner(
     // The cask lane: the official index is evaluated (fail closed) and
     // every saved tap catalog counts, including excluded entries.
     let view = catalog.load()?;
-    let mut sources = view.sources_with_token(system, name);
+    let mut sources = view.index.sources_with_token(system, name);
     sources.extend(saved.sources_with_token(system, name));
     sources.sort();
     sources.dedup();
@@ -447,13 +416,6 @@ pub fn prepare_source(
     system: &str,
     identity: &crate::nix::SourceIdentity,
 ) -> Result<(), CatalogError> {
-    if identity.revision.as_deref().is_none_or(str::is_empty)
-        || identity.locked_url.as_deref().is_none_or(str::is_empty)
-    {
-        return Err(CatalogError::Source(String::from(
-            "catalog preparation requires an immutable source revision",
-        )));
-    }
     super::native::Snapshot::current(nix, cache_dir, source, system, identity)?;
     super::local::mark_checked(cache_dir, source, system, identity)
 }
@@ -495,15 +457,16 @@ pub fn report_for(moving_source: &str, identity: &crate::nix::SourceIdentity) ->
         revision: identity.revision.clone(),
         status: SourceStatus::Fresh,
         detail: None,
-        support_detail: None,
     }
 }
 
 /// Exact attribute lookup for `info`.
 ///
 /// Searches the locked reference with the escaped attribute and returns the
-/// actual full matched attribute. A source failure and a missing attribute
-/// are distinct outcomes; pkg never invents a package identity for a miss.
+/// actual full matched attribute. The query selects only this output. It
+/// does not evaluate the whole catalog. Native evaluation failures retain
+/// their diagnostics. A successful query with no exact row is a distinct
+/// missing-attribute outcome; pkg never invents a package identity for a miss.
 /// # Errors
 ///
 /// Returns an error when source metadata cannot be read, the exact attribute is missing or ambiguous, or Nix evaluation fails.
@@ -515,32 +478,6 @@ pub fn exact_lookup(
     let identity = nix
         .source_identity(moving_source)
         .map_err(CatalogError::from)?;
-    exact_lookup_in(nix, moving_source, &identity, attribute)
-}
-
-/// Exact attribute lookup against an already-resolved source identity.
-///
-/// Sharing one identity keeps the cask support decision and the package
-/// metadata of a single info result on the same locked source. The lookup
-/// is targeted: `nix search <locked>#<attribute> .` makes Nix resolve the
-/// selected output itself — including `packages`/`legacyPackages` and
-/// nested paths — so the whole catalog is never evaluated for one exact
-/// ID. The verified runtime returns exactly one record whose key is the
-/// full native attribute path; the shared matcher still decides which row
-/// is exact and refuses several rows as an ambiguity instead of silently
-/// picking the first one.
-///
-/// A missing or non-package attribute is a native search failure here:
-/// its upstream diagnostic is preserved through [`CatalogError::Source`]
-/// rather than being synthesized as a quiet `NotFound`. `NotFound` remains
-/// the outcome when the native search succeeds but no row is an exact
-/// match for the requested attribute.
-fn exact_lookup_in(
-    nix: &Nix,
-    moving_source: &str,
-    identity: &crate::nix::SourceIdentity,
-    attribute: &str,
-) -> Result<(ExactMatch, SourceReport), CatalogError> {
     let search_ref = identity
         .locked_url
         .clone()
@@ -549,7 +486,7 @@ fn exact_lookup_in(
     let results = nix
         .search(&selected_output, ".")
         .map_err(CatalogError::from)?;
-    let report = report_for(moving_source, identity);
+    let report = report_for(moving_source, &identity);
     let exact_matches = exact_attribute_matches(&results, attribute);
     if exact_matches.len() > 1 {
         // Choices must separate the namespaces that share a short name:
@@ -586,6 +523,25 @@ fn exact_lookup_in(
 mod tests {
     use super::*;
 
+    #[test]
+    fn source_names_and_json_statuses_remain_stable() {
+        assert_eq!(SourceKind::Nixpkgs.label(), "nixpkgs");
+        assert_eq!(SourceKind::Cask.label(), "cask");
+        for (status, expected) in [
+            (SourceStatus::Fresh, "fresh"),
+            (SourceStatus::Cached, "cached"),
+            (SourceStatus::Stale, "stale"),
+            (SourceStatus::Failed, "failed"),
+            (SourceStatus::SkippedPlatform, "skipped-platform"),
+        ] {
+            assert_eq!(status.label(), expected);
+            assert_eq!(
+                serde_json::to_string(&status).unwrap(),
+                format!("\"{expected}\"")
+            );
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn bare_resolution_preserves_native_attribute_evaluation_failures() {
@@ -600,17 +556,18 @@ mod tests {
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
             .expect("chmod runtime");
         let nix = crate::nix::discover(executable.to_str()).expect("discover runtime");
-        let routing = Routing {
-            nixpkgs: String::from("github:example/packages"),
-            casks: String::from("github:example/casks"),
-            formulae: String::from("github:example/formulae"),
+        let routing = super::super::Routing {
+            sources: crate::config::Sources {
+                nixpkgs: String::from("github:example/packages"),
+                casks: String::from("github:example/casks"),
+                formulae: String::from("github:example/formulae"),
+            },
             taps: BTreeMap::new(),
         };
-        let mut catalog = CatalogOnce::new(&nix, &routing.casks);
+        let mut catalog = CatalogOnce::new(&nix, &routing.sources.casks);
         let error = resolve_bare(
             &nix,
-            temp.path(),
-            &routing,
+            Some((&routing.sources.nixpkgs, temp.path())),
             &crate::tap::SavedCatalogs::default(),
             "probe",
             "x86_64-linux",
@@ -705,7 +662,10 @@ mod tests {
         assert_eq!(pname[0].0, "legacyPackages.aarch64-darwin.gnugrep");
 
         // No match stays empty.
-        assert!(exact_attribute_matches(&results, "fd").is_empty());
+        assert_eq!(
+            exact_attribute_matches(&results, "fd"),
+            [] as [(String, SearchMeta); 0]
+        );
     }
 
     /// Attributes that share one short name keep their full paths as IDs

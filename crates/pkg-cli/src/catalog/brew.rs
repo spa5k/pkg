@@ -26,27 +26,18 @@ pub(crate) struct FormulaView {
 impl FormulaView {
     fn decode(identity: SourceIdentity, raw: &serde_json::Value) -> Result<Self, CatalogError> {
         let index = crate::nix::decode_formula_index(raw)?;
-        if index.inputs().len() != 1
-            || !index.inputs().contains_key(SOURCE)
-            || index
-                .systems()
-                .values()
-                .any(|system| system.entries.values().any(|entry| entry.source != SOURCE))
-        {
+        if index.inputs().len() != 1 || !index.inputs().contains_key(SOURCE) {
             return Err(CatalogError::Source(String::from(
                 "Formula catalog must contain only homebrew/core",
             )));
         }
-        let aliases: BTreeMap<String, String> = serde_json::from_value(
-            raw.get("aliases")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-        )
-        .map_err(|error| CatalogError::Source(format!("invalid Formula aliases: {error}")))?;
-        let executables: BTreeMap<String, Option<Vec<String>>> = serde_json::from_value(
-            raw.get("executables")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
+        let aliases: BTreeMap<String, String> =
+            serde::Deserialize::deserialize(raw.get("aliases").unwrap_or(&serde_json::Value::Null))
+                .map_err(|error| {
+                    CatalogError::Source(format!("invalid Formula aliases: {error}"))
+                })?;
+        let executables: BTreeMap<String, Option<Vec<String>>> = serde::Deserialize::deserialize(
+            raw.get("executables").unwrap_or(&serde_json::Value::Null),
         )
         .map_err(|error| CatalogError::Source(format!("invalid Formula executables: {error}")))?;
         let exists = |name: &str| {
@@ -80,21 +71,34 @@ impl FormulaView {
     }
 
     pub fn resolve(&self, system: &str, name: &str) -> Result<String, CatalogError> {
-        if !self.catalog.targeted(system) {
+        if !self.catalog.index.targeted(system) {
             return Err(CatalogError::Source(format!(
                 "Homebrew Formulae do not support {system}; supported targets: {}",
-                self.catalog.targets().join(", ")
+                self.catalog.index.targets().join(", ")
             )));
         }
         let canonical = self.aliases.get(name).map_or(name, String::as_str);
-        if self.catalog.record(system, SOURCE, canonical).is_none() {
+        if self
+            .catalog
+            .index
+            .record(system, SOURCE, canonical)
+            .is_none()
+        {
             return Err(CatalogError::NotFound(format!("brew:homebrew/core/{name}")));
         }
         Ok(canonical.to_string())
     }
 
-    pub fn availability(&self, host: &CaskHost, system: &str, name: &str) -> Availability {
-        host.availability(&self.catalog, system, SOURCE, name)
+    /// Judge the Formula record's catalog and host requirements.
+    /// # Errors
+    /// Returns the retained error if a host-version probe is cancelled.
+    pub fn availability(
+        &self,
+        host: &CaskHost,
+        system: &str,
+        name: &str,
+    ) -> Result<Availability, CatalogError> {
+        host.availability(&self.catalog.index, system, SOURCE, name)
     }
 }
 
@@ -121,19 +125,10 @@ pub(crate) fn prepare(
         None => nix.formula_index(reference)?,
     };
     let view = FormulaView::decode(identity.clone(), &raw)?;
-    let count = view.catalog.entries(system).map_or(0, BTreeMap::len);
+    let count = view.catalog.index.entries(system).map_or(0, BTreeMap::len);
     cache::write_snapshot(
         cache_dir,
-        &cache::Snapshot {
-            schema: cache::SNAPSHOT_SCHEMA,
-            kind: KIND.to_string(),
-            source: source.to_string(),
-            locked_reference: Some(reference.to_string()),
-            revision: Some(revision.to_string()),
-            system: system.to_string(),
-            saved_unix: cache::now_unix(),
-            payload: raw,
-        },
+        &cache::Snapshot::new(KIND, source, system, &identity, raw),
     )?;
     Ok(count)
 }
@@ -153,41 +148,24 @@ pub(crate) fn search(
         report.display = Some(String::from("Homebrew Formulae"));
         return Ok(report);
     };
-    let reference = snapshot
-        .locked_reference
-        .clone()
-        .unwrap_or_else(|| source.to_string());
-    let view = FormulaView::decode(
-        SourceIdentity {
-            reference: source.to_string(),
-            locked_url: Some(reference.clone()),
-            revision: snapshot.revision.clone(),
-            display: String::from("Homebrew Formulae"),
-        },
-        &snapshot.payload,
-    )?;
+    let identity = snapshot.identity("Homebrew Formulae");
+    let reference = identity.locked_url.as_deref().unwrap_or(source);
     let mut report = local::report(
         source,
-        &reference,
+        reference,
         snapshot.revision.clone(),
         snapshot.saved_unix,
     );
+    let view = FormulaView::decode(identity, &snapshot.payload)?;
     report.display = Some(String::from("Homebrew Formulae"));
-    if !view.catalog.targeted(system) {
+    if !view.catalog.index.targeted(system) {
         return Ok(super::SourceReport::skipped_platform(
             source,
-            view.catalog.targets(),
+            view.catalog.index.targets(),
         ));
     }
     let host = CaskHost::default();
-    visit_formula_entries(
-        &view,
-        &host,
-        system,
-        query,
-        (&reference, snapshot.revision.as_deref(), &report),
-        &mut sink,
-    )?;
+    visit_formula_entries(&view, &host, system, query, &report, &mut sink)?;
     Ok(report)
 }
 
@@ -196,14 +174,14 @@ fn visit_formula_entries(
     host: &CaskHost,
     system: &str,
     query: &SearchQuery,
-    (reference, revision, report): (&str, Option<&str>, &SourceReport),
+    report: &SourceReport,
     sink: &mut impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
 ) -> Result<(), CatalogError> {
     let mut aliases_by_name: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (alias, name) in &view.aliases {
         aliases_by_name.entry(name).or_default().push(alias);
     }
-    if let Some(entries) = view.catalog.entries(system) {
+    if let Some(entries) = view.catalog.index.entries(system) {
         for entry in entries.values() {
             let id = format!("brew:{SOURCE}/{}", entry.token);
             let aliases = aliases_by_name
@@ -220,46 +198,22 @@ fn visit_formula_entries(
             {
                 continue;
             }
-            let support = match view.availability(host, system, &entry.token) {
-                Availability::Available => SupportBadge::Eligible,
-                Availability::Unavailable { reason } => {
-                    if !query.unavailable && !exact {
-                        continue;
-                    }
-                    SupportBadge::Excluded {
-                        reason,
-                        detail: entry.detail.clone(),
-                    }
-                }
-                Availability::Unknown { reason } => {
-                    if !query.unavailable && !exact {
-                        continue;
-                    }
-                    SupportBadge::Unknown { reason }
-                }
+            let Some(support) = view
+                .availability(host, system, &entry.token)?
+                .search_badge(query.unavailable || exact, entry.detail.as_deref())
+            else {
+                continue;
             };
-            let install_command = matches!(support, SupportBadge::Eligible)
-                .then(|| vec![String::from("pkg"), String::from("install"), id.clone()]);
-            let row = SearchResult {
-                attribute: super::package_attribute(system, &format!("{SOURCE}/{}", entry.token)),
-                name: entry.token.clone(),
-                version: entry.version.clone().unwrap_or_default(),
-                description: entry
-                    .description
-                    .clone()
-                    .unwrap_or_default()
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                source: String::from("brew"),
-                reference: Some(reference.to_string()),
-                revision: revision.map(str::to_string),
-                system: system.to_string(),
-                stale: report.status == super::SourceStatus::Stale,
-                support: Some(support),
-                install_command,
-                id,
-            };
+            let mut row = SearchResult::catalog(entry, "brew", system, report);
+            row.name.clone_from(&entry.token);
+            row.description = row
+                .description
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            row.install_command = matches!(support, SupportBadge::Eligible)
+                .then(|| vec![String::from("pkg"), String::from("install"), id]);
+            row.support = Some(support);
             let mut rank = query.rank(&row);
             for alias in aliases {
                 let mut alternative = row.clone();

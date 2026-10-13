@@ -160,10 +160,7 @@ pub(super) fn decode_profile_manifest(
 /// and is not a usable query reference. The nested value is only a
 /// fallback for shapes without a top-level `url`.
 pub(super) fn decode_source_identity(reference: &str, value: &serde_json::Value) -> SourceIdentity {
-    let locked = value
-        .get("locked")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
+    let locked = value.get("locked").unwrap_or(&serde_json::Value::Null);
     let revision = locked
         .get("rev")
         .and_then(serde_json::Value::as_str)

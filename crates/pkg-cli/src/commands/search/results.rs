@@ -15,18 +15,16 @@ pub(super) struct SearchSpool {
 
 impl SearchSpool {
     pub(super) fn new(limit: Option<u32>, grouped: bool) -> Result<Self, CommandError> {
-        let file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
-        let connection =
-            rusqlite::Connection::open(file.path()).map_err(|error| error.to_string())?;
-        connection
-            .execute_batch(
-                "PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA journal_mode=OFF;
-            CREATE TABLE results(rank INTEGER, id TEXT, body TEXT, section TEXT);
+        let file = tempfile::NamedTempFile::new()?;
+        let connection = rusqlite::Connection::open(file.path())?;
+        connection.execute_batch(
+            "PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA journal_mode=OFF;
+            CREATE TABLE results(rank INTEGER, id TEXT, body TEXT, section TEXT, bucket TEXT);
             CREATE INDEX result_order ON results(rank, id);
             CREATE INDEX section_order ON results(section, rank, id);
+            CREATE INDEX bucket_order ON results(bucket, rank, id);
             BEGIN;",
-            )
-            .map_err(|error| error.to_string())?;
+        )?;
         Ok(Self {
             _file: file,
             connection,
@@ -46,9 +44,7 @@ impl SearchSpool {
     ) -> Result<(), catalog::CatalogError> {
         let fuzzy = rank >= catalog::FUZZY_RANK;
         if !fuzzy && self.fuzzy {
-            self.connection
-                .execute("DELETE FROM results", [])
-                .map_err(catalog::CatalogError::cache_write)?;
+            self.connection.execute("DELETE FROM results", [])?;
             self.count = 0;
             self.worst.clear();
             self.sections.clear();
@@ -92,44 +88,23 @@ impl SearchSpool {
             return Ok(());
         }
         let body = serde_json::to_string(row).map_err(catalog::CatalogError::cache_write)?;
-        self.connection
-            .execute(
-                "INSERT INTO results VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![rank, row.id, body, section],
-            )
-            .map_err(catalog::CatalogError::cache_write)?;
+        self.connection.execute(
+            "INSERT INTO results VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![rank, row.id, body, section, key],
+        )?;
         if let Some(limit) = self.limit
             && retained_count >= limit as usize
         {
-            let (remove, select) = if self.grouped {
-                (
-                    "DELETE FROM results WHERE section=?2 AND rowid NOT IN (SELECT rowid FROM results WHERE section=?2 ORDER BY rank, id LIMIT ?1)",
-                    "SELECT rank, id FROM results WHERE section=?2 ORDER BY rank DESC, id DESC LIMIT ?1",
-                )
-            } else {
-                (
-                    "DELETE FROM results WHERE rowid NOT IN (SELECT rowid FROM results ORDER BY rank, id LIMIT ?1)",
-                    "SELECT rank, id FROM results ORDER BY rank DESC, id DESC LIMIT ?1",
-                )
-            };
-            let bindings: &[&dyn rusqlite::ToSql] = if self.grouped {
-                &[&limit, &section]
-            } else {
-                &[&limit]
-            };
             self.connection
-                .execute(remove, bindings)
-                .map_err(catalog::CatalogError::cache_write)?;
-            let one = 1;
-            let bindings: &[&dyn rusqlite::ToSql] = if self.grouped {
-                &[&one, &section]
-            } else {
-                &[&one]
-            };
-            let worst = self
-                .connection
-                .query_row(select, bindings, |row| Ok((row.get(0)?, row.get(1)?)))
-                .map_err(catalog::CatalogError::cache_write)?;
+                .execute(
+                    "DELETE FROM results WHERE bucket=?2 AND rowid NOT IN (SELECT rowid FROM results WHERE bucket=?2 ORDER BY rank, id LIMIT ?1)",
+                    rusqlite::params![limit, key],
+                )?;
+            let worst = self.connection.query_row(
+                "SELECT rank, id FROM results WHERE bucket=?1 ORDER BY rank DESC, id DESC LIMIT 1",
+                [&key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
             self.worst.insert(key, worst);
         }
         Ok(())
@@ -153,14 +128,11 @@ impl SearchSpool {
         params: impl rusqlite::Params,
         mut sink: impl FnMut(&str) -> std::io::Result<()>,
     ) -> Result<(), CommandError> {
-        let mut statement = self
-            .connection
-            .prepare(sql)
-            .map_err(|error| error.to_string())?;
-        let mut rows = statement.query(params).map_err(|error| error.to_string())?;
-        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-            let body: String = row.get(0).map_err(|error| error.to_string())?;
-            sink(&body).map_err(|error| error.to_string())?;
+        let mut statement = self.connection.prepare(sql)?;
+        let mut rows = statement.query(params)?;
+        while let Some(row) = rows.next()? {
+            let body: String = row.get(0)?;
+            sink(&body)?;
         }
         Ok(())
     }
@@ -174,7 +146,14 @@ impl SearchSpool {
         use std::io::Write as _;
         let stdout = std::io::stdout();
         let mut out = std::io::BufWriter::new(stdout.lock());
-        write!(out, "{{\"schema\":1,\"command\":\"search\",\"result\":{{\"system\":{},\"sources\":{},\"total\":{},\"approximate\":{},\"results\":[", serde_json::to_string(system).map_err(|error| error.to_string())?, serde_json::to_string(reports).map_err(|error| error.to_string())?, self.count, self.fuzzy).map_err(|error| error.to_string())?;
+        write!(
+            out,
+            "{{\"schema\":1,\"command\":\"search\",\"result\":{{\"system\":{},\"sources\":{},\"total\":{},\"approximate\":{},\"results\":[",
+            serde_json::to_string(system)?,
+            serde_json::to_string(reports)?,
+            self.count,
+            self.fuzzy
+        )?;
         let mut first = true;
         self.visit(limit, |body| {
             if !first {
@@ -183,9 +162,7 @@ impl SearchSpool {
             first = false;
             out.write_all(body.as_bytes())
         })?;
-        out.write_all(b"]}}\n")
-            .and_then(|()| out.flush())
-            .map_err(|error| error.to_string())?;
+        out.write_all(b"]}}\n").and_then(|()| out.flush())?;
         Ok(())
     }
 
@@ -197,10 +174,7 @@ impl SearchSpool {
     ) -> Result<(), CommandError> {
         self.visit_rows(
             "SELECT body FROM results WHERE section=?1 ORDER BY rank, id LIMIT ?2",
-            rusqlite::params![
-                section,
-                i64::try_from(limit).map_err(|error| error.to_string())?
-            ],
+            rusqlite::params![section, i64::try_from(limit)?],
             |body| sink(serde_json::from_str(body).map_err(std::io::Error::other)?),
         )
     }
@@ -208,7 +182,8 @@ impl SearchSpool {
     pub(super) fn text(&self, query: &str, limit: Option<u32>) -> Result<(), CommandError> {
         use std::io::Write as _;
         if self.count == 0 {
-            print!("{}", output::render_search(&[], query));
+            println!("No matches for \"{query}\".");
+            println!("Next: Try fewer search words or use --broad.");
             return Ok(());
         }
         if self.fuzzy {
@@ -246,14 +221,13 @@ impl SearchSpool {
         let mut out = std::io::BufWriter::new(stdout.lock());
         for (index, ((section, count), shown)) in sections.iter().zip(&shown).enumerate() {
             if index > 0 {
-                writeln!(out).map_err(|error| error.to_string())?;
+                writeln!(out)?;
             }
             if shown == *count {
                 let noun = if **count == 1 { "match" } else { "matches" };
-                writeln!(out, "{section} ({count} {noun})").map_err(|error| error.to_string())?;
+                writeln!(out, "{section} ({count} {noun})")?;
             } else {
-                writeln!(out, "{section} ({shown} of {count} matches)")
-                    .map_err(|error| error.to_string())?;
+                writeln!(out, "{section} ({shown} of {count} matches)")?;
             }
             if *shown == 0 {
                 continue;
@@ -273,14 +247,12 @@ impl SearchSpool {
                 out,
                 "{:<width$}  {:<version_width$}  DESCRIPTION",
                 "ID", "VERSION"
-            )
-            .map_err(|error| error.to_string())?;
+            )?;
             self.visit_section(section, *shown, |row| {
                 out.write_all(output::render_search_row(&row, width, version_width).as_bytes())
             })?;
             if let Some(command) = command {
-                writeln!(out, "Install example: {}", command.join(" "))
-                    .map_err(|error| error.to_string())?;
+                writeln!(out, "Install example: {}", command.join(" "))?;
             }
         }
         if let Some(limit) = limit
@@ -290,10 +262,9 @@ impl SearchSpool {
                 out,
                 "Showing {limit} of {} matches. Use --all or --limit N to show more.",
                 self.count
-            )
-            .map_err(|error| error.to_string())?;
+            )?;
         }
-        out.flush().map_err(|error| error.to_string())?;
+        out.flush()?;
         Ok(())
     }
 }

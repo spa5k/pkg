@@ -70,9 +70,10 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
                     "ok",
                     info.lines().next().unwrap_or("reachable").to_string(),
                 )),
+                Err(error) if error.signal().is_some() => return Err(error.into()),
                 Err(error) => rows.push(observed("nix daemon", "unreachable", error.to_string())),
             }
-            let (sandbox_status, sandbox_detail) = crate::tap::setup::doctor_status(&runtime);
+            let (sandbox_status, sandbox_detail) = crate::tap::setup::doctor_status(&runtime)?;
             rows.push(observed("tap sandbox", &sandbox_status, sandbox_detail));
 
             match std::fs::symlink_metadata(&paths.profile) {
@@ -91,6 +92,7 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
                         "ok",
                         format!("{} ({} entries)", paths.profile.display(), entries.len()),
                     )),
+                    Err(error) if error.signal().is_some() => return Err(error.into()),
                     Err(error) => {
                         rows.push(observed("pkg profile", "unreadable", error.to_string()));
                     }
@@ -109,6 +111,7 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
                 ));
             }
         }
+        Err(error) if error.signal().is_some() => return Err(error.into()),
         Err(error) => {
             rows.push(observed("nix runtime", "missing", error.to_string()));
             rows.push(observed(

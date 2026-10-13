@@ -8,8 +8,8 @@
 # exporter, with LC_ALL=C (the reader pipe protocol is binary).
 {
   pkgs ? import (builtins.fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/567a49d1913ce81ac6e9582e3553dd90a955875f.tar.gz";
-    sha256 = "1vq77hlx8mi3z03pw2nf6r5h7473r1p9yxyf58ym3fh01zppmfln";
+    url = "https://github.com/NixOS/nixpkgs/archive/8edc0c72e3a38faf5434e40d1f19431125fe4b30.tar.gz";
+    sha256 = "0cwxl7z1x0ad9z8lcljl390y9lk73ql4fvx5lysy4s9c6723p8xn";
   }) { },
 }:
 pkgs.runCommand "pkg-tap-reader-test" { nativeBuildInputs = [ pkgs.ruby_4_0 ]; } ''

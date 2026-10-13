@@ -1,7 +1,38 @@
 use super::*;
 use serde_json::json;
 
-fn record(platforms: &[&str], extra: &Value) -> RawRecord {
+#[test]
+fn catalog_reason_codes_remain_stable() {
+    use ExclusionReason as Reason;
+    for (reason, expected) in [
+        (Reason::Disabled, "disabled"),
+        (Reason::Deprecated, "deprecated"),
+        (Reason::UnsupportedPlatform, "unsupported-platform"),
+        (Reason::ArchUnsupported, "arch-unsupported"),
+        (Reason::UnsupportedDownloadSpec, "unsupported-download-spec"),
+        (Reason::FormulaDependency, "formula-dependency"),
+        (
+            Reason::CaskDependencyIntegration,
+            "cask-dependency-integration",
+        ),
+        (Reason::MissingUrl, "missing-url"),
+        (Reason::UnsupportedUrl, "unsupported-url"),
+        (Reason::MissingChecksum, "missing-checksum"),
+        (Reason::MinimumOs, "minimum-os"),
+        (Reason::MalformedRecord, "malformed-record"),
+        (Reason::UnsupportedArtifact, "unsupported-artifact"),
+        (Reason::UnsupportedContainer, "unsupported-container"),
+        (Reason::InstallerScript, "installer-script"),
+        (Reason::NoInstallableArtifact, "no-installable-artifact"),
+        (Reason::RubyLoadError, "ruby-load-error"),
+        (Reason::OriginMissing, "origin-missing"),
+        (Reason::OriginMismatch, "origin-mismatch"),
+    ] {
+        assert_eq!(reason.as_str(), expected);
+    }
+}
+
+fn record(platforms: &[&str], extra: &Value) -> Value {
     let mut raw = json!({
         "token": "t",
         "version": "1",
@@ -15,7 +46,7 @@ fn record(platforms: &[&str], extra: &Value) -> RawRecord {
             target.insert(k.clone(), v.clone());
         }
     }
-    RawRecord::new(raw)
+    raw
 }
 
 const BASE: &str = "15.7.7";
@@ -27,7 +58,7 @@ fn linux_requirement_precedes_architecture_exclusion_on_macos() {
         &json!({"depends_on": {"linux": true, "arch": []}}),
     );
     assert_eq!(
-        classify_target(&rec, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&rec, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("unsupported-platform")
     );
 }
@@ -39,7 +70,7 @@ fn linux_requirement_precedes_download_spec_exclusion_on_macos() {
         &json!({"depends_on": {"linux": true}, "url_specs": {"user_agent": "fixture"}}),
     );
     assert_eq!(
-        classify_target(&rec, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&rec, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("unsupported-platform")
     );
 }
@@ -47,14 +78,41 @@ fn linux_requirement_precedes_download_spec_exclusion_on_macos() {
 #[test]
 fn platform_scope_comes_only_from_supported_platforms() {
     let both = ["arm64_sequoia", "x86_64_linux"];
-    assert!(classify_target(&record(&both, &json!({})), "aarch64-darwin", BASE).is_eligible());
-    assert!(classify_target(&record(&both, &json!({})), "x86_64-linux", BASE).is_eligible());
+    assert!(
+        classify_target(
+            &record(&both, &json!({})),
+            "aarch64-darwin",
+            BASE,
+            PlatformGate::Tags
+        )
+        .is_eligible()
+    );
+    assert!(
+        classify_target(
+            &record(&both, &json!({})),
+            "x86_64-linux",
+            BASE,
+            PlatformGate::Tags
+        )
+        .is_eligible()
+    );
     let mac_only = ["arm64_sequoia"];
-    let linux_status = classify_target(&record(&mac_only, &json!({})), "x86_64-linux", BASE);
+    let linux_status = classify_target(
+        &record(&mac_only, &json!({})),
+        "x86_64-linux",
+        BASE,
+        PlatformGate::Tags,
+    );
     assert_eq!(linux_status.reason_code(), Some("unsupported-platform"));
     let arm_linux_only = ["arm64_linux"];
     assert_eq!(
-        classify_target(&record(&arm_linux_only, &json!({})), "aarch64-darwin", BASE).reason_code(),
+        classify_target(
+            &record(&arm_linux_only, &json!({})),
+            "aarch64-darwin",
+            BASE,
+            PlatformGate::Tags
+        )
+        .reason_code(),
         Some("unsupported-platform")
     );
 }
@@ -66,7 +124,7 @@ fn all_dependencies_exclude_in_this_version() {
         &json!({"depends_on": {"formula": ["neovim"]}}),
     );
     assert_eq!(
-        classify_target(&formula, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&formula, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("formula-dependency")
     );
     let cask = record(
@@ -74,12 +132,12 @@ fn all_dependencies_exclude_in_this_version() {
         &json!({"depends_on": {"cask": ["docker"]}}),
     );
     assert_eq!(
-        classify_target(&cask, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&cask, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("cask-dependency-integration")
     );
     // Empty dependency lists do not exclude.
     let none = record(&["arm64_sequoia"], &json!({"depends_on": {"formula": []}}));
-    assert!(classify_target(&none, "aarch64-darwin", BASE).is_eligible());
+    assert!(classify_target(&none, "aarch64-darwin", BASE, PlatformGate::Tags).is_eligible());
 }
 
 #[test]
@@ -88,20 +146,21 @@ fn macos_versions_compare_numerically_with_zero_fill() {
         &["arm64_sequoia"],
         &json!({"depends_on": {"macos": {">=": ["15"]}}}),
     );
-    assert!(classify_target(&ok, "aarch64-darwin", BASE).is_eligible());
+    assert!(classify_target(&ok, "aarch64-darwin", BASE, PlatformGate::Tags).is_eligible());
     let too_new = record(
         &["arm64_sequoia"],
         &json!({"depends_on": {"macos": {">=": ["26"]}}}),
     );
-    let status = classify_target(&too_new, "aarch64-darwin", BASE);
+    let status = classify_target(&too_new, "aarch64-darwin", BASE, PlatformGate::Tags);
     assert_eq!(status.reason_code(), Some("minimum-os"));
-    assert!(status.detail().unwrap().contains("26"));
+    let published = serde_json::to_value(&status).unwrap();
+    assert!(published["detail"].as_str().unwrap().contains("26"));
     let capped = record(
         &["arm64_sequoia"],
         &json!({"depends_on": {"maximum_macos": {"<=": ["14.9"]}}}),
     );
     assert_eq!(
-        classify_target(&capped, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&capped, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("minimum-os")
     );
     let unknown_op = record(
@@ -109,7 +168,7 @@ fn macos_versions_compare_numerically_with_zero_fill() {
         &json!({"depends_on": {"macos": {"~>": ["12"]}}}),
     );
     assert_eq!(
-        classify_target(&unknown_op, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&unknown_op, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
     // An operator the generator cannot evaluate (here `==` with a
@@ -119,20 +178,40 @@ fn macos_versions_compare_numerically_with_zero_fill() {
         &json!({"depends_on": {"macos": {"==": ["15", "26"]}}}),
     );
     assert_eq!(
-        classify_target(&exact_list, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&exact_list, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
 }
 
 #[test]
 fn macos_constraint_shapes_fail_closed() {
+    for constraint in [
+        json!([]),
+        json!([[">=", ["12"]]]),
+        json!({">=": []}),
+        json!({">=": [null]}),
+        json!({">=": [12]}),
+        json!({">=": "12"}),
+    ] {
+        let raw = record(
+            &["arm64_sequoia", "x86_64_linux"],
+            &json!({"depends_on": {"macos": constraint}}),
+        );
+        for system in ["aarch64-darwin", "x86_64-linux"] {
+            assert_eq!(
+                classify_target(&raw, system, BASE, PlatformGate::Tags).reason_code(),
+                Some("malformed-record"),
+                "{raw} on {system}"
+            );
+        }
+    }
     // A non-object constraint and a multi-value array never pass.
     let not_object = record(
         &["arm64_sequoia"],
         &json!({"depends_on": {"macos": ">= 12"}}),
     );
     assert_eq!(
-        classify_target(&not_object, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&not_object, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
     let multi = record(
@@ -140,7 +219,7 @@ fn macos_constraint_shapes_fail_closed() {
         &json!({"depends_on": {"macos": {">=": ["13", "14"]}}}),
     );
     assert_eq!(
-        classify_target(&multi, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&multi, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
     // The satisfied minimum is still carried in the plan.
@@ -148,7 +227,7 @@ fn macos_constraint_shapes_fail_closed() {
         &["arm64_sequoia"],
         &json!({"depends_on": {"macos": {">=": ["12"]}}}),
     );
-    let status = classify_target(&ok, "aarch64-darwin", BASE);
+    let status = classify_target(&ok, "aarch64-darwin", BASE, PlatformGate::Tags);
     assert_eq!(
         status.plan().expect("plan").min_macos.as_deref(),
         Some("12")
@@ -162,9 +241,9 @@ fn macos_requirements_never_constrain_linux() {
     // with a null minMacos. The shape is still validated on linux.
     let both = ["arm64_sequoia", "x86_64_linux"];
     let rec = record(&both, &json!({"depends_on": {"macos": {">=": ["26"]}}}));
-    let darwin = classify_target(&rec, "aarch64-darwin", BASE);
+    let darwin = classify_target(&rec, "aarch64-darwin", BASE, PlatformGate::Tags);
     assert_eq!(darwin.reason_code(), Some("minimum-os"));
-    let linux = classify_target(&rec, "x86_64-linux", BASE);
+    let linux = classify_target(&rec, "x86_64-linux", BASE, PlatformGate::Tags);
     assert!(linux.is_eligible());
     assert_eq!(linux.plan().cloned().expect("plan").min_macos, None);
     // maximum_macos limits nothing on linux either.
@@ -173,14 +252,14 @@ fn macos_requirements_never_constrain_linux() {
         &json!({"depends_on": {"maximum_macos": {"<=": ["14.9"]}}}),
     );
     assert_eq!(
-        classify_target(&capped, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&capped, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("minimum-os")
     );
-    assert!(classify_target(&capped, "x86_64-linux", BASE).is_eligible());
+    assert!(classify_target(&capped, "x86_64-linux", BASE, PlatformGate::Tags).is_eligible());
     // Malformed shapes still exclude on linux.
     let junk = record(&both, &json!({"depends_on": {"macos": ">= 12"}}));
     assert_eq!(
-        classify_target(&junk, "x86_64-linux", BASE).reason_code(),
+        classify_target(&junk, "x86_64-linux", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
 }
@@ -194,7 +273,7 @@ fn eligible_maximum_macos_reaches_the_plan() {
         &both,
         &json!({"depends_on": {"maximum_macos": {"<=": ["15.9"]}}}),
     );
-    let darwin = classify_target(&rec, "aarch64-darwin", BASE);
+    let darwin = classify_target(&rec, "aarch64-darwin", BASE, PlatformGate::Tags);
     assert!(darwin.is_eligible());
     let plan = darwin.plan().cloned().expect("plan");
     assert_eq!(plan.min_macos, None);
@@ -204,7 +283,7 @@ fn eligible_maximum_macos_reaches_the_plan() {
     let emitted = serde_json::to_value(&darwin).expect("serializes");
     assert_eq!(emitted["plan"]["maxMacos"].as_str(), Some("15.9"));
     // Linux stays eligible with null bounds.
-    let linux = classify_target(&rec, "x86_64-linux", BASE);
+    let linux = classify_target(&rec, "x86_64-linux", BASE, PlatformGate::Tags);
     assert!(linux.is_eligible());
     let linux_plan = linux.plan().cloned().expect("plan");
     assert_eq!(linux_plan.min_macos, None);
@@ -227,11 +306,11 @@ fn inverted_macos_range_is_refused_on_every_target() {
     // Darwin refuses it as malformed too: the range is validated
     // whole before any baseline comparison runs.
     assert_eq!(
-        classify_target(&rec, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&rec, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
     assert_eq!(
-        classify_target(&rec, "x86_64-linux", BASE).reason_code(),
+        classify_target(&rec, "x86_64-linux", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
 }
@@ -244,11 +323,11 @@ fn oversized_macos_versions_are_refused_on_every_target() {
         &json!({"depends_on": {"macos": {">=": ["99999999999999999999"]}}}),
     );
     assert_eq!(
-        classify_target(&rec, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&rec, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
     assert_eq!(
-        classify_target(&rec, "x86_64-linux", BASE).reason_code(),
+        classify_target(&rec, "x86_64-linux", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
 }
@@ -261,19 +340,19 @@ fn dependency_shapes_and_unknown_requirements_fail_closed() {
         &json!({"depends_on": {"formula": "neovim"}}),
     );
     assert_eq!(
-        classify_target(&string_dep, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&string_dep, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
     // An unknown requirement key is never silently ignored.
     let unknown = record(&["arm64_sequoia"], &json!({"depends_on": {"x11": true}}));
     assert_eq!(
-        classify_target(&unknown, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&unknown, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
     // A non-string dependency entry is malformed too.
     let junk = record(&["arm64_sequoia"], &json!({"depends_on": {"cask": [42]}}));
     assert_eq!(
-        classify_target(&junk, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&junk, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
 }
@@ -285,12 +364,18 @@ fn nonbool_flags_and_platform_tags_are_never_eligible() {
         &json!({"disabled": "discontinued upstream"}),
     );
     assert_eq!(
-        classify_target(&string_disabled, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&string_disabled, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("disabled")
     );
     let string_deprecated = record(&["arm64_sequoia"], &json!({"deprecated": "yes"}));
     assert_eq!(
-        classify_target(&string_deprecated, "aarch64-darwin", BASE).reason_code(),
+        classify_target(
+            &string_deprecated,
+            "aarch64-darwin",
+            BASE,
+            PlatformGate::Tags
+        )
+        .reason_code(),
         Some("deprecated")
     );
     let junk_tag = record(
@@ -298,7 +383,7 @@ fn nonbool_flags_and_platform_tags_are_never_eligible() {
         &json!({"supported_platforms": ["arm64_sequoia", 42]}),
     );
     assert_eq!(
-        classify_target(&junk_tag, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&junk_tag, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("malformed-record")
     );
 }
@@ -307,12 +392,12 @@ fn nonbool_flags_and_platform_tags_are_never_eligible() {
 fn missing_checksum_or_url_excludes() {
     let no_sha = record(&["arm64_sequoia"], &json!({"sha256": "no_check"}));
     assert_eq!(
-        classify_target(&no_sha, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&no_sha, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("missing-checksum")
     );
     let no_url = record(&["arm64_sequoia"], &json!({"url": null}));
     assert_eq!(
-        classify_target(&no_url, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&no_url, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("missing-url")
     );
 }
@@ -332,7 +417,7 @@ fn linux_variation_merge_selects_linux_payload() {
             "artifacts": [{"binary": ["op-linux"]}]
         }}
     });
-    let status = classify_target(&RawRecord::new(raw.clone()), "x86_64-linux", BASE);
+    let status = classify_target(&raw, "x86_64-linux", BASE, PlatformGate::Tags);
     assert!(status.is_eligible());
     let plan = status.plan().expect("plan");
     assert_eq!(plan.source.url, "https://example.com/linux.zip");
@@ -341,7 +426,7 @@ fn linux_variation_merge_selects_linux_payload() {
     raw.as_object_mut()
         .unwrap()
         .insert("artifacts".into(), json!([{"binary": ["op"]}]));
-    let darwin = classify_target(&RawRecord::new(raw), "aarch64-darwin", BASE);
+    let darwin = classify_target(&raw, "aarch64-darwin", BASE, PlatformGate::Tags);
     assert_eq!(
         darwin.plan().expect("plan").source.url,
         "https://example.com/mac.zip"
@@ -373,7 +458,7 @@ fn probe_regressions_on_linux() {
         ("partial-malformed", partial_malformed),
         ("nested-target", nested_target),
     ] {
-        let status = classify_target(&rec, "x86_64-linux", BASE);
+        let status = classify_target(&rec, "x86_64-linux", BASE, PlatformGate::Tags);
         assert!(!status.is_eligible(), "{name} must be excluded");
         match name {
             "wrong-arch" => assert_eq!(status.reason_code(), Some("arch-unsupported")),
@@ -391,11 +476,11 @@ fn null_linux_requirement_clears_the_darwin_exclusion() {
     // reader; a null linux requirement must not scope darwin away.
     let both = ["arm64_sequoia", "x86_64_linux"];
     let rec = record(&both, &json!({"depends_on": {"linux": null}}));
-    assert!(classify_target(&rec, "aarch64-darwin", BASE).is_eligible());
+    assert!(classify_target(&rec, "aarch64-darwin", BASE, PlatformGate::Tags).is_eligible());
     // A non-null linux requirement still excludes darwin.
     let linux_req = record(&both, &json!({"depends_on": {"linux": "true"}}));
     assert_eq!(
-        classify_target(&linux_req, "aarch64-darwin", BASE).reason_code(),
+        classify_target(&linux_req, "aarch64-darwin", BASE, PlatformGate::Tags).reason_code(),
         Some("unsupported-platform")
     );
 }
@@ -454,7 +539,7 @@ fn urls_with_control_characters_are_not_fetchable() {
         "https://example.com/a\u{d}\u{a}b",
     ] {
         let rec = record(&["arm64_sequoia"], &json!({"url": bad}));
-        let status = classify_target(&rec, "aarch64-darwin", BASE);
+        let status = classify_target(&rec, "aarch64-darwin", BASE, PlatformGate::Tags);
         assert_eq!(
             status.reason_code(),
             Some("unsupported-url"),
@@ -471,24 +556,39 @@ fn summary_kinds_follow_artifacts() {
         &["arm64_sequoia"],
         &json!({"artifacts": [{"app": ["A.app"]}]}),
     );
-    let app =
-        serde_json::to_value(classify_target(&app, "aarch64-darwin", BASE)).expect("serializes");
+    let app = serde_json::to_value(classify_target(
+        &app,
+        "aarch64-darwin",
+        BASE,
+        PlatformGate::Tags,
+    ))
+    .expect("serializes");
     assert_eq!(app["kind"], "app");
     assert_eq!(app["status"], "eligible");
     let pkg = record(
         &["arm64_sequoia"],
         &json!({"artifacts": [{"pkg": ["A.pkg"]}]}),
     );
-    let pkg =
-        serde_json::to_value(classify_target(&pkg, "aarch64-darwin", BASE)).expect("serializes");
+    let pkg = serde_json::to_value(classify_target(
+        &pkg,
+        "aarch64-darwin",
+        BASE,
+        PlatformGate::Tags,
+    ))
+    .expect("serializes");
     assert_eq!(pkg["kind"], "pkg");
     // An excluded decision always carries a null kind and never a plan.
     let bad = record(
         &["arm64_sequoia"],
         &json!({"depends_on": {"formula": ["neovim"]}}),
     );
-    let bad =
-        serde_json::to_value(classify_target(&bad, "aarch64-darwin", BASE)).expect("serializes");
+    let bad = serde_json::to_value(classify_target(
+        &bad,
+        "aarch64-darwin",
+        BASE,
+        PlatformGate::Tags,
+    ))
+    .expect("serializes");
     assert_eq!(bad["status"], "excluded");
     assert!(bad["kind"].is_null());
     assert!(bad["plan"].is_null());
@@ -505,8 +605,13 @@ fn serialized_field_order_and_nulls_match_the_catalog_contract() {
         &both,
         &json!({"artifacts": [{"app": ["A.app"], "binary": ["t"]}]}),
     );
-    let eligible =
-        serde_json::to_value(classify_target(&rec, "aarch64-darwin", BASE)).expect("serializes");
+    let eligible = serde_json::to_value(classify_target(
+        &rec,
+        "aarch64-darwin",
+        BASE,
+        PlatformGate::Tags,
+    ))
+    .expect("serializes");
     // Exact field ORDER comes from the serialized string (to_value
     // sorts keys); the prefix pins the contract order.
     let expected_prefix = concat!(
@@ -514,8 +619,13 @@ fn serialized_field_order_and_nulls_match_the_catalog_contract() {
         "\"reason\":null,\"detail\":null,",
         "\"version\":\"1\",\"homepage\":null,\"plan\":"
     );
-    let eligible_text =
-        serde_json::to_string(&classify_target(&rec, "aarch64-darwin", BASE)).expect("serializes");
+    let eligible_text = serde_json::to_string(&classify_target(
+        &rec,
+        "aarch64-darwin",
+        BASE,
+        PlatformGate::Tags,
+    ))
+    .expect("serializes");
     assert!(eligible_text.starts_with(expected_prefix));
     assert_eq!(eligible["status"], "eligible");
     assert_eq!(eligible["kind"], "app+cli");
@@ -530,6 +640,7 @@ fn serialized_field_order_and_nulls_match_the_catalog_contract() {
         ),
         "aarch64-darwin",
         BASE,
+        PlatformGate::Tags,
     ))
     .expect("serializes");
     assert_eq!(excluded["status"], "excluded");

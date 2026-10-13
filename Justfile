@@ -9,7 +9,7 @@ lint:
     cargo fmt --all -- --check
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
-# Complete Rust checks for both workspace crates.
+# Complete Rust checks for all workspace crates.
 check: lint
     cargo build --locked --workspace --all-targets --all-features
     cargo test --locked --workspace --all-features

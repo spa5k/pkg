@@ -4,7 +4,7 @@ use std::cell::OnceCell;
 
 use crate::nix;
 
-use super::{CaskStatus, CatalogView};
+use super::CatalogError;
 
 /// Whether a catalog record can be installed on the current host.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -25,6 +25,26 @@ pub enum Availability {
 }
 
 impl Availability {
+    pub(super) fn search_badge(
+        self,
+        include_unavailable: bool,
+        detail: Option<&str>,
+    ) -> Option<super::SupportBadge> {
+        match self {
+            Self::Available => Some(super::SupportBadge::Eligible),
+            Self::Unavailable { reason } if include_unavailable => {
+                Some(super::SupportBadge::Excluded {
+                    reason,
+                    detail: detail.map(str::to_owned),
+                })
+            }
+            Self::Unknown { reason } if include_unavailable => {
+                Some(super::SupportBadge::Unknown { reason })
+            }
+            _ => None,
+        }
+    }
+
     /// Refuse unavailable or unknown records before a profile mutation.
     /// # Errors
     ///
@@ -40,58 +60,67 @@ impl Availability {
 /// Read host macOS metadata at most once during a command.
 #[derive(Default)]
 pub struct CaskHost {
-    macos: OnceCell<Result<String, String>>,
+    macos: OnceCell<Result<String, std::sync::Arc<nix::HostVersionError>>>,
 }
 
 impl CaskHost {
     /// Judge a record using its catalog status, platform, and macOS bounds.
-    #[must_use]
+    /// # Errors
+    /// Returns the retained error if a host-version probe is cancelled.
     pub fn availability(
         &self,
-        view: &CatalogView,
+        index: &nix::CatalogIndex,
         system: &str,
         source: &str,
         token: &str,
-    ) -> Availability {
-        if !view.targeted(system) {
-            return Availability::Unavailable {
+    ) -> Result<Availability, CatalogError> {
+        if !index.targeted(system) {
+            return Ok(Availability::Unavailable {
                 reason: format!(
                     "catalog targets {} only; this system is {system}",
-                    view.targets().join(", ")
+                    index.targets().join(", ")
                 ),
-            };
+            });
         }
-        match view.entry(system, source, token) {
-            CaskStatus::Excluded { reason, detail } => Availability::Unavailable {
+        let Some(entry) = index.record(system, source, token) else {
+            return Ok(Availability::Unknown {
+                reason: format!("not in the generated catalog for {system}"),
+            });
+        };
+        Ok(match entry.status {
+            nix::EntryStatus::Excluded => Availability::Unavailable {
                 reason: format!(
-                    "{reason}{}",
-                    detail.map(|text| format!(": {text}")).unwrap_or_default()
+                    "{}{}",
+                    entry.reason.as_deref().unwrap_or_default(),
+                    entry
+                        .detail
+                        .as_deref()
+                        .map(|text| format!(": {text}"))
+                        .unwrap_or_default()
                 ),
             },
-            CaskStatus::Unknown => Availability::Unknown {
-                reason: format!("not in the generated catalog for {system}"),
-            },
-            CaskStatus::Eligible => {
-                let Some(entry) = view.record(system, source, token) else {
-                    return Availability::Unknown {
-                        reason: String::from("catalog record is missing"),
-                    };
-                };
+            nix::EntryStatus::Eligible => {
                 if !system.ends_with("-darwin")
                     || entry.min_macos.is_none() && entry.max_macos.is_none()
                 {
-                    return Availability::Available;
+                    return Ok(Availability::Available);
                 }
-                match self.macos.get_or_init(nix::macos_product_version) {
+                match self
+                    .macos
+                    .get_or_init(|| nix::macos_product_version().map_err(std::sync::Arc::new))
+                {
                     Ok(host) => {
                         macos_range(host, entry.min_macos.as_deref(), entry.max_macos.as_deref())
+                    }
+                    Err(error) if error.signal().is_some() => {
+                        return Err(CatalogError::Host(error.clone()));
                     }
                     Err(detail) => Availability::Unknown {
                         reason: format!("host macOS version cannot be read: {detail}"),
                     },
                 }
             }
-        }
+        })
     }
 }
 
@@ -113,6 +142,40 @@ fn macos_range(host: &str, min: Option<&str>, max: Option<&str>) -> Availability
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_host_probes_are_errors_only_when_the_record_needs_them() {
+        let raw: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/catalog-index.json")).unwrap();
+        let index = nix::decode_catalog_index(&raw).unwrap();
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            for error in [
+                nix::HostVersionError::Interrupted(signal),
+                nix::HostVersionError::Process(pkg_process::RunError {
+                    cancelled: Some(signal),
+                    source: std::io::Error::from_raw_os_error(libc::ECHILD),
+                }),
+            ] {
+                let host = CaskHost {
+                    macos: OnceCell::from(Err(std::sync::Arc::new(error))),
+                };
+                let error = host
+                    .availability(&index, "aarch64-darwin", "homebrew/cask", "iterm2")
+                    .expect_err("cancelled host requirement");
+                assert_eq!(error.signal(), Some(signal));
+                assert!(matches!(
+                    host.availability(&index, "x86_64-linux", "homebrew/cask", "iterm2")
+                        .unwrap(),
+                    Availability::Unavailable { .. }
+                ));
+                assert!(matches!(
+                    host.availability(&index, "aarch64-darwin", "homebrew/cask", "missing")
+                        .unwrap(),
+                    Availability::Unknown { .. }
+                ));
+            }
+        }
+    }
 
     #[test]
     fn host_range_has_inclusive_numeric_bounds() {

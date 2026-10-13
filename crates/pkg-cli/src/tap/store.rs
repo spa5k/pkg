@@ -62,23 +62,17 @@ pub fn store_root(state_home: &Path) -> PathBuf {
 /// Only a strict `owner/tap` slug — never the reserved official source —
 /// may become a filesystem path, so the helpers below can never be path
 /// traversal gadgets.
-fn checked_source(source: &str) -> Result<(String, String), String> {
+fn checked_source(source: &str) -> Result<(&str, &str), String> {
     if source == OFFICIAL_CASK_SOURCE {
         return Err(format!(
             "{OFFICIAL_CASK_SOURCE} is the reserved official source; \
              it cannot be a local tap"
         ));
     }
-    if !crate::nix::valid_catalog_source(source) {
-        return Err(format!("`{source}` is not a valid owner/tap source"));
-    }
-    // The guard above already proved the exact `owner/tap` shape, so the
-    // split cannot fail on validated input; an impossible shape flows
-    // back through the same error channel instead of a panic.
-    match source.split_once('/') {
-        Some((owner, tap)) => Ok((owner.to_string(), tap.to_string())),
-        None => Err(format!("`{source}` is not a valid owner/tap source")),
-    }
+    source
+        .split_once('/')
+        .filter(|_| crate::nix::valid_catalog_source(source))
+        .ok_or_else(|| format!("`{source}` is not a valid owner/tap source"))
 }
 
 /// The per-source directory of one canonical `owner/tap` source.
@@ -282,12 +276,11 @@ impl SourceStore {
     /// inner flake with `current` leaves the exchanged-out old generation
     /// at its already-final immutable path: no post-commit rename is
     /// needed and none exists. The returned generation is tied to THIS
-    /// source: [`Self::publish`] refuses one staged by another source's
-    /// store.
+    /// source, whose store and exclusive lock move into the returned stage.
     /// # Errors
     ///
     /// Returns an error if the staging directory cannot be created.
-    pub fn new_staging(&self) -> Result<StagedGeneration, String> {
+    pub fn new_staging(self) -> Result<StagedGeneration, String> {
         let staging = tempfile::Builder::new()
             .prefix("incoming-")
             .tempdir_in(self.generations())
@@ -296,98 +289,11 @@ impl SourceStore {
                     "cannot create staging under {}: {error}",
                     self.generations().display()
                 )
-            })?
-            .keep();
+            })?;
         Ok(StagedGeneration {
-            guard: StagingGuard {
-                path: staging,
-                armed: true,
-            },
-            source: self.source.clone(),
+            guard: staging,
+            store: self,
         })
-    }
-
-    /// Validate and publish one staged generation as the active
-    /// generation, settling the staging guard internally.
-    ///
-    /// Only the importer-generated flake root (`staging/flake`) becomes
-    /// `current`: the raw checkout and capture files stay outside the
-    /// active Nix flake root. Validation runs first and fails closed: the
-    /// provenance and the strictly decodable index envelope are written
-    /// into the flake root, and a real-directory check guards it before
-    /// any rename. Then:
-    ///
-    /// * a first publication is one plain rename of the flake root into
-    ///   `current`; the disposable staging parent (still holding the raw
-    ///   checkout) is removed before the publication is returned;
-    /// * an update is one atomic directory exchange of the flake root with
-    ///   `current`, after which the exchanged-out old generation already
-    ///   sits at its final immutable path inside the kept staging parent,
-    ///   which the returned publication owns.
-    ///
-    /// Nothing fallible runs after the committing rename or exchange; a
-    /// failure at any step leaves the previous active generation intact
-    /// and removes the failed staging directory. A staged generation or
-    /// provenance belonging to another source is refused before any
-    /// mutation.
-    /// # Errors
-    ///
-    /// Returns an error if the staged source or provenance does not match this store, the index fails validation, or file creation or publication fails.
-    pub fn publish(
-        &self,
-        staged: StagedGeneration,
-        provenance: &Provenance,
-        index: &CatalogIndex,
-    ) -> Result<Publication<'_>, String> {
-        let StagedGeneration { guard, source } = staged;
-        if source != self.source || guard.path.strip_prefix(self.generations()).is_err() {
-            return Err(format!(
-                "the staged generation for source `{source}` does not belong to \
-                 the store of source `{}`; each source publishes only its own \
-                 staged generations",
-                self.source
-            ));
-        }
-        if provenance.source != self.source {
-            return Err(format!(
-                "the provenance names source `{}` but this store publishes \
-                 `{}`; refusing to publish another source's generation",
-                provenance.source, self.source
-            ));
-        }
-        super::validate_binding(index, provenance).map_err(|detail| {
-            format!(
-                "the catalog is not bound to the provenance for source `{}`: {detail}",
-                self.source
-            )
-        })?;
-        let flake = guard.path.join("flake");
-        let published = self.commit(&flake, provenance, index)?;
-        match published {
-            Published::First => {
-                // The inner flake root was renamed to `current`; the armed
-                // guard removes only the disposable staging parent (the
-                // raw checkout and captures) before the publication is
-                // returned.
-                drop(guard);
-                Ok(Publication {
-                    store: self,
-                    published,
-                    staging: None,
-                })
-            }
-            Published::Replaced { .. } => {
-                // The staging parent now holds the preserved old generation
-                // at its final immutable path; disarm the guard and hand
-                // the retained state to the publication.
-                let staging = guard.keep();
-                Ok(Publication {
-                    store: self,
-                    published,
-                    staging: Some(staging),
-                })
-            }
-        }
     }
 
     /// The committing step shared by first and replacing publications.
@@ -578,59 +484,81 @@ fn read_index_at(generation: &Path) -> Result<CatalogIndex, String> {
 ///
 /// The path is the importer's output directory (the staging parent); the
 /// inner guard removes that directory while it is armed. Publication
-/// settles the guard internally: [`SourceStore::publish`] drops it after
+/// settles the guard internally: [`StagedGeneration::publish`] drops it after
 /// a first publication (removing the disposable parent) and disarms it
 /// after a replacing one (retaining the preserved old generation), so no
 /// caller can settle a guard by hand.
 pub struct StagedGeneration {
-    guard: StagingGuard,
-    source: String,
+    // Fields drop in declaration order: clean staging while its lock is held.
+    guard: tempfile::TempDir,
+    store: SourceStore,
 }
 
 impl StagedGeneration {
+    /// Validate and publish one staged generation as the active
+    /// generation, settling the staging guard internally.
+    ///
+    /// Only the importer-generated flake root (`staging/flake`) becomes
+    /// `current`: the raw checkout and capture files stay outside the
+    /// active Nix flake root. Validation runs first and fails closed: the
+    /// provenance and the strictly decodable index envelope are written
+    /// into the flake root, and a real-directory check guards it before
+    /// any rename. Then:
+    ///
+    /// * a first publication is one plain rename of the flake root into
+    ///   `current`; the disposable staging parent (still holding the raw
+    ///   checkout) is removed before the publication is returned;
+    /// * an update is one atomic directory exchange of the flake root with
+    ///   `current`, after which the exchanged-out old generation already
+    ///   sits at its final immutable path inside the kept staging parent,
+    ///   which the returned publication owns.
+    ///
+    /// Nothing fallible runs after the committing rename or exchange; a
+    /// failure at any step leaves the previous active generation intact
+    /// and removes the failed staging directory before releasing its lock.
+    /// Provenance belonging to another source is refused before mutation.
+    /// # Errors
+    ///
+    /// Returns an error if the provenance does not match the owned store, the index fails validation, or file creation or publication fails.
+    pub fn publish(
+        self,
+        provenance: &Provenance,
+        index: &CatalogIndex,
+    ) -> Result<Publication, String> {
+        if provenance.source != self.store.source {
+            return Err(format!(
+                "the provenance names source `{}` but this store publishes \
+                 `{}`; refusing to publish another source's generation",
+                provenance.source, self.store.source
+            ));
+        }
+        super::validate_binding(index, provenance).map_err(|detail| {
+            format!(
+                "the catalog is not bound to the provenance for source `{}`: {detail}",
+                self.store.source
+            )
+        })?;
+        let flake = self.guard.path().join("flake");
+        let published = self.store.commit(&flake, provenance, index)?;
+        let staging = match published {
+            Published::First => {
+                drop(self.guard);
+                None
+            }
+            Published::Replaced { .. } => Some(self.guard.keep()),
+        };
+        Ok(Publication {
+            store: self.store,
+            published,
+            staging,
+        })
+    }
+
     /// The importer output directory: the staging parent whose `flake`
     /// child is the generated flake root.
     #[must_use]
     pub fn path(&self) -> &Path {
-        &self.guard.path
-    }
-
-    /// The canonical source this generation was staged for.
-    #[must_use]
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-}
-
-/// Removes one staging directory when it was not published.
-///
-/// A successful first publication renames the inner flake root away to
-/// `current`, so the dropped guard deletes only the disposable staging
-/// parent (the raw checkout). After a successful exchange the staging
-/// parent holds the preserved old generation at `flake/`, so the guard
-/// is disarmed with [`StagingGuard::keep`] before the publication is
-/// returned. An armed guard only ever removes data this run created.
-struct StagingGuard {
-    path: PathBuf,
-    armed: bool,
-}
-
-impl StagingGuard {
-    /// Disarm the guard and return the retained staging path: the parent
-    /// no longer holds only this run's scratch data (it now holds the
-    /// preserved old generation after an exchange), so the eventual drop
-    /// must not remove it.
-    fn keep(mut self) -> PathBuf {
-        self.armed = false;
-        std::mem::take(&mut self.path)
-    }
-}
-
-impl Drop for StagingGuard {
-    fn drop(&mut self) {
-        if self.armed {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
+        self.guard.path()
     }
 }
 
@@ -644,8 +572,8 @@ impl Drop for StagingGuard {
 /// unfinished publication performs NO fallible rollback: the preserved
 /// old generation and the scratch are conservatively retained, so a
 /// drop can never report a rollback it did not verify.
-pub struct Publication<'store> {
-    store: &'store SourceStore,
+pub struct Publication {
+    store: SourceStore,
     published: Published,
     /// The retained staging parent of a replacing publication (the
     /// preserved old generation plus this run's fetch scratch); `None`
@@ -653,7 +581,7 @@ pub struct Publication<'store> {
     staging: Option<PathBuf>,
 }
 
-impl Publication<'_> {
+impl Publication {
     /// What this publication did.
     #[must_use]
     pub fn kind(&self) -> &Published {
@@ -710,7 +638,7 @@ impl Publication<'_> {
 
     /// Undo the publication after a registry write failure.
     ///
-    /// The publication borrows its originating store and lock, so undo
+    /// The publication owns its originating store and lock, so undo
     /// cannot target another source or run after that lock is released. The
     /// registry state is untouched: the previous disabled state stays
     /// exactly as it was, including the re-add case. Undo errors are
@@ -776,49 +704,89 @@ mod tests {
     }
 
     #[test]
+    fn stage_and_publication_keep_the_source_lock_until_drop() {
+        let state = tempfile::tempdir().expect("tempdir");
+        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
+        let probe = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(store.dir.join("lock"))
+            .expect("opens independent lock probe");
+        let held = || {
+            assert!(matches!(
+                probe.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+        };
+        let staged = store.new_staging().expect("stages");
+        held();
+        std::fs::create_dir(staged.path().join("flake")).expect("flake dir");
+        let revision = "0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a";
+        let mut publication = staged
+            .publish(&provenance(revision), &index(revision))
+            .expect("publishes");
+        held();
+        assert_eq!(publication.finish(), [] as [String; 0]);
+        held();
+        drop(publication);
+        probe
+            .try_lock()
+            .expect("publication drop releases the lock");
+    }
+
+    #[test]
     fn first_publication_renames_and_undo_removes_it() {
         let state = tempfile::tempdir().expect("tempdir");
         let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
         let revision = "0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a";
         assert!(!store.is_published());
+        let generations = store.generations();
+        let current = store.current();
         let staged = store.new_staging().expect("stages");
         let staging = staged.path().to_path_buf();
-        assert!(staging.starts_with(store.generations()));
+        assert!(staging.starts_with(&generations));
         // The importer's flake root lives inside the staging parent; the
         // raw checkout and captures stay outside the published root.
         let flake = staging.join("flake");
         std::fs::create_dir(&flake).expect("flake dir");
         std::fs::write(flake.join("flake.nix"), "first").expect("write");
         std::fs::create_dir(staging.join("captures")).expect("captures dir");
-        let publication = store
-            .publish(staged, &provenance(revision), &index(revision))
+        let publication = staged
+            .publish(&provenance(revision), &index(revision))
             .expect("publishes");
         assert_eq!(publication.kind(), &Published::First);
         // The nested flake root became the active generation itself:
         // `current/flake.nix` exists and `current/flake/` does not.
-        assert!(store.current().join("flake.nix").exists());
-        assert!(!store.current().join("flake").exists());
+        assert!(publication.store.current().join("flake.nix").exists());
+        assert!(!publication.store.current().join("flake").exists());
         // The disposable staging parent was removed by publish itself:
         // the caller settles no guard by hand.
         assert!(!staging.exists());
-        assert!(store.is_published());
+        assert!(publication.store.is_published());
         assert_eq!(
-            store.read_provenance().expect("provenance").revision,
+            publication
+                .store
+                .read_provenance()
+                .expect("provenance")
+                .revision,
             "0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a"
         );
         assert!(
-            store
+            publication
+                .store
                 .read_index()
                 .expect("index")
                 .targets()
                 .contains(&String::from("x86_64-linux"))
         );
         // Only the flake root became the active generation.
-        assert!(!store.current().join("captures").exists());
+        assert!(!publication.store.current().join("captures").exists());
 
         // Undo removes the first publication and nothing else.
         publication.undo().expect("undoes");
+        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks after undo");
         assert!(!store.is_published());
+        assert!(!current.exists());
     }
 
     #[test]
@@ -830,9 +798,10 @@ mod tests {
         let first_flake = first.path().join("flake");
         std::fs::create_dir(&first_flake).expect("flake dir");
         std::fs::write(first_flake.join("flake.nix"), "valid").expect("write");
-        store
-            .publish(first, &provenance(revision), &index(revision))
+        first
+            .publish(&provenance(revision), &index(revision))
             .expect("publishes valid generation");
+        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks again");
         let current = store.current().join("flake.nix");
 
         let staged = store.new_staging().expect("stages");
@@ -840,7 +809,7 @@ mod tests {
         std::fs::create_dir(&flake).expect("flake dir");
         std::fs::write(flake.join("flake.nix"), "invalid").expect("write");
         let mismatch = "1b56ceb53d693f3f3e0eaea0f9f4d5b8cf5b9b9d1b";
-        let Err(error) = store.publish(staged, &provenance(revision), &index(mismatch)) else {
+        let Err(error) = staged.publish(&provenance(revision), &index(mismatch)) else {
             panic!("an index with a different revision is refused");
         };
         assert!(error.contains("revision"), "{error}");
@@ -861,10 +830,11 @@ mod tests {
             let flake = staged.path().join("flake");
             std::fs::create_dir(&flake).expect("flake dir");
             std::fs::write(flake.join("flake.nix"), "old").expect("write");
-            store
-                .publish(staged, &provenance(old_rev), &index(old_rev))
+            staged
+                .publish(&provenance(old_rev), &index(old_rev))
                 .expect("first");
         }
+        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks again");
         let marker = store.current().join("flake.nix");
 
         let staged = store.new_staging().expect("stages");
@@ -873,8 +843,8 @@ mod tests {
         std::fs::create_dir(&flake).expect("flake dir");
         std::fs::write(flake.join("flake.nix"), "new").expect("write");
         std::fs::create_dir(staging.join("captures")).expect("captures scratch");
-        let mut publication = store
-            .publish(staged, &provenance(new_rev), &index(new_rev))
+        let mut publication = staged
+            .publish(&provenance(new_rev), &index(new_rev))
             .expect("exchanges");
         // The publication owns the retained staging parent: the guard was
         // settled inside publish and no caller can mis-settle it.
@@ -885,11 +855,15 @@ mod tests {
         // The old generation stays at the exchanged-out flake root (already
         // under generations/) exactly where the exchange left it.
         assert_eq!(saved_generation, flake);
-        assert!(saved_generation.starts_with(store.generations()));
+        assert!(saved_generation.starts_with(publication.store.generations()));
         // The active generation is entirely new: content and provenance.
         assert_eq!(std::fs::read_to_string(&marker).expect("read"), "new");
         assert_eq!(
-            store.read_provenance().expect("provenance").revision,
+            publication
+                .store
+                .read_provenance()
+                .expect("provenance")
+                .revision,
             new_rev
         );
         // The old generation survives, complete and immutable, inside the
@@ -902,7 +876,7 @@ mod tests {
 
         // Finishing the publication clears only the fetch scratch: the
         // preserved old generation and its parent stay untouched.
-        assert!(publication.finish().is_empty());
+        assert_eq!(publication.finish(), [] as [String; 0]);
         assert!(!staging.join("captures").exists());
         assert_eq!(
             std::fs::read_to_string(saved_generation.join("flake.nix")).expect("read"),
@@ -913,6 +887,7 @@ mod tests {
         // withdrawn new one is removed best effort (normally succeeds in
         // tests) or retained — never a claim of a failed restoration.
         publication.undo().expect("undoes");
+        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks after undo");
         assert_eq!(std::fs::read_to_string(&marker).expect("read"), "old");
         assert_eq!(
             store.read_provenance().expect("provenance").revision,
@@ -930,31 +905,35 @@ mod tests {
     fn undo_targets_its_locked_store_and_keeps_other_roots_intact() {
         let state = tempfile::tempdir().expect("tempdir");
         let other_state = tempfile::tempdir().expect("other tempdir");
-        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
         let other = SourceStore::lock(other_state.path(), "somebody/apps").expect("other locks");
         let revision = "0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a";
+        let other_current = other.current();
         let unrelated = other.new_staging().expect("other staging");
         std::fs::create_dir(unrelated.path().join("flake")).expect("other flake");
         std::fs::write(unrelated.path().join("flake/flake.nix"), "unrelated")
             .expect("other content");
-        other
-            .publish(unrelated, &provenance(revision), &index(revision))
+        unrelated
+            .publish(&provenance(revision), &index(revision))
             .expect("other publication")
             .finish();
         for (content, undo) in [("first", true), ("old", false), ("new", true)] {
+            let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
             let staged = store.new_staging().expect("staging");
             std::fs::create_dir(staged.path().join("flake")).expect("flake");
             std::fs::write(staged.path().join("flake/flake.nix"), content).expect("content");
-            let mut publication = store
-                .publish(staged, &provenance(revision), &index(revision))
+            let mut publication = staged
+                .publish(&provenance(revision), &index(revision))
                 .expect("publication");
             if undo {
                 publication.undo().expect("undo bound to origin");
             } else {
-                assert!(publication.finish().is_empty());
+                assert_eq!(publication.finish(), [] as [String; 0]);
+                drop(publication);
             }
+            let store =
+                SourceStore::lock(state.path(), "somebody/apps").expect("locks after settlement");
             assert_eq!(
-                std::fs::read_to_string(other.current().join("flake.nix")).expect("other content"),
+                std::fs::read_to_string(other_current.join("flake.nix")).expect("other content"),
                 "unrelated"
             );
             if content == "first" {
@@ -975,15 +954,15 @@ mod tests {
         let apps = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
         let revision = "0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9d1a";
 
-        // A staged generation of another source's store is refused, with
-        // both its own identity and the store's named.
+        // The stage owns its store, so a second store cannot be supplied.
+        // Provenance for a different source is still refused before mutation.
         let cli = SourceStore::lock(state.path(), "other/cli").expect("locks");
         let foreign = cli.new_staging().expect("stages");
         let flake = foreign.path().join("flake");
         std::fs::create_dir(&flake).expect("flake dir");
         std::fs::write(flake.join("flake.nix"), "foreign").expect("write");
-        let Err(error) = apps.publish(foreign, &provenance(revision), &index(revision)) else {
-            panic!("a foreign staged generation is refused");
+        let Err(error) = foreign.publish(&provenance(revision), &index(revision)) else {
+            panic!("the owned store refuses foreign provenance");
         };
         assert!(error.contains("other/cli"), "{error}");
         assert!(error.contains("somebody/apps"), "{error}");
@@ -997,37 +976,41 @@ mod tests {
         std::fs::create_dir(&flake).expect("flake dir");
         let mut foreign_provenance = provenance(revision);
         foreign_provenance.source = String::from("other/cli");
-        let Err(error) = apps.publish(staged, &foreign_provenance, &index(revision)) else {
+        let Err(error) = staged.publish(&foreign_provenance, &index(revision)) else {
             panic!("a foreign provenance is refused");
         };
         assert!(error.contains("other/cli"), "{error}");
+        let apps = SourceStore::lock(state.path(), "somebody/apps").expect("locks after refusal");
         assert!(!apps.is_published(), "no mutation happened");
+        drop(apps);
 
         // Publish a first and then a replacing generation; drop the
         // publication without finish or undo: the old generation must be
         // retained — Drop performs no fallible rollback — and this run's
         // scratch stays beside it.
         for content in ["old", "new"] {
+            let apps = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
             let staged = apps.new_staging().expect("stages");
             let flake = staged.path().join("flake");
             std::fs::create_dir(&flake).expect("flake dir");
             std::fs::write(flake.join("flake.nix"), content).expect("write");
             std::fs::create_dir(staged.path().join("captures")).expect("captures");
-            let publication = apps
-                .publish(staged, &provenance(revision), &index(revision))
+            let publication = staged
+                .publish(&provenance(revision), &index(revision))
                 .expect("publishes");
             if content == "new" {
                 let Published::Replaced { saved_generation } = publication.kind() else {
                     panic!("the second publication must replace");
                 };
                 let saved_generation = saved_generation.clone();
+                let current = publication.store.current();
                 drop(publication);
                 assert!(
                     saved_generation.join("flake.nix").exists(),
                     "an unfinished publication conservatively retains the old generation"
                 );
                 assert_eq!(
-                    std::fs::read_to_string(apps.current().join("flake.nix")).expect("read"),
+                    std::fs::read_to_string(current.join("flake.nix")).expect("read"),
                     "new"
                 );
             }
@@ -1043,10 +1026,11 @@ mod tests {
             let staged = store.new_staging().expect("stages");
             let flake = staged.path().join("flake");
             std::fs::create_dir(&flake).expect("flake dir");
-            store
-                .publish(staged, &provenance(revision), &index(revision))
+            staged
+                .publish(&provenance(revision), &index(revision))
                 .expect("first");
         }
+        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks again");
         // A corrupted old provenance must not block publication: nothing
         // reads the old generation during a replacement.
         std::fs::write(store.current().join(PROVENANCE_FILE), "{ broken").expect("corrupt");
@@ -1063,12 +1047,13 @@ mod tests {
         // could not fail at all under root.)
         let new_rev = "1b56ceb53d693f3f3e0eaea0f9f4d5b8cf5b9b9d1b";
         std::fs::create_dir(flake.join(PROVENANCE_FILE)).expect("blocking dir");
-        let failed = store.publish(staged, &provenance(new_rev), &index(new_rev));
+        let failed = staged.publish(&provenance(new_rev), &index(new_rev));
         assert!(
             failed.is_err(),
             "publication must fail on an unwritable provenance capture"
         );
         assert!(!staging.exists(), "the failed staging directory is removed");
+        let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks after failure");
         // The active generation is untouched, still the old one.
         assert!(store.is_published());
         assert_eq!(
@@ -1200,8 +1185,8 @@ mod tests {
             let flake = staged.path().join("flake");
             std::fs::create_dir(&flake).expect("flake dir");
             let revision = "0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a";
-            store
-                .publish(staged, &provenance(revision), &index(revision))
+            staged
+                .publish(&provenance(revision), &index(revision))
                 .expect("publishes");
             // The exclusive handle is dropped before the shared read.
         }

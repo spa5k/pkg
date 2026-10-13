@@ -143,9 +143,9 @@ pub(super) fn add(
 
     // Only now do the runtime and the importer run.
     let session = super::session(cli)?;
-    let (locked, staged_generation, staged) =
+    let (staged_generation, staged) =
         stage_import_with_setup(&session, &source, &origin, revision.as_deref(), now_unix())?;
-    let mut publication = locked.publish(staged_generation, &staged.provenance, &staged.index)?;
+    let mut publication = staged_generation.publish(&staged.provenance, &staged.index)?;
 
     // One prepared rename records consent. A failure triggers a rollback
     // of the publication — first or replacing — so the previous generation
@@ -212,7 +212,7 @@ fn recheck_consent(
 /// immutable path). Nothing is ever claimed undone when it was not.
 fn undo_publication_after_registry_failure(
     source: &str,
-    publication: store::Publication<'_>,
+    publication: store::Publication,
     registry_error: &str,
 ) -> CommandError {
     let published = publication.kind().clone();
@@ -276,10 +276,9 @@ pub(super) fn update(
     }
     // The global lock covers this registry snapshot and all publications.
     for (source, origin) in targets {
-        let (locked, staged_generation, staged) =
+        let (staged_generation, staged) =
             stage_import_with_setup(&session, source, origin, revision.as_deref(), now_unix())?;
-        let mut publication =
-            locked.publish(staged_generation, &staged.provenance, &staged.index)?;
+        let mut publication = staged_generation.publish(&staged.provenance, &staged.index)?;
         // An update has no registry write: finish the publication by
         // clearing this run's fetch scratch best effort.
         for warning in publication.finish() {
@@ -299,16 +298,14 @@ fn report_publication(
     published: &store::Published,
     verbose: bool,
 ) {
-    match published {
-        store::Published::First => println!(
-            "Added tap: {source} ({} packages available).",
-            staged.result.eligible
-        ),
-        store::Published::Replaced { .. } => println!(
-            "Updated tap: {source} ({} packages available).",
-            staged.result.eligible
-        ),
-    }
+    let action = match published {
+        store::Published::First => "Added",
+        store::Published::Replaced { .. } => "Updated",
+    };
+    println!(
+        "{action} tap: {source} ({} packages available).",
+        staged.result.eligible
+    );
     if verbose {
         eprintln!(
             "pkg: revision {}; {} eligible, {} excluded",
@@ -331,25 +328,15 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
         .iter()
         .map(|(source, entry)| {
             let state = tap::SavedCatalogs::load_one(&registry, &paths.state_home, source);
-            match state {
-                Ok(catalog) => TapRow {
-                    source: source.clone(),
-                    origin: entry.origin.clone(),
-                    revision: Some(catalog.provenance().revision.clone()),
-                    eligible: Some(catalog.provenance().eligible),
-                    excluded: Some(catalog.provenance().excluded),
-                    added_unix: entry.added_unix,
-                    error: None,
-                },
-                Err(error) => TapRow {
-                    source: source.clone(),
-                    origin: entry.origin.clone(),
-                    revision: None,
-                    eligible: None,
-                    excluded: None,
-                    added_unix: entry.added_unix,
-                    error: Some(error),
-                },
+            let provenance = state.as_ref().ok().map(tap::SavedCatalog::provenance);
+            TapRow {
+                source: source.clone(),
+                origin: entry.origin.clone(),
+                revision: provenance.map(|value| value.revision.clone()),
+                eligible: provenance.map(|value| value.eligible),
+                excluded: provenance.map(|value| value.excluded),
+                added_unix: entry.added_unix,
+                error: state.err(),
             }
         })
         .collect();

@@ -13,6 +13,7 @@
     )
 )]
 
+use cask_catalog::tap::ImportError;
 use cask_catalog::{
     CACHE_DIR, Pin, emit, load_pin, read_verified_input, valid_repo, valid_revision, valid_sha256,
     verify_sha256,
@@ -79,38 +80,17 @@ enum Command {
     /// (GitHub identity check, codeload fetch, sandboxed Nix raw
     /// export) into a self-contained native-only flake tree (schema
     /// pkg-cask-catalog/4). Emits one JSON result on stdout.
-    ImportTap {
-        /// Tap identity `owner/tap` or
-        /// `https://github.com/owner/homebrew-tap`.
-        #[arg(long)]
-        source: String,
-        /// Exact 40-hex commit revision of the tap; omit to use the
-        /// default branch head.
-        #[arg(long)]
-        revision: Option<String>,
-        /// Single native target: aarch64-darwin or x86_64-linux. Must
-        /// equal this build host.
-        #[arg(long)]
-        system: String,
-        /// Path to the Nix EXECUTABLE (e.g. /nix/store/.../bin/nix)
-        /// that builds the embedded raw-export runtime.
-        #[arg(long, default_value = "nix")]
-        nix: PathBuf,
-        /// Output directory for the self-contained flake tree. Must be
-        /// caller-owned and empty (precreated is fine).
-        #[arg(long)]
-        out: PathBuf,
-    },
+    ImportTap(cask_catalog::tap::ImportRequest),
 }
 
 fn main() {
-    if let Err(message) = run() {
-        eprintln!("cask-catalog: {message}");
-        std::process::exit(1);
+    if let Err(error) = run() {
+        eprintln!("cask-catalog: {error}");
+        std::process::exit(error.signal().map_or(1, |signal| 128 + signal));
     }
 }
 
-fn run() -> Result<(), String> {
+fn run() -> Result<(), ImportError> {
     match Cli::parse().command {
         Command::Fetch {
             revision,
@@ -118,20 +98,14 @@ fn run() -> Result<(), String> {
             sha256,
             cache_dir,
             pin,
-        } => fetch(&revision, &repo, &sha256, &cache_dir, &pin),
+        } => fetch(&revision, &repo, &sha256, &cache_dir, &pin).map_err(ImportError::from),
         Command::Generate {
             pin,
             input,
             cache_dir,
             out_dir,
-        } => generate(&pin, input, &cache_dir, &out_dir),
-        Command::ImportTap {
-            source,
-            revision,
-            system,
-            nix,
-            out,
-        } => import_tap(&source, revision.as_deref(), &system, &nix, &out),
+        } => generate(&pin, input, &cache_dir, &out_dir).map_err(ImportError::from),
+        Command::ImportTap(request) => import_tap(&request),
     }
 }
 
@@ -223,22 +197,8 @@ fn generate(
     Ok(())
 }
 
-fn import_tap(
-    source: &str,
-    revision: Option<&str>,
-    system: &str,
-    nix: &Path,
-    out: &Path,
-) -> Result<(), String> {
-    let request = cask_catalog::tap::ImportRequest {
-        source: source.to_string(),
-        revision: revision.map(ToString::to_string),
-        system: system.to_string(),
-        nix: nix.to_path_buf(),
-        output_dir: out.to_path_buf(),
-    };
-    let result =
-        cask_catalog::tap::import(&request).map_err(|error| error.message().to_string())?;
+fn import_tap(request: &cask_catalog::tap::ImportRequest) -> Result<(), ImportError> {
+    let result = cask_catalog::tap::import(request)?;
     // Machine-readable single-line result on stdout; the client parses
     // this after validating the catalog index. Serialized directly from
     // the `Serialize` derive: snake_case field names

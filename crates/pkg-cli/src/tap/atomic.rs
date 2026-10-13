@@ -9,7 +9,6 @@
 //! a filesystem without the exchange syscall fails publication instead of
 //! risking a missing-path window between renames.
 
-use std::ffi::CString;
 use std::io;
 use std::path::Path;
 
@@ -30,73 +29,21 @@ pub fn exchange_directories(a: &Path, b: &Path) -> Result<(), String> {
     // could then delete the wrong generation.
     verify_directory(a)?;
     verify_directory(b)?;
-    let a_raw = cpath(a)?;
-    let b_raw = cpath(b)?;
-    // SAFETY: both pointers are valid C strings for the whole call and the
-    // syscall only reads them; no state outlives the call.
-    let result = unsafe { exchange_syscall(&a_raw, &b_raw) };
-    if result != 0 {
-        let error = io::Error::last_os_error();
-        return Err(format!(
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        a,
+        rustix::fs::CWD,
+        b,
+        rustix::fs::RenameFlags::EXCHANGE,
+    )
+    .map_err(|error| {
+        let error = io::Error::from(error);
+        format!(
             "cannot atomically exchange {} and {}: {error}",
             a.display(),
             b.display()
-        ));
-    }
-    Ok(())
-}
-
-/// The platform exchange call; zero on success.
-///
-/// SAFETY: `a` and `b` must be valid NUL-terminated paths for the length
-/// of the call.
-#[cfg(target_os = "linux")]
-unsafe fn exchange_syscall(a: &CString, b: &CString) -> i32 {
-    unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            a.as_ptr(),
-            libc::AT_FDCWD,
-            b.as_ptr(),
-            libc::RENAME_EXCHANGE,
         )
-    }
-}
-
-/// The platform exchange call; zero on success.
-///
-/// SAFETY: `a` and `b` must be valid NUL-terminated paths for the length
-/// of the call.
-#[cfg(target_os = "macos")]
-unsafe fn exchange_syscall(a: &CString, b: &CString) -> i32 {
-    // `renameatx_np` takes its flags as `c_uint` on macOS.
-    unsafe {
-        libc::renameatx_np(
-            libc::AT_FDCWD,
-            a.as_ptr(),
-            libc::AT_FDCWD,
-            b.as_ptr(),
-            libc::RENAME_SWAP,
-        )
-    }
-}
-
-/// Convert one path to a C string without NUL bytes inside.
-///
-/// On Unix the path's raw OS bytes are used, so a path with arbitrary
-/// non-UTF-8 bytes converts exactly like a UTF-8 one.
-fn cpath(path: &Path) -> Result<CString, String> {
-    #[cfg(unix)]
-    let bytes = {
-        use std::os::unix::ffi::OsStrExt;
-        path.as_os_str().as_bytes()
-    };
-    #[cfg(not(unix))]
-    let bytes = path
-        .to_str()
-        .map(|text| text.as_bytes())
-        .ok_or_else(|| format!("path {} is not usable as a C path", path.display()))?;
-    CString::new(bytes).map_err(|_| format!("path {} contains a NUL byte", path.display()))
+    })
 }
 
 /// Refuse anything that is not a real directory (a symlink never counts).
@@ -119,16 +66,13 @@ pub(crate) fn verify_directory(path: &Path) -> Result<(), String> {
 /// the flush, but a filesystem that refuses directory fsync must not fail
 /// an otherwise complete publication.
 pub fn fsync_directory(path: &Path) {
-    if let Ok(raw) = cpath(path) {
-        // SAFETY: the pointer is a valid C string for the whole call; the fd
-        // is closed immediately after, whatever the fsync result.
-        unsafe {
-            let fd = libc::open(raw.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY);
-            if fd >= 0 {
-                libc::fsync(fd);
-                libc::close(fd);
-            }
-        }
+    use std::os::unix::fs::OpenOptionsExt as _;
+    if let Ok(directory) = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY)
+        .open(path)
+    {
+        let _ = directory.sync_all();
     }
 }
 

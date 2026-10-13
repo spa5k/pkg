@@ -5,8 +5,8 @@ fn direct_deserialization_uses_the_strict_catalog_decoder() {
     let manifest = include_str!("../../../tests/fixtures/catalog-index.json");
     let raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
     let decoded: CatalogIndex = serde_json::from_value(raw.clone()).expect("valid strict index");
-    assert_eq!(decoded.schema(), CATALOG_INDEX_SCHEMA);
     let encoded = serde_json::to_value(&decoded).expect("serializes");
+    assert_eq!(encoded["schema"], CATALOG_INDEX_SCHEMA);
     assert_eq!(
         serde_json::from_value::<CatalogIndex>(encoded).expect("strict round trip"),
         decoded
@@ -26,7 +26,14 @@ fn direct_deserialization_uses_the_strict_catalog_decoder() {
         })
         .expect("fixture system");
     invalid["systems"][&system]["entries"][&id]["kind"] = serde_json::Value::Null;
-    assert!(serde_json::from_value::<CatalogIndex>(invalid).is_err());
+    assert!(serde_json::from_value::<CatalogIndex>(invalid.clone()).is_err());
+    invalid["systems"][&system]["entries"][&id]["kind"] = serde_json::json!(false);
+    let error = serde_json::from_value::<CatalogIndex>(invalid)
+        .expect_err("invalid field is refused with its complete path")
+        .to_string();
+    for field in [system.as_str(), id.as_str(), "kind"] {
+        assert!(error.contains(field), "{error}");
+    }
 }
 
 /// Invalid declared ranges fail the whole decode, named by entry.
@@ -102,12 +109,44 @@ fn raw_provenance_accepts_the_backend_envelope_shape() {
     });
     let index = decode_catalog_index(&raw).expect("decodes the backend shape");
     let input = &index.inputs()["somebody/apps"];
-    let raw = input.raw.as_ref().expect("raw preserved");
-    assert_eq!(raw.envelope_schema.as_deref(), Some("pkg-tap-raw-export/1"));
+    let provenance = input.raw.as_ref().expect("raw preserved");
     assert_eq!(
-        raw.capture_sha256,
+        provenance.envelope_schema.as_deref(),
+        Some("pkg-tap-raw-export/1")
+    );
+    assert_eq!(
+        provenance.capture_sha256,
         "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251"
     );
+    let fields = [
+        ("url", "/url"),
+        ("revision", "/revision"),
+        ("sha256", "/sha256"),
+        ("license", "/license"),
+        ("raw.archiveUrl", "/raw/archiveUrl"),
+        ("raw.archiveSha256", "/raw/archiveSha256"),
+        ("raw.captureSha256", "/raw/captureSha256"),
+    ];
+    for (field, pointer) in fields {
+        let mut invalid = raw.clone();
+        *invalid["inputs"]["somebody/apps"]
+            .pointer_mut(pointer)
+            .expect("required provenance field") = serde_json::json!(" \t ");
+        let error = decode_catalog_index(&invalid).expect_err("empty provenance is refused");
+        assert!(
+            error.to_string().contains("somebody/apps"),
+            "{field}: {error}"
+        );
+        *invalid["inputs"]["somebody/apps"]
+            .pointer_mut(pointer)
+            .expect("required provenance field") = serde_json::json!(false);
+        let error = decode_catalog_index(&invalid)
+            .expect_err("invalid provenance type is refused")
+            .to_string();
+        for name in ["inputs", "somebody/apps", field] {
+            assert!(error.contains(name), "{error}");
+        }
+    }
     // The official catalog input carries no `raw` at all and decodes.
     let official = serde_json::json!({
         "schema": CATALOG_INDEX_SCHEMA,
@@ -140,8 +179,6 @@ fn decodes_the_actual_catalog_index_slice() {
     let manifest = include_str!("../../../tests/fixtures/catalog-index.json");
     let raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
     let index = decode_catalog_index(&raw).expect("decodes actual slice");
-    assert_eq!(index.generator().name, "cask-catalog");
-    assert_eq!(index.generator().version, "0.1.0");
     let official = &index.inputs()[OFFICIAL_CASK_SOURCE];
     assert_eq!(
         official.revision,
@@ -153,7 +190,6 @@ fn decodes_the_actual_catalog_index_slice() {
     );
     assert_eq!(official.license, "BSD-2-Clause (Homebrew Cask data)");
     assert_eq!(index.targets(), ["aarch64-darwin", "x86_64-linux"]);
-    assert_eq!(index.macos_baseline(), "15.7.7");
 
     let macos = &index.systems()["aarch64-darwin"].entries;
     let iterm2 = &macos["homebrew/cask/iterm2"];
@@ -266,6 +302,8 @@ fn envelope_round_trips_and_full_catalog_layout_is_refused() {
     // The written capture carries the schema identity and the exact
     // `macosBaseline` field name, so saved captures decode again.
     assert_eq!(encoded["schema"], CATALOG_INDEX_SCHEMA);
+    assert_eq!(encoded["generator"]["name"], "cask-catalog");
+    assert_eq!(encoded["generator"]["version"], "0.1.0");
     assert_eq!(encoded["macosBaseline"], "15.7.7");
     assert_eq!(decode_catalog_index(&encoded).expect("round trips"), index);
 
@@ -278,6 +316,51 @@ fn envelope_round_trips_and_full_catalog_layout_is_refused() {
         .insert(String::from("entries"), systems);
     full.as_object_mut().expect("object").remove("systems");
     assert!(decode_catalog_index(&full).is_err());
+}
+
+#[test]
+fn record_arrays_and_duplicate_fields_keep_their_decode_semantics() {
+    let manifest = include_str!("../../../tests/fixtures/catalog-index.json");
+    let mut raw: serde_json::Value = serde_json::from_str(manifest).expect("valid json");
+    raw["generator"] = serde_json::json!(["cask-catalog", "0.1.0"]);
+    raw["systems"]["x86_64-linux"]["entries"]["homebrew/cask/koreader"] = serde_json::json!([
+        "homebrew/cask",
+        "koreader",
+        null,
+        null,
+        "2026.07.1",
+        null,
+        "eligible",
+        "binary",
+        null,
+        null,
+        null,
+        null
+    ]);
+    let targets = ["x86_64-linux", "aarch64-darwin", "x86_64-linux"];
+    raw["targets"] = serde_json::json!(targets);
+    let index = decode_catalog_index(&raw).expect("record arrays are accepted");
+    assert_eq!(index.targets(), targets);
+    let encoded = serde_json::to_value(&index).expect("serializes as objects");
+    assert!(encoded["generator"].is_object());
+    assert!(encoded["systems"]["x86_64-linux"]["entries"]["homebrew/cask/koreader"].is_object());
+    assert_eq!(encoded["targets"], raw["targets"]);
+
+    let duplicate =
+        serde_json::to_string(&raw)
+            .expect("serializes")
+            .replacen('{', "{\"schema\":\"wrong\",", 1);
+    assert_eq!(
+        serde_json::from_str::<CatalogIndex>(&duplicate).unwrap(),
+        index
+    );
+
+    for section in [serde_json::json!([{}]), serde_json::json!({"entries": []})] {
+        raw["systems"]["x86_64-linux"] = section;
+        let error =
+            decode_catalog_index(&raw).expect_err("sections and entry maps must be objects");
+        assert!(error.to_string().contains("x86_64-linux"), "{error}");
+    }
 }
 
 /// The schema gate names the schema found and the schema supported, so a
@@ -387,7 +470,7 @@ fn broken_records_fail_the_whole_decode_named() {
     let mut pinless = raw.clone();
     pinless["inputs"][OFFICIAL_CASK_SOURCE]["revision"] = serde_json::json!("");
     let error = decode_catalog_index(&pinless).expect_err("empty provenance fails");
-    assert!(error.to_string().contains("revision"), "{}", error);
+    assert!(error.to_string().contains(OFFICIAL_CASK_SOURCE), "{error}");
 }
 
 /// Full entry identities split and reassemble exactly, and the source

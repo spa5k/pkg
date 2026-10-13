@@ -3,37 +3,6 @@
 use super::{CommandError, Session};
 use crate::tap::{self, setup, store};
 
-/// The typed failure of one staging attempt.
-///
-/// Only the importer's typed sandbox refusal is carried as a category;
-/// every other failure is already formatted for the CLI boundary.
-enum StageError {
-    /// The importer refused the import because the effective local nix
-    /// config is not fail-closed; the setup offer may answer this.
-    SandboxRefused(String),
-    /// Any other failure, already a command error.
-    Other(CommandError),
-}
-
-/// Classify one importer failure for the staging path.
-///
-/// The category is the importer's typed one: an ordinary failure whose
-/// text merely contains the refusal phrase is an ordinary failure.
-fn stage_error_for_import_error(source: &str, error: cask_catalog::tap::ImportError) -> StageError {
-    match error {
-        cask_catalog::tap::ImportError::SandboxRefused(detail) => {
-            StageError::SandboxRefused(detail)
-        }
-        cask_catalog::tap::ImportError::Failed(detail) => StageError::Other(
-            format!(
-                "importing {source} failed; the published generation and the \
-                 registry are unchanged: {detail}"
-            )
-            .into(),
-        ),
-    }
-}
-
 /// Retry once after approved sandbox setup. Only a typed refusal offers setup.
 pub(super) fn stage_import_with_setup(
     session: &Session,
@@ -41,26 +10,28 @@ pub(super) fn stage_import_with_setup(
     origin: &str,
     revision: Option<&str>,
     now_unix: u64,
-) -> Result<(store::SourceStore, store::StagedGeneration, StagedImport), CommandError> {
+) -> Result<(store::StagedGeneration, StagedImport), CommandError> {
     match stage_import(session, source, origin, revision, now_unix) {
         Ok(staged) => return Ok(staged),
-        Err(StageError::Other(error)) => return Err(error),
-        Err(StageError::SandboxRefused(_)) => {}
+        Err(CommandError::TapImport {
+            error: cask_catalog::tap::ImportError::SandboxRefused(_),
+            ..
+        }) => {}
+        Err(error) => return Err(error),
     }
     eprintln!("pkg: tap import refused: the Nix daemon is not proven sandboxed");
-    if !setup::offer_and_apply(&session.nix)
-        .map_err(|detail| format!("the sandbox setup failed: {detail}"))?
-    {
+    if !setup::offer_and_apply(&session.nix)? {
         return Err(String::from(
             "the tap import needs the one-time sandbox setup; nothing was imported",
         )
         .into());
     }
     stage_import(session, source, origin, revision, now_unix).map_err(|error| match error {
-        StageError::SandboxRefused(detail) => {
-            format!("the tap import was refused again after the sandbox setup: {detail}").into()
-        }
-        StageError::Other(error) => error,
+        CommandError::TapImport {
+            error: cask_catalog::tap::ImportError::SandboxRefused(detail),
+            ..
+        } => format!("the tap import was refused again after the sandbox setup: {detail}").into(),
+        error => error,
     })
 }
 
@@ -82,16 +53,10 @@ fn stage_import(
     origin: &str,
     revision: Option<&str>,
     now_unix: u64,
-) -> Result<(store::SourceStore, store::StagedGeneration, StagedImport), StageError> {
-    let locked = store::SourceStore::lock(&session.paths.state_home, source)
-        .map_err(|error| StageError::Other(error.into()))?;
-    let staged = locked
-        .new_staging()
-        .map_err(|error| StageError::Other(error.into()))?;
-    let system = session
-        .nix
-        .system()
-        .map_err(|error| StageError::Other(error.into()))?;
+) -> Result<(store::StagedGeneration, StagedImport), CommandError> {
+    let locked = store::SourceStore::lock(&session.paths.state_home, source)?;
+    let staged = locked.new_staging()?;
+    let system = session.nix.system()?;
     // The stage boundary: everything above is local state only; from here
     // the approved source's data is fetched and its Ruby runs under the
     // sandboxed Nix build. Name the approved source, origin, and scope
@@ -105,24 +70,23 @@ fn stage_import(
         nix: session.nix.executable().to_path_buf(),
         output_dir: staged.path().to_path_buf(),
     };
-    let result = cask_catalog::tap::import(&request)
-        .map_err(|error| stage_error_for_import_error(source, error))?;
+    let result = cask_catalog::tap::import(&request).map_err(|error| CommandError::TapImport {
+        tap: source.to_owned(),
+        error,
+    })?;
     if result.source != source || result.origin != origin {
-        return Err(StageError::Other(
-            format!(
-                "the importer returned identity {}/{} for source {source}; \
-                 refusing to publish",
-                result.source, result.origin
-            )
-            .into(),
-        ));
+        return Err(format!(
+            "the importer returned identity {}/{} for source {source}; \
+             refusing to publish",
+            result.source, result.origin
+        )
+        .into());
     }
     // Only the importer's generated flake root — exactly the canonical
     // `staging/flake` directory — is returned for publication. The
     // untrusted checkout and the captures beside it never become the
     // active flake root.
-    let flake_path =
-        validated_flake_path(staged.path(), &result.flake_path).map_err(StageError::Other)?;
+    let flake_path = validated_flake_path(staged.path(), &result.flake_path)?;
     let provenance = store::Provenance {
         source: String::from(source),
         origin: String::from(origin),
@@ -132,11 +96,10 @@ fn stage_import(
         excluded: result.excluded,
         published_unix: now_unix,
     };
-    let index = tap::validate_staging(&session.nix, &flake_path)
-        .map_err(|error| StageError::Other(error.into()))?;
-    check_staged_index(&index, &provenance, &system).map_err(StageError::Other)?;
+    let index =
+        tap::validate_staging(&session.nix, &flake_path).map_err(CommandError::TapValidation)?;
+    check_staged_index(&index, &provenance, &system)?;
     Ok((
-        locked,
         staged,
         StagedImport {
             result,

@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read as _;
 use std::io::Write as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
@@ -6,7 +7,7 @@ use std::process::{Child, Command};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use super::{ChildLimits, IoMode, Outcome, StderrSink, run_child, run_child_with_limits};
+use super::{ChildLimits, IoMode, Outcome, StderrSink, run_child};
 
 const MODE: &str = "PKG_PROCESS_SIGNAL_TEST";
 const READY: &str = "PKG_PROCESS_SIGNAL_READY";
@@ -55,6 +56,84 @@ impl StderrSink for ExitSignalSink {
         // SAFETY: the selected termination handler remains installed until
         // run_child restores it after this completion callback returns.
         assert_eq!(unsafe { libc::raise(self.0) }, 0);
+    }
+}
+
+struct ReapFailureSink {
+    signal: i32,
+    changed: bool,
+}
+
+impl StderrSink for ReapFailureSink {
+    fn chunk(&mut self, bytes: &[u8]) {
+        if self.changed || !bytes.windows(5).any(|part| part == b"READY") {
+            return;
+        }
+        self.changed = true;
+        assert_eq!(unsafe { libc::raise(self.signal) }, 0);
+        assert_ne!(
+            unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) },
+            libc::SIG_ERR
+        );
+    }
+
+    fn finish(&mut self, _success: bool) {}
+}
+
+#[test]
+fn cancelled_reap_failure_supervisor() {
+    use std::error::Error as _;
+    if std::env::var(MODE).as_deref() != Ok("cancelled-reap-failure") {
+        return;
+    }
+    let signal = std::env::var(SIGNAL).unwrap().parse::<i32>().unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "tests::reap_failure_child", "--nocapture"])
+        .env(MODE, "reap-failure-child");
+    let mut sink = ReapFailureSink {
+        signal,
+        changed: false,
+    };
+    let error = run_child(command, IoMode::Filtered(&mut sink), None, None)
+        .err()
+        .expect("caller auto-reaping must fail supervision");
+    assert!(sink.changed);
+    assert_eq!(error.cancelled, Some(signal));
+    assert_eq!(error.source.raw_os_error(), Some(libc::ECHILD));
+    assert_eq!(
+        error
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .raw_os_error(),
+        Some(libc::ECHILD)
+    );
+}
+
+#[test]
+fn reap_failure_child() {
+    if std::env::var(MODE).as_deref() == Ok("reap-failure-child") {
+        eprintln!("READY");
+        std::thread::sleep(Duration::from_secs(30));
+    }
+}
+
+#[test]
+fn cancellation_survives_a_reap_failure() {
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::cancelled_reap_failure_supervisor",
+                "--nocapture",
+            ])
+            .env(MODE, "cancelled-reap-failure")
+            .env(SIGNAL, signal.to_string())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{signal}: {output:?}");
     }
 }
 
@@ -113,25 +192,22 @@ fn mixed_signal_child() {
 fn mixed_termination_signals_are_all_forwarded() {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::mixed_signal_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::mixed_signal_child", "--nocapture"])
         .env(MODE, "mixed-signal-child");
     let mut sink = MixedSignalSink {
         bytes: Vec::new(),
         raised: false,
         raise_failed: false,
     };
-    let reaped = run_child_with_limits(
+    let reaped = run_child(
         command,
-        IoMode::Filtered,
-        Some(&mut sink),
+        IoMode::Filtered(&mut sink),
         Some(ChildLimits {
-            resident_bytes: u64::MAX,
+            resident_bytes: Some(u64::MAX),
+            output_bytes: 16 * 1024 * 1024,
             wall_time: Duration::from_secs(3),
         }),
+        None,
     )
     .expect("run mixed-signal child");
     assert!(sink.raised, "child readiness must trigger the signal batch");
@@ -139,7 +215,7 @@ fn mixed_termination_signals_are_all_forwarded() {
     assert_eq!(
         reaped.classify(),
         Outcome::Interrupted {
-            signal: libc::SIGHUP
+            signal: libc::SIGINT
         }
     );
     assert!(
@@ -180,21 +256,17 @@ fn auto_reap_supervisor() {
     );
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::spawn_marker_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::spawn_marker_child", "--nocapture"])
         .env(MODE, "spawn-marker-child")
         .env(MARKER, &marker);
-    let error = run_child(command, IoMode::Capture, None)
+    let error = run_child(command, IoMode::Capture, None, None)
         .err()
         .expect("auto-reaped children cannot be supervised safely");
     assert!(
         !Path::new(&marker).exists(),
         "the child must not be spawned"
     );
-    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(error.source.kind(), std::io::ErrorKind::InvalidInput);
 }
 
 #[test]
@@ -205,11 +277,7 @@ fn setup_signal_supervisor() {
     let signal = std::env::var(SIGNAL).unwrap().parse::<i32>().unwrap();
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::setup_signal_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::setup_signal_child", "--nocapture"])
         .env(MODE, "setup-child")
         .env(SIGNAL, signal.to_string());
     // SAFETY: the hook uses only async-signal-safe calls after fork. It sends
@@ -223,7 +291,7 @@ fn setup_signal_supervisor() {
             Ok(())
         });
     }
-    let reaped = run_child(command, IoMode::Capture, None).expect("run setup signal child");
+    let reaped = run_child(command, IoMode::Capture, None, None).expect("run setup signal child");
     assert_eq!(reaped.classify(), Outcome::Interrupted { signal });
 }
 
@@ -241,11 +309,7 @@ fn setup_signal_child() {
 fn signals_sent_during_child_setup_are_forwarded() {
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
         let status = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "nix::process::tests::setup_signal_supervisor",
-                "--nocapture",
-            ])
+            .args(["--exact", "tests::setup_signal_supervisor", "--nocapture"])
             .env(MODE, "setup-supervisor")
             .env(SIGNAL, signal.to_string())
             .status()
@@ -262,14 +326,11 @@ fn grace_supervisor() {
     let signal = std::env::var(SIGNAL).unwrap().parse::<i32>().unwrap();
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::ignoring_signal_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::ignoring_signal_child", "--nocapture"])
         .env(MODE, "ignoring-child")
         .env(READY, std::env::var(READY).unwrap());
-    let reaped = run_child(command, IoMode::Capture, None).expect("run signal-ignoring child");
+    let reaped =
+        run_child(command, IoMode::Capture, None, None).expect("run signal-ignoring child");
     assert_eq!(reaped.classify(), Outcome::Interrupted { signal });
 }
 
@@ -303,11 +364,7 @@ fn cancellation_grace_kills_and_reaps_a_signal_ignoring_child() {
     let ready = temp.path().join("ready");
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::grace_supervisor",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::grace_supervisor", "--nocapture"])
         .env(MODE, "grace-supervisor")
         .env(SIGNAL, libc::SIGTERM.to_string())
         .env(READY, &ready)
@@ -360,17 +417,13 @@ fn exit_signal_test_supervisor() {
         let ready = Path::new(&ready_dir).join(format!("holder-{signal}"));
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
-            .args([
-                "--exact",
-                "nix::process::tests::exit_signal_supervisor",
-                "--nocapture",
-            ])
+            .args(["--exact", "tests::exit_signal_supervisor", "--nocapture"])
             .env(MODE, "exit-supervisor")
             .env(READY, &ready);
         let mut sink = ExitSignalSink(signal);
         let started = Instant::now();
-        let reaped =
-            run_child(command, IoMode::Filtered, Some(&mut sink)).expect("run exit signal child");
+        let reaped = run_child(command, IoMode::Filtered(&mut sink), None, None)
+            .expect("run exit signal child");
         assert_eq!(reaped.classify(), Outcome::Interrupted { signal });
         assert!(started.elapsed() < Duration::from_secs(1));
         let holder_pid = wait_for_marker(&ready).parse::<i32>().unwrap();
@@ -386,7 +439,7 @@ fn signals_after_child_exit_are_classified_without_reaping_pipe_holders() {
     command
         .args([
             "--exact",
-            "nix::process::tests::exit_signal_test_supervisor",
+            "tests::exit_signal_test_supervisor",
             "--nocapture",
         ])
         .env(MODE, "exit-signal-test-supervisor")
@@ -435,11 +488,7 @@ fn bounded_children_stop_group_descendants_and_preserve_unrelated_sentinels() {
     let ready = temp.path().join("descendant");
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::bounded_group_supervisor",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::bounded_group_supervisor", "--nocapture"])
         .env(MODE, "bounded-group-supervisor")
         .env(READY, &ready);
     let mut sentinels = SentinelChildren(vec![
@@ -453,23 +502,21 @@ fn bounded_children_stop_group_descendants_and_preserve_unrelated_sentinels() {
             .expect("spawn second sentinel"),
     ]);
     for _ in 0..32 {
-        let reaped = super::run_child_bounded(command_for_true(), 512 * 1024 * 1024)
-            .expect("run bounded short child");
+        let reaped = run_metadata_child(command_for_true()).expect("run bounded short child");
         assert_eq!(reaped.classify(), Outcome::Success);
         for sentinel in &mut sentinels.0 {
             assert!(sentinel.try_wait().unwrap().is_none());
         }
     }
-    let reaped =
-        super::run_child_bounded(command, 512 * 1024 * 1024).expect("run bounded group child");
+    let reaped = run_metadata_child(command).expect("run bounded group child");
     assert_eq!(reaped.classify(), Outcome::Success);
     wait_for_process_exit(wait_for_marker(&ready).parse().unwrap());
 }
 
 #[test]
 fn bounded_child_with_no_group_descendants_succeeds_after_exit() {
-    let reaped = super::run_child_bounded(command_for_true(), 512 * 1024 * 1024)
-        .expect("run bounded child with no descendants");
+    let reaped =
+        run_metadata_child(command_for_true()).expect("run bounded child with no descendants");
     assert_eq!(reaped.classify(), Outcome::Success);
 }
 
@@ -540,26 +587,20 @@ fn output_limit_child() {
 fn bounded_output_stops_at_the_existing_budget() {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::output_limit_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::output_limit_child", "--nocapture"])
         .env(MODE, "output-limit-child");
-    let reaped = run_child_with_limits(
+    let reaped = run_child(
         command,
         IoMode::Capture,
-        None,
         Some(ChildLimits {
-            resident_bytes: u64::MAX,
+            resident_bytes: Some(u64::MAX),
+            output_bytes: 16 * 1024 * 1024,
             wall_time: Duration::from_secs(5),
         }),
+        None,
     )
     .expect("run output-limited child");
-    assert_eq!(
-        reaped.resource_limit,
-        Some("metadata output exceeded 16 MiB")
-    );
+    assert_eq!(reaped.resource_limit, Some("child exceeded log cap"));
     assert!(reaped.output.stdout.len() <= 16 * 1024 * 1024);
 }
 
@@ -571,28 +612,22 @@ fn continuous_output_supervisor() {
     let ready = std::env::var(READY).unwrap();
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::continuous_output_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::continuous_output_child", "--nocapture"])
         .env(MODE, "continuous-output-child")
         .env(READY, &ready);
     let started = Instant::now();
-    let reaped = run_child_with_limits(
+    let reaped = run_child(
         command,
         IoMode::Capture,
-        None,
         Some(ChildLimits {
-            resident_bytes: u64::MAX,
+            resident_bytes: Some(u64::MAX),
+            output_bytes: 16 * 1024 * 1024,
             wall_time: Duration::from_secs(5),
         }),
+        None,
     )
     .expect("stop continuous output child");
-    assert_eq!(
-        reaped.resource_limit,
-        Some("metadata output exceeded 16 MiB")
-    );
+    assert_eq!(reaped.resource_limit, Some("child exceeded log cap"));
     assert!(started.elapsed() < Duration::from_secs(4));
 }
 
@@ -619,7 +654,7 @@ fn continuous_output_limit_stops_a_live_producer() {
     command
         .args([
             "--exact",
-            "nix::process::tests::continuous_output_supervisor",
+            "tests::continuous_output_supervisor",
             "--nocapture",
         ])
         .env(MODE, "continuous-output-supervisor")
@@ -701,11 +736,7 @@ fn group_guard_stops_and_reaps_an_early_supervisor_group() {
     let ready = temp.path().join("descendant");
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::group_guard_supervisor",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::group_guard_supervisor", "--nocapture"])
         .env(MODE, "group-guard-supervisor")
         .env(READY, &ready);
     let supervisor = GroupChildGuard::spawn(command).expect("spawn group-guard supervisor");
@@ -722,11 +753,7 @@ fn group_guard_stops_a_live_supervisor_before_reaping() {
     let ready = temp.path().join("running-supervisor");
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::long_running_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::long_running_child", "--nocapture"])
         .env(MODE, "long-running-child")
         .env(READY, &ready);
     let mut supervisor = GroupChildGuard::spawn(command).expect("spawn live supervisor");
@@ -755,34 +782,28 @@ fn long_running_child() {
 fn bounded_timeout_uses_the_private_wall_time_limit() {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::long_running_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::long_running_child", "--nocapture"])
         .env(MODE, "long-running-child");
     let temp = tempfile::tempdir().expect("tempdir");
     let ready = temp.path().join("running-child");
     command.env(READY, &ready);
     let run = std::thread::spawn(move || {
-        run_child_with_limits(
+        run_child(
             command,
             IoMode::Capture,
-            None,
             Some(ChildLimits {
-                resident_bytes: u64::MAX,
+                resident_bytes: Some(u64::MAX),
+                output_bytes: 16 * 1024 * 1024,
                 wall_time: Duration::from_millis(60),
             }),
+            None,
         )
         .expect("run time-limited child")
     });
     let _child_pid = wait_for_marker(&ready).parse::<i32>().unwrap();
     let started = Instant::now();
     let reaped = run.join().expect("join time-limited child owner");
-    assert_eq!(
-        reaped.resource_limit,
-        Some("metadata batch exceeded 120 seconds")
-    );
+    assert_eq!(reaped.resource_limit, Some("child exceeded wall limit"));
     assert!(started.elapsed() < Duration::from_secs(2));
 }
 
@@ -790,20 +811,17 @@ fn bounded_timeout_uses_the_private_wall_time_limit() {
 fn bounded_rss_limit_stops_a_running_child() {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::long_running_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::long_running_child", "--nocapture"])
         .env(MODE, "long-running-child");
-    let reaped = run_child_with_limits(
+    let reaped = run_child(
         command,
         IoMode::Capture,
-        None,
         Some(ChildLimits {
-            resident_bytes: 1,
+            resident_bytes: Some(1),
+            output_bytes: 16 * 1024 * 1024,
             wall_time: Duration::from_secs(5),
         }),
+        None,
     )
     .expect("run RSS-limited child");
     assert_eq!(
@@ -817,11 +835,7 @@ fn automatic_sigchld_reaping_is_rejected_before_spawn() {
     let temp = tempfile::tempdir().expect("tempdir");
     let marker = temp.path().join("spawned");
     let status = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "nix::process::tests::auto_reap_supervisor",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::auto_reap_supervisor", "--nocapture"])
         .env(MODE, "auto-reap-supervisor")
         .env(MARKER, &marker)
         .status()
@@ -835,12 +849,12 @@ fn direct_commands_preserve_arguments_without_shell_interpretation() {
     let temp = tempfile::tempdir().expect("tempdir");
     let marker = temp.path().join("shell-was-run");
     let argument = format!("$(touch {}) ; * ? ' \" `echo injected`", marker.display());
-    let args = vec![
-        String::from("--exact"),
-        String::from("nix::process::tests::argv_child"),
-        String::from("--nocapture"),
-        String::from("--skip"),
-        argument.clone(),
+    let args = [
+        "--exact",
+        "tests::argv_child",
+        "--nocapture",
+        "--skip",
+        &argument,
     ];
     let (outcome, stdout) = super::run_direct_captured(&std::env::current_exe().unwrap(), &args)
         .expect("run argument helper");
@@ -870,10 +884,11 @@ fn spawn_failure_restores_the_callers_signal_mask() {
             Command::new(temp.path().join("missing")),
             IoMode::Capture,
             None,
+            None,
         )
         .err()
         .expect("missing executable must fail");
-        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(error.source.kind(), std::io::ErrorKind::NotFound);
         // SAFETY: pthread_sigmask initializes this buffer before it is read.
         let mut current: libc::sigset_t = unsafe { std::mem::zeroed() };
         // SAFETY: pthread_sigmask reads this thread's mask into a valid buffer.
@@ -902,20 +917,29 @@ fn spawn_failure_restores_the_callers_signal_mask() {
 
 #[test]
 fn signal_supervisor() {
-    if std::env::var(MODE).as_deref() != Ok("supervisor") {
+    let mode = std::env::var(MODE).unwrap_or_default();
+    if !matches!(mode.as_str(), "supervisor" | "input-supervisor") {
         return;
     }
     let signal: i32 = std::env::var(SIGNAL).unwrap().parse().unwrap();
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args([
-            "--exact",
-            "nix::process::tests::signal_child",
-            "--nocapture",
-        ])
+        .args(["--exact", "tests::signal_child", "--nocapture"])
         .env(MODE, "child");
-    let reaped = run_child(command, IoMode::Capture, None).expect("run signal child");
-    assert_eq!(reaped.classify(), Outcome::Interrupted { signal });
+    if mode == "input-supervisor" {
+        match super::run_child(
+            command,
+            IoMode::Stream,
+            None,
+            Some(&vec![b'x'; 1024 * 1024]),
+        ) {
+            Ok(reaped) => assert_eq!(reaped.classify(), Outcome::Interrupted { signal }),
+            Err(error) => assert_eq!(error.cancelled, Some(signal)),
+        }
+    } else {
+        let reaped = run_child(command, IoMode::Capture, None, None).expect("run signal child");
+        assert_eq!(reaped.classify(), Outcome::Interrupted { signal });
+    }
 }
 
 #[test]
@@ -1247,40 +1271,81 @@ impl Drop for SentinelChildren {
 
 #[test]
 fn direct_children_receive_each_forwarded_termination_signal() {
-    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let ready = temp.path().join("ready");
+    for mode in ["supervisor", "input-supervisor"] {
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let ready = temp.path().join("ready");
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "tests::signal_supervisor", "--nocapture"])
+                .env(MODE, mode)
+                .env(READY, &ready)
+                .env(SIGNAL, signal.to_string())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let mut supervisor = GroupChildGuard::spawn(command).expect("spawn supervisor");
+            let text = wait_ready(&ready);
+            let pid: i32 = text.split_whitespace().next().unwrap().parse().unwrap();
+            supervisor
+                .signal(signal)
+                .expect("signal the owned supervisor");
+            let status = supervisor
+                .wait_for_exit(Duration::from_secs(3))
+                .expect("observe supervisor")
+                .expect("signal supervisor must stop within three seconds");
+            assert!(status.success(), "signal {signal}: {text}");
+            assert_eq!(
+                text.split_whitespace().skip(1).collect::<Vec<_>>(),
+                ["0", "0", "0"]
+            );
+            assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "child must be reaped");
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+        }
+    }
+}
+
+#[test]
+fn stdin_receiver_child() {
+    if std::env::var(MODE).as_deref() != Ok("stdin-receiver") {
+        return;
+    }
+    let mut input = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut input)
+        .expect("read input");
+    fs::write(std::env::var(MARKER).unwrap(), input).expect("save input");
+}
+
+#[test]
+fn streamed_input_is_delivered_completely_and_closed() {
+    for length in [0, 5 * 1024 * 1024] {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("input");
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
-            .args([
-                "--exact",
-                "nix::process::tests::signal_supervisor",
-                "--nocapture",
-            ])
-            .env(MODE, "supervisor")
-            .env(READY, &ready)
-            .env(SIGNAL, signal.to_string())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        let mut supervisor = GroupChildGuard::spawn(command).expect("spawn supervisor");
-        let text = wait_ready(&ready);
-        let pid: i32 = text.split_whitespace().next().unwrap().parse().unwrap();
-        supervisor
-            .signal(signal)
-            .expect("signal the owned supervisor");
-        let status = supervisor
-            .wait_for_exit(Duration::from_secs(3))
-            .expect("observe supervisor")
-            .expect("signal supervisor must stop within three seconds");
-        assert!(status.success(), "signal {signal}: {text}");
-        assert_eq!(
-            text.split_whitespace().skip(1).collect::<Vec<_>>(),
-            ["0", "0", "0"]
-        );
-        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "child must be reaped");
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
+            .args(["--exact", "tests::stdin_receiver_child", "--nocapture"])
+            .env(MODE, "stdin-receiver")
+            .env(MARKER, &marker);
+        let input = vec![b'x'; length];
+        let reaped =
+            super::run_child(command, IoMode::Stream, None, Some(&input)).expect("write input");
+        assert_eq!(reaped.classify(), Outcome::Success);
+        assert_eq!(fs::read(marker).unwrap(), input);
     }
+}
+
+fn run_metadata_child(command: Command) -> Result<super::Reaped, super::RunError> {
+    super::run_child(
+        command,
+        IoMode::Capture,
+        Some(ChildLimits {
+            resident_bytes: Some(512 * 1024 * 1024),
+            wall_time: Duration::from_mins(2),
+            output_bytes: 16 * 1024 * 1024,
+        }),
+        None,
+    )
 }

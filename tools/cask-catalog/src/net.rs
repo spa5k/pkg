@@ -10,7 +10,6 @@
 //! (vendor archive) fetching happens inside Nix fixed-output derivations
 //! at install time, never here.
 
-use std::collections::BTreeSet;
 use std::io::Read as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::mpsc;
@@ -192,7 +191,7 @@ pub fn resolve_global(host: &str) -> Result<Vec<SocketAddr>, String> {
 /// A guarded blocking HTTPS client for one fetch task.
 pub struct SafeClient {
     inner: reqwest::blocking::Client,
-    allowed: BTreeSet<&'static str>,
+    allowed: &'static [&'static str],
 }
 
 impl SafeClient {
@@ -202,7 +201,7 @@ impl SafeClient {
     /// the only TLS backend, DNS answers for every allowed host are
     /// resolved and validated now and pinned for the connection.
     /// Source redirects are refused to preserve the approved repository.
-    pub fn new(allowed_hosts: &[&'static str]) -> Result<Self, String> {
+    pub fn new(allowed: &'static [&'static str]) -> Result<Self, String> {
         let mut builder = reqwest::blocking::Client::builder()
             .user_agent(concat!(
                 "pkg-",
@@ -213,13 +212,12 @@ impl SafeClient {
             .no_proxy()
             .timeout(REQUEST_TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT);
-        for host in allowed_hosts {
+        for host in allowed {
             let addrs = resolve_global(host)?;
             // Pin every validated address: the connection can only pick a
             // target this client already checked, never a re-resolved one.
             builder = builder.resolve_to_addrs(host, addrs.as_slice());
         }
-        let allowed: BTreeSet<&'static str> = allowed_hosts.iter().copied().collect();
         let inner = builder
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
                 let reason = redirect_refusal(attempt.url());
@@ -234,8 +232,7 @@ impl SafeClient {
     /// enforcing the body size limit while streaming.
     pub fn get(&self, url: &str, accept: Option<&str>) -> Result<Vec<u8>, String> {
         let parsed = Url::parse(url).map_err(|e| format!("malformed URL {url:?}: {e}"))?;
-        let allowed: Vec<&str> = self.allowed.iter().copied().collect();
-        check_url(&parsed, &allowed)?;
+        check_url(&parsed, self.allowed)?;
         let mut request = self.inner.get(parsed);
         if let Some(accept) = accept {
             request = request.header("Accept", accept);

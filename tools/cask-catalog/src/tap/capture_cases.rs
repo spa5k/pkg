@@ -85,7 +85,7 @@ fn convert_case(system: &str, case: &str) -> Result<Value, String> {
     let system_field = capture["system"].as_str().expect("system").to_string();
     assert_eq!(system_field, system, "{case}: capture system mismatch");
     let envelope = serde_json::to_vec(&capture).unwrap();
-    let (export, metadata_sha256) = validate_export(&envelope, &source, REVISION, system)
+    let (casks, metadata_sha256) = validate_export(&envelope, &source, REVISION, system)
         .unwrap_or_else(|e| panic!("{case}: actual capture must validate: {e}"));
     let dir = tempfile::tempdir().expect("tempdir");
     convert_capture(
@@ -94,7 +94,7 @@ fn convert_case(system: &str, case: &str) -> Result<Value, String> {
             origin: source_origin(&source).expect("origin"),
             revision: REVISION.to_string(),
             system: system.to_string(),
-            export,
+            casks,
             metadata_sha256,
             archive_url: format!("https://codeload.example/{source}/tar.gz/{REVISION}"),
             archive_sha256: "f".repeat(64),

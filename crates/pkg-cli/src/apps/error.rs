@@ -1,50 +1,57 @@
 use crate::nix::NixError;
-use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{context}{separator}{cause}", separator = if .context.is_empty() { "" } else { ": " })]
 pub struct AppError {
     context: String,
+    #[source]
     cause: AppErrorCause,
     dock_effect_possible: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 enum AppErrorCause {
+    #[error("{0}")]
     Message(String),
-    Native(NixError),
+    #[error("{0}")]
+    Native(#[source] NixError),
+    #[error("{0}")]
+    Process(#[source] pkg_process::RunError),
+    #[error("was interrupted by signal {0}")]
     Interrupted(i32),
 }
 
 impl AppError {
-    pub(super) fn message(message: impl Into<String>) -> Self {
+    fn new(context: impl Into<String>, cause: AppErrorCause) -> Self {
         Self {
-            context: String::new(),
-            cause: AppErrorCause::Message(message.into()),
+            context: context.into(),
+            cause,
             dock_effect_possible: false,
         }
+    }
+
+    pub(super) fn message(message: impl Into<String>) -> Self {
+        Self::new("", AppErrorCause::Message(message.into()))
     }
 
     pub(super) fn native(context: impl Into<String>, cause: NixError) -> Self {
-        Self {
-            context: context.into(),
-            cause: AppErrorCause::Native(cause),
-            dock_effect_possible: false,
-        }
+        Self::new(context, AppErrorCause::Native(cause))
     }
 
     pub(super) fn interrupted(context: impl Into<String>, signal: i32) -> Self {
-        Self {
-            context: context.into(),
-            cause: AppErrorCause::Interrupted(signal),
-            dock_effect_possible: false,
-        }
+        Self::new(context, AppErrorCause::Interrupted(signal))
+    }
+
+    pub(super) fn process(context: impl Into<String>, error: pkg_process::RunError) -> Self {
+        Self::new(context, AppErrorCause::Process(error))
     }
 
     pub(crate) fn signal(&self) -> Option<i32> {
         match &self.cause {
-            AppErrorCause::Interrupted(signal)
-            | AppErrorCause::Native(NixError::Interrupted { signal, .. }) => Some(*signal),
-            AppErrorCause::Message(_) | AppErrorCause::Native(_) => None,
+            AppErrorCause::Interrupted(signal) => Some(*signal),
+            AppErrorCause::Process(error) => error.cancelled,
+            AppErrorCause::Native(error) => error.signal(),
+            AppErrorCause::Message(_) => None,
         }
     }
 
@@ -70,26 +77,64 @@ impl From<&str> for AppError {
     }
 }
 
-impl fmt::Display for AppError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.context.is_empty() {
-            write!(formatter, "{}: ", self.context)?;
-        }
-        match &self.cause {
-            AppErrorCause::Message(message) => formatter.write_str(message),
-            AppErrorCause::Native(error) => error.fmt(formatter),
-            AppErrorCause::Interrupted(signal) => {
-                write!(formatter, "was interrupted by signal {signal}")
-            }
-        }
+impl From<pkg_process::RunError> for AppError {
+    fn from(error: pkg_process::RunError) -> Self {
+        Self::process("", error)
     }
 }
 
-impl std::error::Error for AppError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.cause {
-            AppErrorCause::Native(error) => Some(error),
-            AppErrorCause::Message(_) | AppErrorCause::Interrupted(_) => None,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error as _;
+
+    #[test]
+    fn native_error_preserves_the_native_cause_and_cancellation() {
+        let error = AppError::native(
+            "read helper profile",
+            NixError::Interrupted {
+                args: vec!["profile".to_string(), "list".to_string()],
+                signal: libc::SIGTERM,
+            },
+        );
+        let cause = error
+            .source()
+            .expect("app cause")
+            .source()
+            .expect("native cause")
+            .downcast_ref::<NixError>()
+            .expect("original Nix error type");
+        assert_eq!(error.signal(), cause.signal());
+        assert_eq!(error.signal(), Some(libc::SIGTERM));
+        assert_eq!(error.to_string(), format!("read helper profile: {cause}"));
+        assert!(!error.dock_effect_possible());
+    }
+
+    #[test]
+    fn process_error_preserves_cancellation_and_the_io_cause_after_dock_work() {
+        let error = AppError::process(
+            "run app helper",
+            pkg_process::RunError {
+                cancelled: Some(libc::SIGINT),
+                source: std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe failed"),
+            },
+        )
+        .with_dock_effect_possible();
+        let cause = error
+            .source()
+            .expect("app cause")
+            .source()
+            .expect("supervision cause")
+            .downcast_ref::<pkg_process::RunError>()
+            .expect("original supervision error type");
+        let io = cause
+            .source()
+            .expect("I/O cause")
+            .downcast_ref::<std::io::Error>()
+            .expect("original I/O error type");
+        assert_eq!(error.signal(), Some(libc::SIGINT));
+        assert_eq!(io.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(error.to_string(), "run app helper: pipe failed");
+        assert!(error.dock_effect_possible());
     }
 }

@@ -26,9 +26,8 @@ enum Kind {
     Status(String),
 }
 
-/// Git transfer lines the fetch helper prints while Nix downloads one
-/// flake input; none of them changes what the user should do next.
-const GIT_TRANSFER: [&str; 9] = [
+/// Native chatter and errors reported after the profile check.
+const HIDDEN_PREFIXES: &[&str] = &[
     "From ",
     "remote: ",
     "Enumerating objects:",
@@ -38,6 +37,19 @@ const GIT_TRANSFER: [&str; 9] = [
     "Resolving deltas:",
     "Unpacking objects:",
     "* branch ",
+    "error (ignored): ",
+    "error:",
+    "❌ ",
+    "Reason:",
+    "Output paths:",
+    "> ",
+    "For full logs, run:",
+    "nix log ",
+    "failed to allocate ",
+    "warning: redirecting to ",
+    "evaluating derivation ",
+    "these ",
+    "/nix/store/",
 ];
 
 /// The compact name of one repository URL or store path: its final path
@@ -61,55 +73,19 @@ fn short_name(value: &str) -> String {
 /// Classify one complete native stderr line.
 fn classify(line: &str) -> Kind {
     let line = line.trim();
-    if line.is_empty() {
-        return Kind::Hide;
-    }
-    if line.starts_with("error (ignored): ") {
-        // Nix marks ignored non-fatal errors with this prefix; the raw
-        // text still reaches the failure diagnostic when a run fails.
-        return Kind::Hide;
-    }
-    if line.starts_with("removing '") && line.ends_with('\'') {
-        return Kind::Hide;
-    }
-    if line.starts_with("error:")
-        || line.starts_with("❌ ")
-        || line.starts_with("Reason:")
-        || line.starts_with("Output paths:")
+    if line.is_empty()
+        || HIDDEN_PREFIXES
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        || line.starts_with("removing '") && line.ends_with('\'')
         || line.starts_with("Last ") && line.contains(" log lines:")
-        || line.starts_with("> ")
-        || line.starts_with("For full logs, run:")
-        || line.starts_with("nix log ")
-        || line.starts_with("failed to allocate ")
+        || line.starts_with("unpacking '") && line.ends_with(" into the Git cache...")
     {
-        // The command reports one cause and one log command after Nix
-        // finishes. Printing a nested build chain live repeats it there.
         return Kind::Hide;
     }
     if let Some(rest) = line.strip_prefix("fetching Git repository '") {
         let url = rest.strip_suffix('\'').unwrap_or(rest);
         return Kind::Status(format!("fetching {}", short_name(url)));
-    }
-    if GIT_TRANSFER.iter().any(|prefix| line.starts_with(prefix)) {
-        return Kind::Hide;
-    }
-    if line.starts_with("unpacking '") && line.ends_with(" into the Git cache...") {
-        // A flake input being unpacked into the local git cache.
-        return Kind::Hide;
-    }
-    if line.starts_with("warning: redirecting to ") {
-        // The fetch helper's HTTP redirect notice; the retry follows.
-        return Kind::Hide;
-    }
-    if line.starts_with("evaluating derivation ") {
-        return Kind::Hide;
-    }
-    if line.starts_with("these ") {
-        // Build and fetch plan introductions plus their store lists.
-        return Kind::Hide;
-    }
-    if line.starts_with("/nix/store/") {
-        return Kind::Hide;
     }
     if let Some(rest) = line.strip_prefix("copying path '") {
         let path = rest.split('\'').next().unwrap_or(rest);
@@ -133,7 +109,7 @@ pub struct MutationReporter {
     line: PartialLine,
     display: DisplayState,
     filtering: FilterState,
-    profile: Option<String>,
+    profile: String,
     verbose: bool,
     started: Instant,
     work: String,
@@ -161,7 +137,8 @@ struct FilterState {
 
 impl MutationReporter {
     /// Build the reporter for one child run.
-    pub fn new(tty: bool) -> Self {
+    pub fn new(profile: &str, verbose: bool) -> Self {
+        let tty = std::io::stderr().is_terminal();
         Self {
             line: PartialLine::default(),
             display: DisplayState {
@@ -169,20 +146,13 @@ impl MutationReporter {
                 ..DisplayState::default()
             },
             filtering: FilterState::default(),
-            profile: None,
-            verbose: false,
             started: Instant::now(),
             work: String::from("preparing"),
             frame: 0,
             last_render: None,
+            profile: profile.to_string(),
+            verbose,
         }
-    }
-
-    /// Scope native recovery instructions and select verbose output.
-    pub fn scoped(mut self, profile: Option<&str>, verbose: bool) -> Self {
-        self.profile = profile.map(ToString::to_string);
-        self.verbose = verbose;
-        self
     }
 
     /// Print one line, clearing any active status line first.
@@ -235,9 +205,7 @@ impl MutationReporter {
             }
             self.filtering.file_conflict = false;
         }
-        if let Some(profile) = &self.profile
-            && let Some(scoped) = scoped_hint(line, profile)
-        {
+        if let Some(scoped) = scoped_hint(line, &self.profile) {
             self.show(&scoped);
             return;
         }
@@ -341,11 +309,6 @@ impl StderrSink for MutationReporter {
         }
         self.clear_status();
     }
-}
-
-/// The reporter wired into native profile mutations.
-pub fn mutation_reporter() -> MutationReporter {
-    MutationReporter::new(std::io::stderr().is_terminal())
 }
 
 #[cfg(test)]

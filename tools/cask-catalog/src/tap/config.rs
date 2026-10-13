@@ -35,21 +35,6 @@ const MAC_ALLOWED_SANDBOX_PATHS: [&str; 5] = [
 /// including empty, is fine).
 const MAC_ALLOWED_IMPURE_DEPS: [&str; 4] = ["/System/Library", "/bin/sh", "/dev", "/usr/lib"];
 
-/// The fail-closed outcome of the local effective-config gate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum GateError {
-    /// The observed effective settings refuse the raw tap import: weak
-    /// sandbox settings, added host paths, or impure dependencies. This
-    /// is the refusal the client may answer with its one-time
-    /// administrator setup; the message carries the concrete setup
-    /// advice.
-    Refused(String),
-    /// The effective settings could not be observed at all (query
-    /// failure or malformed JSON). The client must not offer setup for
-    /// this: no setting was shown to be wrong.
-    Unverifiable(String),
-}
-
 /// Concrete fail-closed setup advice. NEVER prints the config dump
 /// (it may contain secret settings); only the offending detail.
 fn config_setup_error(detail: &str, mac: bool) -> String {
@@ -97,10 +82,34 @@ fn is_busybox_sh(source: &str) -> bool {
         && parts.next().is_none()
 }
 
-/// Boolean `.value` of one setting object, or `None` when the setting
-/// is missing or its value is not a boolean (wrong shape).
-fn config_bool(config: &Value, name: &str) -> Option<bool> {
-    config.get(name)?.get("value")?.as_bool()
+#[derive(serde::Deserialize, Default)]
+struct Setting<T> {
+    value: T,
+    // Flatten requires object input while retaining unknown Nix metadata.
+    #[serde(flatten)]
+    _metadata: serde::de::IgnoredAny,
+}
+
+#[derive(serde::Deserialize)]
+struct PathGrant {
+    source: String,
+    optional: bool,
+    #[serde(flatten)]
+    _metadata: serde::de::IgnoredAny,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct Settings {
+    sandbox: Setting<bool>,
+    sandbox_fallback: Setting<bool>,
+    #[serde(default)]
+    sandbox_paths: Setting<BTreeMap<String, PathGrant>>,
+    #[serde(default)]
+    extra_sandbox_paths: Setting<BTreeMap<String, PathGrant>>,
+    allowed_impure_host_deps: Option<Setting<Vec<String>>>,
+    #[serde(flatten)]
+    _metadata: serde::de::IgnoredAny,
 }
 
 /// Validate one EFFECTIVE `nix config show --json` document (the
@@ -118,173 +127,81 @@ fn config_bool(config: &Value, name: &str) -> Option<bool> {
 /// or violates the host-specific sandbox policy.
 pub fn verify_effective_config(config: &Value, os: &str) -> Result<(), String> {
     let mac = os == "macos";
-    match config_bool(config, "sandbox") {
-        Some(true) => {}
-        Some(false) => {
-            return Err(config_setup_error("sandbox is false", mac));
+    let settings: Settings = serde::Deserialize::deserialize(config)
+        .map_err(|_| config_setup_error("settings have a missing field or the wrong shape", mac))?;
+    for (name, actual, expected) in [
+        ("sandbox", settings.sandbox.value, true),
+        ("sandbox-fallback", settings.sandbox_fallback.value, false),
+    ] {
+        if actual != expected {
+            return Err(config_setup_error(&format!("{name} is {actual}"), mac));
         }
-        None => {
+    }
+    let mut paths = BTreeMap::new();
+    for (target, grant) in settings
+        .sandbox_paths
+        .value
+        .into_iter()
+        .chain(settings.extra_sandbox_paths.value)
+    {
+        if grant.optional {
             return Err(config_setup_error(
-                "sandbox is missing or its value is not a boolean",
+                &format!("{target} is optional; only mandatory mappings are accepted"),
                 mac,
             ));
         }
+        paths.insert(target, grant.source);
     }
-    match config_bool(config, "sandbox-fallback") {
-        Some(false) => {}
-        Some(true) => {
-            return Err(config_setup_error("sandbox-fallback is true", mac));
-        }
-        None => {
-            return Err(config_setup_error(
-                "sandbox-fallback is missing or its value is not a boolean",
-                mac,
-            ));
-        }
-    }
-
-    // Merged host path mappings: sandbox-paths with extra-sandbox-paths
-    // folded in. Every entry must be an object with a string `source`
-    // and `optional` exactly false.
-    let mut paths: BTreeMap<String, String> = BTreeMap::new();
-    for name in ["sandbox-paths", "extra-sandbox-paths"] {
-        let Some(setting) = config.get(name) else {
-            continue;
-        };
-        let Some(entries) = setting.get("value").and_then(Value::as_object) else {
-            return Err(config_setup_error(
-                &format!("{name} has no object value (wrong shape)"),
-                mac,
-            ));
-        };
-        for (target, entry) in entries {
-            let Some(entry) = entry.as_object() else {
-                return Err(config_setup_error(
-                    &format!("{name}[{target}] is not an object"),
-                    mac,
-                ));
-            };
-            let Some(source) = entry.get("source").and_then(Value::as_str) else {
-                return Err(config_setup_error(
-                    &format!("{name}[{target}] has no string source path"),
-                    mac,
-                ));
-            };
-            match entry.get("optional").and_then(Value::as_bool) {
-                Some(false) => {}
-                Some(true) => {
-                    return Err(config_setup_error(
-                        &format!(
-                            "{name}[{target}] is optional; only mandatory mappings are accepted"
-                        ),
-                        mac,
-                    ));
-                }
-                None => {
-                    return Err(config_setup_error(
-                        &format!("{name}[{target}] optional is missing or not a boolean"),
-                        mac,
-                    ));
-                }
-            }
-            paths.insert(target.clone(), source.to_string());
-        }
-    }
-
-    // allowed-impure-host-deps: absent (default empty) is fine.
-    let impure: Vec<String> = match config.get("allowed-impure-host-deps") {
-        None | Some(Value::Null) => Vec::new(),
-        Some(setting) => {
-            let Some(items) = setting.get("value").and_then(Value::as_array) else {
-                return Err(config_setup_error(
-                    "allowed-impure-host-deps has no array value (wrong shape)",
-                    mac,
-                ));
-            };
-            let mut deps = Vec::new();
-            for item in items {
-                let Some(dep) = item.as_str() else {
-                    return Err(config_setup_error(
-                        "allowed-impure-host-deps carries a non-string entry",
-                        mac,
-                    ));
-                };
-                deps.push(dep.to_string());
-            }
-            deps
-        }
-    };
-
-    validate_host_paths(&paths, &impure, os, mac)
+    let impure = settings
+        .allowed_impure_host_deps
+        .map_or_else(Vec::new, |setting| setting.value);
+    validate_host_paths(&paths, &impure, os)
 }
 
 fn validate_host_paths(
     paths: &BTreeMap<String, String>,
     impure: &[String],
     os: &str,
-    mac: bool,
 ) -> Result<(), String> {
-    match os {
-        "linux" => {
-            for (target, source) in paths {
-                if target != "/bin/sh" {
-                    return Err(config_setup_error(
-                        &format!(
-                            "linux sandbox-paths carries the added host path {target}; \
-                             only an empty set or /bin/sh is accepted"
-                        ),
-                        mac,
-                    ));
-                }
-                if !is_busybox_sh(source) {
-                    return Err(config_setup_error(
-                        &format!(
-                            "linux /bin/sh maps to {source}; only \
-                             /nix/store/<hash>-busybox*/bin/busybox is accepted"
-                        ),
-                        mac,
-                    ));
-                }
-            }
-            if !impure.is_empty() {
-                return Err(config_setup_error(
-                    &format!("linux allowed-impure-host-deps is not empty ({impure:?})"),
-                    mac,
-                ));
-            }
-        }
-        "macos" => {
-            for (target, source) in paths {
-                if !MAC_ALLOWED_SANDBOX_PATHS.contains(&target.as_str()) {
-                    return Err(config_setup_error(
-                        &format!(
-                            "mac sandbox-paths carries the added host path {target}; \
-                             only self-mapped system paths are accepted"
-                        ),
-                        mac,
-                    ));
-                }
-                if source != target {
-                    return Err(config_setup_error(
-                        &format!("mac {target} maps to {source}; only self-mappings are accepted"),
-                        mac,
-                    ));
-                }
-            }
-            for dep in impure {
-                if !MAC_ALLOWED_IMPURE_DEPS.contains(&dep.as_str()) {
-                    return Err(config_setup_error(
-                        &format!("mac allowed-impure-host-deps carries {dep:?}"),
-                        mac,
-                    ));
-                }
-            }
-        }
+    let mac = match os {
+        "linux" => false,
+        "macos" => true,
         other => {
             return Err(format!(
                 "effective nix config check has no rule for host os {other:?}"
             ));
         }
+    };
+    for (target, source) in paths {
+        let detail = match mac {
+            false if target != "/bin/sh" => format!(
+                "linux sandbox-paths carries the added host path {target}; \
+                 only an empty set or /bin/sh is accepted"
+            ),
+            false if !is_busybox_sh(source) => format!(
+                "linux /bin/sh maps to {source}; only \
+                 /nix/store/<hash>-busybox*/bin/busybox is accepted"
+            ),
+            true if !MAC_ALLOWED_SANDBOX_PATHS.contains(&target.as_str()) => format!(
+                "mac sandbox-paths carries the added host path {target}; \
+                 only self-mapped system paths are accepted"
+            ),
+            true if source != target => {
+                format!("mac {target} maps to {source}; only self-mappings are accepted")
+            }
+            false | true => continue,
+        };
+        return Err(config_setup_error(&detail, mac));
+    }
+    for dep in impure {
+        let detail = match mac {
+            false => format!("linux allowed-impure-host-deps is not empty ({impure:?})"),
+            true if !MAC_ALLOWED_IMPURE_DEPS.contains(&dep.as_str()) => {
+                format!("mac allowed-impure-host-deps carries {dep:?}")
+            }
+            true => continue,
+        };
+        return Err(config_setup_error(&detail, mac));
     }
     Ok(())
 }
@@ -333,15 +250,6 @@ pub fn mac_setup_settings(config: &Value) -> Result<Option<String>, String> {
     }))
 }
 
-impl From<String> for GateError {
-    /// Environment, executable, and bounded-run failures mean the
-    /// effective settings could not be observed; they are never a
-    /// refusal.
-    fn from(detail: String) -> Self {
-        Self::Unverifiable(detail)
-    }
-}
-
 /// The daemon can ignore restricted sandbox overrides from untrusted users.
 /// Local effective settings do not prove what the daemon enforces.
 /// The full configuration can contain secret settings.
@@ -349,7 +257,7 @@ fn nix_config_gate_with_limits(
     nix: &Path,
     staging: &Path,
     walltime: Duration,
-) -> Result<(), GateError> {
+) -> Result<(), super::ImportError> {
     let nix_exe = resolve_nix_exe(nix)?;
     let gate = staging.join("gate");
     let nix_home = gate.join("home");
@@ -357,25 +265,24 @@ fn nix_config_gate_with_limits(
     let mut command = isolated_nix_command(&nix_exe, &nix_home, &nix_tmp)?;
     command.arg("config").arg("show").arg("--json");
 
-    let bounded = run_bounded_child(&mut command, walltime, "nix config show")?;
+    let bounded = run_bounded_child(command, walltime, "nix config show")?;
     if !bounded.status.success() {
         let tail =
             String::from_utf8_lossy(&bounded.stderr[bounded.stderr.len().saturating_sub(2000)..]);
-        return Err(GateError::Unverifiable(format!(
+        return Err(format!(
             "nix config show --json failed ({}); the effective local config \
              cannot be verified. tail: {tail}",
             bounded.status
-        )));
+        )
+        .into());
     }
-    let config: Value = serde_json::from_slice(&bounded.stdout).map_err(|e| {
-        GateError::Unverifiable(format!(
-            "nix config show --json emitted malformed JSON: {e}"
-        ))
-    })?;
-    verify_effective_config(&config, std::env::consts::OS).map_err(GateError::Refused)
+    let config: Value = serde_json::from_slice(&bounded.stdout)
+        .map_err(|e| format!("nix config show --json emitted malformed JSON: {e}"))?;
+    verify_effective_config(&config, std::env::consts::OS)
+        .map_err(super::ImportError::SandboxRefused)
 }
 
-pub(super) fn nix_config_gate(nix: &Path, staging: &Path) -> Result<(), GateError> {
+pub(super) fn nix_config_gate(nix: &Path, staging: &Path) -> Result<(), super::ImportError> {
     nix_config_gate_with_limits(nix, staging, NIX_CONFIG_WALLTIME)
 }
 
@@ -411,9 +318,7 @@ mod tests {
         } else {
             config["sandbox-paths"] = json!({"value": {
                 "/bin/sh": {
-                    "source": format!(
-                        "/nix/store/csshf3ycx2wsxjaqrva1vr8rwgp382jw-busybox-1.37.0/bin/busybox"
-                    ),
+                    "source": "/nix/store/csshf3ycx2wsxjaqrva1vr8rwgp382jw-busybox-1.37.0/bin/busybox",
                     "optional": false,
                 },
             }});
@@ -441,6 +346,82 @@ mod tests {
         }});
         mac["allowed-impure-host-deps"] = json!({"value": []});
         verify_effective_config(&mac, "macos").expect("minimal mac paths pass");
+    }
+
+    #[test]
+    fn config_gate_preserves_missing_and_null_setting_rules() {
+        for os in ["linux", "macos"] {
+            let minimal = json!({
+                "sandbox": {"value": true},
+                "sandbox-fallback": {"value": false},
+            });
+            verify_effective_config(&minimal, os).expect("absent grants default to empty");
+            let mut config = minimal.clone();
+            config["allowed-impure-host-deps"] = Value::Null;
+            verify_effective_config(&config, os).expect("null impure setting defaults to empty");
+            for name in ["sandbox-paths", "extra-sandbox-paths"] {
+                for value in [Value::Null, json!({"value": null})] {
+                    let mut config = minimal.clone();
+                    config[name] = value;
+                    assert!(
+                        verify_effective_config(&config, os).is_err(),
+                        "{name}: {config}"
+                    );
+                }
+            }
+            config["allowed-impure-host-deps"] = json!({"value": null});
+            assert!(verify_effective_config(&config, os).is_err());
+        }
+    }
+
+    #[test]
+    fn config_gate_requires_objects_and_ignores_unrelated_metadata() {
+        let mut config = strong_effective_config("macos");
+        config["unrelated"] = json!({"secret": ["opaque"]});
+        config["sandbox"]["description"] = json!(["metadata"]);
+        config["sandbox-paths"]["value"]["/bin/sh"]["metadata"] = Value::Null;
+        verify_effective_config(&config, "macos").expect("unknown metadata remains allowed");
+        let array = json!([
+            {"value": true}, {"value": false}, {"value": {}}, {"value": {}}, null
+        ]);
+        assert!(verify_effective_config(&array, "macos").is_err());
+        config["sandbox"] = json!([true]);
+        assert!(verify_effective_config(&config, "macos").is_err());
+        config["sandbox"] = json!({"value": true});
+        config["sandbox-paths"]["value"]["/bin/sh"] = json!(["/bin/sh", false]);
+        assert!(verify_effective_config(&config, "macos").is_err());
+    }
+
+    #[test]
+    fn config_gate_checks_mandatory_mappings_before_extra_overrides() {
+        let mut config = strong_effective_config("macos");
+        config["sandbox-paths"]["value"]["/bin/sh"]["source"] = json!("/other");
+        config["extra-sandbox-paths"] = json!({"value": {
+            "/bin/sh": {"source": "/bin/sh", "optional": false}
+        }});
+        verify_effective_config(&config, "macos").expect("extra mapping replaces the base source");
+        config["sandbox-paths"]["value"]["/bin/sh"]["optional"] = json!(true);
+        assert!(
+            verify_effective_config(&config, "macos")
+                .unwrap_err()
+                .contains("only mandatory mappings"),
+        );
+        config["sandbox-paths"]["value"]["/bin/sh"]
+            .as_object_mut()
+            .unwrap()
+            .remove("optional");
+        assert!(verify_effective_config(&config, "macos").is_err());
+    }
+
+    #[test]
+    fn malformed_config_reports_setup_advice_without_values() {
+        let mut config = strong_effective_config("macos");
+        config["sandbox"]["value"] = json!("secret-setting-content");
+        let error = verify_effective_config(&config, "macos").unwrap_err();
+        assert!(error.contains("wrong shape"), "{error}");
+        assert!(error.contains("Concrete setup:"), "{error}");
+        assert!(!error.contains("secret-setting-content"), "{error}");
+        assert!(verify_effective_config(&strong_effective_config("macos"), "unknown").is_err());
     }
 
     // ------------------------------------------------------------------
@@ -555,7 +536,7 @@ mod tests {
             let mut config = strong_effective_config(os);
             config.as_object_mut().unwrap().remove("sandbox");
             let err = verify_effective_config(&config, os).unwrap_err();
-            assert!(err.contains("sandbox is missing"), "{os}: {err}");
+            assert!(err.contains("missing field"), "{os}: {err}");
             // sandbox false.
             let mut config = strong_effective_config(os);
             config["sandbox"] = json!({"value": false});
@@ -565,7 +546,7 @@ mod tests {
             let mut config = strong_effective_config(os);
             config["sandbox"] = json!({"value": "true"});
             let err = verify_effective_config(&config, os).unwrap_err();
-            assert!(err.contains("not a boolean"), "{os}: {err}");
+            assert!(err.contains("wrong shape"), "{os}: {err}");
             // sandbox-fallback true.
             let mut config = strong_effective_config(os);
             config["sandbox-fallback"] = json!({"value": true});
@@ -700,7 +681,7 @@ mod tests {
         );
         let err = nix_config_gate_with_limits(&nix, dir.path(), Duration::from_secs(30))
             .expect_err("weak config");
-        let GateError::Refused(detail) = &err else {
+        let crate::tap::ImportError::SandboxRefused(detail) = &err else {
             panic!("an observed weak config is the typed refusal: {err:?}");
         };
         assert!(detail.contains("sandbox is false"), "{detail}");
@@ -713,10 +694,12 @@ mod tests {
         let nix = fake_nix(dir.path(), "yes 0123456789abcdef | head -c 4194304; exit 0");
         let err = nix_config_gate_with_limits(&nix, dir.path(), Duration::from_mins(1))
             .expect_err("flood");
-        let GateError::Unverifiable(detail) = &err else {
-            panic!("the settings were never observed: {err:?}");
-        };
-        assert!(detail.contains("log cap"), "{detail}");
+        assert!(
+            !matches!(err, crate::tap::ImportError::SandboxRefused(_)),
+            "the settings were never observed: {err:?}"
+        );
+        let detail = &err;
+        assert!(detail.message().contains("log cap"), "{detail}");
     }
 
     #[cfg(unix)]
@@ -727,10 +710,12 @@ mod tests {
         let started = std::time::Instant::now();
         let err = nix_config_gate_with_limits(&nix, dir.path(), Duration::from_secs(2))
             .expect_err("hang");
-        let GateError::Unverifiable(detail) = &err else {
-            panic!("a hung query observed nothing: {err:?}");
-        };
-        assert!(detail.contains("wall limit"), "{detail}");
+        assert!(
+            !matches!(err, crate::tap::ImportError::SandboxRefused(_)),
+            "a hung query observed nothing: {err:?}"
+        );
+        let detail = &err;
+        assert!(detail.message().contains("wall limit"), "{detail}");
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "the group kill + bounded joins must return promptly"

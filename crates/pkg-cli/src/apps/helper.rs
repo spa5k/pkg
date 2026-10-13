@@ -107,7 +107,7 @@ pub(super) fn ensure_helper(nix: &Nix, paths: &Paths) -> Result<PathBuf, AppErro
 /// allows one dependency repair; interruption and unrelated failures stop
 /// the sync before any launcher is replaced.
 fn helper_runtime_compatible(helper: &Path) -> Result<bool, AppError> {
-    match run_direct(helper, &[String::from("--help")])? {
+    match run_direct(helper, &["--help"])? {
         Outcome::Success => Ok(true),
         Outcome::Failed { stderr, .. }
             if stderr.contains("failed to allocate 1048576 bytes at 0x300100000") =>
@@ -187,9 +187,9 @@ fn helper_binary_in(store_paths: &[String]) -> Option<PathBuf> {
 /// refreshes Dock entries for the trampolined apps.
 pub(super) fn run_sync_trampolines(helper: &Path, from: &Path, to: &Path) -> Result<(), AppError> {
     let args = [
-        String::from("sync-trampolines"),
-        from.to_string_lossy().into_owned(),
-        to.to_string_lossy().into_owned(),
+        "sync-trampolines",
+        &from.to_string_lossy(),
+        &to.to_string_lossy(),
     ];
     match run_direct(helper, &args) {
         Ok(Outcome::Success) => Ok(()),
@@ -210,11 +210,10 @@ pub(super) fn run_sync_trampolines(helper: &Path, from: &Path, to: &Path) -> Res
             stderr.trim()
         ))
         .with_dock_effect_possible()),
-        Err(detail) => Err(AppError::message(format!(
-            "could not run {}: {detail}",
-            helper.display()
-        ))
-        .with_dock_effect_possible()),
+        Err(error) => Err(
+            AppError::process(format!("could not run {}", helper.display()), error)
+                .with_dock_effect_possible(),
+        ),
     }
 }
 

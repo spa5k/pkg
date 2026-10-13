@@ -3,12 +3,9 @@
 /// Parse dot-separated ASCII digits. Reject empty components and overflow.
 #[must_use]
 pub fn parse(text: &str) -> Option<Vec<u64>> {
-    if text.is_empty() {
-        return None;
-    }
     text.split('.')
         .map(|part| {
-            if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+            if !part.bytes().all(|b| b.is_ascii_digit()) {
                 return None;
             }
             part.parse::<u64>().ok()

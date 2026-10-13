@@ -19,8 +19,7 @@
 
 use cask_catalog::MACOS_BASELINE;
 use cask_catalog::TARGETS;
-use cask_catalog::classify::{self, TargetDecision};
-use cask_catalog::effective::RawRecord;
+use cask_catalog::classify::{self, PlatformGate, TargetDecision};
 use serde_json::Value;
 
 fn fixture(name: &str) -> String {
@@ -82,7 +81,7 @@ fn fixture_records_match_manual_expectations_on_both_targets() {
         for system in TARGETS {
             let exp = expectation(&expected, &token, system);
             let status =
-                classify::classify_target(&RawRecord::new(record.clone()), system, MACOS_BASELINE);
+                classify::classify_target(record, system, MACOS_BASELINE, PlatformGate::Tags);
             let actual = status_json(&status);
 
             assert_field(&actual["status"], &exp["status"], "status", &token, system);

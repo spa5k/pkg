@@ -14,18 +14,22 @@ publish = false
 description = "Maintainer tool for the pkg Cask catalog: pinned snapshot generation and raw public tap import"
 
 [dependencies]
-libc = "=0.2.189"
-clap = { version = "=4.6.6", features = ["derive"] }
+# Static enum names are derived at compile time; no runtime conversion.
+strum_macros = "=0.28.0"
+pkg-process = { path = "../../crates/pkg-process" }
+libc = "=0.2.190"
+clap = { version = "=4.6.7", features = ["derive"] }
 flate2 = "=1.1.10"
-reqwest = { version = "=0.12.28", default-features = false, features = [
+reqwest = { version = "=0.13.5", default-features = false, features = [
   "blocking",
-  "rustls-tls",
+  "rustls",
 ] }
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
-sha2 = "=0.10.9"
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
 tar = "=0.4.46"
 tempfile = "=3.27.0"
+thiserror = "=2.0.21"
 url = "=2.5.8"
 
 [lints]

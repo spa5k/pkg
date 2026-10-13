@@ -25,14 +25,14 @@ pub use consent::Decision;
 pub use registry::{
     GlobalLock, REGISTRY_SCHEMA, Registry, RegistryEntry, commit_prepared, registry_path,
 };
-pub use saved::{SavedCatalog, SavedCatalogs, load_all, validate_binding};
+pub use saved::{SavedCatalog, SavedCatalogs, validate_binding};
 pub use store::{Provenance, Publication, Published, SourceStore, StagedGeneration, current_ref};
 
 /// Validate one staged import by native evaluation of the staging flake.
 ///
 /// The evaluation uses only our fixed builder over trusted generated
 /// assets; the captured `catalogIndex` output is decoded by the ordinary
-/// strict schema-3 decoder, so no second classifier exists in the client.
+/// strict schema-4 decoder, so no second classifier exists in the client.
 /// The decoded envelope is returned for the generation's capture file.
 /// # Errors
 ///
@@ -40,14 +40,13 @@ pub use store::{Provenance, Publication, Published, SourceStore, StagedGeneratio
 pub fn validate_staging(
     nix: &crate::nix::Nix,
     flake_path: &std::path::Path,
-) -> Result<crate::nix::CatalogIndex, String> {
+) -> Result<crate::nix::CatalogIndex, crate::nix::NixError> {
     // The same percent-encoding as the stable `current` reference: a
     // staging path with spaces, `#`, `?`, or `%` must stay exactly one
     // reference text Nix evaluates verbatim, never a raw path string that
     // splits or truncates the reference.
     let reference = format!("path:{}", crate::nix::encode_path_reference(flake_path));
     nix.catalog_index(&reference)
-        .map_err(|error| format!("the generated staging flake is invalid: {error}"))
 }
 
 #[cfg(test)]
@@ -91,6 +90,26 @@ mod tests {
         let nix = crate::nix::discover(Some(script.as_os_str().to_str().expect("utf-8")))
             .expect("discovers the fake runtime");
         (nix, bin)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_validation_keeps_child_cancellation() {
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            let capture = tempfile::tempdir().expect("capture");
+            let (nix, _runtime) = fake_nix(&capture.path().join("arguments"));
+            let script = std::fs::read_to_string(nix.executable()).expect("runtime script");
+            std::fs::write(
+                nix.executable(),
+                script.replace(
+                    "*'eval --json'*) ",
+                    &format!("*'eval --json'*) kill -{signal} $$; "),
+                ),
+            )
+            .expect("cancel evaluation");
+            let error = validate_staging(&nix, capture.path()).expect_err("cancelled validation");
+            assert_eq!(error.signal(), Some(signal));
+        }
     }
 
     #[test]

@@ -107,6 +107,178 @@ const ACTIONS: &[&[&str]] = &[
 ];
 
 #[test]
+fn failure_state_cancellation_keeps_its_signal_and_skips_conflict_diagnostics() {
+    for (signal, code) in [("INT", 130), ("TERM", 143), ("HUP", 129)] {
+        let fixture = Fixture::new();
+        let runtime = RUNTIME
+            .replace(
+                "text=' '.join(args)",
+                "text=' '.join(args)\nwith open(home/'all-calls.jsonl','a') as log: log.write(json.dumps(text)+'\\n')",
+            )
+            .replace(
+                "if os.environ['PKG_ORDER_STOP']=='mutation': interrupt()",
+                "print('error: An existing package already provides the following file:\\n\\n  \"/nix/store/old-probe/bin/probe\"\\n\\nThis is the conflicting file from the new package:\\n\\n  \"/nix/store/new-probe/bin/probe\"',file=sys.stderr)\n sys.exit(1)",
+            );
+        fs::write(fixture.home.path().join("nix"), runtime).expect("failing runtime");
+        let output = fixture.run(ACTIONS[0], "after", signal);
+        assert_eq!(output.status.code(), Some(code), "{signal}: {output:?}");
+        assert!(output.stdout.is_empty(), "no completion: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(
+                "Interrupted: install stopped.\nPackage state is unknown. Next: run `pkg doctor`.\n"
+            ),
+            "{signal}: {stderr}"
+        );
+        assert!(
+            stderr.contains("Cause: An existing package already provides the following file:"),
+            "original mutation cause: {stderr}"
+        );
+        assert!(
+            !stderr.contains("Cause: two packages provide") && !stderr.contains("Requested:"),
+            "no conflict diagnostics after cancellation: {stderr}"
+        );
+        let calls = fixture.calls();
+        assert_eq!(
+            calls
+                .iter()
+                .map(|call| call["call"].as_str().expect("native call name"))
+                .collect::<Vec<_>>(),
+            ["list", "list", "add", "list"],
+            "{signal}: {calls:?}"
+        );
+        assert!(calls.iter().all(|call| call["locked"] == true), "{calls:?}");
+        let all_calls = fs::read_to_string(fixture.home.path().join("all-calls.jsonl"))
+            .expect("all native calls");
+        assert!(
+            all_calls
+                .lines()
+                .last()
+                .expect("final native call")
+                .contains("profile list "),
+            "no diagnostic Nix work after the reread: {all_calls}"
+        );
+    }
+}
+
+#[test]
+fn mutation_signal_wins_over_failure_state_cancellation() {
+    for (first, later, code) in [
+        ("INT", "TERM", 130),
+        ("TERM", "HUP", 143),
+        ("HUP", "INT", 129),
+    ] {
+        let fixture = Fixture::new();
+        let runtime = RUNTIME.replace(
+            " stop=os.environ['PKG_ORDER_STOP']",
+            &format!(
+                " if changed:\n  os.environ['PKG_ORDER_SIGNAL']='{later}'\n  interrupt()\n stop=os.environ['PKG_ORDER_STOP']"
+            ),
+        );
+        fs::write(fixture.home.path().join("nix"), runtime).expect("cancelling runtime");
+        let output = fixture.run(ACTIONS[1], "mutation", first);
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{first}, {later}: {output:?}"
+        );
+        assert!(output.stdout.is_empty(), "no completion: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(
+                "Interrupted: remove stopped.\nPackage state is unknown. Next: run `pkg doctor`.\n"
+            ),
+            "{first}, {later}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("Cause:"),
+            "pure interruptions stay concise: {stderr}"
+        );
+        let calls = fixture.calls();
+        assert_eq!(calls.len(), 3, "{first}, {later}: {calls:?}");
+        assert_eq!(calls.last().expect("failure-state read")["call"], "list");
+        assert!(calls.iter().all(|call| call["locked"] == true), "{calls:?}");
+    }
+}
+
+#[test]
+fn failed_mutation_reports_observed_profile_state_and_original_cause() {
+    for (state, args, evidence) in [
+        (
+            "unchanged",
+            ACTIONS[1],
+            "Failed: remove did not complete.\nInstalled entries unchanged.\n",
+        ),
+        (
+            "changed",
+            ACTIONS[1],
+            "Partial: remove changed the profile before it stopped.\nProfile: 0 added, 1 removed, 0 updated.\nNext: run `pkg list` to inspect the active profile.\n",
+        ),
+        (
+            "unreadable",
+            ACTIONS[1],
+            "Failed: remove did not complete.\nPackage state is unknown. Next: run `pkg doctor`.\n",
+        ),
+        (
+            "without-before",
+            ACTIONS[4],
+            "Failed: prune did not complete.\nProfile checked: 0 entries are active.\n",
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let failure = format!(
+            "{}print('error: fixture mutation failed',file=sys.stderr)\n sys.exit(1)",
+            if state == "unchanged" {
+                "(home/'changed').unlink()\n "
+            } else {
+                ""
+            }
+        );
+        let mut runtime = RUNTIME.replace(
+            "if os.environ['PKG_ORDER_STOP']=='mutation': interrupt()",
+            &failure,
+        );
+        if state == "unreadable" {
+            runtime = runtime.replace(
+                "elif action=='list':",
+                "elif action=='list' and changed:\n print('error: fixture profile unreadable',file=sys.stderr)\n sys.exit(1)\nelif action=='list':",
+            );
+        }
+        fs::write(fixture.home.path().join("nix"), runtime).expect("failing runtime");
+        let output = fixture.run(args, "none", "TERM");
+        assert_eq!(output.status.code(), Some(1), "{state}: {output:?}");
+        assert!(output.stdout.is_empty(), "no completion: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(evidence), "{state}: {stderr}");
+        let cause = if args[0] == "prune" {
+            "Cause: native command `nix profile wipe-history"
+        } else {
+            "Cause: fixture mutation failed"
+        };
+        assert!(
+            stderr.contains(cause) && stderr.contains("fixture mutation failed"),
+            "original mutation cause: {stderr}"
+        );
+        let calls = fixture.calls();
+        let expected_calls: &[&str] = if args[0] == "prune" {
+            &["history", "list", "wipe-history", "list"]
+        } else {
+            &["list", "remove", "list"]
+        };
+        assert_eq!(
+            calls
+                .iter()
+                .map(|call| call["call"].as_str().expect("native call name"))
+                .collect::<Vec<_>>(),
+            expected_calls,
+            "{state}: {calls:?}"
+        );
+        assert_eq!(calls.last().expect("postfailure read")["call"], "list");
+        assert!(calls.iter().all(|call| call["locked"] == true), "{calls:?}");
+    }
+}
+
+#[test]
 fn fixed_only_upgrades_keep_the_profile_without_native_mutation() {
     for (args, message) in [
         (
@@ -194,6 +366,22 @@ fn mutation_cancellation_preserves_each_signal_and_profile_evidence() {
                 stderr.contains("Interrupted:") || stderr.contains("Partial:"),
                 "{stderr}"
             );
+            if args[0] == "prune" {
+                assert!(
+                    stderr.contains(
+                        "Interrupted: prune stopped.\nProfile checked: 0 entries are active.\n"
+                    ),
+                    "{stderr}"
+                );
+            } else if args[0] != "rollback" {
+                assert!(
+                    stderr.contains(&format!(
+                        "Interrupted: {} stopped after the profile changed.\nProfile: 0 added, 1 removed, 0 updated.\n",
+                        args[0]
+                    )),
+                    "{stderr}"
+                );
+            }
             let calls = fixture.calls();
             assert!(calls.iter().all(|call| call["locked"] == true), "{calls:?}");
             if args[0] == "rollback" {

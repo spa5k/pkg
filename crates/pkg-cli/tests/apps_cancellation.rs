@@ -360,7 +360,7 @@ fn doctor_preserves_interruption_during_app_status() {
     assert_eq!(output.status.code(), Some(128 + libc::SIGTERM));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("signal 15"), "{stderr}");
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, [] as [u8; 0]);
 }
 
 #[test]
@@ -498,7 +498,7 @@ fn canceled_refresh_reports_the_completed_native_upgrade() {
         assert!(stderr.contains("Partial: upgrade"), "{stderr}");
         assert!(stderr.contains("pkg apps sync"), "{stderr}");
         assert!(stderr.contains("Dock state may have changed"), "{stderr}");
-        assert!(output.stdout.is_empty());
+        assert_eq!(output.stdout, [] as [u8; 0]);
         assert_eq!(
             fs::read_to_string(fixture.launchers().join(".pkg-launcher-sources")).unwrap(),
             SOURCE_MAP

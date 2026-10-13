@@ -23,7 +23,7 @@ pub(super) fn update(cli: &Cli, catalogs_only: bool) -> Result<(), CommandError>
         &system,
     ) {
         Ok(count) => eprintln!("Ready: Homebrew Formulae search data ({count} formulae)."),
-        Err(error @ catalog::CatalogError::Interrupted(_)) => return Err(error.into()),
+        Err(error) if error.signal().is_some() => return Err(error.into()),
         Err(error) => {
             failed = true;
             eprintln!(
@@ -56,7 +56,7 @@ pub(super) fn update(cli: &Cli, catalogs_only: bool) -> Result<(), CommandError>
             });
         match result {
             Ok(()) => eprintln!("Ready: {} search data.", kind.label()),
-            Err(error @ catalog::CatalogError::Interrupted(_)) => return Err(error.into()),
+            Err(error) if error.signal().is_some() => return Err(error.into()),
             Err(error) => {
                 failed = true;
                 eprintln!(

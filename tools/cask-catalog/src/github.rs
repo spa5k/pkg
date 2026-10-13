@@ -10,15 +10,7 @@ use crate::net::SafeClient;
 use serde_json::Value;
 
 fn short(text: &str, limit: usize) -> String {
-    if text.len() <= limit {
-        return text.to_string();
-    }
-    // Never cut inside a multi-byte character: back up to a boundary.
-    let mut end = limit;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_string()
+    text[..text.floor_char_boundary(limit)].to_string()
 }
 
 /// One bounded JSON GET against api.github.com.
@@ -77,38 +69,6 @@ fn license_from(repo_json: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-/// Resolve the head commit sha of one branch (or `HEAD` for names
-/// containing `/`): the response `sha` must be an exact 40-hex id.
-fn head_sha(
-    client: &SafeClient,
-    owner: &str,
-    repo: &str,
-    default_branch: &str,
-) -> Result<String, String> {
-    let branch_ref = if default_branch.contains('/') {
-        "HEAD"
-    } else {
-        default_branch
-    };
-    let branch_json = api_get(
-        client,
-        &format!("/repos/{owner}/{repo}/commits/{branch_ref}"),
-    )
-    .map_err(|e| short(&e, 400))?;
-    let revision = branch_json
-        .get("sha")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("commit response for {owner}/{repo}/{default_branch} has no sha"))?
-        .to_ascii_lowercase();
-    if !crate::valid_revision(&revision) {
-        return Err(format!(
-            "commit response for {owner}/{repo}/{default_branch} is not an exact \
-             40-hex commit id: {revision:?}"
-        ));
-    }
-    Ok(revision)
-}
-
 /// Verified repository identity: the exact revision plus license.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoIdentity {
@@ -141,25 +101,43 @@ pub fn verify_repo(
     expect_full_name(&repo_json, owner, repo)?;
     let default_branch = validated_default_branch(&repo_json, owner, repo)?;
     let license_spdx = license_from(&repo_json);
-    let revision = match revision {
-        Some(rev) => {
-            let commit_json = api_get(client, &format!("/repos/{owner}/{repo}/commits/{rev}"))
-                .map_err(|e| short(&e, 400))?;
-            let sha = commit_json
-                .get("sha")
-                .and_then(Value::as_str)
-                .ok_or_else(|| format!("commit response for {owner}/{repo}@{rev} has no sha"))?
-                .to_ascii_lowercase();
-            if sha != rev.to_ascii_lowercase() || !crate::valid_revision(&sha) {
-                return Err(format!(
-                    "commit response for {owner}/{repo}@{rev} is not the exact requested \
-                     40-hex commit id"
-                ));
-            }
-            sha
+    let branch_ref = revision.unwrap_or_else(|| {
+        if default_branch.contains('/') {
+            "HEAD"
+        } else {
+            &default_branch
         }
-        None => head_sha(client, owner, repo, &default_branch)?,
+    });
+    let context = match revision {
+        Some(rev) => format!("{owner}/{repo}@{rev}"),
+        None => format!("{owner}/{repo}/{default_branch}"),
     };
+    let commit_json = api_get(
+        client,
+        &format!("/repos/{owner}/{repo}/commits/{branch_ref}"),
+    )
+    .map_err(|e| short(&e, 400))?;
+    let sha = commit_json
+        .get("sha")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("commit response for {context} has no sha"))?
+        .to_ascii_lowercase();
+    match revision {
+        Some(rev) if sha != rev.to_ascii_lowercase() || !crate::valid_revision(&sha) => {
+            return Err(format!(
+                "commit response for {context} is not the exact requested \
+                 40-hex commit id"
+            ));
+        }
+        None if !crate::valid_revision(&sha) => {
+            return Err(format!(
+                "commit response for {context} is not an exact \
+                 40-hex commit id: {sha:?}"
+            ));
+        }
+        _ => {}
+    }
+    let revision = sha;
     Ok(RepoIdentity {
         revision,
         license_spdx,
@@ -229,5 +207,27 @@ mod tests {
         assert!(cut.len() <= 400);
         assert!(cut.chars().all(|c| c == 'é'));
         assert_eq!(cut.len() % 2, 0);
+
+        let text = "aé€🦀z";
+        for (limit, expected) in [
+            (0, ""),
+            (1, "a"),
+            (2, "a"),
+            (3, "aé"),
+            (4, "aé"),
+            (5, "aé"),
+            (6, "aé€"),
+            (7, "aé€"),
+            (8, "aé€"),
+            (9, "aé€"),
+            (10, "aé€🦀"),
+            (11, text),
+            (12, text),
+            (usize::MAX, text),
+        ] {
+            assert_eq!(short(text, limit), expected, "byte limit {limit}");
+        }
+        assert_eq!(short("", 0), "");
+        assert_eq!(short("", usize::MAX), "");
     }
 }

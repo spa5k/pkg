@@ -10,8 +10,8 @@
 //! fields. The official driver reads the pinned JSON snapshot; the raw
 //! tap driver lives in `tap.rs` and feeds the same entry shape.
 
-use crate::classify::{TargetDecision, TargetOutcome};
-use crate::effective::{self, RawRecord};
+use crate::classify::{PlatformGate, TargetDecision, classify_target};
+use crate::effective;
 use crate::{
     CATALOG_SCHEMA, GENERATOR_NAME, GENERATOR_VERSION, MACOS_BASELINE, OFFICIAL_SOURCE, Pin,
     TARGETS,
@@ -20,7 +20,6 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
@@ -64,6 +63,19 @@ pub struct Origin {
     pub sha256: String,
 }
 
+impl Origin {
+    /// Check source-relative path and SHA-256 syntax, and normalize the hash.
+    pub(super) fn checked(path: &str, sha256: &str) -> Option<Self> {
+        if !crate::valid_sha256(sha256) || !safe_relative_path(path) {
+            return None;
+        }
+        Some(Self {
+            path: path.to_string(),
+            sha256: sha256.to_ascii_lowercase(),
+        })
+    }
+}
+
 /// One catalog entry: source identity plus per-target decisions.
 #[derive(Serialize)]
 pub struct Entry {
@@ -93,27 +105,21 @@ pub struct Generated {
     pub coverage: String,
 }
 
-/// Provenance at the top of the catalog envelope.
-#[derive(Serialize)]
-struct Provenance<'a> {
-    schema: &'a str,
-    generator: Generator<'a>,
-    inputs: &'a BTreeMap<String, InputProvenance>,
-    targets: &'a [&'a str],
-    #[serde(rename = "macosBaseline")]
-    macos_baseline: &'a str,
-}
-
 #[derive(Serialize)]
 struct Generator<'a> {
     name: &'a str,
     version: &'a str,
 }
 
+/// The complete catalog envelope with its source provenance and entries.
 #[derive(Serialize)]
 struct Catalog<'a> {
-    #[serde(flatten)]
-    provenance: Provenance<'a>,
+    schema: &'a str,
+    generator: Generator<'a>,
+    inputs: &'a BTreeMap<String, InputProvenance>,
+    targets: &'a [&'a str],
+    #[serde(rename = "macosBaseline")]
+    macos_baseline: &'a str,
     entries: &'a BTreeMap<String, Entry>,
 }
 
@@ -132,16 +138,14 @@ pub fn assemble_catalog(
     targets: &[&str],
 ) -> Result<String, String> {
     let catalog = Catalog {
-        provenance: Provenance {
-            schema: CATALOG_SCHEMA,
-            generator: Generator {
-                name: GENERATOR_NAME,
-                version: GENERATOR_VERSION,
-            },
-            inputs,
-            targets,
-            macos_baseline: MACOS_BASELINE,
+        schema: CATALOG_SCHEMA,
+        generator: Generator {
+            name: GENERATOR_NAME,
+            version: GENERATOR_VERSION,
         },
+        inputs,
+        targets,
+        macos_baseline: MACOS_BASELINE,
         entries,
     };
     let catalog = serde_json::to_string(&catalog).map_err(|e| e.to_string())?;
@@ -176,13 +180,7 @@ fn snapshot_origin(record: &Value) -> Option<Origin> {
         .get("ruby_source_checksum")?
         .get("sha256")?
         .as_str()?;
-    if !crate::valid_sha256(sha) || !safe_relative_path(path) {
-        return None;
-    }
-    Some(Origin {
-        path: path.to_string(),
-        sha256: sha.to_ascii_lowercase(),
-    })
+    Origin::checked(path, sha)
 }
 
 /// Whether a source-relative path is plain and inside the tree: no
@@ -227,10 +225,9 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
                 .to_string(),
         );
     }
-    let mut by_token: BTreeMap<String, RawRecord> = BTreeMap::new();
-    for raw in records {
-        let record = RawRecord::new(raw.clone());
-        let Some(token) = record.token() else {
+    let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
+    for record in records {
+        let Some(token) = record.get("token").and_then(Value::as_str) else {
             return Err("integrity: snapshot record without a token string".to_string());
         };
         if !crate::token::is_valid_token(token) {
@@ -239,51 +236,25 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
                  (allowed: [a-z0-9][a-z0-9+._@-]* without '..')"
             ));
         }
-        if by_token.contains_key(token) {
+        let id = qualified_id(OFFICIAL_SOURCE, token);
+        if entries.contains_key(&id) {
             return Err(format!("integrity: duplicate token {token}"));
         }
-        by_token.insert(token.to_string(), record);
-    }
-
-    let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
-    let mut counts: BTreeMap<&str, BTreeMap<&'static str, usize>> = TARGETS
-        .iter()
-        .map(|system| (*system, BTreeMap::new()))
-        .collect();
-    let mut eligible_counts: BTreeMap<&str, usize> =
-        TARGETS.iter().map(|system| (*system, 0)).collect();
-
-    for (token, record) in &by_token {
         let mut targets: BTreeMap<String, TargetDecision> = BTreeMap::new();
         for system in TARGETS {
-            let decision = crate::classify::classify_target(record, system, MACOS_BASELINE);
-            // The eligible/reason counts read the typed outcome: an
-            // excluded decision always carries its reason code, so the
-            // coverage can no longer invent an "unknown" bucket.
-            match &decision.outcome {
-                TargetOutcome::Eligible { .. } => {
-                    if let Some(count) = eligible_counts.get_mut(system) {
-                        *count += 1;
-                    }
-                }
-                TargetOutcome::Excluded { reason, .. } => {
-                    if let Some(reasons) = counts.get_mut(system) {
-                        *reasons.entry(reason.as_str()).or_insert(0) += 1;
-                    }
-                }
-            }
+            let decision = classify_target(record, system, MACOS_BASELINE, PlatformGate::Tags);
             targets.insert((*system).to_string(), decision);
         }
         entries.insert(
-            qualified_id(OFFICIAL_SOURCE, token),
+            id,
             Entry {
                 source: OFFICIAL_SOURCE.to_string(),
-                token: token.clone(),
-                name: effective::name_field(&record.raw),
-                description: effective::str_field(&record.raw, "desc"),
-                version: effective::str_field(&record.raw, "version"),
-                homepage: effective::str_field(&record.raw, "homepage"),
-                origin: snapshot_origin(&record.raw),
+                token: token.to_string(),
+                name: effective::name_field(record),
+                description: effective::str_field(record, "desc"),
+                version: effective::str_field(record, "version"),
+                homepage: effective::str_field(record, "homepage"),
+                origin: snapshot_origin(record),
                 targets,
             },
         );
@@ -296,16 +267,24 @@ pub fn generate(snapshot: &Value, pin: &Pin) -> Result<Generated, String> {
 
     let mut coverage = String::new();
     for system in TARGETS {
-        let eligible = eligible_counts.get(system).copied().unwrap_or(0);
+        let mut eligible = 0;
+        let mut reasons = BTreeMap::new();
+        for decision in entries
+            .values()
+            .filter_map(|entry| entry.targets.get(system))
+        {
+            match decision.reason_code() {
+                None => eligible += 1,
+                Some(reason) => *reasons.entry(reason).or_insert(0) += 1,
+            }
+        }
         let _ = writeln!(
             coverage,
             "{system}: {} records, {eligible} eligible",
-            by_token.len()
+            entries.len()
         );
-        if let Some(reasons) = counts.get(system) {
-            for (reason, count) in reasons {
-                let _ = writeln!(coverage, "  {reason}: {count}");
-            }
+        for (reason, count) in reasons {
+            let _ = writeln!(coverage, "  {reason}: {count}");
         }
     }
 
@@ -331,7 +310,6 @@ pub fn write_catalog(dir: &Path, catalog: &str) -> Result<(), String> {
         .map_err(|e| format!("cannot write the staged catalog: {e}"))?;
     let target = dir.join("catalog.json");
     // Set public data permissions before replacing the old catalog.
-    #[cfg(unix)]
     {
         let permissions = std::fs::Permissions::from_mode(0o644);
         tmp.as_file()
@@ -383,7 +361,7 @@ mod tests {
                 &json!(["arm64_sequoia"]),
                 &json!(
                     {"artifacts": [{"app": ["A.app"]}], "ruby_source_path": "Casks/a/app-ok.rb",
-                     "ruby_source_checksum": {"sha256": "b".repeat(64)}}
+                     "ruby_source_checksum": {"sha256": "B".repeat(64)}}
                 ),
             ),
             record(
@@ -392,6 +370,11 @@ mod tests {
                 &json!(
                     {"artifacts": [{"installer": [{"script": {}}]}]}
                 ),
+            ),
+            record(
+                "disabled",
+                &json!(["arm64_sequoia", "x86_64_linux"]),
+                &json!({"disabled": true}),
             ),
         ]);
         let one = generate(&snapshot, &pin()).expect("generates");
@@ -424,7 +407,10 @@ mod tests {
             json!({"path": "Casks/a/app-ok.rb", "sha256": "b".repeat(64)})
         );
         assert_eq!(entry["targets"]["aarch64-darwin"]["status"], "eligible");
-        assert!(entry["targets"]["aarch64-darwin"]["plan"]["artifacts"][0]["target"] == "A.app");
+        assert_eq!(
+            entry["targets"]["aarch64-darwin"]["plan"]["artifacts"][0]["target"],
+            "A.app"
+        );
         let zoom = &catalog["entries"]["homebrew/cask/zoom"];
         assert_eq!(
             zoom["targets"]["aarch64-darwin"]["reason"],
@@ -438,11 +424,11 @@ mod tests {
                     .is_object()
             );
         }
-        assert!(
-            one.coverage
-                .contains("aarch64-darwin: 2 records, 1 eligible")
+        assert_eq!(
+            one.coverage,
+            "aarch64-darwin: 3 records, 1 eligible\n  disabled: 1\n  installer-script: 1\n\
+             x86_64-linux: 3 records, 0 eligible\n  disabled: 1\n  unsupported-platform: 2\n"
         );
-        assert!(one.coverage.contains("installer-script: 1"));
     }
 
     #[test]
@@ -498,16 +484,24 @@ mod tests {
                 ["plan"]
                 .is_object()
         );
+        assert_eq!(
+            out.coverage,
+            "aarch64-darwin: 1 records, 1 eligible\nx86_64-linux: 1 records, 0 eligible\n  unsupported-platform: 1\n"
+        );
     }
 
     #[test]
     fn bad_snapshot_origin_is_dropped_not_guessed() {
         for bad in [
+            "",
             "../escape.rb",
             "a/../../escape.rb",
             "/abs.rb",
             "Casks//x.rb",
             "Casks/./x.rb",
+            "Casks/x.rb/",
+            "Casks\\x.rb",
+            "Casks/\u{7f}x.rb",
         ] {
             let snapshot = json!([record(
                 "x",

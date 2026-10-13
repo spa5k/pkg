@@ -51,30 +51,28 @@ pub fn package_id(entry: &ProfileEntry, config: &Config, state_home: &std::path:
     let system = parts.next().unwrap_or_default();
     let tail = parts.next().unwrap_or_default();
     let standard = matches!(root, "packages" | "legacyPackages") && !tail.is_empty();
-    if catalog::canonical_source(&entry.original_url)
-        == catalog::canonical_source(&config.sources.nixpkgs)
-    {
+    let original_source = catalog::canonical_source(&entry.original_url);
+    if original_source == catalog::canonical_source(&config.sources.nixpkgs) {
         return format!("nixpkgs:{}", if standard { tail } else { &entry.attr_path });
     }
     if root == "packages"
         && let Ok(full) = cask_catalog::decode_package_attribute(tail)
-        && full.starts_with("homebrew/core/")
-        && catalog::canonical_source(&entry.original_url)
-            == catalog::canonical_source(&config.sources.formulae)
-        && catalog::native_package_attribute(system, &full) == entry.attr_path
     {
-        return format!("brew:{full}");
-    }
-    if root == "packages"
-        && let Ok(full) = cask_catalog::decode_package_attribute(tail)
-        && let Some((source, _)) = crate::nix::split_entry_id(&full)
-        && (catalog::canonical_source(&entry.original_url)
-            == catalog::canonical_source(&config.sources.casks)
-            || crate::tap::store::source_of_reference(state_home, &entry.original_url).as_deref()
-                == Some(source))
-        && catalog::native_package_attribute(system, &full) == entry.attr_path
-    {
-        return format!("cask:{full}");
+        if full.starts_with("homebrew/core/")
+            && original_source == catalog::canonical_source(&config.sources.formulae)
+            && catalog::native_package_attribute(system, &full) == entry.attr_path
+        {
+            return format!("brew:{full}");
+        }
+        if let Some((source, _)) = crate::nix::split_entry_id(&full)
+            && (original_source == catalog::canonical_source(&config.sources.casks)
+                || crate::tap::store::source_of_reference(state_home, &entry.original_url)
+                    .as_deref()
+                    == Some(source))
+            && catalog::native_package_attribute(system, &full) == entry.attr_path
+        {
+            return format!("cask:{full}");
+        }
     }
     format!("{}#{}", entry.original_url, entry.attr_path)
 }
@@ -195,7 +193,7 @@ mod tests {
         selected.store_paths = vec![output.to_string_lossy().into_owned()];
         assert_eq!(commands(&selected, &profile), ["fff"]);
         selected.active = false;
-        assert!(commands(&selected, &profile).is_empty());
+        assert_eq!(commands(&selected, &profile), [] as [String; 0]);
     }
 
     #[test]

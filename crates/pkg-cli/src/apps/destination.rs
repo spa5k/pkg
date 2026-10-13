@@ -26,13 +26,7 @@ pub(super) fn destination_path() -> Result<PathBuf, String> {
             home.display()
         ));
     }
-    let dest = home.join(DEST_RELATIVE);
-    // A hostile or broken HOME must never point the launcher destination at
-    // the system application folder.
-    if dest.parent() == Some(Path::new("/Applications")) {
-        return Err("refusing to use /Applications as the launcher destination".to_string());
-    }
-    Ok(dest)
+    Ok(home.join(DEST_RELATIVE))
 }
 
 /// The inspected ownership state of the launcher destination.

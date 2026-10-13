@@ -30,10 +30,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: DeterminateSystems/determinate-nix-action@668647a33843b1f280cb2ef4c41736f86b29f826
+      - uses: DeterminateSystems/determinate-nix-action@d0c908e6cbe9f89f36ed8205a3ab6f092636916a # v3.23.1
       - name: Generator and bottle boundary tests
         run: python3 tools/formula-catalog/tests.py
       - name: Regenerate from the pinned snapshot
@@ -55,10 +55,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: DeterminateSystems/determinate-nix-action@668647a33843b1f280cb2ef4c41736f86b29f826
+      - uses: DeterminateSystems/determinate-nix-action@d0c908e6cbe9f89f36ed8205a3ab6f092636916a # v3.23.1
       - name: macOS bottle build and execution
         run: |
           output="$(nix build --no-link --print-out-paths ./nix/formulae#homebrew/core/abnfgen)"
