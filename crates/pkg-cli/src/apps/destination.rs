@@ -10,9 +10,8 @@ const DEST_RELATIVE: &str = "Applications/pkg";
 const MARKER_NAME: &str = ".pkg-owned";
 /// Payload required inside [`MARKER_NAME`].
 const MARKER_PAYLOAD: &str = "pkg-apps-owned/1\n";
-/// Derived record of launcher name to source bundle, written after a
-/// successful sync and compared by [`super::status`]. It is derived state, not
-/// package inventory; it is preserved on failed syncs.
+/// Map of launcher names to source bundles. Sync writes it on success,
+/// preserves it on failure, and [`super::status`] compares it with the profile.
 const SOURCE_MAP_NAME: &str = ".pkg-launcher-sources";
 /// The user's launcher destination: `$HOME/Applications/pkg`.
 pub(super) fn destination_path() -> Result<PathBuf, String> {
@@ -49,9 +48,8 @@ pub(super) enum DestinationState {
 
 /// Classify the destination without changing anything.
 ///
-/// Every pre-existing directory without a valid marker — empty or not,
-/// symlinked or not — classifies as [`DestinationState::Unowned`], so
-/// read-only paths can report it and the write path can refuse it.
+/// Any existing directory without a valid marker is [`DestinationState::Unowned`].
+/// This includes empty directories and symlinks.
 pub(super) fn inspect_destination(dest: &Path) -> Result<DestinationState, String> {
     match fs::symlink_metadata(dest) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(DestinationState::Missing),
@@ -86,11 +84,9 @@ pub(super) fn inspect_destination(dest: &Path) -> Result<DestinationState, Strin
 
 /// Require a missing or pkg-owned destination before writing.
 ///
-/// Only two states are acceptable: the destination does not exist, or it
-/// exists with a regular, non-symlink [`MARKER_NAME`] carrying exactly
-/// [`MARKER_PAYLOAD`]. Any other pre-existing directory — empty or not,
-/// symlinked or not — is refused, so this module never replaces a folder
-/// it does not own.
+/// An existing destination must have a regular [`MARKER_NAME`] file with
+/// exactly [`MARKER_PAYLOAD`]. Reject symlink markers and unowned directories,
+/// including empty directories.
 pub(super) fn ensure_owned_destination(dest: &Path) -> Result<(), String> {
     match inspect_destination(dest)? {
         DestinationState::Missing | DestinationState::Owned => Ok(()),

@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 /// The index is the generated `pkg-cask-catalog/4` envelope exposed by a
 /// casks flake as `catalogIndex`. It carries one provenance object per
 /// source (`inputs`), the target system list, and per-system status entries
-/// keyed by the full entry identity `owner/tap/token` (the official source
-/// is `homebrew/cask`). Schema 2 is gone: no compatibility layer exists.
+/// keyed by the full entry identity `owner/tap/token`. The official source
+/// is `homebrew/cask`.
 pub const CATALOG_INDEX_SCHEMA: &str = "pkg-cask-catalog/4";
 
 /// The source identity of the official generated cask catalog.
@@ -27,14 +27,10 @@ pub struct CatalogGenerator {
 
 /// The raw-input provenance recorded for a locally imported tap source.
 ///
-/// A local (tap) input's `url` is the canonical approved repository
-/// origin, and this object carries what the importer actually fetched and
-/// captured, including the backend envelope identity
-/// (`pkg-tap-raw-export/1`). Unknown extra fields are accepted: the
-/// backend envelope grows fields the client does not interpret. The
-/// official catalog input has no `raw` object at all, so the field stays
-/// optional and absent there. There is deliberately no `origin` inside
-/// `raw`: the approved origin is the input's own `url`.
+/// The input's `url` records the approved repository origin. This object
+/// records the fetched content and capture hashes. Decoding accepts unknown
+/// fields, including the backend's `pkg-tap-raw-export/1` envelope identity.
+/// Official catalog inputs omit `raw`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawInputProvenance {
@@ -52,9 +48,8 @@ pub struct RawInputProvenance {
 
 /// The pinned input provenance recorded for one catalog source.
 ///
-/// Unknown extra fields are accepted permissively on decode (generated
-/// protocol data grows); the required identity fields must be present and
-/// nonempty. On encode only the decoded fields are written back.
+/// Decoding accepts unknown fields but requires nonempty identity fields.
+/// Encoding writes only the fields this type defines.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct CatalogInput {
     /// The pinned source URL the catalog was generated from.
@@ -153,10 +148,8 @@ impl TryFrom<BTreeMap<String, serde_json::Value>> for CatalogSystem {
 
 /// The decoded `catalogIndex` envelope of a casks flake.
 ///
-/// The envelope serializes back to the exact shape it decodes from — the
-/// `schema` identity and the `macosBaseline` field name included — so a
-/// published generation's capture file is the same strict schema-4 index
-/// the decoder consumes. No parallel encoding exists in this client.
+/// Serialization preserves the schema-4 format, including `schema` and
+/// `macosBaseline`, so the decoder can read published capture files.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct IndexDocument {
     /// The schema identity accepted by the strict decoder and written on encode.

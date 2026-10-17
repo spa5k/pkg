@@ -1,10 +1,8 @@
-//! Source routing: which reference answers each catalog source.
+//! Map catalog sources to install references.
 //!
-//! One place maps a catalog source identity to the reference pkg installs
-//! from: the configured casks flake for `homebrew/cask`, and one stable
-//! per-tap `current` path reference for every locally imported tap. Every
-//! query, gate, and install derives its reference through [`Routing`], so
-//! no command repeats its own routing glue.
+//! [`Routing`] selects the configured casks flake for `homebrew/cask` and
+//! a stable `current` path for each imported tap. Queries, eligibility checks,
+//! and installation use these references.
 
 use std::collections::BTreeMap;
 use std::path::Path;

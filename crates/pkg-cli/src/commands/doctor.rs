@@ -1,8 +1,7 @@
 //! Doctor: read-only runtime, profile, launcher, and tap status.
 //!
-//! Doctor reports and never repairs (design D7 review rule). Unhealthy
-//! required components make the command fail with a nonzero exit; a fresh
-//! profile, a home without taps, or a skipped platform component does not.
+//! Unhealthy required components cause a nonzero exit. A fresh profile,
+//! a home without taps, or a skipped platform component does not.
 
 use std::process::ExitCode;
 
@@ -126,11 +125,7 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
     } else {
         "defaults"
     };
-    // Saved tap health is read through the same strict per-source loader
-    // the query paths use; doctor reports the state and never repairs
-    // it. A registered tap without a usable published generation is
-    // unhealthy here, so a home in that state cannot pass doctor while
-    // its installs are being blocked.
+    // Use the query loader so doctor and installation agree on tap health.
     rows.extend(tap_rows(&paths.state_home));
     rows.push(observed(
         "config",

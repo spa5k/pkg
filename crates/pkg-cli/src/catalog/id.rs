@@ -1,8 +1,7 @@
 //! Catalog ID parsing, validation, and source normalization.
 //!
-//! Pure functions over user input: how an ID parses, which form it names,
-//! and how two references collapse to one canonical source. No process
-//! runs here and no source is contacted.
+//! Parse user input and normalize source references without running processes
+//! or contacting sources.
 
 use crate::nix::{self, full_entry_id, split_entry_id};
 
@@ -175,9 +174,8 @@ impl std::fmt::Display for CatalogId {
 pub enum ParsedId {
     /// A source-qualified or explicit identity.
     Qualified(CatalogId),
-    /// A bare cask token (`cask:token`): resolved across every saved cask
-    /// catalog, official and taps alike, and refused when it matches more
-    /// than one source — even when some matches are excluded entries.
+    /// A bare `cask:token` resolved across official and saved tap catalogs.
+    /// Reject matches in more than one source, including excluded entries.
     BareCask(String),
     /// A bare name that needs disambiguation across all sources.
     Bare(String),
@@ -249,11 +247,8 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
 
 /// Validate a cask token.
 ///
-/// The rule is the generator's token identifier rule
-/// (`[a-z0-9][a-z0-9+._@-]*` without `..` components): `@` versioned
-/// tokens such as `1password-cli@beta` and `+` tokens such as `xournal++`
-/// are real catalog identifiers and must parse, while a token can never
-/// shape the attribute path it installs through.
+/// Use the generator's rule, `[a-z0-9][a-z0-9+._@-]*`, without `..`
+/// components. This accepts tokens such as `1password-cli@beta` and `xournal++`.
 fn validate_cask_token(token: &str, prefix: &str) -> Result<(), String> {
     if token.is_empty() {
         return Err(format!("{prefix} needs a nonempty token"));
@@ -308,12 +303,9 @@ fn validate_github_reference(reference: &str) -> Result<(), String> {
 
 /// Canonical source identity of a reference, for installed matching.
 ///
-/// Two references map to the same canonical source when they name the same
-/// repository *and* the same flake subdirectory: reference, revision, and
-/// other parameters are ignored, but `dir=` is retained so two flakes in one
-/// repository are never conflated. A stable tap `current` path reference is
-/// already canonical: the symlink may move between generations, and the
-/// canonical identity deliberately stays the stable per-source reference.
+/// References match when they name the same repository and flake subdirectory.
+/// Keep `dir=` and ignore other parameters, including the reference and revision.
+/// Keep a tap's stable `current` path unchanged when its symlink target changes.
 #[must_use]
 pub fn canonical_source(reference: &str) -> String {
     let without_fragment = reference.split('#').next().unwrap_or(reference);

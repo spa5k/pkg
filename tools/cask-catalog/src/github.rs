@@ -1,10 +1,8 @@
 //! GitHub public API access for source identity only (crate-internal).
 //!
-//! Two unauthenticated HTTPS calls resolve the current default-branch
-//! head and repository license for a canonical `owner/tap`. No token,
-//! no credentials, no other endpoints. Responses are parsed defensively
-//! with strict shape checks; the returned commit must be an exact
-//! 40-hex id or the whole operation fails.
+//! Two unauthenticated HTTPS calls resolve the repository license and
+//! default-branch head for a canonical `owner/tap`. Validate response fields
+//! and require an exact 40-hex commit ID.
 
 use crate::net::SafeClient;
 use serde_json::Value;
@@ -79,7 +77,7 @@ pub struct RepoIdentity {
     pub license_spdx: Option<String>,
 }
 
-/// Verify the public repository identity BEFORE any fetch.
+/// Verify the public repository identity before fetching source data.
 ///
 /// `full_name` must equal `owner/repo` exactly (lowercased), even when
 /// an explicit revision is given: transfer, rename, and cross-repo
@@ -92,10 +90,7 @@ pub fn verify_repo(
     repo: &str,
     revision: Option<&str>,
 ) -> Result<RepoIdentity, String> {
-    // ONE repository GET: the same validated response provides the
-    // identity check (full_name), the default branch, and the license.
-    // There is no second repository request that could ignore the
-    // validated full_name.
+    // Use one validated response for repository identity, branch, and license.
     let repo_json =
         api_get(client, &format!("/repos/{owner}/{repo}")).map_err(|e| short(&e, 400))?;
     expect_full_name(&repo_json, owner, repo)?;

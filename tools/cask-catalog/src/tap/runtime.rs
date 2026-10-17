@@ -23,11 +23,9 @@ pub(super) const NIX_WALLTIME: Duration = Duration::from_mins(45);
 /// Per-stream captured Nix log limit. Overflow ABORTS the build; it
 /// never silently truncates into a reported success.
 const MAX_STREAM_BYTES: usize = 1024 * 1024;
-/// Trusted `--file` wrapper: converts `--argstr`-provided STRINGS into
-/// the argument types raw-export.nix expects. No caller-controlled
-/// value is ever evaluated as a Nix expression: the tap path arrives as
-/// a plain string (safe with spaces, `$`, quotes) and the canary set is
-/// parsed by `builtins.fromJSON`.
+/// Convert `--argstr` strings to the types `raw-export.nix` expects.
+/// Keep the tap path as a string and parse the canary set with `builtins.fromJSON`.
+/// Do not evaluate caller values as Nix expressions.
 const RUN_WRAPPER_NIX: &str = r#"
 { tapSourcePath
 , canaryJson
@@ -41,9 +39,7 @@ import ./raw-export.nix
 "#;
 
 pub(super) struct CanaryControl {
-    /// RAII guard over the public canary directory: even failures
-    /// BEFORE this struct is fully built cannot leak the directory,
-    /// because the `TempDir` guard owns it from creation.
+    /// Own the canary directory from creation so early failures remove it.
     #[allow(dead_code, reason = "the guard field is owned for Drop only")]
     pub(super) dir: tempfile::TempDir,
     pub(super) path: String,
@@ -54,10 +50,8 @@ pub(super) struct CanaryControl {
 }
 
 impl Drop for CanaryControl {
-    /// RAII cleanup on EVERY path (success, timeout, failure): stop the
-    /// accept loop, reap the thread, remove ONLY the paths this
-    /// control created (the nonce file, then its own directory via the
-    /// `TempDir` guard).
+    /// Stop and join the listener thread, then remove the nonce file.
+    /// The `TempDir` guard removes the directory.
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.listener_thread.take() {
@@ -79,24 +73,15 @@ fn random_bytes(n: usize) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-/// Create the fresh public canary and the live loopback listener, and
-/// verify both positive controls from the host side before the build.
-/// The canary directory is owned by a `TempDir` guard FROM CREATION, so
-/// every early failure (dir, chmod, nonce write, read-back, listener
-/// bind, thread spawn) cleans up; the `CanaryControl` is constructed
-/// BEFORE the listener positive control runs, so even that error path
-/// gets full Drop cleanup.
+/// Create a public canary file and loopback listener, then verify host access.
+/// Own the directory with `TempDir` from creation. Construct `CanaryControl`
+/// before checking the listener so every early failure cleans up both resources.
 pub(super) fn setup_canary() -> Result<CanaryControl, String> {
     {
         use std::os::unix::fs::PermissionsExt as _;
         let nonce = random_bytes(32)?;
-        // Fresh OS randomness for the directory name; no timestamp
-        // fallback ever.
-        // The parent MUST be the literal PUBLIC /tmp: on macOS the
-        // default std temp dir has private ancestors (per-user
-        // dirs), which makes the sandbox deny the canary for reasons
-        // that are NOT the build's fault. Never std::env::temp_dir()
-        // (inherited TMPDIR) here.
+        // Use OS randomness under public /tmp. A private macOS temp directory
+        // would deny access through its parents and give a false sandbox result.
         let dir = tempfile::TempDir::with_prefix_in("pkg-import-", "/tmp")
             .map_err(|e| format!("cannot create public canary dir: {e}"))?;
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777))
@@ -147,10 +132,7 @@ pub(super) fn setup_canary() -> Result<CanaryControl, String> {
                 }
             })
             .map_err(|e| format!("cannot start the canary listener: {e}"))?;
-        // The control is FULLY constructed (dir guard, thread, stop
-        // flag) BEFORE the listener positive control below: any error
-        // from here on drops the control, stopping the thread and
-        // removing the canary paths.
+        // Own the thread and paths before checking the listener so errors clean up both.
         let control = CanaryControl {
             dir,
             path: path.display().to_string(),
@@ -174,10 +156,6 @@ pub(super) fn setup_canary() -> Result<CanaryControl, String> {
         Ok(control)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Nix raw-export build (ordinary derivation, bounded process)
-// ---------------------------------------------------------------------------
 
 /// Resolve the configured Nix executable: an existing file path is
 /// used directly; otherwise the name is looked up in PATH.
@@ -225,10 +203,8 @@ pub(super) fn write_asset(path: &Path, contents: &str) -> Result<(), String> {
     }
     Ok(())
 }
-/// The fixed child `PATH` whitelist: the resolved nix executable's
-/// own bin directory first, then the system default. Nothing else —
-/// no caller-controlled directories, no ambient PATH entries survive
-/// `env_clear`.
+/// Build child `PATH` from the resolved Nix binary's directory and system defaults.
+/// Exclude inherited `PATH` entries.
 fn isolated_path_value(nix_exe: &Path) -> String {
     let mut path = String::new();
     if let Some(bin) = nix_exe.parent() {
@@ -239,26 +215,19 @@ fn isolated_path_value(nix_exe: &Path) -> String {
     path
 }
 
-/// The ONE shared constructor of the isolated Nix child environment,
-/// used by BOTH nix child callers (the early local config gate and
-/// the fresh authoritative raw-export build). It creates the CALLER'S
-/// private roots (each caller passes its own `home` and `tmp`
-/// directories — there is no shared or reused home/session state)
-/// and returns a `Command` already carrying the complete process
-/// setup the two callers previously duplicated:
-/// - cleared environment (`env_clear`: no ambient `NIX_CONFIG`, no
-///   proxies, no credentials, no inherited HOME),
-/// - the exact whitelist `PATH` (nix bin dir + system default),
+/// Create the isolated Nix command for settings checks and raw-export builds.
+/// Each caller supplies separate private home and temporary directories.
+/// Set up the command with:
+///
+/// - a cleared environment,
+/// - `PATH` from [`isolated_path_value`],
 /// - `LC_ALL=C`,
-/// - a private `HOME` with a `.config` directory and an empty
-///   `NIX_USER_CONF_FILES` (with no HOME at all Nix infers the REAL
-///   user home and its credentials),
+/// - a private `HOME` with `.config` and empty `NIX_USER_CONF_FILES`,
 /// - a private `TMPDIR`,
 /// - null stdin and piped stdout/stderr.
 ///
-/// Arguments, deadlines, log caps, labels, sandbox/fallback flags,
-/// and process ownership stay with the callers: this constructor owns
-/// environment/process setup ONLY.
+/// An explicit private `HOME` prevents Nix from finding the real user's credentials.
+/// Callers set arguments, deadlines, output limits, and sandbox flags.
 pub(super) fn isolated_nix_command(
     nix_exe: &Path,
     home: &Path,
@@ -335,12 +304,8 @@ pub(super) fn run_nix_export(
     write_asset(&runtime.join("probe.sh"), PROBE_SH)?;
     write_asset(&runtime.join("brew-boot-adapter.sh"), BOOT_ADAPTER_SH)?;
 
-    // All caller-controlled values travel as --argstr STRINGS through
-    // the trusted wrapper above: no bare-path `--arg` (spaces or `${`
-    // would break), no interpolated Nix expression. The canary set is
-    // serde-encoded JSON parsed by builtins.fromJSON inside the
-    // wrapper. Every value travels as a plain --argstr STRING: no
-    // caller-controlled value is ever evaluated as a Nix expression.
+    // Pass caller values with --argstr so spaces and `${` remain data.
+    // The wrapper parses the canary JSON without evaluating it as a Nix expression.
     let canary_json = serde_json::json!({
         "path": canary.path,
         "sha256": canary.sha256,
@@ -376,23 +341,16 @@ pub(super) fn run_nix_export(
         .arg("--argstr")
         .arg("system")
         .arg(&request.system)
-        // Fail-closed sandbox demands. `sandbox-fallback false` is the
-        // real option name; there is no `fallback` option. Client
-        // --options are IGNORED for untrusted users on macOS; only the
-        // DAEMON config counts, and the in-build probe stays
-        // authoritative either way.
+        // Request sandboxing with sandbox-fallback disabled. The daemon can ignore
+        // restricted options from untrusted users, so the build must also run its probe.
         .arg("--option")
         .arg("sandbox")
         .arg("true")
         .arg("--option")
         .arg("sandbox-fallback")
         .arg("false")
-        // Real build-log plumbing: -L surfaces builder logs on failure,
-        // and max-build-log-size makes the BUILDER itself die when it
-        // exceeds 1 MiB (the same bound as the parent stdout/stderr
-        // caps above — both bounds are active, they do not replace
-        // each other). This is the raw build only; the config query
-        // carries no log options.
+        // Show build logs with -L and stop the builder above 1 MiB of logs.
+        // The parent also limits captured stdout and stderr to 1 MiB each.
         .arg("--print-build-logs")
         .arg("--option")
         .arg("max-build-log-size")
@@ -522,10 +480,8 @@ mod tests {
         assert!(err.message().contains("log cap"), "unexpected error: {err}");
     }
 
-    // 2 MiB of stdout, then a descendant HANGS while holding the pipes
-    // open: the shared overflow flag must abort the build IMMEDIATELY
-    // (at the 1 MiB cap), not after EOF, and the group kill must free
-    // the bounded drains.
+    // Write 2 MiB, then keep the pipes open in a descendant. The 1 MiB output
+    // limit must stop the process group without waiting for EOF.
     #[cfg(unix)]
     #[test]
     fn nix_log_flood_with_hung_descendant_aborts_within_seconds() {
@@ -555,13 +511,10 @@ mod tests {
         );
     }
 
-    /// The raw-export build child must see EXACTLY the same shared
-    /// constructor whitelist as the config gate (plus shell bookkeeping):
-    /// the fake nix dumps its environment and exits
-    /// 0 without producing export.json, so the run fails at the
-    /// out-link check — AFTER the child ran — and the dump can be
-    /// compared exactly. A separate test process carries only controlled
-    /// sentinels, so an isolation failure cannot dump host credentials.
+    /// Check that the build and settings query use the same child environment.
+    /// Fake Nix records its environment and exits without creating `export.json`.
+    /// The later out-link check fails, but the environment remains available to compare.
+    /// Run in a test subprocess with controlled values to avoid exposing host credentials.
     #[cfg(unix)]
     #[test]
     fn nix_export_child_environment_is_exactly_the_whitelist() {
@@ -738,7 +691,7 @@ mod tests {
             .expect("child test process spawns");
         // Wait until the bounded child was spawned and the guard is
         // registered (the `started` marker is written by the bounded
-        // child itself, i.e. AFTER guard installation).
+        // child itself after guard installation).
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         while !started.exists() {
             assert!(
@@ -748,7 +701,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         std::thread::sleep(Duration::from_millis(100));
-        // SIGTERM to the PARENT PROCESS ONLY: no group signal.
+        // Send SIGTERM only to the parent process.
         assert_eq!(
             unsafe { libc::kill(libc::pid_t::try_from(child.id()).unwrap(), libc::SIGTERM,) },
             0
@@ -765,11 +718,9 @@ mod tests {
         );
     }
 
-    /// The canary parent MUST be the literal PUBLIC /tmp (canonical
-    /// alias /private/tmp on macOS), NEVER the inherited TMPDIR: a
-    /// per-user private default temp dir causes false sandbox
-    /// denials on macOS. Runs in a child test process so the private
-    /// TMPDIR never leaks into parallel tests.
+    /// Require the canary under public `/tmp`, which resolves to `/private/tmp` on macOS.
+    /// A private `TMPDIR` would cause false sandbox denials. Use a test subprocess
+    /// to keep that environment setting out of parallel tests.
     #[cfg(unix)]
     #[test]
     fn canary_parent_is_public_tmp_not_inherited_tmpdir() {

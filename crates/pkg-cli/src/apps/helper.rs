@@ -28,18 +28,13 @@ const HELPER_INPUTS: &[(&str, &str)] = &[(
 /// Location of the helper binary inside one of its store outputs.
 const HELPER_BINARY_RELATIVE: &str = "bin/mac-app-util";
 
-/// Returns the helper binary, installing the pinned reference first if the
-/// helper profile is empty.
+/// Return the helper binary. Install the pinned reference if the profile is empty.
 ///
-/// The profile is read, installed into and re-read only when empty, and
-/// then checked by one verifier: exactly one active entry pinned to the
-/// helper repository and revision, with the helper binary present. Native
-/// entry names are opaque (Determinate macOS uses `originalUrl#attrPath`
-/// keys), so identity is verified from the entry's own native fields
-/// instead of its map key. Anything else is an error for the user to
-/// resolve. A verified helper that cannot start because of the macOS 27
-/// SBCL address conflict is rebuilt with the fixed dependency pin. Other
-/// failures do not trigger a repair.
+/// Require exactly one active entry with the pinned repository, revision,
+/// and helper binary. Check the entry's fields because native entry names
+/// can vary. Determinate macOS uses `originalUrl#attrPath` keys.
+/// Rebuild the verified helper with the fixed dependency pin only if the
+/// macOS 27 SBCL address conflict prevents it from starting.
 pub(super) fn ensure_helper(nix: &Nix, paths: &Paths) -> Result<PathBuf, AppError> {
     let profile = &paths.helper_profile;
     let mut entries = nix.profile_list(profile).map_err(|e| {
@@ -124,8 +119,7 @@ fn helper_runtime_compatible(helper: &Path) -> Result<bool, AppError> {
 /// Verify the helper profile holds exactly one active entry pinned to the
 /// helper repository and revision, and return its binary.
 ///
-/// One verifier serves the freshly installed and the pre-existing profile
-/// alike; the entry-count check applies to both.
+/// Apply the same checks to new and existing helper profiles.
 fn verify_pinned_helper(
     profile: &Path,
     entries: &BTreeMap<String, crate::nix::ProfileEntry>,

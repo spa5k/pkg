@@ -1,17 +1,12 @@
-//! Cask catalog index access (design D6).
+//! Cask catalog index access.
 //!
-//! Status decisions come from the generated `pkg-cask-catalog/4` index the
-//! casks flake exposes as `catalogIndex`, evaluated from the same locked
-//! source reference that search rows use, so status and rows always describe
-//! one source revision. The client classifies nothing itself: eligibility,
-//! exclusion reasons, and details are generated data. Malformed raw
-//! Homebrew records are already isolated by the generator as excluded
-//! entries; this module holds no second classifier.
+//! Read eligibility, exclusion reasons, and details from the generated
+//! `pkg-cask-catalog/4` index at `catalogIndex`. Use the same locked source
+//! reference as search rows. The generator marks malformed Homebrew records
+//! as excluded entries.
 //!
-//! Platform capability also comes from the envelope: `targets` is read
-//! before any per-system data, so a system outside the target list is
-//! platform-skipped from the envelope alone and an evaluation failure is
-//! never mistaken for a platform skip.
+//! Read `targets` before per-system data. Skip systems outside that list.
+//! Report evaluation failures as errors.
 
 use std::rc::Rc;
 
@@ -21,12 +16,9 @@ use super::CatalogError;
 
 /// The install attribute for one full cask entry id on one system.
 ///
-/// `info` and `install` resolve cask identities to this attribute of the
-/// casks source. The full entry id (`owner/tap/token`) is encoded by the
-/// shared backend helper (`_` becomes `_u_` and `.` becomes `_d_`, one
-/// pass) and quoted as one attribute segment, so the id never becomes a
-/// nested attribute path. The client never duplicates the encoding
-/// algorithm: `cask_catalog::package_attribute` is the one source of it.
+/// `info` and `install` use `cask_catalog::package_attribute` to encode the
+/// full `owner/tap/token` ID. It converts `_` to `_u_` and `.` to `_d_` in
+/// one pass. Quote the result as one attribute segment to prevent nesting.
 #[must_use]
 pub fn package_attribute(system: &str, full_id: &str) -> String {
     format!(
@@ -35,7 +27,7 @@ pub fn package_attribute(system: &str, full_id: &str) -> String {
     )
 }
 
-/// The same attribute as native profile manifests spell it: unquoted.
+/// The unquoted attribute form that native profile manifests record.
 ///
 /// `nix profile` records the attribute path without the quotes, for
 /// example `packages.x86_64-linux.example/tap/tool@1_d_2`. Installed
@@ -65,9 +57,8 @@ pub struct CatalogView {
 impl CatalogView {
     /// Assemble a view from a resolved identity and a decoded index.
     ///
-    /// Saved tap catalogs load from validated local captures; their
-    /// identity is synthetic (the stable reference and the recorded
-    /// revision), because no flake metadata was evaluated for them.
+    /// Saved taps use the stable reference and recorded revision from their
+    /// validated local capture. They do not require flake metadata evaluation.
     #[must_use]
     pub fn from_parts(identity: SourceIdentity, index: CatalogIndex) -> Self {
         Self {
@@ -78,10 +69,9 @@ impl CatalogView {
 
     /// Assemble a view over one saved tap catalog.
     ///
-    /// The identity is synthetic: the stable per-source reference, the
-    /// recorded revision, and the source identity as the display name.
-    /// Status and records come from the validated capture; no Nix call
-    /// and no tap Ruby ever runs for this view.
+    /// Build the identity from the stable reference and recorded revision.
+    /// Use the source ID as the display name. Read status and records from
+    /// the validated capture without running Nix or tap Ruby.
     #[must_use]
     pub fn from_saved(saved: &crate::tap::SavedCatalog) -> Self {
         Self {
