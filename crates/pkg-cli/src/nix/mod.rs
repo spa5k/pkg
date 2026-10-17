@@ -400,10 +400,17 @@ impl Nix {
         pattern: &str,
     ) -> Result<BTreeMap<String, SearchMeta>, NixError> {
         let args = ["search", reference, pattern, "--json"];
-        match self.discovery_json("search results", &args, "20") {
-            Err(NixError::ResourceLimit(_)) => self.discovery_json("search results", &args, "100"),
-            result => result,
-        }
+        let results: BTreeMap<String, SearchMeta> =
+            match self.discovery_json("search results", &args, "20") {
+                Err(NixError::ResourceLimit(_)) => {
+                    self.discovery_json("search results", &args, "100")
+                }
+                result => result,
+            }?;
+        Ok(results
+            .into_iter()
+            .map(|(attribute, meta)| (manifest::normalize_catalog_attribute(attribute), meta))
+            .collect())
     }
 
     /// Evaluate the default installation outputs without realizing them.

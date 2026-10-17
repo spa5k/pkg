@@ -1,11 +1,13 @@
 //! Decoding of captured native output shapes.
 //!
 //! Every type here is a pure transcription of a verified native JSON shape
-//! (Determinate 3.22.1, Nix 2.35.2, aarch64-darwin). Required identity
-//! fields must be present or decoding fails clearly (design D3); unknown
-//! optional fields are ignored.
+//! (Determinate 3.22.1 and 3.23.1, Nix 2.35.2). Catalog attribute segments
+//! accept both native quote forms. Required identity fields must be present
+//! or decoding fails clearly (design D3); unknown optional fields are ignored.
 
 use std::collections::BTreeMap;
+
+use serde::Deserialize as _;
 
 use super::TESTED_BASELINE;
 use super::reference::locked_revision;
@@ -37,8 +39,11 @@ pub struct ProfileEntry {
     ///
     /// Discovery and app-launcher scans must only consider active entries.
     pub active: bool,
-    /// The attribute path of the installed output (a dot-separated string).
-    #[serde(rename = "attrPath")]
+    /// The installed attribute path, with catalog segment quotes normalized.
+    #[serde(
+        rename = "attrPath",
+        deserialize_with = "deserialize_profile_attribute"
+    )]
     pub attr_path: String,
     /// The original (moving) source reference.
     #[serde(rename = "originalUrl")]
@@ -49,6 +54,37 @@ pub struct ProfileEntry {
     /// The realized store output paths.
     #[serde(rename = "storePaths")]
     pub store_paths: Vec<String>,
+}
+
+fn deserialize_profile_attribute<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    String::deserialize(deserializer).map(normalize_catalog_attribute)
+}
+
+/// Normalize the quoted catalog segment emitted by newer native Nix versions.
+/// Other attribute syntax stays opaque, including invalid catalog encodings.
+pub(super) fn normalize_catalog_attribute(attribute: String) -> String {
+    let mut parts = attribute.splitn(3, '.');
+    if parts.next() != Some("packages") {
+        return attribute;
+    }
+    let Some(system) = parts.next() else {
+        return attribute;
+    };
+    let Some(segment) = parts
+        .next()
+        .and_then(|part| part.strip_prefix('"')?.strip_suffix('"'))
+    else {
+        return attribute;
+    };
+    if let Ok(id) = cask_catalog::decode_package_attribute(segment)
+        && split_entry_id(&id).is_some()
+        && cask_catalog::package_attribute(&id) == segment
+    {
+        return format!("packages.{system}.{segment}");
+    }
+    attribute
 }
 
 impl ProfileEntry {
@@ -308,6 +344,55 @@ mod tests {
             decode_name("packages.x86_64-linux.example/tap/trailing_"),
             "example/tap/trailing_"
         );
+    }
+
+    #[test]
+    fn profile_catalog_attributes_accept_quoted_and_unquoted_native_names() {
+        for segment in [
+            "homebrew/core/formula-probe",
+            "homebrew/cask/os-probe",
+            "a_u_b_d_c/d_d_e/tool@1_d_2",
+        ] {
+            let expected = format!("packages.x86_64-linux.{segment}");
+            for attribute in [
+                expected.clone(),
+                format!("packages.x86_64-linux.\"{segment}\""),
+            ] {
+                let raw = serde_json::json!({
+                    "version": 3,
+                    "elements": {"opaque native entry": {
+                        "active": true, "attrPath": attribute,
+                        "originalUrl": "path:/source", "url": "path:/source",
+                        "storePaths": ["/nix/store/fixture"],
+                    }},
+                });
+                let entries = decode_profile_manifest(&raw).expect("decodes native profile");
+                let entry = &entries["opaque native entry"];
+                assert_eq!(entry.attr_path, expected);
+                assert_eq!(
+                    entry.name(),
+                    cask_catalog::decode_package_attribute(segment).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn profile_attribute_decode_preserves_other_quoted_paths() {
+        for attribute in [
+            "legacyPackages.x86_64-linux.\"a.b\"",
+            "packages.x86_64-linux.\"homebrew/core/tool_x_\"",
+            "packages.x86_64-linux.\"homebrew/core/tool.1\"",
+            "packages.x86_64-linux.\"homebrew/core/tool\\\"\"",
+        ] {
+            let entry: ProfileEntry = serde_json::from_value(serde_json::json!({
+                "active": true, "attrPath": attribute,
+                "originalUrl": "path:/source", "url": "path:/source",
+                "storePaths": [],
+            }))
+            .expect("decodes native profile");
+            assert_eq!(entry.attr_path, attribute);
+        }
     }
 
     /// The pre-mutation guard depends on a strict manifest decode: the

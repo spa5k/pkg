@@ -75,3 +75,22 @@ The Linux sandbox was stopped after the download.
 This follows the [Rust compiler update](2026-10-13-rust-1.99-upgrade.md) and the
 [Package Resolution and cancellation work](2026-10-12-package-resolution-and-tap-cancellation.md).
 The user withdrew the 20% reduction target. No further reduction work was done.
+
+## CI follow-up, 2026-10-17
+
+The cask generation check found 36 stale exclusion detail messages. Regeneration
+from the same verified snapshot changed only those messages. Eligibility, status,
+reason codes, plans, and input pins did not change.
+
+The native smoke checks exposed a runtime difference. Determinate Nix 3.23.1
+quotes catalog attribute segments in profile JSON. Version 3.22.1 leaves those
+segments unquoted. The adapter now normalizes valid encoded catalog segments in
+profile entries and native search results. Opaque profile entry keys and other
+attribute syntax remain unchanged. This keeps package identity, duplicate
+installation checks, and upgrade gates consistent across both runtime versions.
+
+The regression test failed on the captured quoted shape before the fix. It now
+passes for both quote forms. Separate checks retain unknown escapes, raw dots,
+embedded quotes, and ordinary quoted Nix paths. All workspace tests, strict
+Clippy, formatting, and private Rustdoc checks passed locally. The CI smoke
+script now records the runtime version and the actual rows on identity failures.
