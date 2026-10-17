@@ -1,8 +1,7 @@
 //! The `pkg` client library.
 //!
-//! One crate owns the whole client: the reduced command grammar, configuration
-//! and paths, the concrete native Nix adapter, catalog name routing, command
-//! execution, and output envelopes (design D1).
+//! Parse commands, load configuration, run Nix, resolve catalog names,
+//! and format command results.
 
 #![cfg(unix)]
 // Tests may abort on broken fixtures or failed setup; production code

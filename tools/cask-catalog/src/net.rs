@@ -1,14 +1,9 @@
 //! Guarded HTTPS fetching for public GitHub source material.
 //!
-//! Policy (contract): a real URL parser decides every URL's shape; the
-//! client refuses inherited proxies and credentials; DNS is resolved
-//! first and every address must be global (no localhost, no private
-//! networks, no link-local rebind), the resolved address is pinned for
-//! the connection, and every redirect hop is re-checked against the
-//! destination allowlist. Body size and total time are bounded. The only
-//! hosts this module may talk to are GitHub source hosts; payload
-//! (vendor archive) fetching happens inside Nix fixed-output derivations
-//! at install time, never here.
+//! Parse URLs and allow only GitHub source hosts. Disable inherited proxies
+//! and credentials. Resolve DNS before connecting, require public addresses,
+//! and pin them for the connection. Refuse redirects and limit body size and time.
+//! Nix fixed-output derivations fetch vendor archives at install time.
 
 use std::io::Read as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
@@ -31,12 +26,8 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_mins(3);
 /// Connect timeout.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Source fetch redirect decision (pure, unit-testable): ALL redirects
-/// are refused. The source API and codeload endpoints are canonical and
-/// direct; a hop could silently change the approved repository between
-/// requests (transfer/rename), so none is ever followed. The vendored
-/// safe-fetch FOD is a separate component that follows redirects with
-/// its own verification; it is not affected by this rule.
+/// Refuse all source-fetch redirects to preserve the approved repository.
+/// Vendor downloads use the separate safe-fetch derivation, which verifies redirects.
 fn redirect_refusal(url: &Url) -> String {
     format!(
         "source fetch redirect to {url} refused; canonical GitHub endpoints \
@@ -46,9 +37,7 @@ fn redirect_refusal(url: &Url) -> String {
 
 /// Check one URL against the transport policy.
 ///
-/// Exactly HTTPS, no embedded credentials, no explicit non-443 port, no
-/// fragment games, and a host inside the allowlist. This is a pure
-/// function so every rule is unit-testable without network access.
+/// Require HTTPS, an allowed host, port 443 if explicit, and no credentials or fragment.
 pub fn check_url(url: &Url, allowed_hosts: &[&str]) -> Result<(), String> {
     if url.scheme() != "https" {
         return Err(format!("refusing non-https URL: {url}"));

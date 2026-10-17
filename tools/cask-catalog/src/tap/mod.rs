@@ -1,7 +1,6 @@
-//! Raw tap importer: one public Homebrew tap in, one self-contained
-//! native-only flake tree out (schema `pkg-cask-catalog/4`).
+//! Import a public Homebrew tap as a self-contained Nix flake.
 //!
-//! The actual public import flow, end to end:
+//! The import uses schema `pkg-cask-catalog/4`:
 //!
 //! 1. Canonicalize the source (`owner/tap` or
 //!    `https://github.com/owner/homebrew-tap`), validate the native
@@ -21,12 +20,9 @@
 //!    flake tree via the private `capture::convert_capture`. The
 //!    client validates and publishes.
 //!
-//! Submodules: `archive` (strict unpacking and tree inventory),
-//! `runtime` (canary, bounded child runner, Nix build, asset writes),
-//! `config` (local effective nix config gate), and `capture`
-//! (envelope validation and conversion). No real tap Ruby ever runs
-//! in this process; the only execution of upstream loader code
-//! happens inside the sandboxed Nix build.
+//! `archive` unpacks the source, `config` checks local settings, `runtime`
+//! runs the sandboxed build, and `capture` validates and converts its output.
+//! Tap Ruby runs only inside the sandboxed build.
 
 mod archive;
 mod capture;
@@ -54,9 +50,8 @@ pub const EXPORT_SCHEMA: &str = "pkg-tap-raw-export/1";
 
 /// The typed failure of one raw tap import.
 ///
-/// The category is produced by construction at the one refusal source
-/// (the local effective-config gate), never by matching message text;
-/// callers format the message at their boundary.
+/// The local settings check constructs sandbox refusals as typed errors.
+/// Callers format the error without matching message text.
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
     /// The effective local nix config refuses the raw tap import (weak
@@ -181,7 +176,7 @@ fn safe_segment(segment: &str) -> bool {
 /// Accepts the short form `owner/tap` (with or without a `homebrew-`
 /// repo prefix) or an explicit `https://github.com/owner/homebrew-tap`
 /// URL. Both segments are lowercased; exactly one `homebrew-` prefix
-/// is stripped, never more. An explicit GitHub URL MUST name the
+/// is stripped, never more. An explicit GitHub URL must name the
 /// `homebrew-` repository: `https://github.com/example/foo` is refused
 /// instead of being silently rewritten to `homebrew-foo` (the short
 /// `example/foo` form stays valid). A repeated `homebrew-homebrew-`
@@ -398,7 +393,7 @@ fn resolve_requested_revision(revision: Option<&str>) -> Result<String, String> 
     Ok(revision.to_ascii_lowercase())
 }
 
-/// Import one raw public tap through the ACTUAL public flow.
+/// Import a public tap and write its generated flake.
 ///
 /// Steps: identity check, archive fetch and strict unpack,
 /// canary/listener positive controls, sandboxed Nix raw-export build,
@@ -430,13 +425,9 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
         ))
     })?;
 
-    // 2. Security gate: the EFFECTIVE local nix config must already be
-    // fail-closed before the raw-export build starts. This is not a
-    // substitute for the in-build probe; the fresh probe remains
-    // mandatory and authoritative. Only an actually OBSERVED refusal
-    // becomes the typed `SandboxRefused`; a settings query that could
-    // not run at all stays an ordinary failure the client must not
-    // answer with setup.
+    // Check local settings before building. Only unsafe settings produce
+    // SandboxRefused. A failed query must not trigger administrator setup.
+    // The build must still pass its own sandbox probe.
     nix_config_gate(&request.nix, staging.path())?;
 
     // 3. GitHub API identity verification and revision resolution.
@@ -493,7 +484,7 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
     drop(canary);
 
     // 7. Read and validate the capture, then convert it. The read is
-    // bounded BEFORE the JSON parse.
+    // bounded before the JSON parse.
     let mut export_file = std::fs::File::open(out_link.join("export.json")).map_err(|e| {
         format!(
             "cannot read {} : {e}",
@@ -719,7 +710,7 @@ mod tests {
     #[test]
     fn import_errors_are_typed_not_textual() {
         // The typed refusal is the only category the client may answer
-        // with setup — by construction, never by message text.
+        // with setup through typed errors, without matching message text.
         let refused = ImportError::SandboxRefused(String::from("refuses the raw tap import"));
         assert!(matches!(refused, ImportError::SandboxRefused(_)));
         assert_eq!(refused.message(), "refuses the raw tap import");

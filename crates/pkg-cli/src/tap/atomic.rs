@@ -1,13 +1,9 @@
-//! Narrow atomic filesystem helpers for tap publication.
+//! Atomic directory replacement for tap publication.
 //!
-//! A published tap root is a stable REAL directory, never a symlink: Nix
-//! rejects `path:` references whose target is a symlink. Replacing an
-//! existing generation uses one atomic directory exchange — Linux
-//! `renameat2(RENAME_EXCHANGE)`, macOS `renameatx_np(RENAME_SWAP)` — so the
-//! active generation is committed by a single rename with no window that
-//! mixes two generations. There is deliberately no multi-rename fallback:
-//! a filesystem without the exchange syscall fails publication instead of
-//! risking a missing-path window between renames.
+//! Nix rejects symlink roots for `path:` references. Replace real directories
+//! with `renameat2(RENAME_EXCHANGE)` on Linux or `renameatx_np(RENAME_SWAP)`
+//! on macOS. If the filesystem does not support atomic exchange, fail publication.
+//! Multiple renames would leave a gap when the active path does not exist.
 
 use std::io;
 use std::path::Path;
@@ -22,11 +18,8 @@ use std::path::Path;
 ///
 /// Returns an error when either path is not a real directory, contains a NUL byte, or the platform exchange operation fails.
 pub fn exchange_directories(a: &Path, b: &Path) -> Result<(), String> {
-    // Everything fallible — the real-directory checks and the C string
-    // conversions — happens before the syscall. Nothing fallible runs
-    // after it: a post-commit check that failed would leave the caller
-    // unable to tell whether the exchange happened, and an undo attempt
-    // could then delete the wrong generation.
+    // Check directories and convert paths before the syscall. Errors after
+    // a successful exchange would make the commit result ambiguous.
     verify_directory(a)?;
     verify_directory(b)?;
     rustix::fs::renameat_with(

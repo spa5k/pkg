@@ -1,7 +1,7 @@
-# `pkg-cli` — the standalone client over native Nix.
+# `pkg-cli` is the standalone client for native Nix.
 #
-# One application crate owns parsing, configuration, the concrete Nix adapter,
-# catalog routing, commands, and output (design D1). The public binary is `pkg`.
+# This crate handles parsing, configuration, Nix commands, catalogs, and output.
+# The public binary is `pkg`.
 #
 [package]
 name = "pkg-cli"
@@ -19,7 +19,7 @@ path = "src/main.rs"
 name = "pkg_cli"
 
 [dependencies]
-# One first-target-order and last-display-name owner for install batches.
+# Keep install targets in input order and use the last display name for duplicates.
 indexmap = "=2.14.2"
 # Static enum names are derived at compile time; no runtime conversion.
 strum_macros = "=0.28.0"
@@ -31,25 +31,22 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 serde_path_to_error = "=0.1.20"
 toml = "=1.1.8"
-# Signal forwarding for native child reaping (nix.rs cancellation handling).
-libc = "=0.2.190"
+# Forward signals to child processes and reap them after cancellation.
+libc = "=0.2.191"
 # Scratch directories for temporary discovery and sync views.
 tempfile = "=3.27.0"
 # Shared local search filtering.
 regex = "=1.13.1"
-# The same optimal string alignment algorithm used for bounded name typos.
+# Match name typos with optimal string alignment distance.
 strsim = "=0.11.1"
-# Percent encoding shared with the already locked URL parser dependency.
+# Encode paths in flake references.
 percent-encoding = "=2.3.2"
-# Safe atomic rename operations, already used by the scratch-directory dependency.
+# Replace directories with atomic rename operations.
 rustix = { version = "=1.1.5", features = ["fs"] }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
-# Local public tap imports run through the backend library seam
-# `cask_catalog::tap` (openspec/changes/import-public-cask-taps). The
-# client owns consent, the tap registry, publishing, and routing; the
-# library owns fetching, sandboxed Ruby, and catalog/flake generation.
+# `cask_catalog::tap` fetches public taps, runs sandboxed Ruby, and generates
+# catalogs and flakes. The client handles consent, registration, and publication.
 cask-catalog = { path = "../../tools/cask-catalog" }
 
-# Opt into the workspace lint policy.
 [lints]
 workspace = true

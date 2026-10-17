@@ -1,11 +1,9 @@
-//! Local effective Nix config gate (pre-build, fail-closed).
+//! Check local effective Nix sandbox settings before a build.
 //!
-//! The gate reads the LOCAL effective settings (`nix config show --json`)
-//! so an obviously weak local setup fails fast, before any Ruby runs.
-//! It is NOT an authoritative statement of daemon behavior: client
-//! `--option` flags are ignored for untrusted users and the daemon may
-//! hold the real state. Actual sandbox behavior is proven by the fresh
-//! in-build probe, which stays mandatory and authoritative.
+//! Read `nix config show --json` and reject unsafe local settings before
+//! Ruby runs. Local settings do not prove daemon behavior because the daemon
+//! can ignore restricted `--option` flags from untrusted users. Each build
+//! must still pass its own sandbox probe.
 
 use super::runtime::{isolated_nix_command, resolve_nix_exe, run_bounded_child};
 use serde_json::Value;
@@ -13,16 +11,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-// ---------------------------------------------------------------------------
-// Effective local Nix config gate (pre-build, fail-closed)
-// ---------------------------------------------------------------------------
-
 /// Wall-time limit for the `nix config show --json` query.
 const NIX_CONFIG_WALLTIME: Duration = Duration::from_mins(2);
 
-/// The ONLY mac sandbox paths accepted when self-mapped: the minimal
-/// system set the raw-export runtime needs. Omitted (minimal) entries
-/// are fine; ADDED arbitrary entries are not.
+/// Allowed self-mapped macOS sandbox paths. Subsets, including empty, are valid.
 const MAC_ALLOWED_SANDBOX_PATHS: [&str; 5] = [
     "/bin/sh",
     "/bin/bash",
@@ -31,12 +23,11 @@ const MAC_ALLOWED_SANDBOX_PATHS: [&str; 5] = [
     "/usr/lib",
 ];
 
-/// The ONLY mac `allowed-impure-host-deps` entries accepted (a subset,
-/// including empty, is fine).
+/// Allowed macOS `allowed-impure-host-deps` entries. Subsets are valid.
 const MAC_ALLOWED_IMPURE_DEPS: [&str; 4] = ["/System/Library", "/bin/sh", "/dev", "/usr/lib"];
 
-/// Concrete fail-closed setup advice. NEVER prints the config dump
-/// (it may contain secret settings); only the offending detail.
+/// Report the unsafe setting and setup steps without exposing the config dump.
+/// The dump can contain secrets.
 fn config_setup_error(detail: &str, mac: bool) -> String {
     let mac_note = if mac {
         " On macOS the daemon must use TMPDIR=/nix/var/nix/builds because \
@@ -55,8 +46,7 @@ fn config_setup_error(detail: &str, mac: bool) -> String {
     )
 }
 
-/// The Nix store hash alphabet: base32 (32 characters, no `e`, `o`,
-/// `u`, or `t`), NEVER hex.
+/// Nix store hash alphabet, base32 without `e`, `o`, `u`, or `t`.
 const NIX_BASE32: &str = "0123456789abcdfghijklmnpqrsvwxyz";
 
 /// Whether a path is exactly
@@ -333,7 +323,7 @@ mod tests {
             verify_effective_config(&strong_effective_config(os), os)
                 .unwrap_or_else(|e| panic!("{os} strong config must pass: {e}"));
         }
-        // Linux with NO paths at all is also fine.
+        // Linux with no paths is also valid.
         let mut linux = strong_effective_config("linux");
         linux["sandbox-paths"] = json!({"value": {}});
         verify_effective_config(&linux, "linux").expect("empty linux paths pass");
@@ -431,10 +421,8 @@ mod tests {
 
     #[test]
     fn config_gate_accepts_the_actual_linux_config_fixture_when_fail_closed() {
-        // The ACTUAL fixture carries the real busybox base32 store path
-        // and the strong settings, but sandbox-fallback is still true
-        // (weak current host state); it must pass ONLY once fallback is
-        // false.
+        // The captured settings use a valid busybox path but enable sandbox-fallback.
+        // They must pass only after fallback is disabled.
         let mut config: Value =
             serde_json::from_str(include_str!("testdata/linux-config-fixture.json"))
                 .expect("linux fixture json parses");
@@ -482,7 +470,7 @@ mod tests {
 
     #[test]
     fn config_gate_rejects_the_linux_fixture_with_fallback_true() {
-        // The ACTUAL linux fixture still has sandbox-fallback true; the
+        // The captured Linux settings still have sandbox-fallback true. The
         // verifier must reject it as-is.
         let config: Value =
             serde_json::from_str(include_str!("testdata/linux-config-fixture.json")).unwrap();

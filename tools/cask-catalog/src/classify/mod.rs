@@ -1,10 +1,8 @@
-//! Per-target eligibility: effective record in, bounded status out.
+//! Decide cask eligibility for each target.
 //!
-//! OS support comes only from explicit constraints (`supported_platforms`
-//! membership, `depends_on` arch entries). Variation presence and artifact
-//! kinds are never OS evidence. Every nonempty formula or cask dependency
-//! excludes the token in this version (manager contract): no closure
-//! engine, no guessed resolution.
+//! Use `supported_platforms` and `depends_on` architecture entries as OS
+//! evidence. Variations and artifact kinds do not establish OS support.
+//! Exclude tokens with nonempty formula or cask dependencies.
 
 use crate::effective;
 use crate::plan::{self, Plan};
@@ -16,10 +14,8 @@ use std::net::IpAddr;
 
 /// Why one target is excluded.
 ///
-/// One closed vocabulary shared by the official classifier and the raw
-/// tap capture; [`ExclusionReason::as_str`] is the emitted `reason`
-/// code. A typed reason keeps the code and the counting in emit from
-/// ever disagreeing about a spelling.
+/// The official classifier and raw tap capture share these reason codes.
+/// [`ExclusionReason::as_str`] supplies the code for output and counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::IntoStaticStr)]
 #[strum(serialize_all = "kebab-case")]
 pub enum ExclusionReason {
@@ -119,14 +115,8 @@ pub type TargetOutcome = Result<Plan, Exclusion>;
 
 /// One target's published decision.
 ///
-/// The effective version and homepage are shared display metadata kept
-/// outside the outcome (excluded tokens keep their known version and
-/// homepage); the outcome owns everything eligibility-specific.
-///
-/// Renamed from `TargetStatus` when the invalid string/optional
-/// combinations were made unrepresentable; every in-repo consumer is
-/// in this workspace (emit, tap capture, tests). External users of the
-/// maintainer tool's Rust API, if any exist, are unknown.
+/// Keep the effective version and homepage outside the outcome so excluded
+/// tokens retain them. The outcome holds the eligibility decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetDecision {
     /// Effective merged version for this target, or null.
@@ -204,26 +194,17 @@ fn excluded_with_detail(reason: ExclusionReason, detail: String) -> TargetOutcom
     Err(Exclusion::with_detail(reason, detail))
 }
 
-/// A constraint failure: `malformed-record` for shapes the generator
-/// cannot evaluate safely, `minimum-os` for a version decision.
-///
-/// Only single-value `>=`/`<=` arrays are accepted: every other shape
-/// (non-object constraint, multi-value arrays, non-strings, unknown
-/// operators, non-numeric versions) is rejected on every target, never
-/// guessed. The baseline comparison and the `minMacos` output apply only
-/// to `aarch64-darwin`: a macOS version requirement says nothing about
-/// Linux, so a Linux-supporting record stays Linux-eligible whatever
-/// macOS version it demands (and `maximum_macos` limits nothing there).
-///
-/// The bounds are COLLECTED and VALIDATED on every target first
-/// (numeric shape, single-value operators, coherent ordering); only
-/// then is the baseline decision applied, and only on Darwin, so an
-/// inverted or malformed range is consistently malformed on both
-/// targets. A Linux plan therefore carries null macOS bounds while an
-/// inverted or malformed range is still refused there.
-/// The macOS bounds a record declares for one target (min, max).
+/// The declared minimum and maximum macOS versions for a target.
 pub type MacosBounds = (Option<String>, Option<String>);
 
+/// Parse the macOS constraints and compare them against the target baseline.
+///
+/// Accept only single-value `>=` and `<=` arrays with numeric versions.
+/// Reject malformed or inverted ranges on every target before comparing
+/// against the baseline. Use `malformed-record` for invalid constraints and
+/// `minimum-os` for a baseline failure.
+/// Apply the baseline and return macOS bounds only on `aarch64-darwin`.
+/// Valid macOS constraints do not limit Linux plans, whose bounds are null.
 fn macos_constraints(eff: &Value, system: &str, baseline: &str) -> Result<MacosBounds, Exclusion> {
     let Some(depends) = eff.get("depends_on").filter(|v| !v.is_null()) else {
         return Ok((None, None));
@@ -268,10 +249,8 @@ fn macos_constraints(eff: &Value, system: &str, baseline: &str) -> Result<MacosB
             "macOS range is inverted: >= {min} and <= {max}"
         )));
     }
-    // Only now, with the whole declared range parsed and coherent, is
-    // the baseline decision applied — and only on Darwin. A malformed
-    // or inverted range is malformed on every target; the baseline
-    // never fires first and masks it.
+    // Validate the whole range before the Darwin baseline check so a baseline
+    // failure cannot hide malformed bounds.
     if system == "aarch64-darwin" {
         if let Some(min) = &min
             && version_lt(baseline, min) == Some(true)
@@ -462,12 +441,8 @@ pub fn destination_allowed(url: &str) -> Result<(), String> {
 
 /// Classify one record for one target system.
 ///
-/// The effective record (base merged with the target variation) is
-/// computed first; every decision — flags, platform scope, arch,
-/// download specs, dependencies, URL, checksum, macOS minimums, plan —
-/// reads the effective record. The gate supplies platform evidence.
-/// Display fields are attached last so
-/// excluded tokens keep their known version and homepage.
+/// Merge the target variation into the base before making any decision.
+/// Use the gate's platform evidence and retain display metadata for excluded tokens.
 #[must_use]
 pub fn classify_target(
     record: &Value,

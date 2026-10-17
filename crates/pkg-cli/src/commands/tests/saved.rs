@@ -143,11 +143,8 @@ fn publish_apps(state: &std::path::Path) {
         .expect("publishes");
 }
 
-/// A qualified read of one source is isolated from an unrelated
-/// broken tap (review 2026-09-30, P2): loading every source fails on
-/// the broken one, while loading the healthy source alone succeeds.
-/// Bare-name resolution uses the strict whole-set load; qualified
-/// requests use the per-source load.
+/// A qualified read succeeds even when an unrelated tap is broken.
+/// Loading all sources for bare-name resolution must still fail.
 #[test]
 fn load_one_isolates_a_qualified_read_from_a_broken_unrelated_tap() {
     let state = tempfile::tempdir().expect("tempdir");

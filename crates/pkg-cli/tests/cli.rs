@@ -390,7 +390,7 @@ fn missing_nix_gives_vendor_guidance_not_a_silent_result() {
 /// PATH candidate, doctor becomes healthy without manual PATH setup. Both
 /// tiers are exercised with fakes under isolated homes. On a machine with
 /// a real system profile Nix that runtime wins instead, and the branches
-/// assert exactly what each machine can prove — the host Nix never masks
+/// assert which runtime each machine selects. The host Nix never masks
 /// a fake candidate silently.
 #[test]
 fn doctor_finds_a_user_profile_nix_when_path_has_none() {
@@ -607,7 +607,7 @@ fn encode_ref(path: &str) -> String {
 /// The upgrade refusal rules for removed taps, through a fake Nix runtime:
 /// an explicitly named entry from an unregistered tap is refused before
 /// any `profile upgrade` runs, and `--all` skips such entries with a note
-/// and passes only the explicit remaining IDs — never `--all`.
+/// and passes only the explicit remaining IDs without `--all`.
 #[test]
 fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     let bin = tempfile::tempdir().expect("tempdir");
@@ -708,7 +708,7 @@ fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     );
 
     // `--all` skips the removed tap entry with a clear note and passes the
-    // remaining entry IDs explicitly — never `--all`.
+    // remaining entry IDs explicitly without `--all`.
     let (code, stdout, stderr) = run(&["upgrade", "--all"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("tap-entry"), "skip note: {stdout}");
@@ -720,12 +720,8 @@ fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     assert!(!recorded.contains("--all"), "{recorded}");
 }
 
-/// Successful flake installs reduce native stderr to signal, not chatter:
-/// git fetch and evaluation lines are dropped, meaningful warnings stay,
-/// Nix's interactive trust prompt passes through before its newline
-/// exists, and the profile result is still reported. Proven with a fake
-/// Nix runtime that replays the Helix-style stderr captured from a real
-/// install.
+/// Filter fetch and evaluation messages while preserving warnings, interactive
+/// prompts, and the profile result. Replay stderr captured from a Helix install.
 #[test]
 fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
     let bin = tempfile::tempdir().expect("tempdir");

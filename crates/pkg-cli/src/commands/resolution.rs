@@ -220,8 +220,7 @@ impl<'a> Resolution<'a> {
 /// One ambiguity choice as a CLI ID that round-trips through `info` and
 /// `install` for the request it came from.
 ///
-/// The attribute part is the choice the catalog layer produced — a full
-/// attribute path when namespaces collide — so the ID stays unambiguous.
+/// Keep the catalog's full attribute path when short names would be ambiguous.
 fn request_qualified(resolved: &catalog::CatalogId, attribute: &str) -> String {
     match resolved.kind() {
         catalog::CatalogIdKind::Nixpkgs(_) => format!("nixpkgs:{attribute}"),

@@ -1,21 +1,18 @@
 //! `pkg tap` commands: add, list, update, remove.
 //!
-//! `add` and `update` are the only paths that run tap imports. The order is
-//! fixed and fail-safe: consent comes first — before Nix discovery, before
-//! any directory is created, before any fetch or Ruby runs — then the
-//! importer stages a generation, validation evaluates the generated staging
-//! flake with the client decoder, and publication commits the whole active
-//! generation with one atomic rename. The registry replacement is prepared
-//! *before* publication and committed by one rename after it: publication
-//! and registry commit stay two renames, so a registry failure triggers an
-//! attempted rollback of the publication, and a process crash between the
-//! two renames can leave an active generation without a committed registry
-//! entry. All registry
-//! mutations serialize on the global registry lock first, then the
-//! per-source publication lock. `list` and `remove` touch only the registry
-//! and the saved state; `remove` works from the registry alone so a broken
-//! catalog never blocks repair. No command here installs or removes
-//! packages: the native profile stays authoritative.
+//! `add` and `update` require consent before Nix discovery, directory creation,
+//! fetching, or Ruby execution. They stage an import and validate its generated
+//! flake with the client decoder before publishing it with an atomic rename.
+//!
+//! `add` prepares the registry replacement before publication and renames it
+//! afterward. A registry failure triggers a publication rollback attempt.
+//! A crash between the two renames can leave an active generation without
+//! a registry entry.
+//!
+//! Registry changes take the global lock before the per-source publication lock.
+//! `list` and `remove` use saved state. `remove` needs only the registry, so a
+//! broken catalog cannot block removal. Tap commands do not change packages
+//! in the native profile.
 
 use crate::cli::{Cli, TapCommand};
 use crate::nix::OFFICIAL_CASK_SOURCE;
@@ -100,12 +97,8 @@ pub(super) fn add(
     let state_home = crate::config::paths()?.state_home;
     let registry_path = registry::registry_path(&state_home);
     let existing = registry::Registry::load(&registry_path)?;
-    // Whether THIS invocation explicitly approved the source. Remembered
-    // consent from an earlier `add` covers it, and an explicit `--trust`
-    // counts as this invocation's approval even when remembered consent
-    // exists: the registry entry can disappear before the lock is held,
-    // and a publication without either remembered or fresh approval must
-    // be refused under the lock.
+    // Keep explicit approval separate from saved consent. A concurrent remove
+    // can delete saved consent before this command takes the registry lock.
     let mut approved_now = trusted;
     if let Some(recorded) = existing.origin(&source) {
         if recorded != origin {
@@ -131,9 +124,7 @@ pub(super) fn add(
     let global = registry::GlobalLock::acquire(&state_home)?;
     let mut registry = registry::Registry::load(&registry_path)?;
     recheck_consent(&registry, &source, &origin, approved_now)?;
-    // The next registry state is prepared before publication, so the
-    // publication is committed only when the registry replacement is one
-    // already-fsynced rename away.
+    // Flush the prepared registry before publishing. Commit it with one rename.
     let prepared = if registry.origin(&source).is_none() {
         registry.approve(&source, &origin, now_unix());
         Some(registry.prepare(&registry_path)?)
@@ -147,12 +138,8 @@ pub(super) fn add(
         stage_import_with_setup(&session, &source, &origin, revision.as_deref(), now_unix())?;
     let mut publication = staged_generation.publish(&staged.provenance, &staged.index)?;
 
-    // One prepared rename records consent. A failure triggers a rollback
-    // of the publication — first or replacing — so the previous generation
-    // stays active when the rollback succeeds; when the rollback itself
-    // fails, the error reports the exact known state instead of claiming
-    // an undo that did not happen. Publication and registry commit stay
-    // two renames; a crash between them is not covered.
+    // Roll back publication if the registry rename fails. Report rollback
+    // failures with the known state. A crash between the renames is not covered.
     if let Some(prepared) = prepared
         && let Err(error) = registry::commit_prepared(prepared, &registry_path)
     {
@@ -162,10 +149,8 @@ pub(super) fn add(
             &error,
         ));
     }
-    // The publication and its registry commit both succeeded: finish the
-    // publication by clearing this run's fetch scratch best effort; the
-    // preserved old flake is never touched and a failure is only a
-    // warning.
+    // Remove this run's fetch files after both commits. Cleanup failures warn
+    // and leave the preserved old flake intact.
     for warning in publication.finish() {
         eprintln!("pkg: warning: {warning}");
     }
@@ -176,10 +161,8 @@ pub(super) fn add(
 
 /// Re-read consent under the global registry lock.
 ///
-/// The approval must still be there — or this invocation must have given
-/// it explicitly — before anything runs Nix, imports, or publishes state.
-/// A concurrent `remove` that deletes the entry between the first read
-/// and the lock must not turn this `add` into an implicit approval.
+/// Require saved consent or this invocation's explicit approval before running
+/// Nix, importing, or publishing. A concurrent `remove` can revoke saved consent.
 fn recheck_consent(
     registry: &registry::Registry,
     source: &str,
@@ -203,13 +186,10 @@ fn recheck_consent(
     }
 }
 
-/// Build the honest error for a registry commit failure after a committed
-/// publication, undoing the publication when that is possible.
+/// Attempt publication rollback after a registry commit failure and report the result.
 ///
-/// The message reports the precise known state in every branch: an undo
-/// that ran, an undo that failed (the generation may still be active), and
-/// a restore that failed (the old generation stays preserved at its
-/// immutable path). Nothing is ever claimed undone when it was not.
+/// A failed withdrawal may leave the new generation active. A failed restore
+/// leaves the old generation at its immutable path. Report these states separately.
 fn undo_publication_after_registry_failure(
     source: &str,
     publication: store::Publication,
@@ -316,9 +296,8 @@ fn report_publication(
 
 /// `pkg tap list [--json]`
 ///
-/// The registry is read strictly: a malformed registry is a hard error. A
-/// broken saved catalog of one source is reported per source instead —
-/// `remove` keeps working, and `pkg tap update SOURCE` can repair.
+/// A malformed registry fails the command. Report saved catalog errors per
+/// source. `remove` still works, and `pkg tap update SOURCE` can repair the catalog.
 pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
     let paths = crate::config::paths()?;
     let registry_path = registry::registry_path(&paths.state_home);
@@ -357,7 +336,7 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
                 (Some(eligible), Some(_excluded)) => {
                     println!("{:<width$}  {}  ready", row.source, eligible);
                 }
-                _ => println!("{:<width$}  —  needs update", row.source),
+                _ => println!("{:<width$}  unavailable  needs update", row.source),
             }
             if cli.verbose {
                 if let Some(error) = &row.error {

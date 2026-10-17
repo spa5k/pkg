@@ -1,10 +1,7 @@
-//! The tap registry: origin and consent per source (design: local taps).
+//! Record the approved origin and consent for each tap source.
 //!
-//! The registry records only what approval needs: the canonical origin the
-//! user approved and when it was added. Revisions and import provenance
-//! live inside each published generation, so publishing never races the
-//! registry. The registry is untrusted persisted input: it loads strictly
-//! and a malformed file fails closed.
+//! Revisions and import provenance live in published generations. Loading
+//! validates the registry and rejects malformed files.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -16,9 +13,7 @@ pub const REGISTRY_SCHEMA: &str = "pkg-tap-registry/1";
 
 /// The durable tap namespace root under the state home: `<state>/pkg/taps`.
 ///
-/// Everything tap-related lives here — the registry file, the per-source
-/// store, and the global registry lock — so the state home root stays
-/// reserved for the native profile layout.
+/// Store the registry file, per-source directories, and global registry lock here.
 #[must_use]
 pub fn taps_root(state_home: &Path) -> PathBuf {
     state_home.join("pkg").join("taps")
@@ -68,11 +63,9 @@ impl Registry {
 
     /// Load the registry strictly; a malformed file is a hard error.
     ///
-    /// A missing file is the empty registry: a fresh host has no taps.
-    /// Everything else — wrong schema, duplicate keys, denied fields, a
-    /// source that is not exactly its canonical form, an origin that is
-    /// not the canonical origin of that source, or the reserved official
-    /// source — fails closed with the reason.
+    /// A missing file means an empty registry. Require the current schema,
+    /// canonical sources and origins, and no duplicate keys or unknown fields.
+    /// Reject the reserved official source.
     /// # Errors
     ///
     /// Returns an error if the file cannot be read or its JSON, schema, source identities, or origins are invalid. A missing file returns an empty registry.

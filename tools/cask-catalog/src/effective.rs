@@ -1,11 +1,9 @@
 //! Effective-record computation: base merged with the target variation.
 //!
-//! A variation extends the base record generically (every key it carries
-//! replaces the base value; explicit null replaces too). No whitelist:
-//! whitelists drift from the data. Only `token` and `variations` are never
-//! taken from a variation. A missing variation means the base record
-//! already serves that target. Variation presence is never evidence of OS
-//! support; that comes only from `supported_platforms` and `depends_on`.
+//! Replace base values with variation values, including explicit nulls.
+//! Keep `token` and `variations` from the base. If no variation exists,
+//! use the base record. OS support comes from `supported_platforms` and
+//! `depends_on`, not from the presence of a variation.
 
 use serde_json::Value;
 

@@ -1,9 +1,8 @@
 //! Decoding of captured native output shapes.
 //!
-//! Every type here is a pure transcription of a verified native JSON shape
-//! (Determinate 3.22.1 and 3.23.1, Nix 2.35.2). Catalog attribute segments
-//! accept both native quote forms. Required identity fields must be present
-//! or decoding fails clearly (design D3); unknown optional fields are ignored.
+//! These types match JSON captured from Determinate 3.22.1 and 3.23.1,
+//! and Nix 2.35.2. Catalog attributes accept quoted and unquoted segments.
+//! Decoding requires identity fields and ignores unknown optional fields.
 
 use std::collections::BTreeMap;
 
@@ -90,12 +89,8 @@ pub(super) fn normalize_catalog_attribute(attribute: String) -> String {
 impl ProfileEntry {
     /// The display name of this entry.
     ///
-    /// A cask entry's final attribute segment is the encoded full human
-    /// cask id (`owner/tap/token`, dots and underscores escaped); it is
-    /// decoded back for display, but only when the segment is a valid
-    /// cask segment — anything else, including an unknown escape, is
-    /// shown exactly as recorded and never silently misdecoded. Ordinary
-    /// Nixpkgs names contain no `/` and stay unchanged.
+    /// Decode a valid `owner/tap/token` attribute segment for display.
+    /// Keep ordinary Nixpkgs names and invalid cask encodings unchanged.
     #[must_use]
     pub fn name(&self) -> String {
         let segment = self.attr_path.rsplit('.').next().unwrap_or("?");
@@ -148,9 +143,7 @@ pub struct SourceIdentity {
 /// Decode one captured `nix profile list --json` document.
 ///
 /// The manifest `version` field is required and must equal
-/// [`PROFILE_MANIFEST_VERSION`]: the supported native runtime always
-/// reports it, so an absent or different version is an unsupported shape,
-/// not an invented version floor.
+/// [`PROFILE_MANIFEST_VERSION`]. Reject missing or different versions.
 pub(super) fn decode_profile_manifest(
     raw: &serde_json::Value,
 ) -> Result<BTreeMap<String, ProfileEntry>, super::NixError> {

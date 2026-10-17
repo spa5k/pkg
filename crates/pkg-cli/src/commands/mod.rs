@@ -1,14 +1,11 @@
-//! Command execution for the reduced grammar (design D4).
+//! Execute `pkg` commands.
 //!
-//! Mutating commands delegate package realization to Nix, show native
-//! progress, and print a short final result. Nothing here retries silently
-//! or writes product state.
+//! Package commands call Nix, show its progress, and print a final result.
 //!
-//! Error rule: every handler returns `Result<(), CommandError>` and uses
-//! `?` for ordinary diagnostics; [`run`] converts the result to an exit
-//! code in exactly one place. The change owner reports mutation failures
-//! — re-read native state included — and end with the reported variant of
-//! `CommandError`, so diagnostics are never duplicated.
+//! Handlers return `Result<(), CommandError>`. [`run`] converts the result
+//! to an exit code. A handler that reports a mutation failure first reads
+//! native state again, then returns the reported error variant to prevent
+//! duplicate diagnostics.
 
 mod change;
 mod conflict;
@@ -153,12 +150,9 @@ fn session(cli: &Cli) -> Result<Session, CommandError> {
 /// The tap state one query or mutation run uses: the registry, the
 /// routing it implies, and saved catalogs loaded per source on demand.
 ///
-/// Qualified requests are isolated from unrelated broken taps: a
-/// source's saved catalog loads only when that source is actually read
-/// ([`TapState::saved_one`]). Bare-name resolution is the strict
-/// exception: it must see every source to fail closed on ambiguity, so
-/// it loads all of them ([`TapState::saved_all`]) and the first broken
-/// source fails the resolution.
+/// Qualified requests load only their named source through [`TapState::saved_one`].
+/// Bare-name resolution calls [`TapState::saved_all`] to detect ambiguity.
+/// Any broken source fails that resolution.
 struct TapState {
     /// Source routing for every catalog source.
     routing: catalog::Routing,
@@ -245,11 +239,8 @@ fn configured_sources(config: &Config) -> [(catalog::SourceKind, &str); 2] {
 
 /// Report native state after a failed or interrupted mutation.
 ///
-/// The child was reaped inside the adapter; pkg stays alive to re-read the
-/// authoritative profile and report it instead of exiting silently. This
-/// runs after every failed mutation, not only cancellations, because a
-/// failed native operation may also have partially applied. The state is
-/// stated, not guessed.
+/// The adapter has reaped the child. Read and report the profile after
+/// every failed mutation because errors and cancellation can leave partial changes.
 fn mutation_failed(
     session: &Session,
     action: &str,

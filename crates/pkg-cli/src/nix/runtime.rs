@@ -116,8 +116,7 @@ fn resolve(
 /// stable Nix installation profile paths (system profile, modern per-user
 /// state profile, legacy per-user profile). A configured value stays the
 /// only candidate and never falls back. Nothing is installed or repaired
-/// here, and no invented version floor is enforced: capability is proven
-/// by the decoded shapes.
+/// here. Decoding checks the runtime's output format.
 /// # Errors
 ///
 /// Returns an error if no usable runtime is found, a configured runtime is unusable, the current directory cannot be read for a relative path, or the version probe cannot start, complete, or be reaped.
@@ -335,10 +334,7 @@ mod tests {
         );
     }
 
-    /// Regression: `discover` and every captured operation run a real child
-    /// through the shared forward/reap boundary. A capture path that
-    /// misclassifies its reaped child fails here instead of failing on every
-    /// installed machine.
+    /// Check discovery's exit-status classification with a real child process.
     #[test]
     fn discover_captures_the_version_from_a_real_child() {
         use std::error::Error as _;

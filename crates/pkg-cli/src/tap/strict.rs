@@ -1,10 +1,8 @@
 //! Strict JSON input for untrusted persisted state.
 //!
-//! `serde_json::Value` keeps the last of duplicate object keys silently, so
-//! decoding through a `Value` cannot claim duplicate keys were rejected. The
-//! registry and the saved catalog captures are untrusted persisted input:
-//! they decode through this module, which rejects duplicate keys at every
-//! object level and then validates the typed shape.
+//! `serde_json::Value` keeps the last value for duplicate object keys.
+//! Reject duplicates at every object level before validating registry and
+//! saved catalog data against their types.
 
 use serde::de::{self, DeserializeSeed, Visitor};
 use serde_json::Value;

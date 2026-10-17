@@ -1,9 +1,6 @@
-//! Package reference classification rules (design D4).
+//! Classify package references and encode filesystem paths.
 //!
-//! Pure string rules over Nix flake references: which references are
-//! provably fixed, which locked revision a locked URL names, and how one
-//! filesystem path becomes the text of a `path:` flake reference. No
-//! process runs here and no state is read.
+//! Parse commit pins and `path:` references without running processes or reading state.
 
 use std::path::{Path, PathBuf};
 
@@ -14,9 +11,8 @@ const FINAL_SEGMENT_COMMIT_SCHEMES: [&str; 3] = ["github", "gitlab", "sourcehut"
 
 /// The reference scheme prefix of `text`, when it starts with one.
 ///
-/// A scheme is the run of ASCII letters, digits, `+`, `-`, and `.` before
-/// the first `:` — `github`, `gitlab`, `git+file`, `path`, `https`. A plain
-/// filesystem path (`/tmp/...`, `./...`) has no scheme.
+/// A scheme contains ASCII letters, digits, `+`, `-`, or `.` before the first `:`.
+/// Examples include `github`, `git+file`, and `path`. Filesystem paths have no scheme.
 fn scheme(text: &str) -> Option<&str> {
     let (prefix, _) = text.split_once(':')?;
     (!prefix.is_empty()
@@ -30,11 +26,10 @@ fn scheme(text: &str) -> Option<&str> {
     .then_some(prefix)
 }
 
-/// The exact full commit named by one `rev=` query parameter, if one is.
+/// Read the full commit from an exact `rev=` query parameter, if present.
 ///
-/// Parameters are split on `&`, so only a parameter *named* `rev` counts —
-/// `prev=` is not `rev=` — and only an exact full-commit value counts, so
-/// `rev=<commit><suffix>` is not a fixed reference.
+/// Split parameters on `&`. Reject names such as `prev` and values with
+/// extra characters after the commit.
 fn query_commit(query: &str) -> Option<&str> {
     query
         .split('&')
@@ -44,8 +39,7 @@ fn query_commit(query: &str) -> Option<&str> {
 
 /// The exact full commit a reference or locked URL names, if any.
 ///
-/// Classification is scheme-aware, because a commit pin means what the
-/// transport makes it mean:
+/// The scheme determines which commit pins are valid:
 ///
 /// * Forge references (`github:`, `gitlab:`, `sourcehut:`) pin a commit
 ///   either as the final `owner/repo/<commit>` segment or through an exact
@@ -80,13 +74,10 @@ fn final_segment_commit(base: &str) -> Option<&str> {
 
 /// Detect explicit full-commit semantics in a reference.
 ///
-/// Only a commit pin the reference scheme actually has — a forge
-/// `owner/repo/<commit>` segment, or an exact `rev=<commit>` parameter on
-/// a forge or `git+` reference — proves a fixed reference. Tags, branch
-/// names, short hex-looking branch names, and 40-hex directory or file
-/// basenames on `path:`, tarball, `file://`, or plain filesystem
-/// references are moving locations and never get fixed status here; the
-/// locked revision comes from actual flake metadata instead (design D4).
+/// Forge references can pin a full commit in the final path segment or a
+/// `rev=` parameter. Git references require `rev=`. Tags, branches, and
+/// commit-shaped filenames are moving references. Their locked revision
+/// must come from flake metadata.
 #[must_use]
 pub fn is_fixed_reference(reference: &str) -> bool {
     full_commit_named(reference).is_some()
@@ -131,12 +122,8 @@ pub fn encode_path_reference(path: &Path) -> String {
 
 /// Decode one percent-encoded `path:` reference body back to a path.
 ///
-/// Returns `None` for a malformed escape (`%` not followed by two hex
-/// digits). Decoded bytes are preserved as-is: on Unix an arbitrary
-/// non-UTF-8 path that [`encode_path_reference`] encoded — a state home
-/// the user named with raw OS path bytes — decodes back to the same path
-/// instead of being refused. A reference pkg did not encode itself is
-/// still never guessed at.
+/// Return `None` if `%` is not followed by two hex digits. Preserve decoded
+/// bytes, including non-UTF-8 Unix paths from [`encode_path_reference`].
 #[must_use]
 pub fn decode_path_reference(encoded: &str) -> Option<PathBuf> {
     if !encoded.split('%').skip(1).all(|suffix| {

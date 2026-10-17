@@ -1,7 +1,4 @@
-//! Reduced command parser (design D4).
-//!
-//! The grammar lists only the retained commands. Removed alpha commands and
-//! global options are rejected as ordinary usage errors.
+//! Parse commands and global options for `pkg`.
 
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -32,7 +29,7 @@ pub struct Cli {
     pub command: Command,
 }
 
-/// The retained command set (design D4).
+/// Supported commands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Search local package catalogs.
@@ -105,7 +102,7 @@ pub enum Command {
     Doctor,
     /// Print idempotent Bash/Zsh path settings for this profile.
     Shellenv,
-    /// Generate shell completion for the reduced grammar.
+    /// Generate shell completion for supported commands.
     Completion {
         /// Target shell.
         shell: Shell,
