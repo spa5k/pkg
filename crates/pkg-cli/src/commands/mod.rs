@@ -18,6 +18,10 @@ mod info;
 mod lifecycle;
 mod list;
 mod maintenance;
+mod resolution;
+#[cfg(test)]
+#[path = "tests/saved.rs"]
+mod saved_tests;
 mod search;
 mod support;
 mod tap;
@@ -67,19 +71,15 @@ fn finish(outcome: Result<(), CommandError>) -> ExitCode {
         Err(CommandError::Native(NixError::Interrupted { signal, .. })) => {
             error::signal_exit(signal)
         }
-        Err(CommandError::Apps(app_error)) => {
-            eprintln!("pkg: {app_error}");
-            app_error
-                .signal()
-                .map_or_else(|| ExitCode::from(FAILURE), error::signal_exit)
-        }
         Err(CommandError::Catalog(catalog::CatalogError::Interrupted(signal))) => {
             eprintln!("Discovery cancelled. The previous complete cache was retained.");
             error::signal_exit(signal)
         }
         Err(error) => {
             eprintln!("pkg: {error}");
-            ExitCode::from(FAILURE)
+            error
+                .signal()
+                .map_or_else(|| ExitCode::from(FAILURE), error::signal_exit)
         }
     }
 }
@@ -195,15 +195,6 @@ impl TapState {
         })
     }
 
-    fn official(session: &Session) -> Self {
-        Self {
-            routing: catalog::Routing::new(&session.config.sources, BTreeMap::new()),
-            registry: crate::tap::Registry::empty(),
-            state_home: session.paths.state_home.clone(),
-            saved: BTreeMap::new(),
-        }
-    }
-
     /// One registered source's saved catalog, loaded on first use.
     ///
     /// Loading is strict and reads exactly this source: a broken
@@ -231,15 +222,13 @@ impl TapState {
     ///
     /// Bare-name resolution needs the complete source set to stay
     /// fail-closed: one unreadable or malformed capture fails the whole
-    /// load, exactly like [`crate::tap::load_all`].
+    /// load before any package choice is made.
     fn saved_all(&mut self) -> Result<crate::tap::SavedCatalogs, String> {
-        let mut catalogs = BTreeMap::new();
         let sources: Vec<_> = self.registry.sources.keys().cloned().collect();
         for source in sources {
-            let catalog = self.saved_one(&source)?.clone();
-            catalogs.insert(source, catalog);
+            self.saved_one(&source)?;
         }
-        crate::tap::SavedCatalogs::from_catalogs(catalogs.into_values())
+        crate::tap::SavedCatalogs::from_catalogs(self.saved.values().cloned())
     }
 }
 
@@ -261,31 +250,34 @@ fn configured_sources(config: &Config) -> [(catalog::SourceKind, &str); 2] {
 /// runs after every failed mutation, not only cancellations, because a
 /// failed native operation may also have partially applied. The state is
 /// stated, not guessed.
-fn report_failed_mutation(
+fn mutation_failed(
     session: &Session,
     action: &str,
     error: &nix::NixError,
-    interrupted: bool,
     before: Option<&BTreeMap<String, ProfileEntry>>,
     requested: Option<&[String]>,
 ) -> CommandError {
     let current = installed_entries(session);
+    let signal = error
+        .signal()
+        .or_else(|| current.as_ref().err().and_then(NixError::signal));
+    let interrupted = signal.is_some();
+    let profile_changed = current
+        .as_ref()
+        .is_ok_and(|entries| before.is_some_and(|previous| previous != entries));
+    let (status, detail) = match (interrupted, profile_changed) {
+        (true, true) => ("Interrupted", "stopped after the profile changed."),
+        (true, false) => ("Interrupted", "stopped."),
+        (false, true) => ("Partial", "changed the profile before it stopped."),
+        (false, false) => ("Failed", "did not complete."),
+    };
+    eprintln!("{status}: {action} {detail}");
     if let Ok(entries) = &current {
         match before {
-            Some(previous) if previous == entries => {
-                if interrupted {
-                    eprintln!("Interrupted: {action} stopped.");
-                } else {
-                    eprintln!("Failed: {action} did not complete.");
-                }
+            Some(_) if !profile_changed => {
                 eprintln!("Installed entries unchanged.");
             }
             Some(previous) => {
-                if interrupted {
-                    eprintln!("Interrupted: {action} stopped after the profile changed.");
-                } else {
-                    eprintln!("Partial: {action} changed the profile before it stopped.");
-                }
                 let added = entries
                     .keys()
                     .filter(|key| !previous.contains_key(*key))
@@ -306,42 +298,27 @@ fn report_failed_mutation(
                 eprintln!("Next: run `pkg list` to inspect the active profile.");
             }
             None => {
-                if interrupted {
-                    eprintln!("Interrupted: {action} stopped.");
-                } else {
-                    eprintln!("Failed: {action} did not complete.");
-                }
                 eprintln!("Profile checked: {} entries are active.", entries.len());
             }
         }
     } else {
-        if interrupted {
-            eprintln!("Interrupted: {action} stopped.");
-        } else {
-            eprintln!("Failed: {action} did not complete.");
-        }
         eprintln!("Package state is unknown. Next: run `pkg doctor`.");
     }
-    if !interrupted && !conflict::report(session, error, current.as_ref().ok(), requested) {
-        report_cause(&error.to_string());
+    if interrupted || !conflict::report(session, error, current.as_ref().ok(), requested) {
+        report_native_cause(error);
     }
-    CommandError::Reported(match error {
-        NixError::Interrupted { signal, .. } => error::signal_exit(*signal),
-        _ => ExitCode::from(FAILURE),
-    })
+    if let Err(read_error @ NixError::Process(_)) = &current
+        && read_error.signal().is_some()
+    {
+        eprintln!("Profile check failed: {read_error}");
+    }
+    CommandError::Reported(signal.map_or_else(|| ExitCode::from(FAILURE), error::signal_exit))
 }
 
-/// Classify a mutation error, report re-read native state, and end the
-/// command with the matching exit status.
-fn mutation_failed(
-    session: &Session,
-    action: &str,
-    error: &nix::NixError,
-    before: Option<&BTreeMap<String, ProfileEntry>>,
-    requested: Option<&[String]>,
-) -> CommandError {
-    let interrupted = matches!(error, nix::NixError::Interrupted { .. });
-    report_failed_mutation(session, action, error, interrupted, before, requested)
+fn report_native_cause(error: &NixError) {
+    if !matches!(error, NixError::Interrupted { .. }) {
+        report_cause(&error.to_string());
+    }
 }
 
 /// Report one useful native cause and one log command from a nested error.

@@ -2,7 +2,7 @@
 
 Client downloader behavior for shell path setup and Nix detection. Adds
 to the [standalone client
-delivery](../../../../changes/simplify-to-native-nix/specs/standalone-client-delivery/spec.md)
+delivery](../../../2026-10-12-simplify-to-native-nix/specs/standalone-client-delivery/spec.md)
 capability held by the active change.
 
 ## ADDED Requirements

@@ -96,14 +96,11 @@ pub fn short_source(source: &str) -> String {
     }
     let stripped = source.strip_prefix("github:").unwrap_or(source);
     let no_query = stripped.split('?').next().unwrap_or(stripped);
-    let normalized = no_query.replace(':', "/");
-    match normalized.find('/') {
-        Some(first) => match normalized[first + 1..].find('/') {
-            Some(second) => normalized[..first + 1 + second].to_string(),
-            None => normalized,
-        },
-        None => normalized,
+    let mut normalized = no_query.replace(':', "/");
+    if let Some((end, _)) = normalized.match_indices('/').nth(1) {
+        normalized.truncate(end);
     }
+    normalized
 }
 /// Render list rows for humans.
 #[must_use]
@@ -142,41 +139,6 @@ pub struct ListRow {
     pub locked_source: String,
     /// The locked revision, when present.
     pub revision: Option<String>,
-}
-
-/// Render search rows for humans.
-///
-/// Rows carry their own provenance.
-#[must_use]
-pub fn render_search(rows: &[crate::catalog::SearchResult], query: &str) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::new();
-    if rows.is_empty() {
-        let _ = writeln!(out, "No matches for \"{query}\".");
-        let _ = writeln!(out, "Next: Try fewer search words or use --broad.");
-        return out;
-    }
-    let width = rows
-        .iter()
-        .map(|row| row.id.len())
-        .max()
-        .unwrap_or(2)
-        .max(2);
-    let version_width = rows
-        .iter()
-        .map(|row| row.version.len())
-        .max()
-        .unwrap_or(7)
-        .max(7);
-    let _ = writeln!(
-        out,
-        "{:<width$}  {:<version_width$}  DESCRIPTION",
-        "ID", "VERSION"
-    );
-    for row in rows {
-        out.push_str(&render_search_row(row, width, version_width));
-    }
-    out
 }
 
 /// Render one search row at the shared column width.
@@ -258,9 +220,6 @@ pub fn render_source_reports(reports: &[crate::catalog::SourceReport], verbose: 
         if let Some(detail) = &report.detail {
             let _ = writeln!(out, "  {detail}");
         }
-        if let Some(detail) = &report.support_detail {
-            let _ = writeln!(out, "  {detail}");
-        }
     }
     out
 }
@@ -273,28 +232,21 @@ fn truncate(text: &str, max: usize) -> String {
     format!("{cut}…")
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "the fixed CSI pattern is valid and checked by the output tests"
+)]
+static CSI: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\x1b\[[^A-Za-z]*[A-Za-z]?").expect("valid fixed CSI pattern")
+});
+
 /// Remove ANSI escape sequences from native text.
 ///
 /// `--no-color` must hold for text pkg passes through from Nix (native
 /// history) even when the runtime colorizes anyway (manager review 4).
 #[must_use]
 pub fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' && chars.clone().next() == Some('[') {
-            chars.next();
-            for c in chars.by_ref() {
-                // A CSI sequence ends at its final alphabetic byte.
-                if c.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
+    CSI.replace_all(text, "").into_owned()
 }
 
 #[cfg(test)]

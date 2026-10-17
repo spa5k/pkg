@@ -1,31 +1,41 @@
 //! Child process supervision: one signal forward and reap boundary.
 //!
-//! Every external child of pkg — native Nix commands and the macOS app
-//! helper alike — runs through [`run_child`]. Termination signals sent only
+//! Every external child of pkg — Nix commands, tap imports, and app helpers — runs through [`run_child`]. Termination signals sent only
 //! to pkg are forwarded to the registered child, the child is reaped, and
 //! pkg stays alive to re-read state and report. Every reaped run is
 //! classified exactly once, into [`Outcome`], by the code that reaped it.
 
+#![cfg(unix)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        reason = "tests fail on broken fixtures"
+    )
+)]
+
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;
 
 /// How a native child's stdio is wired.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum IoMode {
+pub enum IoMode<'sink> {
     /// Capture stdout/stderr through pipes.
     Capture,
     /// Stream stdio to the user's terminal.
     Stream,
     /// Inherit stdin/stdout, pipe stderr, and feed it live to a sink.
-    Filtered,
+    Filtered(&'sink mut dyn StderrSink),
 }
 
-pub(super) struct Reaped {
+/// A reaped child with output, cancellation, and resource status.
+pub struct Reaped {
     /// The child's output record; stdout and stderr buffers are empty for
     /// streamed children.
-    pub(super) output: Output,
+    pub output: Output,
     /// A termination signal pkg received and forwarded to the child during
     /// the run, when one was.
     ///
@@ -33,8 +43,29 @@ pub(super) struct Reaped {
     /// because classification happens after restoration and the exit status
     /// alone cannot prove cancellation: the verified runtime handles SIGINT
     /// itself and then exits with a plain code 1.
-    pub(super) cancelled: Option<i32>,
-    pub(super) resource_limit: Option<&'static str>,
+    pub cancelled: Option<i32>,
+    /// A failed resource bound, after group cleanup.
+    pub resource_limit: Option<&'static str>,
+}
+
+/// A supervision failure with any cancellation retained through cleanup.
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+pub struct RunError {
+    /// The first forwarded signal, or the child's cancellation signal.
+    pub cancelled: Option<i32>,
+    /// The original setup, stream, cleanup, or wait failure.
+    #[source]
+    pub source: std::io::Error,
+}
+
+impl From<std::io::Error> for RunError {
+    fn from(source: std::io::Error) -> Self {
+        Self {
+            cancelled: None,
+            source,
+        }
+    }
 }
 
 impl Reaped {
@@ -44,8 +75,14 @@ impl Reaped {
     /// that handled SIGINT and exited 130 — is an interruption, not a plain
     /// failure, so callers re-read native state instead of trusting the
     /// exit code.
-    pub(super) fn classify(&self) -> Outcome {
-        if let Some(signal) = self.cancelled.or_else(|| unix_signal(self.output.status)) {
+    #[must_use]
+    pub fn classify(&self) -> Outcome {
+        if let Some(signal) = self.cancelled.or_else(|| {
+            self.resource_limit
+                .is_none()
+                .then(|| unix_signal(self.output.status))
+                .flatten()
+        }) {
             return Outcome::Interrupted { signal };
         }
         if self.output.status.success() {
@@ -61,7 +98,7 @@ impl Reaped {
 /// The classified outcome of one external child through the boundary.
 ///
 /// One representation serves native Nix commands (wrapped into
-/// [`super::NixError`] with their argument vector) and direct helper
+/// the native adapter error with their argument vector) and direct helper
 /// commands (returned as is).
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -85,20 +122,15 @@ pub enum Outcome {
     },
 }
 
-#[cfg(unix)]
 mod forward {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
     /// Signals that cancel a native child and are forwarded to it.
-    pub(super) const TERMINATION: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
+    pub const TERMINATION: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
     static RECEIVED: AtomicI32 = AtomicI32::new(0);
-    static SIGNAL_COUNTS: [AtomicUsize; 3] = [
-        AtomicUsize::new(0),
-        AtomicUsize::new(0),
-        AtomicUsize::new(0),
-    ];
+    static SIGNAL_COUNTS: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
     static ACTIVE: AtomicBool = AtomicBool::new(false);
     static HANDLERS: AtomicUsize = AtomicUsize::new(0);
     static RUN_LOCK: Mutex<()> = Mutex::new(());
@@ -109,7 +141,7 @@ mod forward {
         if ACTIVE.load(Ordering::SeqCst) {
             let index = TERMINATION.iter().position(|&signal| signal == signum);
             if let Some(index) = index {
-                RECEIVED.store(signum, Ordering::SeqCst);
+                let _ = RECEIVED.compare_exchange(0, signum, Ordering::SeqCst, Ordering::SeqCst);
                 SIGNAL_COUNTS[index].fetch_add(1, Ordering::SeqCst);
             }
         }
@@ -125,7 +157,7 @@ mod forward {
     }
 
     /// Reject dispositions that let the kernel reap children before wait.
-    pub(super) fn check_sigchld() -> std::io::Result<()> {
+    pub fn check_sigchld() -> std::io::Result<()> {
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
         // SAFETY: a null new-action pointer queries the current disposition.
         if unsafe { libc::sigaction(libc::SIGCHLD, std::ptr::null(), &raw mut action) } != 0 {
@@ -140,7 +172,7 @@ mod forward {
         Ok(())
     }
 
-    pub(super) fn install() -> std::io::Result<Guard> {
+    pub fn install() -> std::io::Result<Guard> {
         let mut previous = Vec::new();
         RECEIVED.store(0, Ordering::SeqCst);
         for count in &SIGNAL_COUNTS {
@@ -152,16 +184,20 @@ mod forward {
             let handler = record_cancellation as *const () as usize;
             if unsafe { libc::sigaction(signum, &empty_action(handler), &raw mut old) } != 0 {
                 let error = std::io::Error::last_os_error();
-                ACTIVE.store(false, Ordering::SeqCst);
-                while HANDLERS.load(Ordering::SeqCst) != 0 {
-                    std::hint::spin_loop();
-                }
+                deactivate();
                 restore(&previous)?;
                 return Err(error);
             }
             previous.push((signum, old));
         }
         Ok(Guard(Some(previous)))
+    }
+
+    fn deactivate() {
+        ACTIVE.store(false, Ordering::SeqCst);
+        while HANDLERS.load(Ordering::SeqCst) != 0 {
+            std::hint::spin_loop();
+        }
     }
 
     fn restore(previous: &[(libc::c_int, libc::sigaction)]) -> std::io::Result<()> {
@@ -176,34 +212,27 @@ mod forward {
         first_error.map_or(Ok(()), Err)
     }
 
-    pub(super) struct Guard(Option<Vec<(libc::c_int, libc::sigaction)>>);
+    pub struct Guard(Option<Vec<(libc::c_int, libc::sigaction)>>);
 
     impl Guard {
-        pub(super) fn restore(mut self) -> std::io::Result<Option<i32>> {
-            ACTIVE.store(false, Ordering::SeqCst);
-            while HANDLERS.load(Ordering::SeqCst) != 0 {
-                std::hint::spin_loop();
-            }
-            let received = RECEIVED.load(Ordering::SeqCst);
+        pub fn restore(mut self) -> std::io::Result<()> {
+            deactivate();
             restore(self.0.as_deref().unwrap_or_default())?;
             self.0 = None;
-            Ok((received != 0).then_some(received))
+            Ok(())
         }
     }
 
     impl Drop for Guard {
         fn drop(&mut self) {
-            ACTIVE.store(false, Ordering::SeqCst);
-            while HANDLERS.load(Ordering::SeqCst) != 0 {
-                std::hint::spin_loop();
-            }
+            deactivate();
             if let Some(previous) = &self.0 {
                 let _ = restore(previous);
             }
         }
     }
 
-    pub(super) fn signals_since(seen: &mut [usize; 3]) -> Option<[usize; 3]> {
+    pub fn signals_since(seen: &mut [usize; 3]) -> Option<[usize; 3]> {
         let mut new_signals = [0; 3];
         for (index, count) in SIGNAL_COUNTS.iter().enumerate() {
             let current = count.load(Ordering::SeqCst);
@@ -216,7 +245,12 @@ mod forward {
         Some(new_signals)
     }
 
-    pub(super) fn block() -> std::io::Result<MaskGuard> {
+    pub fn received() -> Option<i32> {
+        let signal = RECEIVED.load(Ordering::SeqCst);
+        (signal != 0).then_some(signal)
+    }
+
+    pub fn block() -> std::io::Result<MaskGuard> {
         let previous = unsafe {
             let mut set: libc::sigset_t = std::mem::zeroed();
             let mut previous: libc::sigset_t = std::mem::zeroed();
@@ -237,10 +271,10 @@ mod forward {
         Ok(MaskGuard(previous))
     }
 
-    pub(super) struct MaskGuard(libc::sigset_t);
+    pub struct MaskGuard(libc::sigset_t);
 
     impl MaskGuard {
-        pub(super) fn prepare_child(&self, command: &mut std::process::Command) {
+        pub fn prepare_child(&self, command: &mut std::process::Command) {
             use std::os::unix::process::CommandExt as _;
             let previous = self.0;
             // SAFETY: the hook only restores a copied signal mask with the
@@ -274,7 +308,7 @@ mod forward {
     }
 
     /// Serialize child registration; only one child runs at a time.
-    pub(super) fn lock() -> std::sync::MutexGuard<'static, ()> {
+    pub fn lock() -> std::sync::MutexGuard<'static, ()> {
         RUN_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -282,7 +316,7 @@ mod forward {
 }
 
 /// A live consumer of one filtered child's stderr chunks.
-pub(super) trait StderrSink {
+pub trait StderrSink {
     /// One raw chunk in arrival order.
     fn chunk(&mut self, bytes: &[u8]);
     /// Update terminal progress while the child is quiet.
@@ -292,35 +326,22 @@ pub(super) trait StderrSink {
     fn finish(&mut self, success: bool);
 }
 
-#[cfg(unix)]
 #[derive(Clone, Copy)]
-struct ChildLimits {
-    resident_bytes: u64,
-    wall_time: std::time::Duration,
+/// Resource bounds for a captured child in its own process group.
+pub struct ChildLimits {
+    /// Maximum resident memory. None disables memory measurement.
+    pub resident_bytes: Option<u64>,
+    /// Maximum elapsed time.
+    pub wall_time: std::time::Duration,
+    /// Maximum captured bytes in each stream.
+    pub output_bytes: usize,
 }
 
-#[cfg(unix)]
-impl ChildLimits {
-    const fn metadata(resident_bytes: u64) -> Self {
-        Self {
-            resident_bytes,
-            wall_time: std::time::Duration::from_mins(2),
-        }
-    }
-}
-
-#[cfg(unix)]
-const OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
-#[cfg(unix)]
 const READ_BUDGET: usize = 64 * 1024;
-#[cfg(unix)]
 const CANCELLATION_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
-#[cfg(unix)]
 const POST_EXIT_DRAIN: std::time::Duration = std::time::Duration::from_millis(250);
-#[cfg(unix)]
 const MONITOR_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
-#[cfg(unix)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChildState {
     Running,
@@ -330,7 +351,6 @@ enum ChildState {
     Lost,
 }
 
-#[cfg(unix)]
 struct ChildOwner {
     child: Child,
     pid: libc::pid_t,
@@ -338,7 +358,6 @@ struct ChildOwner {
     state: ChildState,
 }
 
-#[cfg(unix)]
 impl ChildOwner {
     fn new(mut child: Child, process_group: bool) -> std::io::Result<Self> {
         let Ok(pid) = libc::pid_t::try_from(child.id()) else {
@@ -365,12 +384,7 @@ impl ChildOwner {
         if self.state != ChildState::Running {
             return Err(std::io::Error::from_raw_os_error(libc::ECHILD));
         }
-        let id = libc::id_t::try_from(self.pid).map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "child id does not fit id_t",
-            )
-        })?;
+        let id = self.child.id();
         loop {
             let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
             // SAFETY: `info` is writable and `id` names this unreaped child.
@@ -442,24 +456,13 @@ impl ChildOwner {
     }
 
     fn force_stop(&mut self) -> std::io::Result<()> {
-        if self.process_group {
-            let group_result = self.signal_group(libc::SIGKILL);
-            let child_result = self.signal_child(libc::SIGKILL);
-            match (group_result, child_result) {
-                (Err(error), _) | (_, Err(error)) => Err(error),
-                (Ok(()), Ok(())) => Ok(()),
-            }
-        } else {
-            self.signal_child(libc::SIGKILL)
-        }
-    }
-
-    fn clean_group_after_exit(&mut self) -> std::io::Result<()> {
-        self.signal_group(libc::SIGKILL)
+        let group_result = self.signal_group(libc::SIGKILL);
+        let child_result = self.signal_child(libc::SIGKILL);
+        group_result.and(child_result)
     }
 
     fn reap(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        if self.state != ChildState::Exited {
+        if !matches!(self.state, ChildState::Exited | ChildState::Reaping) {
             return Err(std::io::Error::other("child exit was not observed"));
         }
         // Stop all signaling before wait can consume the PID and release its
@@ -480,51 +483,29 @@ impl ChildOwner {
     }
 
     fn cleanup(&mut self) {
-        if self.state == ChildState::Reaping {
-            self.finish_reap();
-            return;
-        }
         if self.state == ChildState::Running {
             match self.observe() {
                 Ok(true) => {}
-                Ok(false) => {
-                    let _ = self.force_stop();
-                    self.state = ChildState::Reaping;
-                    self.finish_reap();
-                    return;
-                }
                 Err(_) if self.state == ChildState::Lost => return,
-                Err(_) => {
+                Ok(false) | Err(_) => {
                     // Keep the child identity owned while stopping it. We
                     // cannot signal its group after wait may consume its PID.
                     let _ = self.force_stop();
                     self.state = ChildState::Reaping;
-                    self.finish_reap();
-                    return;
                 }
             }
         }
         if self.state == ChildState::Exited {
-            let _ = self.clean_group_after_exit();
+            let _ = self.signal_group(libc::SIGKILL);
             let _ = self.reap();
-            if self.state == ChildState::Reaping {
-                self.finish_reap();
-            }
         }
+        self.finish_reap();
     }
 
     fn finish_reap(&mut self) {
-        loop {
-            match self.child.wait() {
-                Ok(_) => {
-                    self.state = ChildState::Reaped;
-                    return;
-                }
-                Err(error) if error.raw_os_error() == Some(libc::ECHILD) => {
-                    self.state = ChildState::Lost;
-                    return;
-                }
-                Err(_) => std::thread::sleep(MONITOR_INTERVAL),
+        while self.state == ChildState::Reaping {
+            if self.reap().is_err() && self.state == ChildState::Reaping {
+                std::thread::sleep(MONITOR_INTERVAL);
             }
         }
     }
@@ -593,19 +574,34 @@ fn macos_group_has_live_members(pgid: libc::pid_t) -> std::io::Result<bool> {
             )
         })?;
         // SAFETY: `info` is writable and `pid` came from the process-group list.
-        let read = unsafe {
-            libc::proc_pidinfo(
-                pid,
-                libc::PROC_PIDTBSDINFO,
-                0,
-                std::ptr::from_mut(&mut info).cast(),
-                size,
-            )
-        };
-        if read != size {
-            return Err(std::io::Error::other(
-                "cannot inspect a Darwin process-group member",
-            ));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            // SAFETY: the buffer remains writable during each inspection attempt.
+            let read = unsafe {
+                libc::proc_pidinfo(
+                    pid,
+                    libc::PROC_PIDTBSDINFO,
+                    0,
+                    std::ptr::from_mut(&mut info).cast(),
+                    size,
+                )
+            };
+            if read == size {
+                break;
+            }
+            // A killed descendant can briefly remain listed while its process
+            // information is unavailable. Accept only readable state or absence.
+            if unsafe { libc::kill(pid, 0) } != 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(std::io::Error::other(
+                    "cannot inspect a Darwin process-group member",
+                ));
+            }
+            std::thread::sleep(MONITOR_INTERVAL);
         }
         if info.pbi_pgid == pgid.cast_unsigned() && info.pbi_status != libc::SZOMB {
             return Ok(true);
@@ -614,56 +610,71 @@ fn macos_group_has_live_members(pgid: libc::pid_t) -> std::io::Result<bool> {
     Ok(false)
 }
 
-#[cfg(unix)]
 impl Drop for ChildOwner {
     fn drop(&mut self) {
         self.cleanup();
     }
 }
 
-#[cfg(unix)]
-struct OutputPipes<'a> {
+struct OutputPipes<'sink, 'input> {
+    stdin: Option<StdinPipe<'input>>,
     stdout: Option<std::process::ChildStdout>,
     stderr: Option<std::process::ChildStderr>,
     stdout_bytes: Vec<u8>,
     stderr_bytes: Vec<u8>,
-    bounded: bool,
+    output_limit: Option<usize>,
     overflow: bool,
-    sink: Option<&'a mut dyn StderrSink>,
+    mode: IoMode<'sink>,
     last_tick: std::time::Instant,
 }
 
-#[cfg(unix)]
-impl<'a> OutputPipes<'a> {
+struct StdinPipe<'a> {
+    stream: std::process::ChildStdin,
+    remaining: &'a [u8],
+}
+
+impl<'sink, 'input> OutputPipes<'sink, 'input> {
     fn new(
         child: &mut Child,
-        mode: IoMode,
-        bounded: bool,
-        sink: Option<&'a mut dyn StderrSink>,
+        mode: IoMode<'sink>,
+        output_limit: Option<usize>,
+        input: Option<&'input [u8]>,
     ) -> std::io::Result<Self> {
-        use std::os::fd::AsRawFd as _;
-
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
+        let stdin = if let Some(bytes) = input {
+            let stream = child
+                .stdin
+                .take()
+                .ok_or_else(|| std::io::Error::other("the child has no piped stdin"))?;
+            set_nonblocking(&stream)?;
+            Some(StdinPipe {
+                stream,
+                remaining: bytes,
+            })
+        } else {
+            None
+        };
         if let Some(pipe) = &stdout {
-            set_nonblocking(pipe.as_raw_fd())?;
+            set_nonblocking(pipe)?;
         }
         if let Some(pipe) = &stderr {
-            set_nonblocking(pipe.as_raw_fd())?;
+            set_nonblocking(pipe)?;
         }
         Ok(Self {
+            stdin,
             stdout,
             stderr,
             stdout_bytes: Vec::new(),
             stderr_bytes: Vec::new(),
-            bounded: bounded && mode == IoMode::Capture,
+            output_limit: output_limit.filter(|_| matches!(mode, IoMode::Capture)),
             overflow: false,
-            sink,
+            mode,
             last_tick: std::time::Instant::now(),
         })
     }
 
-    fn poll_read(&mut self) -> std::io::Result<()> {
+    fn poll_io(&mut self) -> std::io::Result<()> {
         use std::os::fd::AsRawFd;
 
         let mut descriptors = [
@@ -677,8 +688,16 @@ impl<'a> OutputPipes<'a> {
                 events: libc::POLLIN | libc::POLLHUP,
                 revents: 0,
             },
+            libc::pollfd {
+                fd: self
+                    .stdin
+                    .as_ref()
+                    .map_or(-1, |pipe| pipe.stream.as_raw_fd()),
+                events: libc::POLLOUT | libc::POLLHUP,
+                revents: 0,
+            },
         ];
-        let ready = unsafe { libc::poll(descriptors.as_mut_ptr(), 2, 10) };
+        let ready = unsafe { libc::poll(descriptors.as_mut_ptr(), 3, 10) };
         if ready < 0 {
             let error = std::io::Error::last_os_error();
             if error.kind() == std::io::ErrorKind::Interrupted {
@@ -694,100 +713,68 @@ impl<'a> OutputPipes<'a> {
             return Err(std::io::Error::from_raw_os_error(libc::EBADF));
         }
         if descriptors[0].revents != 0 {
-            self.read_stdout()?;
+            read_pipe(
+                &mut self.stdout,
+                &mut self.stdout_bytes,
+                self.output_limit,
+                &mut self.overflow,
+                &mut IoMode::Capture,
+            )?;
             if self.overflow {
                 return Ok(());
             }
         }
         if descriptors[1].revents != 0 {
-            self.read_stderr()?;
+            read_pipe(
+                &mut self.stderr,
+                &mut self.stderr_bytes,
+                self.output_limit,
+                &mut self.overflow,
+                &mut self.mode,
+            )?;
+        }
+        if descriptors[2].revents != 0 {
+            self.write_stdin()?;
         }
         self.tick();
         Ok(())
     }
 
-    fn read_stdout(&mut self) -> std::io::Result<()> {
-        use std::io::Read as _;
-
-        let (stdout, bytes, overflow) =
-            (&mut self.stdout, &mut self.stdout_bytes, &mut self.overflow);
-        let Some(pipe) = stdout.as_mut() else {
+    fn write_stdin(&mut self) -> std::io::Result<()> {
+        use std::io::Write as _;
+        let Some(pipe) = &mut self.stdin else {
             return Ok(());
         };
-        let mut buffer = [0_u8; 8192];
-        let mut budget = READ_BUDGET;
-        let mut eof = false;
-        while budget > 0 {
-            let count_limit = budget.min(buffer.len());
-            match pipe.read(&mut buffer[..count_limit]) {
+        if !pipe.remaining.is_empty() {
+            let end = pipe.remaining.len().min(READ_BUDGET);
+            match pipe.stream.write(&pipe.remaining[..end]) {
                 Ok(0) => {
-                    eof = true;
-                    break;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "could not deliver child stdin",
+                    ));
                 }
-                Ok(count) => {
-                    budget -= count;
-                    append_output(bytes, &buffer[..count], self.bounded, overflow);
-                    if *overflow {
-                        break;
-                    }
+                Ok(count) => pipe.remaining = &pipe.remaining[count..],
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    return Ok(());
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                 Err(error) => return Err(error),
             }
         }
-        if eof {
-            *stdout = None;
-        }
-        Ok(())
-    }
-
-    fn read_stderr(&mut self) -> std::io::Result<()> {
-        use std::io::Read as _;
-
-        let (stderr, bytes, overflow, sink) = (
-            &mut self.stderr,
-            &mut self.stderr_bytes,
-            &mut self.overflow,
-            &mut self.sink,
-        );
-        let Some(pipe) = stderr.as_mut() else {
-            return Ok(());
-        };
-        let mut buffer = [0_u8; 8192];
-        let mut budget = READ_BUDGET;
-        let mut eof = false;
-        while budget > 0 {
-            let count_limit = budget.min(buffer.len());
-            match pipe.read(&mut buffer[..count_limit]) {
-                Ok(0) => {
-                    eof = true;
-                    break;
-                }
-                Ok(count) => {
-                    budget -= count;
-                    append_output(bytes, &buffer[..count], self.bounded, overflow);
-                    if let Some(sink) = sink.as_deref_mut() {
-                        sink.chunk(&buffer[..count]);
-                    }
-                    if *overflow {
-                        break;
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(error) => return Err(error),
-            }
-        }
-        if eof {
-            *stderr = None;
+        if pipe.remaining.is_empty() {
+            self.stdin.take();
         }
         Ok(())
     }
 
     fn tick(&mut self) {
         if self.last_tick.elapsed() >= std::time::Duration::from_millis(250) {
-            if let Some(sink) = self.sink.as_deref_mut() {
+            if let IoMode::Filtered(sink) = &mut self.mode {
                 sink.tick();
             }
             self.last_tick = std::time::Instant::now();
@@ -795,22 +782,59 @@ impl<'a> OutputPipes<'a> {
     }
 
     fn all_closed(&self) -> bool {
-        self.stdout.is_none() && self.stderr.is_none()
+        self.stdin.is_none() && self.stdout.is_none() && self.stderr.is_none()
     }
 
     fn close(&mut self) {
+        self.stdin.take();
         self.stdout.take();
         self.stderr.take();
     }
 
     fn finish(&mut self, success: bool) {
-        if let Some(sink) = self.sink.take() {
+        if let IoMode::Filtered(sink) = std::mem::replace(&mut self.mode, IoMode::Stream) {
             sink.finish(success);
         }
     }
 }
 
-#[cfg(unix)]
+fn read_pipe<T: std::io::Read>(
+    pipe: &mut Option<T>,
+    bytes: &mut Vec<u8>,
+    limit: Option<usize>,
+    overflow: &mut bool,
+    mode: &mut IoMode<'_>,
+) -> std::io::Result<()> {
+    let Some(stream) = pipe.as_mut() else {
+        return Ok(());
+    };
+    let mut buffer = [0_u8; 8192];
+    let mut budget = READ_BUDGET;
+    while budget > 0 {
+        let count_limit = budget.min(buffer.len());
+        match stream.read(&mut buffer[..count_limit]) {
+            Ok(0) => {
+                *pipe = None;
+                break;
+            }
+            Ok(count) => {
+                budget -= count;
+                append_output(bytes, &buffer[..count], limit, overflow);
+                if let IoMode::Filtered(sink) = mode {
+                    sink.chunk(&buffer[..count]);
+                }
+                if *overflow {
+                    break;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 struct ChildMonitor {
     started: std::time::Instant,
     unmeasured_since: Option<std::time::Instant>,
@@ -819,12 +843,10 @@ struct ChildMonitor {
     cancellation_expired: bool,
     stop_sent: bool,
     limit_reason: Option<&'static str>,
-    read_error: Option<std::io::Error>,
-    exit_seen: bool,
+    io_error: Option<std::io::Error>,
     drain_deadline: Option<std::time::Instant>,
 }
 
-#[cfg(unix)]
 impl ChildMonitor {
     fn new() -> Self {
         Self {
@@ -835,35 +857,41 @@ impl ChildMonitor {
             cancellation_expired: false,
             stop_sent: false,
             limit_reason: None,
-            read_error: None,
-            exit_seen: false,
+            io_error: None,
             drain_deadline: None,
         }
     }
 
     fn observe_exit(&mut self, owner: &mut ChildOwner) -> std::io::Result<()> {
-        if self.exit_seen || !owner.observe()? {
+        if self.drain_deadline.is_some() || !owner.observe()? {
             return Ok(());
         }
-        self.exit_seen = true;
         self.drain_deadline = Some(std::time::Instant::now() + POST_EXIT_DRAIN);
-        if let Err(error) = owner.clean_group_after_exit() {
-            self.read_error.get_or_insert(error);
+        if let Err(error) = owner.signal_group(libc::SIGKILL) {
+            self.io_error.get_or_insert(error);
         }
         Ok(())
     }
 
-    fn drain_exit(&mut self, pipes: &mut OutputPipes<'_>) -> bool {
+    fn drain_exit(&mut self, pipes: &mut OutputPipes<'_, '_>) -> bool {
         if pipes.all_closed()
             || self
                 .drain_deadline
                 .is_some_and(|deadline| std::time::Instant::now() >= deadline)
         {
+            if pipes.stdin.is_some() {
+                self.io_error.get_or_insert_with(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "child ended before stdin was delivered",
+                    )
+                });
+            }
             pipes.close();
             return true;
         }
-        if let Err(error) = pipes.poll_read() {
-            self.read_error.get_or_insert(error);
+        if let Err(error) = pipes.poll_io() {
+            self.io_error.get_or_insert(error);
             pipes.close();
         }
         false
@@ -878,7 +906,7 @@ impl ChildMonitor {
         for (signal, count) in forward::TERMINATION.into_iter().zip(counts) {
             for _ in 0..count {
                 if let Err(error) = owner.signal_child(signal) {
-                    self.read_error.get_or_insert(error);
+                    self.io_error.get_or_insert(error);
                 }
             }
         }
@@ -890,29 +918,18 @@ impl ChildMonitor {
         limits: Option<ChildLimits>,
         now: std::time::Instant,
     ) -> Option<&'static str> {
-        if self.read_error.is_some() {
+        if self.io_error.is_some() {
             return None;
         }
         if limits.is_some_and(|bounds| now.duration_since(self.started) >= bounds.wall_time) {
-            return Some("metadata batch exceeded 120 seconds");
+            return Some("child exceeded wall limit");
         }
         let bounds = limits?;
         if self.limit_reason.is_some() {
             return None;
         }
-        let rss_limit = bounds.resident_bytes.saturating_sub(32 * 1024 * 1024);
-        let resident = if let Ok(pid) = u32::try_from(owner.pid) {
-            resident_bytes(pid)
-        } else {
-            self.read_error.get_or_insert_with(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "child process id does not fit u32",
-                )
-            });
-            None
-        };
-        match resident {
+        let rss_limit = bounds.resident_bytes?.saturating_sub(32 * 1024 * 1024);
+        match resident_bytes(owner.child.id()) {
             Some(bytes) if bytes > rss_limit => Some("evaluator approached 512 MiB RSS"),
             Some(_) => {
                 self.unmeasured_since = None;
@@ -926,15 +943,22 @@ impl ChildMonitor {
         }
     }
 
+    fn force_stop(&mut self, owner: &mut ChildOwner) {
+        self.stop_sent = true;
+        if let Err(error) = owner.force_stop() {
+            self.io_error.get_or_insert(error);
+        }
+    }
+
     fn enforce_stops(
         &mut self,
         owner: &mut ChildOwner,
-        pipes: &mut OutputPipes<'_>,
+        pipes: &mut OutputPipes<'_, '_>,
         limits: Option<ChildLimits>,
     ) {
         let now = std::time::Instant::now();
         let reason = if pipes.overflow {
-            Some("metadata output exceeded 16 MiB")
+            Some("child exceeded log cap")
         } else {
             self.stop_reason(owner, limits, now)
         };
@@ -942,10 +966,7 @@ impl ChildMonitor {
             && self.limit_reason.is_none()
         {
             self.limit_reason = Some(reason);
-            self.stop_sent = true;
-            if let Err(error) = owner.force_stop() {
-                self.read_error.get_or_insert(error);
-            }
+            self.force_stop(owner);
         }
 
         if !self.cancellation_expired
@@ -954,46 +975,36 @@ impl ChildMonitor {
                 .is_some_and(|deadline| now >= deadline)
         {
             self.cancellation_expired = true;
-            self.stop_sent = true;
-            if let Err(error) = owner.force_stop() {
-                self.read_error.get_or_insert(error);
-            }
+            self.force_stop(owner);
         }
 
-        if self.read_error.is_some() && !self.stop_sent {
+        if self.io_error.is_some() && !self.stop_sent {
             self.stop_sent = true;
             pipes.close();
-            if let Err(error) = owner.force_stop() {
-                self.read_error.get_or_insert(error);
-            }
+            self.force_stop(owner);
         }
     }
 
-    fn poll_running(&mut self, owner: &mut ChildOwner, pipes: &mut OutputPipes<'_>) {
-        if let Err(error) = pipes.poll_read() {
-            self.read_error.get_or_insert(error);
+    fn poll_running(&mut self, owner: &mut ChildOwner, pipes: &mut OutputPipes<'_, '_>) {
+        if let Err(error) = pipes.poll_io() {
+            self.io_error.get_or_insert(error);
             pipes.close();
-            if !self.stop_sent {
-                self.stop_sent = true;
-            }
-            if let Err(error) = owner.force_stop() {
-                self.read_error.get_or_insert(error);
-            }
+            self.force_stop(owner);
         }
     }
 
     fn run(
         &mut self,
         owner: &mut ChildOwner,
-        pipes: &mut OutputPipes<'_>,
+        pipes: &mut OutputPipes<'_, '_>,
         limits: Option<ChildLimits>,
     ) -> std::io::Result<()> {
         loop {
             self.observe_exit(owner)?;
-            if self.exit_seen && pipes.overflow && self.limit_reason.is_none() {
-                self.limit_reason = Some("metadata output exceeded 16 MiB");
+            if self.drain_deadline.is_some() && pipes.overflow && self.limit_reason.is_none() {
+                self.limit_reason = Some("child exceeded log cap");
             }
-            if self.exit_seen {
+            if self.drain_deadline.is_some() {
                 if self.drain_exit(pipes) {
                     break;
                 }
@@ -1007,52 +1018,60 @@ impl ChildMonitor {
     }
 }
 
-#[cfg(unix)]
-fn append_output(bytes: &mut Vec<u8>, chunk: &[u8], bounded: bool, overflow: &mut bool) {
-    if bounded && (*overflow || bytes.len().saturating_add(chunk.len()) > OUTPUT_LIMIT) {
+fn append_output(
+    bytes: &mut Vec<u8>,
+    chunk: &[u8],
+    output_limit: Option<usize>,
+    overflow: &mut bool,
+) {
+    if output_limit
+        .is_some_and(|limit| *overflow || bytes.len().saturating_add(chunk.len()) > limit)
+    {
         *overflow = true;
     } else {
         bytes.extend_from_slice(chunk);
     }
 }
 
-#[cfg(unix)]
-fn set_nonblocking(fd: std::os::fd::RawFd) -> std::io::Result<()> {
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
+fn set_nonblocking(fd: impl std::os::fd::AsFd) -> std::io::Result<()> {
+    let flags = rustix::fs::fcntl_getfl(&fd)?;
+    rustix::fs::fcntl_setfl(fd, flags | rustix::fs::OFlags::NONBLOCK)?;
     Ok(())
 }
 
-#[cfg(unix)]
 impl ChildOwner {
     fn run(
         mut self,
-        mode: IoMode,
-        sink: Option<&mut dyn StderrSink>,
+        mode: IoMode<'_>,
         limits: Option<ChildLimits>,
-    ) -> std::io::Result<(Output, Option<&'static str>)> {
-        let mut pipes = OutputPipes::new(&mut self.child, mode, limits.is_some(), sink)?;
+        input: Option<&[u8]>,
+    ) -> Result<(Output, Option<&'static str>), RunError> {
+        let mut pipes = OutputPipes::new(
+            &mut self.child,
+            mode,
+            limits.map(|bounds| bounds.output_bytes),
+            input,
+        )?;
         let mut monitor = ChildMonitor::new();
         if let Err(error) = monitor.run(&mut self, &mut pipes, limits) {
             pipes.finish(false);
-            return Err(error);
+            return Err(error.into());
         }
 
         let status = match self.reap() {
             Ok(status) => status,
             Err(error) => {
                 pipes.finish(false);
-                return Err(error);
+                return Err(error.into());
             }
         };
-        pipes.finish(status.success() && monitor.read_error.is_none());
-        if let Some(error) = monitor.read_error {
-            return Err(error);
+        pipes.finish(status.success() && monitor.io_error.is_none());
+        if let Some(error) = monitor.io_error {
+            return Err(RunError {
+                cancelled: unix_signal(status)
+                    .filter(|signal| !monitor.stop_sent || forward::TERMINATION.contains(signal)),
+                source: error,
+            });
         }
         Ok((
             Output {
@@ -1065,61 +1084,67 @@ impl ChildOwner {
     }
 }
 
-pub(super) fn run_child(
-    command: Command,
-    mode: IoMode,
-    sink: Option<&mut dyn StderrSink>,
-) -> std::io::Result<Reaped> {
-    run_child_with_limits(command, mode, sink, None)
-}
-
-pub(super) fn run_child_bounded(command: Command, bytes: u64) -> std::io::Result<Reaped> {
-    run_child_with_limits(
-        command,
-        IoMode::Capture,
-        None,
-        Some(ChildLimits::metadata(bytes)),
-    )
-}
-
-#[cfg(unix)]
-fn run_child_with_limits(
+/// Run a child and retain cancellation until the caller reports it.
+///
+/// The mode selects captured or inherited output. Supplied input uses a
+/// nonblocking pipe instead of inherited or null stdin. The complete input
+/// must be delivered; otherwise the child is stopped and reaped.
+/// Limits create a child process group and bound elapsed time and captured
+/// output. Memory checks require `resident_bytes`.
+/// Filtered mode delivers captured stderr to its borrowed sink while the child runs.
+/// # Errors
+/// Returns an error if signal registration, spawn, input delivery, stream reads,
+/// cleanup, or wait fails.
+pub fn run_child(
     mut command: Command,
-    mode: IoMode,
-    sink: Option<&mut dyn StderrSink>,
+    mode: IoMode<'_>,
     limits: Option<ChildLimits>,
-) -> std::io::Result<Reaped> {
+    input: Option<&[u8]>,
+) -> Result<Reaped, RunError> {
     let _run = forward::lock();
     let mask = forward::block()?;
-    let guard = forward::install()?;
+    let guard = forward::install().map_err(|source| RunError {
+        cancelled: forward::received(),
+        source,
+    })?;
     mask.prepare_child(&mut command);
     if limits.is_some() {
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
     }
-    forward::check_sigchld()?;
-    let spawn = command
-        .stdin(if mode == IoMode::Capture {
-            Stdio::null()
-        } else {
-            Stdio::inherit()
-        })
-        .stdout(if mode == IoMode::Capture {
-            Stdio::piped()
-        } else {
-            Stdio::inherit()
-        })
-        .stderr(if mode == IoMode::Stream {
-            Stdio::inherit()
-        } else {
-            Stdio::piped()
-        })
-        .spawn();
-    let child = spawn?;
-    let owner = ChildOwner::new(child, limits.is_some())?;
-    drop(mask);
-    let (output, resource_limit) = owner.run(mode, sink, limits)?;
-    let cancelled = guard.restore()?;
+    let result = (|| {
+        forward::check_sigchld()?;
+        let child = command
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else if matches!(mode, IoMode::Capture) {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            })
+            .stdout(if matches!(mode, IoMode::Capture) {
+                Stdio::piped()
+            } else {
+                Stdio::inherit()
+            })
+            .stderr(if matches!(mode, IoMode::Stream) {
+                Stdio::inherit()
+            } else {
+                Stdio::piped()
+            })
+            .spawn()?;
+        let owner = ChildOwner::new(child, limits.is_some())?;
+        drop(mask);
+        owner.run(mode, limits, input)
+    })();
+    let restored = guard.restore();
+    let cancelled = forward::received();
+    let failure = |source| RunError { cancelled, source };
+    let (output, resource_limit) = result.map_err(|mut error| {
+        error.cancelled = cancelled.or(error.cancelled);
+        error
+    })?;
+    restored.map_err(failure)?;
     Ok(Reaped {
         output,
         cancelled,
@@ -1179,18 +1204,16 @@ fn resident_bytes(_pid: u32) -> Option<u64> {
 /// Nonzero exits and cancellation are returned as [`Outcome`] values.
 pub fn run_direct_captured(
     executable: &std::path::Path,
-    args: &[String],
-) -> Result<(Outcome, String), String> {
+    args: &[&str],
+) -> Result<(Outcome, String), RunError> {
     let mut command = Command::new(executable);
     command.args(args);
-    run_child(command, IoMode::Capture, None)
-        .map_err(|error| error.to_string())
-        .map(|reaped| {
-            (
-                reaped.classify(),
-                String::from_utf8_lossy(&reaped.output.stdout).into_owned(),
-            )
-        })
+    run_child(command, IoMode::Capture, None, None).map(|reaped| {
+        (
+            reaped.classify(),
+            String::from_utf8_lossy(&reaped.output.stdout).into_owned(),
+        )
+    })
 }
 
 /// Run one direct external command through the shared signal forward/reap
@@ -1206,7 +1229,7 @@ pub fn run_direct_captured(
 /// Returns an error if signal setup, child setup, spawning, signal forwarding,
 /// exit observation, stream supervision, reaping, or signal restoration fails.
 /// Nonzero exits and cancellation are returned as [`Outcome`] values.
-pub fn run_direct(executable: &std::path::Path, args: &[String]) -> Result<Outcome, String> {
+pub fn run_direct(executable: &std::path::Path, args: &[&str]) -> Result<Outcome, RunError> {
     run_direct_captured(executable, args).map(|(outcome, _)| outcome)
 }
 
@@ -1214,25 +1237,12 @@ pub fn run_direct(executable: &std::path::Path, args: &[String]) -> Result<Outco
 /// cancelled: a signalled child, then a child that exited 130 after
 /// handling SIGINT itself.
 fn unix_signal(status: ExitStatus) -> Option<i32> {
-    if let Some(signal) = platform_signal(status) {
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
         return Some(signal);
     }
     // A child that exits with status 130 reports a handled SIGINT; treat it
     // as interruption so native state is still re-read.
     (status.code() == Some(130)).then_some(2)
-}
-
-fn platform_signal(status: ExitStatus) -> Option<i32> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt as _;
-        status.signal()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = status;
-        None
-    }
 }
 
 fn exit_status_text(status: ExitStatus) -> String {

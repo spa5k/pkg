@@ -16,12 +16,8 @@ use crate::tap::{registry::Registry, store};
 /// The references behind every catalog source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Routing {
-    /// The configured Nixpkgs flake reference.
-    pub nixpkgs: String,
-    /// The configured official casks flake reference.
-    pub casks: String,
-    /// The configured native Formula source.
-    pub formulae: String,
+    /// The configured source references.
+    pub sources: Sources,
     /// One stable `current` path reference per imported tap, keyed by
     /// source identity.
     pub taps: BTreeMap<String, String>,
@@ -32,9 +28,7 @@ impl Routing {
     #[must_use]
     pub fn new(sources: &Sources, taps: BTreeMap<String, String>) -> Self {
         Self {
-            nixpkgs: sources.nixpkgs.clone(),
-            casks: sources.casks.clone(),
-            formulae: sources.formulae.clone(),
+            sources: sources.clone(),
             taps,
         }
     }
@@ -69,7 +63,7 @@ impl Routing {
     /// Returns an error when `source` is not the official cask source or a registered tap.
     pub fn cask_reference(&self, source: &str) -> Result<String, String> {
         if source == OFFICIAL_CASK_SOURCE {
-            Ok(self.casks.clone())
+            Ok(self.sources.casks.clone())
         } else if let Some(reference) = self.taps.get(source) {
             Ok(reference.clone())
         } else {

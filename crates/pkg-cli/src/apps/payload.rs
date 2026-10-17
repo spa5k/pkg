@@ -105,9 +105,8 @@ pub(super) fn prepare_bundle(bundle: &Path) -> Result<PathBuf, AppError> {
     let name = bundle
         .file_name()
         .ok_or("missing cask app name")?
-        .to_string_lossy()
-        .into_owned();
-    match run_direct_captured(&helper, &[String::from("prepare"), name])? {
+        .to_string_lossy();
+    match run_direct_captured(&helper, &["prepare", &name])? {
         (Outcome::Success, text)
             if text.trim() == expected.to_string_lossy() && expected.is_dir() =>
         {

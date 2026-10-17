@@ -32,7 +32,7 @@ The [module map](docs/architecture.md) shows the current code owners.
 
 - All PRs: the **ci** workflow is green. It runs the ordinary Rust checks —
   build, test, format, clippy, docs, and dependency policy — on the pinned
-  toolchain (currently Rust 1.96.1 via `rust-toolchain.toml`), plus a small
+  toolchain (currently Rust 1.99.0 via `rust-toolchain.toml`), plus a small
   client smoke job on Linux and macOS.
 - All PRs: the **docs-linkcheck** workflow is green. It validates Markdown
   cross-references and requires README/CONTRIBUTING to link the native Nix

@@ -25,7 +25,7 @@ start on macOS 27. The helper fix is already in this branch's base. See the
 | The catalog discarded the maximum macOS version. | Schema 4 retains both bounds in plans and the actual Nix index. Install and upgrade check the host before mutation. Upgrade uses the installed entry's original source. |
 | 7zz extraction left nested Apple metadata streams inside signed apps. | Recursive cleanup removes materialized streams. Vendor resources, ordinary colon names, and validated links remain intact. A failed removal fails the build. |
 
-Owners: [child process boundary](../../crates/pkg-cli/src/nix/process.rs),
+Owners: [child process boundary](https://github.com/spa5k/pkg/blob/1c1164b42052e09dd1dfa544987d5f38d100d81f/crates/pkg-cli/src/nix/process.rs),
 [source references](../../crates/pkg-cli/src/nix/reference.rs),
 [tap loading](../../crates/pkg-cli/src/commands/mod.rs),
 [namespace resolution](../../crates/pkg-cli/src/catalog/search.rs),

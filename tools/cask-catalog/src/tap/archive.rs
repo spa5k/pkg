@@ -7,7 +7,7 @@
 use super::safe_segment;
 use super::sha256_hex;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::Path;
 
 /// Codeload download byte limit (compressed archive).
@@ -62,17 +62,18 @@ pub(super) fn tree_inventory(tree: &Path) -> Result<BTreeMap<String, String>, St
 /// Erroring counting reader around the gzip stream: bounds ALL decoded
 /// bytes (entry headers, file data, end-of-archive padding). A plain
 /// `take` would masquerade the over-limit case as clean EOF and silently
-/// accept a stream that is really a decompression bomb.
-struct BoundedGzReader<R> {
-    inner: R,
+/// accept a stream that is really a decompression bomb. The source is
+/// deliberately a memory decoder: its reads cannot return Interrupted.
+struct BoundedGzReader<'a> {
+    inner: flate2::read::GzDecoder<&'a [u8]>,
     remaining: u64,
     consumed: u64,
 }
 
-impl<R: Read> BoundedGzReader<R> {
-    fn new(inner: R, limit: u64) -> Self {
+impl<'a> BoundedGzReader<'a> {
+    fn new(bytes: &'a [u8], limit: u64) -> Self {
         Self {
-            inner,
+            inner: flate2::read::GzDecoder::new(bytes),
             remaining: limit,
             consumed: 0,
         }
@@ -85,21 +86,19 @@ impl<R: Read> BoundedGzReader<R> {
     /// early EOF. A tar stream is 512-byte blocked; a decoded length off
     /// that grid means the tar itself was truncated.
     fn finish(&mut self) -> Result<(), String> {
-        let mut sink = vec![0u8; 64 * 1024].into_boxed_slice();
-        loop {
-            match self.read(&mut sink) {
-                Ok(0) => break,
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
-                    return Err(e.to_string());
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "archive stream is truncated or damaged after the tar end: {e}"
-                    ));
-                }
+        // Keep 64 KiB reads: decoder read size affects which damage or
+        // byte-limit error is returned first.
+        io::copy(
+            &mut io::BufReader::with_capacity(64 * 1024, &mut *self),
+            &mut io::sink(),
+        )
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::InvalidData {
+                e.to_string()
+            } else {
+                format!("archive stream is truncated or damaged after the tar end: {e}")
             }
-        }
+        })?;
         if !self.consumed.is_multiple_of(512) {
             return Err(format!(
                 "archive decoded {} bytes, which is not a whole number of 512-byte \
@@ -111,13 +110,13 @@ impl<R: Read> BoundedGzReader<R> {
     }
 }
 
-impl<R: Read> Read for BoundedGzReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+impl Read for BoundedGzReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = self.inner.read(buf)?;
         let n64 = n as u64;
         if n64 > self.remaining {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
                 "archive decompresses past the decoded-stream byte limit",
             ));
         }
@@ -204,7 +203,7 @@ fn extract_tar_gz_limited(
         ));
     }
     std::fs::create_dir_all(dest).map_err(|e| format!("cannot create {}: {e}", dest.display()))?;
-    let mut bounded = BoundedGzReader::new(flate2::read::GzDecoder::new(bytes), byte_limit);
+    let mut bounded = BoundedGzReader::new(bytes, byte_limit);
     let mut tree = ExtractedTree::default();
     {
         let mut archive = tar::Archive::new(&mut bounded);
@@ -230,14 +229,7 @@ fn extract_tar_gz_limited(
                 validate_global_pax_header(&mut entry)?;
                 continue;
             }
-            tree.unpack_entry(
-                &mut entry,
-                entry_type,
-                dest,
-                byte_limit,
-                max_files,
-                max_file_bytes,
-            )?;
+            tree.unpack_entry(&mut entry, entry_type, dest, byte_limit, max_file_bytes)?;
         }
     }
     bounded.finish()?;
@@ -259,7 +251,6 @@ struct ExtractedTree {
 #[derive(Clone, Copy)]
 struct ExtractLimits {
     bytes: u64,
-    files: usize,
     file_bytes: u64,
 }
 
@@ -270,7 +261,6 @@ impl ExtractedTree {
         entry_type: tar::EntryType,
         dest: &Path,
         byte_limit: u64,
-        max_files: usize,
         max_file_bytes: u64,
     ) -> Result<(), String> {
         let (path_str, relative_path) = self.entry_paths(entry)?;
@@ -286,7 +276,6 @@ impl ExtractedTree {
                 dest,
                 ExtractLimits {
                     bytes: byte_limit,
-                    files: max_files,
                     file_bytes: max_file_bytes,
                 },
             ),
@@ -402,13 +391,8 @@ impl ExtractedTree {
                 limits.bytes
             ));
         }
-        self.file_count = self
-            .file_count
-            .checked_add(1)
-            .ok_or_else(|| "archive file count overflowed".to_string())?;
-        if self.file_count > limits.files {
-            return Err(format!("archive has more than {} files", limits.files));
-        }
+        // Every regular file is one of the already counted, bounded entries.
+        self.file_count += 1;
         let lower = relative_path.to_ascii_lowercase();
         if self.files.contains(&lower) || self.dirs.contains(&lower) {
             return Err(format!(

@@ -38,15 +38,13 @@ mod capture_cases;
 
 use crate::github;
 use crate::net::{GITHUB_HOSTS, SafeClient};
-use crate::{valid_repo, valid_revision};
+use crate::{sha256_hex, valid_repo, valid_revision};
 use archive::{MAX_ARCHIVE_BYTES, extract_tar_gz, tree_inventory};
 use capture::{Capture, MAX_EXPORT_BYTES, convert_capture, validate_export};
-use config::{GateError, nix_config_gate};
+use config::nix_config_gate;
 pub use config::{mac_setup_settings, verify_effective_config};
 use runtime::{run_nix_export, setup_canary};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
-use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -59,35 +57,59 @@ pub const EXPORT_SCHEMA: &str = "pkg-tap-raw-export/1";
 /// The category is produced by construction at the one refusal source
 /// (the local effective-config gate), never by matching message text;
 /// callers format the message at their boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 pub enum ImportError {
     /// The effective local nix config refuses the raw tap import (weak
     /// sandbox settings, added host paths, impure dependencies). The
     /// client may offer its one-time consent-gated administrator setup
     /// and retry once; the message carries the concrete setup advice.
+    #[error("{0}")]
     SandboxRefused(String),
+    /// A signal stopped the owned import process group.
+    #[error("{detail}")]
+    Interrupted {
+        /// The first cancellation signal.
+        signal: i32,
+        /// The operation and cleanup detail.
+        detail: String,
+    },
+    /// An owned process could not start, be monitored, or be reaped.
+    #[error("{detail}")]
+    Process {
+        /// The operation and diagnostic.
+        detail: String,
+        /// The original operating system error.
+        #[source]
+        source: pkg_process::RunError,
+    },
     /// Any other failure: canonicalization, identity, network, archive,
     /// build, or conversion. Setup cannot fix these.
+    #[error("{0}")]
     Failed(String),
 }
 
 impl ImportError {
+    /// The cancellation signal, including a supervision failure.
+    #[must_use]
+    pub fn signal(&self) -> Option<i32> {
+        match self {
+            Self::Interrupted { signal, .. } => Some(*signal),
+            Self::Process { source, .. } => source.cancelled,
+            _ => None,
+        }
+    }
+
     /// The full detail message, whatever the category.
     #[must_use]
     pub fn message(&self) -> &str {
         match self {
-            Self::SandboxRefused(detail) | Self::Failed(detail) => detail,
+            Self::SandboxRefused(detail)
+            | Self::Failed(detail)
+            | Self::Interrupted { detail, .. }
+            | Self::Process { detail, .. } => detail,
         }
     }
 }
-
-impl fmt::Display for ImportError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.message())
-    }
-}
-
-impl std::error::Error for ImportError {}
 
 impl From<String> for ImportError {
     /// Every ordinary string failure is an ordinary import failure.
@@ -99,22 +121,27 @@ impl From<String> for ImportError {
 /// One import job: the tap, the optional exact revision, the native
 /// target, the Nix executable to drive, and where the self-contained
 /// flake tree is written.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Args)]
 pub struct ImportRequest {
-    /// Tap identity: `owner/tap` or
-    /// `https://github.com/owner/homebrew-tap` (lowercased and
-    /// normalized).
+    /// Tap identity `owner/tap` or
+    /// `https://github.com/owner/homebrew-tap`.
+    #[arg(long)]
     pub source: String,
-    /// Exact 40-hex commit revision. `None` resolves the default
-    /// branch head through the GitHub API.
+    /// Exact 40-hex commit revision of the tap; omit to use the
+    /// default branch head.
+    #[arg(long)]
     pub revision: Option<String>,
-    /// The single native catalog target (`aarch64-darwin` or
-    /// `x86_64-linux`); must equal this build host.
+    /// Single native target: aarch64-darwin or x86_64-linux. Must
+    /// equal this build host.
+    #[arg(long)]
     pub system: String,
-    /// Path to the Nix executable used to build `raw-export.nix`.
+    /// Path to the Nix EXECUTABLE (e.g. /nix/store/.../bin/nix)
+    /// that builds the embedded raw-export runtime.
+    #[arg(long, default_value = "nix")]
     pub nix: PathBuf,
-    /// Output directory the self-contained flake tree is written into.
-    /// Must be caller-owned and empty (precreated is fine).
+    /// Output directory for the self-contained flake tree. Must be
+    /// caller-owned and empty (precreated is fine).
+    #[arg(long = "out", value_name = "OUT")]
     pub output_dir: PathBuf,
 }
 
@@ -292,10 +319,6 @@ fn archive_url(source: &str, revision: &str) -> Result<String, String> {
     ))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
-
 /// Prepare the caller-owned output directory: precreated is fine, but
 /// it must be empty and owned by the current user.
 fn prepare_output_dir(output_dir: &Path) -> Result<(), String> {
@@ -308,7 +331,6 @@ fn prepare_output_dir(output_dir: &Path) -> Result<(), String> {
                 output_dir.display()
             ));
         }
-        #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt as _;
             // Effective uid, derived from a file this process just
@@ -415,10 +437,7 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
     // becomes the typed `SandboxRefused`; a settings query that could
     // not run at all stays an ordinary failure the client must not
     // answer with setup.
-    nix_config_gate(&request.nix, staging.path()).map_err(|error| match error {
-        GateError::Refused(detail) => ImportError::SandboxRefused(detail),
-        GateError::Unverifiable(detail) => ImportError::Failed(detail),
-    })?;
+    nix_config_gate(&request.nix, staging.path())?;
 
     // 3. GitHub API identity verification and revision resolution.
     let Some((owner, tap)) = source.split_once('/') else {
@@ -467,6 +486,7 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
         &source,
         &revision,
         &canary,
+        runtime::NIX_WALLTIME,
     )?;
     // RAII: the canary and listener stop existing on this and every
     // error path (Drop), removing only the paths they created.
@@ -485,13 +505,13 @@ pub fn import(request: &ImportRequest) -> Result<ImportResult, ImportError> {
         .take((MAX_EXPORT_BYTES as u64) + 1)
         .read_to_end(&mut export_bytes)
         .map_err(|e| format!("cannot read the export capture: {e}"))?;
-    let (export, metadata_sha256) = validate_export(&export_bytes, &source, &revision, native)?;
+    let (casks, metadata_sha256) = validate_export(&export_bytes, &source, &revision, native)?;
     let capture = Capture {
         source,
         origin,
         revision,
         system: native.to_string(),
-        export,
+        casks,
         metadata_sha256,
         archive_url: archive_url_value,
         archive_sha256,
@@ -652,7 +672,7 @@ mod tests {
             origin: "https://github.com/example/homebrew-foo".to_string(),
             revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
             system: "aarch64-darwin".to_string(),
-            export: serde_json::json!({"casks": []}),
+            casks: Vec::new(),
             metadata_sha256: "a".repeat(64),
             archive_url: "https://codeload.github.com/example/homebrew-foo/tar.gz/revision"
                 .to_string(),
@@ -712,6 +732,6 @@ mod tests {
         assert!(matches!(lookalike, ImportError::Failed(_)));
         // Ordinary string failures convert to the ordinary category.
         let converted: ImportError = String::from("network down").into();
-        assert_eq!(converted, ImportError::Failed(String::from("network down")));
+        assert!(matches!(converted, ImportError::Failed(ref detail) if detail == "network down"));
     }
 }

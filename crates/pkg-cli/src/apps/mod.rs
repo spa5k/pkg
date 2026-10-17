@@ -194,27 +194,27 @@ pub(crate) fn status(nix: &Nix, paths: &Paths) -> Result<AppStatus, AppError> {
             ),
         ));
     };
-    let mut missing: Vec<&String> = Vec::new();
-    let mut stale_sources: Vec<&String> = Vec::new();
-    let mut changed: Vec<&String> = Vec::new();
+    let mut missing: Vec<&str> = Vec::new();
+    let mut stale_sources: Vec<&str> = Vec::new();
+    let mut changed: Vec<&str> = Vec::new();
     for (name, source) in &apps {
         match recorded.get(name) {
-            None => missing.push(name),
-            Some(old) if old != source => changed.push(name),
+            None => missing.push(name.as_str()),
+            Some(old) if old != source => changed.push(name.as_str()),
             Some(_) => {
                 if !dest.join(name).exists()
                     || restored_path(source)?.is_some_and(|path| {
                         !fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
                     })
                 {
-                    missing.push(name);
+                    missing.push(name.as_str());
                 }
             }
         }
     }
     for name in recorded.keys() {
         if !apps.contains_key(name) {
-            stale_sources.push(name);
+            stale_sources.push(name.as_str());
         }
     }
     if missing.is_empty() && stale_sources.is_empty() && changed.is_empty() {
@@ -227,22 +227,15 @@ pub(crate) fn status(nix: &Nix, paths: &Paths) -> Result<AppStatus, AppError> {
             ),
         ));
     }
-    let list = |names: &[&String]| {
-        names
-            .iter()
-            .map(|n| n.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
     Ok(AppStatus::new(
         Health::Unhealthy,
         &format!(
             "app launcher drift in {} (missing: [{}]; stale: [{}]; changed source: [{}]); \
          run `pkg apps sync`",
             dest.display(),
-            list(&missing),
-            list(&stale_sources),
-            list(&changed)
+            missing.join(", "),
+            stale_sources.join(", "),
+            changed.join(", ")
         ),
     ))
 }

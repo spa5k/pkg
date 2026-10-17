@@ -5,34 +5,42 @@ use crate::tap::registry;
 #[test]
 fn typed_refusal_category_survives_text_lookalikes() {
     use cask_catalog::tap::ImportError;
-    // Only the typed refusal is carried as a category.
-    let refused = stage_error_for_import_error(
-        "somebody/apps",
-        ImportError::SandboxRefused(String::from("sandbox is false")),
-    );
-    assert!(matches!(refused, StageError::SandboxRefused(_)));
-    // An ordinary failure whose text contains the refusal phrase is
-    // an ordinary failure: the setup offer must never trigger.
-    let lookalike = stage_error_for_import_error(
-        "somebody/apps",
-        ImportError::Failed(String::from(
-            "effective local nix config refuses the raw tap import: \
-             the settings could not be verified",
-        )),
-    );
-    let StageError::Other(error) = lookalike else {
-        panic!("a coincidental refusal phrase must not become a refusal");
+    use std::error::Error as _;
+
+    let wrap_import_error = |error| CommandError::TapImport {
+        tap: String::from("somebody/apps"),
+        error,
     };
-    let CommandError::Message(text) = error else {
-        panic!("the ordinary failure is a message");
-    };
+    let refused = wrap_import_error(ImportError::SandboxRefused(String::from(
+        "sandbox is false",
+    )));
+    assert!(matches!(
+        refused,
+        CommandError::TapImport {
+            error: ImportError::SandboxRefused(_),
+            ..
+        }
+    ));
+    let lookalike = wrap_import_error(ImportError::Failed(String::from(
+        "effective local nix config refuses the raw tap import: \
+         the settings could not be verified",
+    )));
+    let cause = lookalike
+        .source()
+        .expect("original importer cause")
+        .downcast_ref::<ImportError>()
+        .expect("importer error type");
+    assert!(matches!(cause, ImportError::Failed(_)));
+    let text = lookalike.to_string();
     assert!(text.contains("importing somebody/apps failed"), "{text}");
     assert!(text.contains("could not be verified"), "{text}");
-    // The refusal detail stays available for the retry path.
-    let StageError::SandboxRefused(detail) = stage_error_for_import_error(
-        "somebody/apps",
-        ImportError::SandboxRefused(String::from("added host path /etc")),
-    ) else {
+    let CommandError::TapImport {
+        error: ImportError::SandboxRefused(detail),
+        ..
+    } = wrap_import_error(ImportError::SandboxRefused(String::from(
+        "added host path /etc",
+    )))
+    else {
         panic!("the typed refusal is carried");
     };
     assert_eq!(detail, "added host path /etc");

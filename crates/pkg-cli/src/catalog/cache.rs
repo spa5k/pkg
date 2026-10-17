@@ -53,6 +53,36 @@ pub struct Snapshot<P> {
 /// The latest cask index snapshot shape: the complete index envelope.
 pub type IndexSnapshot = Snapshot<CatalogIndex>;
 
+impl<P> Snapshot<P> {
+    pub(super) fn new(
+        kind: &str,
+        source: &str,
+        system: &str,
+        identity: &crate::nix::SourceIdentity,
+        payload: P,
+    ) -> Self {
+        Self {
+            schema: SNAPSHOT_SCHEMA,
+            kind: kind.to_string(),
+            source: source.to_string(),
+            locked_reference: identity.locked_url.clone(),
+            revision: identity.revision.clone(),
+            system: system.to_string(),
+            saved_unix: now_unix(),
+            payload,
+        }
+    }
+
+    pub(super) fn identity(&self, display: &str) -> crate::nix::SourceIdentity {
+        crate::nix::SourceIdentity {
+            reference: self.source.clone(),
+            locked_url: self.locked_reference.clone(),
+            revision: self.revision.clone(),
+            display: display.to_string(),
+        }
+    }
+}
+
 /// Read the latest snapshot of one kind, source, and system, if valid.
 ///
 /// `revision` is `Some(expected)` for fresh reuse: the record's own
@@ -116,22 +146,29 @@ pub fn write_snapshot<P: serde::Serialize>(
     cache_dir: &Path,
     snap: &Snapshot<P>,
 ) -> Result<(), CatalogError> {
-    use std::io::Write as _;
+    write_json(
+        cache_dir,
+        &snapshot_path(&snap.kind, &snap.source, &snap.system),
+        snap,
+    )
+}
 
+pub(super) fn write_json(
+    cache_dir: &Path,
+    name: &Path,
+    value: &impl serde::Serialize,
+) -> Result<(), CatalogError> {
+    use std::io::Write as _;
     std::fs::create_dir_all(cache_dir).map_err(CatalogError::cache_write)?;
-    let text = serde_json::to_string(snap).map_err(CatalogError::cache_write)?;
-    let final_path = cache_dir.join(snapshot_path(&snap.kind, &snap.source, &snap.system));
+    let bytes = serde_json::to_vec(value).map_err(CatalogError::cache_write)?;
     let mut staged =
         tempfile::NamedTempFile::new_in(cache_dir).map_err(CatalogError::cache_write)?;
     staged
-        .write_all(text.as_bytes())
+        .write_all(&bytes)
+        .and_then(|()| staged.as_file().sync_all())
         .map_err(CatalogError::cache_write)?;
     staged
-        .as_file()
-        .sync_all()
-        .map_err(CatalogError::cache_write)?;
-    staged
-        .persist(final_path)
+        .persist(cache_dir.join(name))
         .map_err(|error| CatalogError::cache_write(error.error))?;
     Ok(())
 }

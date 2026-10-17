@@ -1,4 +1,6 @@
+use indexmap::IndexMap;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::process::ExitCode;
 
 use crate::catalog;
@@ -14,8 +16,7 @@ pub(super) enum Request<'a> {
 
 pub(super) enum ProfileChange<'a> {
     Install {
-        installables: Vec<String>,
-        resolved_names: BTreeMap<String, String>,
+        installables: IndexMap<String, String>,
         system: &'a str,
     },
     Remove {
@@ -30,6 +31,8 @@ pub(super) enum ProfileChange<'a> {
     Rollback(Option<u64>),
 }
 
+#[derive(strum_macros::IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 enum Prepared {
     Install {
         targets: Vec<String>,
@@ -60,7 +63,7 @@ pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), Com
         .map_err(|error| report_postflight_failure(prepared.action(), &error))?;
     let report = prepared.completed(session, &before, &after);
     apps_refresh_after_mutation(&profile, prepared.action(), &report.names)?;
-    report.render();
+    print!("{}", report.text);
     Ok(())
 }
 
@@ -72,9 +75,8 @@ fn prepare(
     match request {
         ProfileChange::Install {
             installables,
-            resolved_names,
             system,
-        } => prepare_install(session, before, installables, &resolved_names, system),
+        } => prepare_install(session, before, installables, system),
         ProfileChange::Remove {
             entries,
             exact_entry,
@@ -111,29 +113,21 @@ fn prepare(
 fn prepare_install(
     session: &Session,
     before: &BTreeMap<String, ProfileEntry>,
-    installables: Vec<String>,
-    resolved_names: &BTreeMap<String, String>,
+    installables: IndexMap<String, String>,
     system: &str,
 ) -> Result<Option<Prepared>, CommandError> {
-    let mut selected = BTreeSet::new();
     let mut targets = Vec::new();
-    for installable in installables {
-        if !selected.insert(installable.clone()) {
-            continue;
-        }
+    for (installable, name) in installables {
         if already_installed(&session.nix, before, &installable, system)? {
-            println!("Already installed: {}", resolved_names[&installable]);
+            println!("Already installed: {name}");
         } else {
-            targets.push(installable);
+            targets.push((installable, name));
         }
     }
     if targets.is_empty() {
         return Ok(None);
     }
-    let requested = targets
-        .iter()
-        .map(|target| resolved_names[target].clone())
-        .collect::<Vec<_>>();
+    let (targets, requested): (Vec<_>, Vec<_>) = targets.into_iter().unzip();
     eprintln!("Installing: {}", requested.join(", "));
     Ok(Some(Prepared::Install { targets, requested }))
 }
@@ -151,12 +145,7 @@ fn selected_names(
 
 impl Prepared {
     fn action(&self) -> &'static str {
-        match self {
-            Self::Install { .. } => "install",
-            Self::Remove(_) => "remove",
-            Self::Upgrade(_) => "upgrade",
-            Self::Rollback { .. } => "rollback",
-        }
+        self.into()
     }
 
     fn apply(&self, session: &Session) -> Result<(), NixError> {
@@ -182,9 +171,7 @@ impl Prepared {
                 .filter(|number| Some(*number) != *previous)
         {
             eprintln!("Partial: generation {number} is active. App launchers may need an update.");
-            if !matches!(error, NixError::Interrupted { .. }) {
-                super::report_cause(&error.to_string());
-            }
+            super::report_native_cause(error);
             if cfg!(target_os = "macos") {
                 eprintln!("Next: run `pkg apps sync`.");
             } else {
@@ -205,42 +192,26 @@ impl Prepared {
         before: &BTreeMap<String, ProfileEntry>,
         after: &BTreeMap<String, ProfileEntry>,
     ) -> Report {
-        match self {
-            Self::Install { .. } => {
-                let changed = after
+        let (verb, changed): (&str, Vec<&ProfileEntry>) = match self {
+            Self::Install { .. } => (
+                "Installed",
+                after
                     .iter()
                     .filter(|(key, entry)| before.get(*key) != Some(*entry))
                     .map(|(_, entry)| entry)
-                    .collect::<Vec<_>>();
-                Report {
-                    names: changed
-                        .iter()
-                        .map(|entry| package_id(session, entry))
-                        .collect(),
-                    completion: Completion::Packages {
-                        verb: "Installed",
-                        commands: changed
-                            .iter()
-                            .flat_map(|entry| {
-                                crate::installed::commands(entry, &session.paths.profile)
-                            })
-                            .collect(),
-                    },
-                }
-            }
-            Self::Remove(targets) => Report {
-                names: targets
+                    .collect(),
+            ),
+            Self::Remove(targets) => (
+                "Removed",
+                targets
                     .iter()
                     .filter(|key| !after.contains_key(*key))
-                    .map(|key| package_id(session, &before[key]))
+                    .map(|key| &before[key])
                     .collect(),
-                completion: Completion::Packages {
-                    verb: "Removed",
-                    commands: BTreeSet::new(),
-                },
-            },
-            Self::Upgrade(targets) => Report {
-                names: targets
+            ),
+            Self::Upgrade(targets) => (
+                "Upgraded",
+                targets
                     .as_slice()
                     .iter()
                     .filter_map(|key| {
@@ -248,13 +219,8 @@ impl Prepared {
                             .get(key)
                             .filter(|entry| Some(*entry) != before.get(key))
                     })
-                    .map(|entry| package_id(session, entry))
                     .collect(),
-                completion: Completion::Packages {
-                    verb: "Upgraded",
-                    commands: BTreeSet::new(),
-                },
-            },
+            ),
             Self::Rollback {
                 generation,
                 previous,
@@ -265,85 +231,73 @@ impl Prepared {
                     |number| format!("generation {number}"),
                 );
                 let unchanged = current.is_some() && current == *previous;
-                Report {
+                return Report {
                     names: if unchanged {
                         Vec::new()
                     } else {
                         vec![destination.clone()]
                     },
-                    completion: Completion::Rollback {
-                        destination,
-                        unchanged,
+                    text: if unchanged {
+                        format!("Unchanged: {destination} is still active.\n")
+                    } else {
+                        format!("Restored: {destination}.\n")
                     },
+                };
+            }
+        };
+        let names: Vec<_> = changed
+            .iter()
+            .map(|entry| package_id(session, entry))
+            .collect();
+        let mut text = if names.is_empty() {
+            String::from("Unchanged: profile did not change.\n")
+        } else {
+            format!("{verb}: {}\n", names.join(", "))
+        };
+        if matches!(self, Self::Install { .. }) {
+            let commands: BTreeSet<_> = changed
+                .iter()
+                .flat_map(|entry| crate::installed::commands(entry, &session.paths.profile))
+                .collect();
+            if !commands.is_empty() {
+                let shown = commands
+                    .iter()
+                    .take(10)
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let remaining = commands.len().saturating_sub(10);
+                if remaining == 0 {
+                    let _ = writeln!(text, "Commands: {shown}");
+                } else {
+                    let _ = writeln!(text, "Commands: {shown} (+{remaining} more)");
                 }
             }
         }
+        Report { names, text }
     }
 }
 
 struct Report {
     names: Vec<String>,
-    completion: Completion,
-}
-
-enum Completion {
-    Packages {
-        verb: &'static str,
-        commands: BTreeSet<String>,
-    },
-    Rollback {
-        destination: String,
-        unchanged: bool,
-    },
-}
-
-impl Report {
-    fn render(self) {
-        match self.completion {
-            Completion::Packages { verb, commands } => {
-                report_names(verb, &self.names);
-                if !commands.is_empty() {
-                    let shown = commands
-                        .iter()
-                        .take(10)
-                        .map(String::as_str)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let remaining = commands.len().saturating_sub(10);
-                    if remaining == 0 {
-                        println!("Commands: {shown}");
-                    } else {
-                        println!("Commands: {shown} (+{remaining} more)");
-                    }
-                }
-            }
-            Completion::Rollback {
-                destination,
-                unchanged,
-            } => {
-                if unchanged {
-                    println!("Unchanged: {destination} is still active.");
-                } else {
-                    println!("Restored: {destination}.");
-                }
-            }
-        }
-    }
+    text: String,
 }
 
 fn failure_exit(error: &NixError) -> ExitCode {
-    match error {
-        NixError::Interrupted { signal, .. } => super::error::signal_exit(*signal),
-        _ => ExitCode::from(super::FAILURE),
-    }
+    error
+        .signal()
+        .map_or_else(|| ExitCode::from(super::FAILURE), super::error::signal_exit)
 }
 
 fn report_postflight_failure(action: &str, error: &NixError) -> CommandError {
-    eprintln!("Partial: native {action} completed. The active profile could not be read.");
-    if !matches!(error, NixError::Interrupted { .. }) {
-        super::report_cause(&error.to_string());
-    }
-    eprintln!("Next: run `pkg list` to inspect the active profile.");
+    let (state, next, inspect) = if action == "prune" {
+        ("generation history", "history", "generations")
+    } else {
+        ("active profile", "list", "the active profile")
+    };
+    eprintln!("Partial: native {action} completed. The {state} could not be read.");
+    super::report_native_cause(error);
+    eprintln!("Next: run `pkg {next}` to inspect {inspect}.");
     CommandError::Reported(failure_exit(error))
 }
 
@@ -355,13 +309,8 @@ fn report_rollback_target(
     if let Some(number) = generation {
         eprintln!("Restoring: generation {number}");
     } else {
-        let destination = optional_history(session)?.and_then(|text| {
-            let current = previous?;
-            history_numbers(&text)
-                .into_iter()
-                .filter(|number| *number < current)
-                .max()
-        });
+        let destination = optional_history(session)?
+            .and_then(|generations| generations.range(..previous?).next_back().copied());
         if let Some(number) = destination {
             eprintln!("Restoring: generation {number} (native previous generation)");
         } else {
@@ -372,19 +321,14 @@ fn report_rollback_target(
 }
 
 fn prune(session: &Session, days: u64) -> Result<(), CommandError> {
-    let before = optional_history(session)?.map(|text| history_numbers(&text));
+    let before = optional_history(session)?;
     eprintln!("Pruning: generations older than {days} days");
     session
         .nix
         .profile_wipe_history(&session.paths.profile, &format!("{days}d"))
         .map_err(|error| super::mutation_failed(session, "prune", &error, None, None))?;
-    let after = optional_history(session)
-        .map_err(|error| {
-            eprintln!("Partial: native prune completed. The generation history could not be read.");
-            eprintln!("Next: run `pkg history` to inspect generations.");
-            CommandError::Reported(failure_exit(&error))
-        })?
-        .map(|text| history_numbers(&text));
+    let after =
+        optional_history(session).map_err(|error| report_postflight_failure("prune", &error))?;
     match (before, after) {
         (Some(before), Some(after)) if !before.is_empty() && !after.is_empty() => {
             let removed = before.difference(&after).count();
@@ -399,14 +343,6 @@ fn prune(session: &Session, days: u64) -> Result<(), CommandError> {
     Ok(())
 }
 
-enum UpgradeSelection<'a> {
-    All,
-    Explicit {
-        entries: &'a [String],
-        exact_entry: bool,
-    },
-}
-
 struct UpgradeTargets(Vec<String>);
 
 impl UpgradeTargets {
@@ -419,125 +355,6 @@ impl UpgradeTargets {
     }
 }
 
-struct UpgradePolicy<'a> {
-    session: &'a Session,
-    installed: &'a BTreeMap<String, ProfileEntry>,
-    registry: registry::Registry,
-}
-
-impl<'a> UpgradePolicy<'a> {
-    fn prepare(
-        session: &'a Session,
-        installed: &'a BTreeMap<String, ProfileEntry>,
-        selection: &UpgradeSelection<'_>,
-    ) -> Result<Option<UpgradeTargets>, CommandError> {
-        let selected = match selection {
-            UpgradeSelection::All => installed
-                .iter()
-                .filter(|(_, entry)| entry.active)
-                .map(|(key, _)| key.clone())
-                .collect(),
-            UpgradeSelection::Explicit {
-                entries,
-                exact_entry,
-            } => {
-                if entries.is_empty() {
-                    return Err(String::from("upgrade needs entry IDs or --all").into());
-                }
-                crate::installed::select(
-                    installed,
-                    &session.config,
-                    &session.paths.state_home,
-                    entries,
-                    *exact_entry,
-                )?
-            }
-        };
-        if matches!(selection, UpgradeSelection::All) && selected.is_empty() {
-            println!("No installed entries; nothing to upgrade.");
-            return Ok(None);
-        }
-        let policy = Self {
-            session,
-            installed,
-            registry: registry::Registry::load(&registry::registry_path(
-                &session.paths.state_home,
-            ))?,
-        };
-        let Some(targets) = policy.movable_targets(selected, selection)? else {
-            return Ok(None);
-        };
-        policy.require_eligible(&targets)?;
-        Ok(Some(targets))
-    }
-
-    fn removed_source(&self, entry: &str) -> Option<String> {
-        let source = store::source_of_reference(
-            &self.session.paths.state_home,
-            &self.installed[entry].original_url,
-        )?;
-        (source != nix::OFFICIAL_CASK_SOURCE && self.registry.origin(&source).is_none())
-            .then_some(source)
-    }
-
-    fn movable_targets(
-        &self,
-        mut selected: Vec<String>,
-        selection: &UpgradeSelection<'_>,
-    ) -> Result<Option<UpgradeTargets>, CommandError> {
-        match selection {
-            UpgradeSelection::All => {
-                selected.retain(|entry| match self.removed_source(entry) {
-                    None => true,
-                    Some(source) => {
-                        println!(
-                            "Skipped: {entry} (tap {source} was removed; keeping locked outputs)."
-                        );
-                        false
-                    }
-                });
-                if selected.is_empty() {
-                    println!("Nothing eligible to upgrade.");
-                    return Ok(None);
-                }
-            }
-            UpgradeSelection::Explicit { .. } => {
-                for entry in &selected {
-                    if let Some(source) = self.removed_source(entry) {
-                        return Err(format!(
-                            "pkg: {entry}: tap {source} is removed; upgrade refuses to follow it"
-                        )
-                        .into());
-                    }
-                }
-            }
-        }
-        let mut movable = Vec::new();
-        for entry in selected {
-            if nix::is_fixed_reference(&self.installed[&entry].original_url) {
-                println!("Skipped: {entry} (fixed source reference).");
-            } else {
-                movable.push(entry);
-            }
-        }
-        let targets = UpgradeTargets::nonempty(movable);
-        if targets.is_none() {
-            match selection {
-                UpgradeSelection::All => println!("Unchanged: no movable entries to upgrade."),
-                UpgradeSelection::Explicit { .. } => {
-                    println!("Unchanged: selected entries use fixed source references.");
-                }
-            }
-        }
-        Ok(targets)
-    }
-
-    fn require_eligible(&self, targets: &UpgradeTargets) -> Result<(), CommandError> {
-        lifecycle::gate_upgrade_formulae(self.session, self.installed, targets.as_slice())?;
-        lifecycle::gate_upgrade_macos_range(self.session, self.installed, targets.as_slice())
-    }
-}
-
 fn prepare_upgrade(
     session: &Session,
     installed: &BTreeMap<String, ProfileEntry>,
@@ -545,17 +362,69 @@ fn prepare_upgrade(
     all: bool,
     exact_entry: bool,
 ) -> Result<Option<Prepared>, CommandError> {
-    let selection = if all {
-        UpgradeSelection::All
+    let selected: Vec<String> = if all {
+        installed
+            .iter()
+            .filter(|(_, entry)| entry.active)
+            .map(|(key, _)| key.clone())
+            .collect()
     } else {
-        UpgradeSelection::Explicit {
+        if entries.is_empty() {
+            return Err(String::from("upgrade needs entry IDs or --all").into());
+        }
+        crate::installed::select(
+            installed,
+            &session.config,
+            &session.paths.state_home,
             entries,
             exact_entry,
-        }
+        )?
     };
-    let Some(targets) = UpgradePolicy::prepare(session, installed, &selection)? else {
+    if all && selected.is_empty() {
+        println!("No installed entries; nothing to upgrade.");
+        return Ok(None);
+    }
+    let registry = registry::Registry::load(&registry::registry_path(&session.paths.state_home))?;
+    let mut retained = Vec::new();
+    for entry in selected {
+        let removed_source =
+            store::source_of_reference(&session.paths.state_home, &installed[&entry].original_url)
+                .filter(|source| {
+                    source != nix::OFFICIAL_CASK_SOURCE && registry.origin(source).is_none()
+                });
+        if let Some(source) = removed_source {
+            if !all {
+                return Err(format!(
+                    "pkg: {entry}: tap {source} is removed; upgrade refuses to follow it"
+                )
+                .into());
+            }
+            println!("Skipped: {entry} (tap {source} was removed; keeping locked outputs).");
+        } else {
+            retained.push(entry);
+        }
+    }
+    if all && retained.is_empty() {
+        println!("Nothing eligible to upgrade.");
+        return Ok(None);
+    }
+    let mut movable = Vec::new();
+    for entry in retained {
+        if nix::is_fixed_reference(&installed[&entry].original_url) {
+            println!("Skipped: {entry} (fixed source reference).");
+        } else {
+            movable.push(entry);
+        }
+    }
+    let Some(targets) = UpgradeTargets::nonempty(movable) else {
+        if all {
+            println!("Unchanged: no movable entries to upgrade.");
+        } else {
+            println!("Unchanged: selected entries use fixed source references.");
+        }
         return Ok(None);
     };
+    super::resolution::gate_upgrade(session, installed, targets.as_slice())?;
     eprintln!(
         "Upgrading: {}",
         selected_names(session, installed, targets.as_slice()).join(", ")
@@ -608,18 +477,10 @@ fn package_id(session: &super::Session, entry: &ProfileEntry) -> String {
     crate::installed::package_id(entry, &session.config, &session.paths.state_home)
 }
 
-fn report_names(verb: &str, names: &[String]) {
-    match names {
-        [] => println!("Unchanged: profile did not change."),
-        [one] => println!("{verb}: {one}"),
-        many => println!("{verb}: {}", many.join(", ")),
-    }
-}
-
-fn optional_history(session: &super::Session) -> Result<Option<String>, NixError> {
+fn optional_history(session: &super::Session) -> Result<Option<BTreeSet<u64>>, NixError> {
     match session.nix.profile_history(&session.paths.profile) {
-        Ok(text) => Ok(Some(text)),
-        Err(error @ nix::NixError::Interrupted { .. }) => Err(error),
+        Ok(text) => Ok(Some(history_numbers(&text))),
+        Err(error) if error.signal().is_some() => Err(error),
         Err(_) => Ok(None),
     }
 }
@@ -635,4 +496,174 @@ fn history_numbers(text: &str) -> std::collections::BTreeSet<u64> {
                 .ok()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mutation_action_names_remain_stable() {
+        for (prepared, expected) in [
+            (
+                Prepared::Install {
+                    targets: vec![String::from("nixpkgs:hello")],
+                    requested: vec![String::from("hello")],
+                },
+                "install",
+            ),
+            (Prepared::Remove(vec![String::from("entry")]), "remove"),
+            (
+                Prepared::Upgrade(UpgradeTargets(vec![String::from("entry")])),
+                "upgrade",
+            ),
+            (
+                Prepared::Rollback {
+                    generation: Some(2),
+                    previous: Some(3),
+                },
+                "rollback",
+            ),
+        ] {
+            assert_eq!(prepared.action(), expected);
+        }
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "isolated reporting fixtures fail directly when setup is unavailable"
+)]
+mod reporting_tests {
+    use super::super::{finish, mutation_failed};
+    use super::*;
+    use crate::config::{Config, Paths};
+    use std::os::unix::fs::PermissionsExt as _;
+
+    const SIGNAL: &str = "PKG_MUTATION_REPORT_SIGNAL";
+    const STAGE: &str = "PKG_MUTATION_REPORT_STAGE";
+    const PURE: &str = "PKG_MUTATION_REPORT_PURE";
+
+    #[test]
+    fn cancelled_supervision_report_child() {
+        let Ok(signal) = std::env::var(SIGNAL) else {
+            return;
+        };
+        let signal = signal.parse::<i32>().expect("cancellation signal");
+        let home = tempfile::tempdir().expect("isolated home");
+        let paths = Paths::from_bases(
+            &home.path().join("state"),
+            &home.path().join("config"),
+            &home.path().join("cache"),
+        );
+        let runtime = home.path().join("nix");
+        std::fs::write(
+            &runtime,
+            "#!/bin/sh\ncase \"$*\" in\n *--version*) echo 'nix (Nix) 2.35.2';;\n *'profile list'*) echo '{\"version\":3,\"elements\":{}}';;\n *) exit 9;;\nesac\n",
+        )
+        .expect("fixture runtime");
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755))
+            .expect("executable runtime");
+        let session = Session {
+            nix: nix::discover(runtime.to_str()).expect("discover fixture runtime"),
+            config: Config::default(),
+            paths,
+        };
+        let _lock = crate::profile_lock::ProfileLock::acquire(&session.paths.profile)
+            .expect("profile lock");
+        std::fs::write(&session.paths.profile, "profile").expect("native profile");
+        let failure = if std::env::var_os(PURE).is_some() {
+            NixError::Interrupted {
+                args: vec![String::from("fixture")],
+                signal,
+            }
+        } else {
+            NixError::Process(pkg_process::RunError {
+                cancelled: Some(signal),
+                source: std::io::Error::other("fixture supervisor pipe read failed"),
+            })
+        };
+        let outcome = match std::env::var(STAGE).expect("report stage").as_str() {
+            "mutation" => {
+                mutation_failed(&session, "install", &failure, Some(&BTreeMap::new()), None)
+            }
+            "postflight" => report_postflight_failure("install", &failure),
+            "prune" => report_postflight_failure("prune", &failure),
+            "rollback" => {
+                std::fs::remove_file(&session.paths.profile).expect("remove fixture profile");
+                std::os::unix::fs::symlink("pkg-2-link", &session.paths.profile)
+                    .expect("active generation");
+                Prepared::Rollback {
+                    generation: Some(2),
+                    previous: Some(1),
+                }
+                .failed(&session, &BTreeMap::new(), &failure)
+            }
+            stage => panic!("unknown fixture stage {stage}"),
+        };
+        assert_eq!(
+            finish(Err(outcome)),
+            super::super::error::signal_exit(signal)
+        );
+    }
+
+    #[test]
+    fn cancelled_supervision_report_keeps_its_io_cause() {
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            for stage in ["mutation", "postflight", "prune", "rollback"] {
+                for pure in [false, true] {
+                    let mut child = std::process::Command::new(
+                        std::env::current_exe().expect("test executable"),
+                    );
+                    child
+                        .args([
+                            "--exact",
+                            "commands::change::reporting_tests::cancelled_supervision_report_child",
+                            "--nocapture",
+                        ])
+                        .env(SIGNAL, signal.to_string())
+                        .env(STAGE, stage)
+                        .env_remove(PURE);
+                    if pure {
+                        child.env(PURE, "1");
+                    }
+                    let output = child.output().expect("isolated report process");
+                    assert!(
+                        output.status.success(),
+                        "{signal}/{stage}/{pure}: {output:?}"
+                    );
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let heading = match stage {
+                        "mutation" => {
+                            "Interrupted: install stopped.\nInstalled entries unchanged.\n"
+                        }
+                        "postflight" => {
+                            "Partial: native install completed. The active profile could not be read.\n"
+                        }
+                        "prune" => {
+                            "Partial: native prune completed. The generation history could not be read.\n"
+                        }
+                        "rollback" => {
+                            "Partial: generation 2 is active. App launchers may need an update.\n"
+                        }
+                        _ => unreachable!(),
+                    };
+                    assert!(
+                        stderr.contains(heading),
+                        "{signal}/{stage}/{pure}: {stderr}"
+                    );
+                    if pure {
+                        assert!(
+                            !stderr.contains("Cause:"),
+                            "pure interruptions stay concise: {stderr}"
+                        );
+                        assert!(!stderr.contains("native command `nix fixture`"), "{stderr}");
+                    } else {
+                        assert!(stderr.contains("Cause: could not supervise the Nix command: fixture supervisor pipe read failed\n"), "{signal}/{stage}: {stderr}");
+                    }
+                }
+            }
+        }
+    }
 }

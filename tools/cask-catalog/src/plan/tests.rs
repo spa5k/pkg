@@ -10,7 +10,9 @@ fn app_plus_binary_preserves_rename_from_metadata() {
     let plan = build_plan(
         &eff(&json!([
             {"app": ["Cursor.app"], "target": "/Applications/Cursor.app"},
-            {"binary": ["$APPDIR/Cursor.app/Contents/Resources/app/bin/code", {"target": "cursor"}],
+            {"binary": ["$APPDIR/Cursor.app/Contents/Resources/app/bin/code",
+                        {"source": "bin/helper", "target": "aux"},
+                        {"target": "cursor"}],
              "target": "$HOMEBREW_PREFIX/bin/cursor"}
         ])),
         "aarch64-darwin",
@@ -23,6 +25,11 @@ fn app_plus_binary_preserves_rename_from_metadata() {
                 kind: "app",
                 source: "Cursor.app".into(),
                 target: Some("Cursor.app".into())
+            },
+            PlanArtifact {
+                kind: "binary",
+                source: "bin/helper".into(),
+                target: Some("aux".into())
             },
             PlanArtifact {
                 kind: "binary",
@@ -63,7 +70,14 @@ fn traversal_and_unknown_anchors_are_malformed() {
     ] {
         let err = build_plan(&eff(&json!([{"binary": [bad]}])), "x86_64-linux");
         assert!(
-            matches!(err, Err(PlanError::Malformed(_))),
+            matches!(
+                err,
+                Err(Exclusion {
+                    reason: ExclusionReason::MalformedRecord,
+                    detail: Some(_),
+                    ..
+                })
+            ),
             "{bad}: {err:?}"
         );
     }
@@ -75,16 +89,30 @@ fn execution_stanzas_and_foreign_kinds_reject_whole_record() {
         &eff(&json!([{"app": ["A.app"]}, {"installer": [{"script": "x"}]}])),
         "aarch64-darwin",
     );
-    assert!(matches!(installer, Err(PlanError::InstallerScript(_))));
+    assert!(matches!(
+        installer,
+        Err(Exclusion {
+            reason: ExclusionReason::InstallerScript,
+            detail: Some(_),
+            ..
+        })
+    ));
     let font = build_plan(
         &eff(&json!([{"app": ["A.app"]}, {"font": ["F.ttf"]}])),
         "aarch64-darwin",
     );
-    assert!(matches!(font, Err(PlanError::UnsupportedKinds(k)) if k == ["font"]));
+    assert!(
+        matches!(font, Err(Exclusion { reason: ExclusionReason::UnsupportedArtifact, detail: Some(d), .. }) if d == "artifact kinds: font")
+    );
     let empty = build_plan(&eff(&json!([{"zap": [{"trash": "~"}]}])), "aarch64-darwin");
-    assert_eq!(empty, Err(PlanError::NoInstallableArtifact));
+    assert_eq!(
+        empty,
+        Err(Exclusion::bare(ExclusionReason::NoInstallableArtifact))
+    );
     let app_on_linux = build_plan(&eff(&json!([{"app": ["A.app"]}])), "x86_64-linux");
-    assert!(matches!(app_on_linux, Err(PlanError::UnsupportedKinds(k)) if k == ["app"]));
+    assert!(
+        matches!(app_on_linux, Err(Exclusion { reason: ExclusionReason::UnsupportedArtifact, detail: Some(d), .. }) if d == "artifact kinds: app")
+    );
 }
 
 #[test]
@@ -104,7 +132,7 @@ fn container_naked_is_raw_binary_and_nested_is_unsupported() {
         "aarch64-darwin",
     );
     assert!(
-        matches!(nested, Err(PlanError::UnsupportedContainer(d)) if d.contains("inner/Real.dmg"))
+        matches!(nested, Err(Exclusion { reason: ExclusionReason::UnsupportedContainer, detail: Some(d), .. }) if d.contains("inner/Real.dmg"))
     );
 }
 
@@ -127,23 +155,42 @@ fn active_item_options_never_disappear_silently() {
     // execution stanza, never dropped from an eligible plan.
     let choices = build_plan(
         &json!({"url": "https://v/x.pkg", "sha256": "a".repeat(64),
-                     "artifacts": [{"pkg": ["A.pkg", {"choices": [{"choiceIdentifier": "c"}]}]}]}),
+                     "artifacts": [{"pkg": ["A.pkg", {"choices": [{"choiceIdentifier": "c"}],
+                                                        "source": false, "target": null,
+                                                        "only_if": true}]}]}),
         "aarch64-darwin",
     );
-    assert!(matches!(choices, Err(PlanError::InstallerScript(d)) if d.contains("choices")));
+    assert!(
+        matches!(choices, Err(Exclusion { reason: ExclusionReason::InstallerScript, detail: Some(d), .. }) if d.contains("choices"))
+    );
     // Unknown option keys and malformed target values are malformed.
     let unknown = build_plan(
         &json!({"url": "https://v/x", "sha256": "a".repeat(64),
                      "artifacts": [{"binary": ["tool", {"only_if": true}]}]}),
         "x86_64-linux",
     );
-    assert!(matches!(unknown, Err(PlanError::Malformed(d)) if d.contains("only_if")));
-    let bad_target = build_plan(
-        &json!({"url": "https://v/x", "sha256": "a".repeat(64),
-                     "artifacts": [{"binary": ["tool", {"target": 7}]}]}),
-        "x86_64-linux",
+    assert!(
+        matches!(unknown, Err(Exclusion { reason: ExclusionReason::MalformedRecord, detail: Some(d), .. }) if d.contains("only_if"))
     );
-    assert!(matches!(bad_target, Err(PlanError::Malformed(d)) if d.contains("target")));
+    for options in [
+        json!({"target": 7}),
+        json!({"target": null}),
+        json!({"source": null, "target": "renamed"}),
+        json!({"source": "explicit", "target": null}),
+        json!({"source": false}),
+        json!({"source": []}),
+        json!({"target": {}}),
+    ] {
+        let malformed = build_plan(
+            &json!({"url": "https://v/x", "sha256": "a".repeat(64),
+                    "artifacts": [{"binary": ["tool", options]}]}),
+            "x86_64-linux",
+        );
+        assert!(
+            matches!(malformed, Err(Exclusion { reason: ExclusionReason::MalformedRecord, detail: Some(d), .. }) if d.contains("invalid artifact options")),
+            "{options}"
+        );
+    }
     // A pkg rename cannot be represented (pkg target is null by
     // contract), so it is rejected instead of ignored.
     let pkg_rename = build_plan(
@@ -151,7 +198,9 @@ fn active_item_options_never_disappear_silently() {
                      "artifacts": [{"pkg": ["A.pkg", {"target": "B.pkg"}]}]}),
         "aarch64-darwin",
     );
-    assert!(matches!(pkg_rename, Err(PlanError::Malformed(d)) if d.contains("pkg rename")));
+    assert!(
+        matches!(pkg_rename, Err(Exclusion { reason: ExclusionReason::MalformedRecord, detail: Some(d), .. }) if d.contains("pkg rename"))
+    );
 }
 
 #[test]
@@ -162,14 +211,18 @@ fn naked_needs_exactly_one_binary_and_targets_must_not_collide() {
                      "artifacts": [{"binary": ["a/tool", "b/tool"]}]}),
         "x86_64-linux",
     );
-    assert!(matches!(two_binaries, Err(PlanError::UnsupportedContainer(d)) if d.contains("naked")));
+    assert!(
+        matches!(two_binaries, Err(Exclusion { reason: ExclusionReason::UnsupportedContainer, detail: Some(d), .. }) if d.contains("naked"))
+    );
     let collision = build_plan(
         &json!({"url": "https://v/x.zip", "sha256": "a".repeat(64),
                      "artifacts": [{"binary": ["dir/tool", {"target": "t"}]},
                                     {"binary": ["other/tool", {"target": "t"}]}]}),
         "x86_64-linux",
     );
-    assert!(matches!(collision, Err(PlanError::Malformed(d)) if d.contains("duplicate")));
+    assert!(
+        matches!(collision, Err(Exclusion { reason: ExclusionReason::MalformedRecord, detail: Some(d), .. }) if d.contains("duplicate"))
+    );
 }
 
 #[test]
@@ -180,14 +233,18 @@ fn malformed_and_nested_targets_reject_the_record() {
                      "artifacts": [{"binary": ["tool"]}, 42]}),
         "x86_64-linux",
     );
-    assert!(matches!(partial, Err(PlanError::Malformed(d)) if d.contains("artifact entry 1")));
+    assert!(
+        matches!(partial, Err(Exclusion { reason: ExclusionReason::MalformedRecord, detail: Some(d), .. }) if d.contains("artifact entry 1"))
+    );
     // A slash inside a link target is not one component.
     let nested = build_plan(
         &json!({"url": "https://v/x", "sha256": "a".repeat(64),
                      "artifacts": [{"binary": ["tool", {"target": "bin/tool"}]}]}),
         "x86_64-linux",
     );
-    assert!(matches!(nested, Err(PlanError::Malformed(d)) if d.contains("bin/tool")));
+    assert!(
+        matches!(nested, Err(Exclusion { reason: ExclusionReason::MalformedRecord, detail: Some(d), .. }) if d.contains("bin/tool"))
+    );
 }
 
 #[test]
@@ -212,12 +269,26 @@ fn control_characters_in_link_names_and_sources_are_rejected() {
             "x86_64-linux",
         );
         assert!(
-            matches!(err, Err(PlanError::Malformed(_))),
+            matches!(
+                err,
+                Err(Exclusion {
+                    reason: ExclusionReason::MalformedRecord,
+                    detail: Some(_),
+                    ..
+                })
+            ),
             "{bad:?}: {err:?}"
         );
     }
     let src = build_plan(&eff(&json!([{"binary": ["a\u{b}tool"]}])), "x86_64-linux");
-    assert!(matches!(src, Err(PlanError::Malformed(_))));
+    assert!(matches!(
+        src,
+        Err(Exclusion {
+            reason: ExclusionReason::MalformedRecord,
+            detail: Some(_),
+            ..
+        })
+    ));
 }
 
 fn linux_eff(url: &str, artifacts: &Value) -> Value {
@@ -303,7 +374,7 @@ fn appimage_as_binary_refuses_closed() {
         let err = build_plan(&linux_eff(url, &artifacts), "x86_64-linux")
             .expect_err(&format!("{url} must refuse"));
         assert!(
-            matches!(&err, PlanError::UnsupportedContainer(d) if d.contains(needle)),
+            matches!(&err, Exclusion { reason: ExclusionReason::UnsupportedContainer, detail: Some(d), .. } if d.contains(needle)),
             "{url}: {err:?}"
         );
     }
@@ -322,7 +393,7 @@ fn appimage_as_binary_refuses_closed() {
         let err = build_plan(&linux_eff(url, &artifacts), "x86_64-linux")
             .expect_err(&format!("{url} must refuse"));
         assert!(
-            matches!(&err, PlanError::UnsupportedKinds(k) if k.len() == 1),
+            matches!(&err, Exclusion { reason: ExclusionReason::UnsupportedArtifact, detail: Some(d), .. } if d == "artifact kinds: app_image mixed with other artifacts"),
             "{url}: {err:?}"
         );
     }
@@ -427,12 +498,32 @@ fn completion_normalization_never_hides_unsafe_targets() {
             &eff(&json!([{"zsh_completion": ["s/x", {"target": bad}]}])),
             "x86_64-linux",
         );
-        assert!(matches!(err, Err(PlanError::Malformed(_))), "{bad:?}");
+        assert!(
+            matches!(
+                err,
+                Err(Exclusion {
+                    reason: ExclusionReason::MalformedRecord,
+                    detail: Some(_),
+                    ..
+                })
+            ),
+            "{bad:?}"
+        );
         let err = build_plan(
             &eff(&json!([{"bash_completion": ["s/x", {"target": bad}]}])),
             "x86_64-linux",
         );
-        assert!(matches!(err, Err(PlanError::Malformed(_))), "{bad:?}");
+        assert!(
+            matches!(
+                err,
+                Err(Exclusion {
+                    reason: ExclusionReason::MalformedRecord,
+                    detail: Some(_),
+                    ..
+                })
+            ),
+            "{bad:?}"
+        );
     }
 }
 
@@ -446,7 +537,9 @@ fn post_normalization_collisions_still_refuse() {
         ])),
         "x86_64-linux",
     );
-    assert!(matches!(err, Err(PlanError::Malformed(d)) if d.contains("duplicate")));
+    assert!(
+        matches!(err, Err(Exclusion { reason: ExclusionReason::MalformedRecord, detail: Some(d), .. }) if d.contains("duplicate"))
+    );
     // Same shell, both rename to _tool.
     let err = build_plan(
         &eff(&json!([
@@ -455,7 +548,9 @@ fn post_normalization_collisions_still_refuse() {
         ])),
         "x86_64-linux",
     );
-    assert!(matches!(err, Err(PlanError::Malformed(d)) if d.contains("duplicate")));
+    assert!(
+        matches!(err, Err(Exclusion { reason: ExclusionReason::MalformedRecord, detail: Some(d), .. }) if d.contains("duplicate"))
+    );
 }
 
 #[test]
@@ -509,7 +604,9 @@ fn distinct_namespaces_do_not_falsely_collide() {
         ])),
         "x86_64-linux",
     );
-    assert!(matches!(err, Err(PlanError::Malformed(d)) if d.contains("duplicate")));
+    assert!(
+        matches!(err, Err(Exclusion { reason: ExclusionReason::MalformedRecord, detail: Some(d), .. }) if d.contains("duplicate"))
+    );
 }
 
 #[test]
@@ -525,7 +622,7 @@ fn archive_with_anchored_appimage_binary_refuses() {
         "x86_64-linux",
     );
     assert!(
-        matches!(err, Err(PlanError::UnsupportedContainer(ref d)) if d.contains("AppImage inside archive")),
+        matches!(err, Err(Exclusion { reason: ExclusionReason::UnsupportedContainer, detail: Some(ref d), .. }) if d.contains("AppImage inside archive")),
         "{err:?}"
     );
 }
@@ -537,11 +634,15 @@ fn multiple_pkg_or_appimage_artifacts_are_unsupported() {
                      "artifacts": [{"pkg": ["A.pkg"]}, {"pkg": ["B.pkg"]}]}),
         "aarch64-darwin",
     );
-    assert!(matches!(two_pkgs, Err(PlanError::UnsupportedKinds(k)) if k.len() == 1));
+    assert!(
+        matches!(two_pkgs, Err(Exclusion { reason: ExclusionReason::UnsupportedArtifact, detail: Some(d), .. }) if d == "artifact kinds: multiple pkg artifacts are unsupported")
+    );
     let two_images = build_plan(
         &json!({"url": "https://v/x.AppImage", "sha256": "a".repeat(64),
                      "artifacts": [{"app_image": ["A.AppImage"]}, {"app_image": ["B.AppImage"]}]}),
         "x86_64-linux",
     );
-    assert!(matches!(two_images, Err(PlanError::UnsupportedKinds(k)) if k.len() == 1));
+    assert!(
+        matches!(two_images, Err(Exclusion { reason: ExclusionReason::UnsupportedArtifact, detail: Some(d), .. }) if d == "artifact kinds: multiple appimage artifacts are unsupported")
+    );
 }

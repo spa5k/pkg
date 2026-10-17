@@ -3,23 +3,14 @@ mod model;
 #[cfg(test)]
 mod tests;
 
+use model::IndexDocument;
 pub use model::{
     CATALOG_INDEX_SCHEMA, CatalogEntry, CatalogGenerator, CatalogIndex, CatalogInput,
     CatalogSystem, EntryStatus, OFFICIAL_CASK_SOURCE, RawInputProvenance,
 };
-use serde::Deserialize as _;
 use std::collections::BTreeMap;
 
 const FORMULA_INDEX_SCHEMA: &str = "pkg-formula-catalog/1";
-
-#[derive(serde::Deserialize)]
-struct IndexHeader {
-    generator: CatalogGenerator,
-    inputs: BTreeMap<String, CatalogInput>,
-    targets: Vec<String>,
-    #[serde(rename = "macosBaseline")]
-    macos_baseline: String,
-}
 
 /// Decode one captured `catalogIndex` envelope (schema 4).
 ///
@@ -59,96 +50,46 @@ fn decode_index(
             "index schema {schema:?} is not the decoded schema {expected:?}"
         )));
     }
-    let IndexHeader {
-        generator,
-        inputs,
-        targets,
-        macos_baseline,
-    } = IndexHeader::deserialize(raw)
-        .map_err(|error| gate(format!("invalid index header: {error}")))?;
+    let document: IndexDocument = serde_path_to_error::deserialize(raw)
+        .map_err(|error| gate(format!("invalid index: {error}")))?;
+    let inputs = &document.inputs;
+    let targets = &document.targets;
+    let systems = &document.systems;
     if inputs.is_empty() {
         return Err(gate(String::from(
             "the `inputs` provenance map is empty; a catalog names at least one source",
         )));
     }
-    for (source, input) in &inputs {
-        if !valid_catalog_source(source) {
-            return Err(gate(format!(
-                "inputs key {source:?} is not a valid owner/tap source identity"
-            )));
-        }
-        for (field, value) in [
-            ("url", &input.url),
-            ("revision", &input.revision),
-            ("sha256", &input.sha256),
-            ("license", &input.license),
-        ] {
-            if value.trim().is_empty() {
-                return Err(gate(format!(
-                    "inputs.{source}.{field} must be a nonempty string"
-                )));
-            }
-        }
-        if let Some(raw) = &input.raw {
-            for (field, value) in [
-                ("raw.archiveUrl", &raw.archive_url),
-                ("raw.archiveSha256", &raw.archive_sha256),
-                ("raw.captureSha256", &raw.capture_sha256),
-            ] {
-                if value.trim().is_empty() {
-                    return Err(gate(format!(
-                        "inputs.{source}.{field} must be a nonempty string"
-                    )));
-                }
-            }
+    for (source, input) in inputs {
+        let complete = [&input.url, &input.revision, &input.sha256, &input.license]
+            .into_iter()
+            .chain(
+                input
+                    .raw
+                    .iter()
+                    .flat_map(|raw| [&raw.archive_url, &raw.archive_sha256, &raw.capture_sha256]),
+            )
+            .all(|value| !value.trim().is_empty());
+        if !valid_catalog_source(source) || !complete {
+            return Err(gate(format!("source {source:?} has invalid provenance")));
         }
     }
-
-    // The per-system sections are the one decoded layout; an envelope
-    // without them is not an index envelope.
-    let Some(systems_raw) = raw.get("systems").and_then(serde_json::Value::as_object) else {
-        return Err(gate(String::from(
-            "the `systems` per-system sections are absent from the index",
+    let mut declared = targets.iter().collect::<Vec<_>>();
+    declared.sort_unstable();
+    declared.dedup();
+    if !declared.into_iter().eq(systems.keys()) {
+        return Err(gate(format!(
+            "declared targets {targets:?} differ from system sections {:?}",
+            systems.keys().collect::<Vec<_>>()
         )));
-    };
-    for target in &targets {
-        if !systems_raw.contains_key(target) {
-            return Err(gate(format!(
-                "target system {target:?} has no `systems` section; \
-                 the envelope is inconsistent"
-            )));
-        }
     }
-    for system in systems_raw.keys() {
-        if !targets.contains(system) {
-            return Err(gate(format!(
-                "`systems` carries {system:?} which is not a declared target"
-            )));
-        }
-    }
-
-    let mut systems = BTreeMap::new();
-    for (system, section) in systems_raw {
-        let entries_raw = section
-            .get("entries")
-            .and_then(serde_json::Value::as_object)
-            .ok_or_else(|| gate(format!("system {system:?} has no `entries` map")))?;
-        let mut entries = BTreeMap::new();
-        for (full_id, record) in entries_raw {
-            let entry = validate_entry(full_id, record, &inputs)
+    for (system, section) in systems {
+        for (full_id, entry) in &section.entries {
+            validate_entry(full_id, entry, inputs)
                 .map_err(|detail| gate(format!("{system}/{full_id}: {detail}")))?;
-            entries.insert(full_id.clone(), entry);
         }
-        systems.insert(system.clone(), CatalogSystem { entries });
     }
-    Ok(CatalogIndex::from_decoded(
-        expected.to_string(),
-        generator,
-        inputs,
-        targets,
-        macos_baseline,
-        systems,
-    ))
+    Ok(CatalogIndex(document))
 }
 
 /// Validate one index entry record against its full-id key and the inputs.
@@ -159,72 +100,34 @@ fn decode_index(
 /// must hold. Anything else fails the whole decode with the entry named.
 fn validate_entry(
     full_id: &str,
-    record: &serde_json::Value,
+    entry: &CatalogEntry,
     inputs: &BTreeMap<String, CatalogInput>,
-) -> Result<CatalogEntry, String> {
+) -> Result<(), String> {
     let Some((source, token)) = split_entry_id(full_id) else {
-        return Err(String::from(
-            "the key is not a full owner/tap/token entry identity",
-        ));
+        return Err("the key is not a full owner/tap/token entry identity".to_string());
     };
-    let entry = CatalogEntry::deserialize(record)
-        .map_err(|error| format!("does not follow the schema: {error}"))?;
-    if entry.source != source {
+    if entry.source != source || entry.token != token || !inputs.contains_key(source) {
         return Err(format!(
-            "record source {:?} does not match its key {source:?}",
-            entry.source
+            "record source {:?} and token {:?} do not match its key and input provenance",
+            entry.source, entry.token
         ));
     }
-    if entry.token != token {
-        return Err(format!(
-            "record token {:?} does not match its key {token:?}",
-            entry.token
-        ));
-    }
-    if !inputs.contains_key(source) {
-        return Err(format!(
-            "record source {source:?} has no `inputs` provenance"
-        ));
-    }
-    match entry.status {
+    let valid_status = match entry.status {
         EntryStatus::Eligible => {
-            if entry.kind.is_none() {
-                return Err(String::from(
-                    "an eligible entry must carry a non-null `kind`",
-                ));
-            }
-            if entry.reason.is_some() {
-                return Err(String::from("an eligible entry must carry a null `reason`"));
-            }
-            if entry.detail.is_some() {
-                return Err(String::from("an eligible entry must carry a null `detail`"));
-            }
+            entry.kind.is_some() && entry.reason.is_none() && entry.detail.is_none()
         }
-        EntryStatus::Excluded => {
-            if entry.kind.is_some() {
-                return Err(String::from("an excluded entry must carry a null `kind`"));
-            }
-            if entry.reason.is_none() {
-                return Err(String::from(
-                    "an excluded entry must carry a non-null `reason`",
-                ));
-            }
-        }
+        EntryStatus::Excluded => entry.kind.is_none() && entry.reason.is_some(),
+    };
+    if !valid_status {
+        return Err("record kind, reason, or detail violates its status".to_string());
     }
-    // The declared macOS range fails closed: each bound must be a
-    // non-empty numeric version, and together they must be coherent.
-    for (field, value) in [
-        ("minMacos", &entry.min_macos),
-        ("maxMacos", &entry.max_macos),
-    ] {
-        match value {
-            Some(value) if super::host::parse_numeric_version(value).is_none() => {
-                return Err(format!(
-                    "{field} must be a non-empty numeric version, found {value:?}"
-                ));
-            }
-            None | Some(_) => {}
-        }
+    if entry
+        .min_macos
+        .iter()
+        .chain(entry.max_macos.iter())
+        .any(|bound| super::host::parse_numeric_version(bound).is_none())
+    {
+        return Err("macOS bounds must be non-empty numeric versions".to_string());
     }
     if let (Some(min), Some(max)) = (&entry.min_macos, &entry.max_macos)
         && !super::host::in_range(min, None, Some(max))
@@ -233,7 +136,7 @@ fn validate_entry(
             "macOS range is inverted: minMacos {min:?} exceeds maxMacos {max:?}"
         ));
     }
-    Ok(entry)
+    Ok(())
 }
 
 pub use cask_catalog::token::{

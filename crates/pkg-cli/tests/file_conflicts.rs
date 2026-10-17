@@ -127,7 +127,7 @@ esac
     ) {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{scenario}: {stderr}");
-        assert!(output.stdout.is_empty());
+        assert_eq!(output.stdout, [] as [u8; 0]);
         assert!(stderr.contains("bin/bat"), "{scenario}: {stderr}");
         assert!(stderr.contains(owner_text), "{scenario}: {stderr}");
         assert!(stderr.contains(state_text), "{stderr}");

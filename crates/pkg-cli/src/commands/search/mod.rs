@@ -122,9 +122,7 @@ fn local_search(
                 },
             ),
         };
-        reports.push(
-            result.unwrap_or_else(|error| catalog::missing_report(moving, &error.to_string())),
-        );
+        reports.push(source_report(moving, result)?);
     }
     if source.includes("brew") {
         let result = catalog::brew::search(
@@ -134,9 +132,7 @@ fn local_search(
             query,
             |row, rank| rows.push(&row, rank),
         );
-        reports.push(result.unwrap_or_else(|error| {
-            catalog::missing_report(&config.sources.formulae, &error.to_string())
-        }));
+        reports.push(source_report(&config.sources.formulae, result)?);
     }
     for tap_source in registry.sources.keys() {
         if !source.includes(tap_source) {
@@ -149,11 +145,20 @@ fn local_search(
                     rows.push(&row, rank)
                 })
             });
-        reports.push(
-            result.unwrap_or_else(|error| catalog::missing_report(tap_source, &error.to_string())),
-        );
+        reports.push(source_report(tap_source, result)?);
     }
     Ok((system, reports, rows))
+}
+
+fn source_report(
+    source: &str,
+    result: Result<catalog::SourceReport, catalog::CatalogError>,
+) -> Result<catalog::SourceReport, CommandError> {
+    match result {
+        Ok(report) => Ok(report),
+        Err(error) if error.signal().is_some() => Err(error.into()),
+        Err(error) => Ok(catalog::missing_report(source, &error.to_string())),
+    }
 }
 
 pub(super) fn install_resolution_error(
@@ -164,41 +169,27 @@ pub(super) fn install_resolution_error(
 ) -> CommandError {
     if !matches!(
         error,
-        catalog::CatalogError::NotFound(_)
-            | catalog::CatalogError::Ambiguous { .. }
-            | catalog::CatalogError::RequiresId { .. }
+        catalog::CatalogError::NotFound(_) | catalog::CatalogError::RequiresId { .. }
     ) {
         return error.into();
     }
-    let suggestions = catalog::SearchQuery::new(name, false, false)
-        .ok()
-        .and_then(|query| {
-            local_search(
-                &session.paths,
-                &session.config,
-                &query,
-                &SearchSource::parse(source),
-                Some(5),
-                false,
-            )
-            .ok()
-        })
-        .map(|(_, _, rows)| rows)
-        .filter(|rows| rows.count > 0);
-    if suggestions.is_some() {
-        match &error {
-            catalog::CatalogError::Ambiguous { choices, .. } => eprintln!(
-                "pkg: `{name}` matches {} exact package IDs. Choose an ID.",
-                choices.len()
-            ),
-            catalog::CatalogError::RequiresId { .. } => eprintln!(
-                "pkg: `{name}` needs an exact package ID for its development package or variant."
-            ),
-            _ => eprintln!("pkg: {error}"),
-        }
-    } else {
-        eprintln!("pkg: {error}");
+    let suggestions = match catalog::SearchQuery::new(name, false, false) {
+        Ok(query) => match local_search(
+            &session.paths,
+            &session.config,
+            &query,
+            &SearchSource::parse(source),
+            Some(5),
+            false,
+        ) {
+            Ok((_, _, rows)) => Some(rows),
+            Err(error) if error.signal().is_some() => return error,
+            Err(_) => None,
+        },
+        Err(_) => None,
     }
+    .filter(|rows| rows.count > 0);
+    eprintln!("pkg: {error}");
     if let Some(rows) = suggestions {
         eprintln!(
             "{}",
@@ -219,10 +210,7 @@ pub(super) fn install_resolution_error(
         });
         eprintln!("Choose a package ID, then run `pkg install ID`.");
     }
-    if matches!(
-        error,
-        catalog::CatalogError::Ambiguous { .. } | catalog::CatalogError::RequiresId { .. }
-    ) {
+    if matches!(error, catalog::CatalogError::RequiresId { .. }) {
         eprintln!("Use `pkg search {name} --broad` to inspect other package IDs.");
     } else {
         eprintln!("Use `pkg search {name}` to find packages.");

@@ -13,15 +13,11 @@
 //! platform-skipped from the envelope alone and an evaluation failure is
 //! never mistaken for a platform skip.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::nix::{CatalogEntry, CatalogIndex, EntryStatus, Nix, SourceIdentity};
+use crate::nix::{CatalogIndex, Nix, SourceIdentity};
 
 use super::CatalogError;
-
-/// The flake attribute that carries the catalog index envelope.
-pub const INDEX_ATTRIBUTE: &str = "catalogIndex";
 
 /// The install attribute for one full cask entry id on one system.
 ///
@@ -52,44 +48,6 @@ pub fn native_package_attribute(system: &str, full_id: &str) -> String {
     )
 }
 
-/// Status for one cask token on one system (design D6).
-///
-/// Derived from the generated index envelope: `eligible` is a metadata
-/// claim of the generator, never a verification promise; excluded tokens
-/// carry their recorded reason; a token absent from the index is unknown
-/// and never becomes eligible.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CaskStatus {
-    /// The token is eligible on this system.
-    Eligible,
-    /// The token is excluded on this system, with the recorded reason.
-    Excluded {
-        /// A short machine-readable reason.
-        reason: String,
-        /// Human-readable detail for the exclusion, when present.
-        detail: Option<String>,
-    },
-    /// The token is absent from the index for this system.
-    Unknown,
-}
-
-impl CaskStatus {
-    /// The status of one decoded entry, when present.
-    #[must_use]
-    pub fn for_entry(entry: Option<&CatalogEntry>) -> Self {
-        match entry {
-            None => Self::Unknown,
-            Some(entry) => match entry.status {
-                EntryStatus::Eligible => Self::Eligible,
-                EntryStatus::Excluded => Self::Excluded {
-                    reason: entry.reason.clone().unwrap_or_default(),
-                    detail: entry.detail.clone(),
-                },
-            },
-        }
-    }
-}
-
 /// One loaded catalog index bound to the source identity it came from.
 ///
 /// The identity is the same locked source any metadata lookup for the same
@@ -100,7 +58,8 @@ impl CaskStatus {
 pub struct CatalogView {
     /// The resolved identity of the casks source.
     pub identity: SourceIdentity,
-    index: Rc<CatalogIndex>,
+    /// The validated index shared with saved and live query views.
+    pub index: Rc<CatalogIndex>,
 }
 
 impl CatalogView {
@@ -151,107 +110,6 @@ impl CatalogView {
         let index = nix.catalog_index(&eval_ref).map_err(CatalogError::from)?;
         Ok(Self::from_parts(identity, index))
     }
-
-    /// The decoded index envelope.
-    #[must_use]
-    pub fn index(&self) -> &CatalogIndex {
-        &self.index
-    }
-
-    /// The target systems declared by the envelope.
-    #[must_use]
-    pub fn targets(&self) -> &[String] {
-        self.index.targets()
-    }
-
-    /// Whether the envelope targets `system`.
-    ///
-    /// This is the platform rule; it is read from the envelope, not from a
-    /// client constant.
-    #[must_use]
-    pub fn targeted(&self, system: &str) -> bool {
-        self.index.targets().iter().any(|target| target == system)
-    }
-
-    /// The status entries for one system, when the system is targeted.
-    #[must_use]
-    pub fn entries(&self, system: &str) -> Option<&BTreeMap<String, CatalogEntry>> {
-        self.index
-            .systems()
-            .get(system)
-            .map(|section| &section.entries)
-    }
-
-    /// The decoded record for one source and token on one system.
-    ///
-    /// Keys are full entry identities; the record is found by matching
-    /// both its `source` and its bare `token`.
-    #[must_use]
-    pub fn record(&self, system: &str, source: &str, token: &str) -> Option<&CatalogEntry> {
-        record(&self.index, system, source, token)
-    }
-
-    /// Resolve the status of one source and token on one system.
-    #[must_use]
-    pub fn entry(&self, system: &str, source: &str, token: &str) -> CaskStatus {
-        CaskStatus::for_entry(self.record(system, source, token))
-    }
-
-    /// Every source in this catalog that carries one bare token.
-    ///
-    /// A match counts whatever its status is: an excluded entry still
-    /// makes a bare token ambiguous across sources.
-    #[must_use]
-    pub fn sources_with_token(&self, system: &str, token: &str) -> Vec<String> {
-        sources_with_token(&self.index, system, token)
-    }
-}
-
-/// The decoded record for one source and token in one index.
-///
-/// Keys are full entry identities; the record is found by matching both
-/// its `source` and its bare `token`.
-#[must_use]
-pub fn record<'a>(
-    index: &'a CatalogIndex,
-    system: &str,
-    source: &str,
-    token: &str,
-) -> Option<&'a CatalogEntry> {
-    index
-        .systems()
-        .get(system)?
-        .entries
-        .get(&crate::nix::full_entry_id(source, token))
-}
-
-/// The status of one source and token in one index.
-#[must_use]
-pub fn status(index: &CatalogIndex, system: &str, source: &str, token: &str) -> CaskStatus {
-    CaskStatus::for_entry(record(index, system, source, token))
-}
-
-/// Every source in one index that carries one bare token on one system.
-///
-/// A match counts whatever its status is: an excluded entry still makes a
-/// bare token ambiguous across sources. The result is sorted and unique.
-#[must_use]
-pub fn sources_with_token(index: &CatalogIndex, system: &str, token: &str) -> Vec<String> {
-    let mut sources: Vec<String> = index
-        .systems()
-        .get(system)
-        .map(|section| {
-            section
-                .entries
-                .values()
-                .filter(|entry| entry.token == token)
-                .map(|entry| entry.source.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    sources.sort();
-    sources.dedup();
-    sources
 }
 
 /// A catalog index loaded at most once per command run.
@@ -314,54 +172,55 @@ mod tests {
     #[test]
     fn platform_capability_comes_from_the_envelope_targets() {
         let view = fixture_view();
-        assert!(view.targeted("aarch64-darwin"));
-        assert!(view.targeted("x86_64-linux"));
+        assert!(view.index.targeted("aarch64-darwin"));
+        assert!(view.index.targeted("x86_64-linux"));
         // No client constant decides platforms anymore.
-        assert!(!view.targeted("x86_64-darwin"));
-        assert!(!view.targeted("aarch64-linux"));
-        assert_eq!(view.targets(), ["aarch64-darwin", "x86_64-linux"]);
-        assert_eq!(view.index().generator().name, "cask-catalog");
-        assert_eq!(view.index().macos_baseline(), "15.7.7");
+        assert!(!view.index.targeted("x86_64-darwin"));
+        assert!(!view.index.targeted("aarch64-linux"));
+        assert_eq!(view.index.targets(), ["aarch64-darwin", "x86_64-linux"]);
+        let encoded = serde_json::to_value(view.index.as_ref()).expect("serializes");
+        assert_eq!(encoded["generator"]["name"], "cask-catalog");
+        assert_eq!(encoded["macosBaseline"], "15.7.7");
     }
 
     #[test]
     fn entries_resolve_eligible_excluded_and_unknown_tokens() {
         let view = fixture_view();
+        let entry = |system, token| {
+            view.index
+                .record(system, OFFICIAL_CASK_SOURCE, token)
+                .unwrap()
+        };
         assert_eq!(
-            view.entry("aarch64-darwin", OFFICIAL_CASK_SOURCE, "iterm2"),
-            CaskStatus::Eligible
+            entry("aarch64-darwin", "iterm2").status,
+            crate::nix::EntryStatus::Eligible
         );
+        let zoom = entry("aarch64-darwin", "zoom");
+        assert_eq!(zoom.status, crate::nix::EntryStatus::Excluded);
+        assert_eq!(zoom.reason.as_deref(), Some("installer-script"));
+        assert_eq!(zoom.detail.as_deref(), Some("stanza: postflight_steps"));
+        let iterm = entry("x86_64-linux", "iterm2");
+        assert_eq!(iterm.status, crate::nix::EntryStatus::Excluded);
+        assert_eq!(iterm.reason.as_deref(), Some("unsupported-platform"));
+        assert_eq!(iterm.detail, None);
         assert_eq!(
-            view.entry("aarch64-darwin", OFFICIAL_CASK_SOURCE, "zoom"),
-            CaskStatus::Excluded {
-                reason: String::from("installer-script"),
-                detail: Some(String::from("stanza: postflight_steps")),
-            }
+            entry("x86_64-linux", "koreader").status,
+            crate::nix::EntryStatus::Eligible
         );
-        // The same token can be excluded on one target and eligible on
-        // another; per-system data decides, not the token.
-        assert_eq!(
-            view.entry("x86_64-linux", OFFICIAL_CASK_SOURCE, "iterm2"),
-            CaskStatus::Excluded {
-                reason: String::from("unsupported-platform"),
-                detail: None,
-            }
-        );
-        assert_eq!(
-            view.entry("x86_64-linux", OFFICIAL_CASK_SOURCE, "koreader"),
-            CaskStatus::Eligible
-        );
-        assert_eq!(
-            view.entry("aarch64-darwin", OFFICIAL_CASK_SOURCE, "missing-token"),
-            CaskStatus::Unknown
+        assert!(
+            view.index
+                .record("aarch64-darwin", OFFICIAL_CASK_SOURCE, "missing-token")
+                .is_none()
         );
         // Records keep their metadata for info, including the
         // target-effective version merge the projection applies.
         let raycast_mac = view
+            .index
             .record("aarch64-darwin", OFFICIAL_CASK_SOURCE, "raycast")
             .expect("record");
         assert_eq!(raycast_mac.version.as_deref(), Some("1.104.25"));
         let raycast_linux = view
+            .index
             .record("x86_64-linux", OFFICIAL_CASK_SOURCE, "raycast")
             .expect("record");
         assert_eq!(raycast_linux.version.as_deref(), None);
@@ -372,26 +231,27 @@ mod tests {
         let view = fixture_view();
         // The official source carries the token; the id stays unique.
         assert_eq!(
-            view.sources_with_token("aarch64-darwin", "cursor"),
+            view.index.sources_with_token("aarch64-darwin", "cursor"),
             [String::from("homebrew/cask")]
         );
         // A display name is never a bare token match, in either case form.
-        assert!(
-            view.sources_with_token("aarch64-darwin", "Cursor")
-                .is_empty()
+        assert_eq!(
+            view.index.sources_with_token("aarch64-darwin", "Cursor"),
+            [] as [String; 0]
         );
-        assert!(
-            view.sources_with_token("aarch64-darwin", "iTerm2")
-                .is_empty()
+        assert_eq!(
+            view.index.sources_with_token("aarch64-darwin", "iTerm2"),
+            [] as [String; 0]
         );
-        assert!(
-            view.sources_with_token("aarch64-darwin", "iterm2.app")
-                .is_empty()
+        assert_eq!(
+            view.index
+                .sources_with_token("aarch64-darwin", "iterm2.app"),
+            [] as [String; 0]
         );
         // Untargeted systems have no entries at all.
-        assert!(
-            view.sources_with_token("x86_64-darwin", "iterm2")
-                .is_empty()
+        assert_eq!(
+            view.index.sources_with_token("x86_64-darwin", "iterm2"),
+            [] as [String; 0]
         );
     }
 

@@ -38,7 +38,6 @@ fn scheme(text: &str) -> Option<&str> {
 fn query_commit(query: &str) -> Option<&str> {
     query
         .split('&')
-        .filter(|param| !param.is_empty())
         .find_map(|param| param.strip_prefix("rev="))
         .filter(|value| cask_catalog::valid_revision(value))
 }
@@ -65,11 +64,9 @@ fn full_commit_named(text: &str) -> Option<&str> {
     let (base, query) = without_fragment
         .split_once('?')
         .unwrap_or((without_fragment, ""));
-    let forge_reference = scheme(without_fragment)
-        .is_some_and(|prefix| FINAL_SEGMENT_COMMIT_SCHEMES.contains(&prefix));
-    let names_revision = forge_reference
-        || scheme(without_fragment)
-            .is_some_and(|prefix| prefix == "git" || prefix.starts_with("git+"));
+    let prefix = scheme(without_fragment)?;
+    let forge_reference = FINAL_SEGMENT_COMMIT_SCHEMES.contains(&prefix);
+    let names_revision = forge_reference || prefix == "git" || prefix.starts_with("git+");
     query_commit(query)
         .filter(|_| names_revision)
         .or_else(|| final_segment_commit(base).filter(|_| forge_reference))
@@ -101,10 +98,7 @@ pub fn is_fixed_reference(reference: &str) -> bool {
 /// characters and nothing else. A reference that merely contains a full
 /// commit (for example `github:owner/repo?rev=<commit>`) does not count,
 /// so a qualified URL passed as a revision pin is refused.
-#[must_use]
-pub fn is_full_commit_id(text: &str) -> bool {
-    cask_catalog::valid_revision(text)
-}
+pub use cask_catalog::valid_revision as is_full_commit_id;
 
 /// Extract a locked full commit from a locked URL, when present.
 #[must_use]
@@ -117,9 +111,12 @@ pub fn locked_revision(url: &str) -> Option<&str> {
 /// Slash is the path structure and stays literal; every other byte that is
 /// not unreserved ASCII is percent-encoded so a path with spaces, `#`, `?`,
 /// `%`, or non-ASCII bytes stays exactly one reference text both ways.
-fn kept_path_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/')
-}
+const PATH_ENCODING: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~')
+    .remove(b'/');
 
 /// Percent-encode one filesystem path for a `path:` flake reference.
 ///
@@ -129,17 +126,7 @@ fn kept_path_byte(byte: u8) -> bool {
 /// non-ASCII bytes are `%XX`-encoded; `/` and unreserved ASCII stay literal.
 #[must_use]
 pub fn encode_path_reference(path: &Path) -> String {
-    let bytes = path.as_os_str().as_encoded_bytes();
-    let mut encoded = String::with_capacity(bytes.len());
-    for &byte in bytes {
-        if kept_path_byte(byte) {
-            encoded.push(byte as char);
-        } else {
-            use std::fmt::Write as _;
-            let _ = write!(encoded, "%{byte:02X}");
-        }
-    }
-    encoded
+    percent_encoding::percent_encode(path.as_os_str().as_encoded_bytes(), PATH_ENCODING).to_string()
 }
 
 /// Decode one percent-encoded `path:` reference body back to a path.
@@ -152,35 +139,19 @@ pub fn encode_path_reference(path: &Path) -> String {
 /// still never guessed at.
 #[must_use]
 pub fn decode_path_reference(encoded: &str) -> Option<PathBuf> {
-    fn hex_value(byte: u8) -> Option<u8> {
-        match byte {
-            b'0'..=b'9' => Some(byte - b'0'),
-            b'a'..=b'f' => Some(byte - b'a' + 10),
-            b'A'..=b'F' => Some(byte - b'A' + 10),
-            _ => None,
-        }
+    if !encoded.split('%').skip(1).all(|suffix| {
+        suffix
+            .as_bytes()
+            .get(..2)
+            .is_some_and(|pair| pair.iter().all(u8::is_ascii_hexdigit))
+    }) {
+        return None;
     }
-    let bytes = encoded.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let high = hex_value(*bytes.get(index + 1)?)?;
-            let low = hex_value(*bytes.get(index + 2)?)?;
-            decoded.push(high * 16 + low);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
-        }
-    }
-    #[cfg(unix)]
+    let decoded = percent_encoding::percent_decode_str(encoded).collect::<Vec<_>>();
     let path = {
         use std::os::unix::ffi::OsStringExt;
         PathBuf::from(std::ffi::OsString::from_vec(decoded))
     };
-    #[cfg(not(unix))]
-    let path = String::from_utf8(decoded).ok().map(PathBuf::from)?;
     Some(path)
 }
 

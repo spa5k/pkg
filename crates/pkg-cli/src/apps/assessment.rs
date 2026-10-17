@@ -85,8 +85,7 @@ fn confirms_enabled_assessment(stdout: &str) -> bool {
 /// changed, bypassed, or recorded — the user enables assessment in System
 /// Settings.
 fn require_assessments_enabled() -> Result<(), AppError> {
-    let args = [String::from("--status")];
-    match run_direct_captured(Path::new(SPCTL_BIN), &args) {
+    match run_direct_captured(Path::new(SPCTL_BIN), &["--status"]) {
         Ok((Outcome::Success, stdout)) if confirms_enabled_assessment(&stdout) => Ok(()),
         Ok((Outcome::Success, stdout)) => Err(format!(
             "cannot confirm that Gatekeeper assessment is enabled; {SPCTL_STATUS_CHECK} \
@@ -105,11 +104,13 @@ fn require_assessments_enabled() -> Result<(), AppError> {
             stderr.trim()
         )
         .into()),
-        Err(detail) => Err(format!(
-            "cannot confirm that Gatekeeper assessment is enabled; could not run \
-             {SPCTL_STATUS_CHECK}: {detail}; no launcher was changed"
-        )
-        .into()),
+        Err(error) => Err(AppError::process(
+            format!(
+                "cannot confirm that Gatekeeper assessment is enabled; could not run \
+             {SPCTL_STATUS_CHECK}; no launcher was changed"
+            ),
+            error,
+        )),
     }
 }
 
@@ -121,26 +122,21 @@ fn require_assessments_enabled() -> Result<(), AppError> {
 /// a failed check has no bypass. Success records only that both checks
 /// passed; it does not claim the bundle is free of malware.
 fn assess_bundle(bundle: &Path) -> Result<(), AppError> {
-    let bundle_arg = || bundle.to_string_lossy().into_owned();
+    let bundle_arg = || bundle.to_string_lossy();
     run_assessment_check(
         Path::new(CODESIGN_BIN),
-        &[
-            "--verify".to_string(),
-            "--deep".to_string(),
-            "--strict".to_string(),
-            bundle_arg(),
-        ],
+        &["--verify", "--deep", "--strict", &bundle_arg()],
         bundle,
         CODESIGN_CHECK,
     )?;
     run_assessment_check(
         Path::new(SPCTL_BIN),
         &[
-            "--assess".to_string(),
-            "--type".to_string(),
-            "execute".to_string(),
-            "--verbose=4".to_string(),
-            bundle_arg(),
+            "--assess",
+            "--type",
+            "execute",
+            "--verbose=4",
+            &bundle_arg(),
         ],
         bundle,
         SPCTL_CHECK,
@@ -151,7 +147,7 @@ fn assess_bundle(bundle: &Path) -> Result<(), AppError> {
 /// boundary and reports an exact outcome for the named bundle.
 fn run_assessment_check(
     tool: &Path,
-    args: &[String],
+    args: &[&str],
     bundle: &Path,
     check: &str,
 ) -> Result<(), AppError> {
@@ -168,9 +164,10 @@ fn run_assessment_check(
             stderr.trim()
         )
         .into()),
-        Err(detail) => {
-            Err(format!("could not run {check} on {}: {detail}", bundle.display()).into())
-        }
+        Err(error) => Err(AppError::process(
+            format!("could not run {check} on {}", bundle.display()),
+            error,
+        )),
     }
 }
 

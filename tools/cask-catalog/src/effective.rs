@@ -9,27 +9,6 @@
 
 use serde_json::Value;
 
-/// One raw cask record with the fields the generator reads.
-#[derive(Debug, Clone)]
-pub struct RawRecord {
-    /// The full raw JSON object (borrowed shapes vary too much to model).
-    pub raw: Value,
-}
-
-impl RawRecord {
-    /// Wrap a decoded record object.
-    #[must_use]
-    pub fn new(raw: Value) -> Self {
-        Self { raw }
-    }
-
-    /// The token string, when present and a string.
-    #[must_use]
-    pub fn token(&self) -> Option<&str> {
-        self.raw.get("token").and_then(Value::as_str)
-    }
-}
-
 /// The variation key that serves one catalog target.
 ///
 /// `aarch64-darwin` maps to the `arm64_sequoia` platform (the declared
@@ -55,14 +34,14 @@ pub fn variation_key_for(system: &str) -> Option<&'static str> {
 ///
 /// Returns an error when the record or its target variation has an invalid
 /// shape.
-pub fn effective_for(record: &RawRecord, system: &str) -> Result<Value, String> {
-    let mut eff = record.raw.clone();
+pub fn effective_for(record: &Value, system: &str) -> Result<Value, String> {
+    let mut eff = record.clone();
     let Some(key) = variation_key_for(system) else {
         return Ok(eff);
     };
     // A non-object `variations` field must never fall back to the base
     // record silently: the target lookup would just miss.
-    let variations = match record.raw.get("variations") {
+    let variations = match record.get("variations") {
         None | Some(&Value::Null) => None,
         Some(v) => Some(
             v.as_object()
@@ -105,13 +84,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn record(variations: &Value) -> RawRecord {
-        RawRecord::new(json!({
+    fn record(variations: &Value) -> Value {
+        json!({
             "token": "t", "version": "1", "url": "https://x/mac.zip",
             "sha256": "aaa", "name": ["T"],
             "supported_platforms": ["arm64_sequoia", "x86_64_linux"],
             "variations": variations
-        }))
+        })
     }
 
     #[test]
@@ -195,24 +174,24 @@ mod tests {
             "token": "t", "url": "https://x/mac.zip", "sha256": "aaa",
             "variations": "garbage"
         });
-        let result = effective_for(&RawRecord::new(raw.clone()), "x86_64-linux");
+        let result = effective_for(&raw, "x86_64-linux");
         assert!(result.unwrap_err().contains("variations"));
         raw.as_object_mut()
             .unwrap()
             .insert("variations".into(), serde_json::Value::Null);
-        assert!(effective_for(&RawRecord::new(raw), "x86_64-linux").is_ok());
+        assert!(effective_for(&raw, "x86_64-linux").is_ok());
     }
 
     #[test]
     fn flags_are_strict_booleans_on_the_effective_record() {
         let mut raw = json!({"token": "t", "disabled": false, "deprecated": true});
-        let eff = effective_for(&RawRecord::new(raw.clone()), "aarch64-darwin").expect("effective");
+        let eff = effective_for(&raw, "aarch64-darwin").expect("effective");
         assert_ne!(eff.get("disabled"), Some(&Value::Bool(true)));
         assert_eq!(eff.get("deprecated"), Some(&Value::Bool(true)));
         raw.as_object_mut()
             .unwrap()
             .insert("disabled".into(), json!(0.5));
-        let eff = effective_for(&RawRecord::new(raw), "aarch64-darwin").expect("effective");
+        let eff = effective_for(&raw, "aarch64-darwin").expect("effective");
         assert_ne!(
             eff.get("disabled"),
             Some(&Value::Bool(true)),

@@ -36,9 +36,7 @@ pub(super) fn completion(shell: Shell) -> Result<(), CommandError> {
     };
     let mut generated = Vec::new();
     clap_complete::generate(target, &mut command, "pkg", &mut generated);
-    std::io::stdout()
-        .write_all(&generated)
-        .map_err(|error| CommandError::Message(error.to_string()))?;
+    std::io::stdout().write_all(&generated)?;
     Ok(())
 }
 

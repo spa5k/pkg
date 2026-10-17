@@ -5,8 +5,7 @@ use std::path::Path;
 use crate::nix::{CatalogIndex, SourceIdentity};
 
 use super::{
-    Availability, CaskHost, CatalogError, CatalogView, SearchQuery, SearchResult, SourceReport,
-    SourceStatus, SupportBadge, cache, native,
+    CaskHost, CatalogError, SearchQuery, SearchResult, SourceReport, SourceStatus, cache, native,
 };
 
 pub(super) fn report(
@@ -36,7 +35,6 @@ pub(super) fn report(
                 if stale { "; run `pkg update`" } else { "" }
             )
         }),
-        support_detail: None,
     }
 }
 
@@ -50,7 +48,6 @@ pub fn missing_report(source: &str, detail: &str) -> SourceReport {
         revision: None,
         status: SourceStatus::Failed,
         detail: Some(detail.to_string()),
-        support_detail: None,
     }
 }
 
@@ -126,26 +123,15 @@ pub fn search_local_casks(
             "search data is not ready. Run `pkg setup` to prepare it.",
         ));
     };
-    let reference = snapshot
-        .locked_reference
-        .unwrap_or_else(|| source.to_string());
+    let reference = snapshot.locked_reference.as_deref().unwrap_or(source);
     let mut report = report(
         source,
-        &reference,
+        reference,
         snapshot.revision.clone(),
         snapshot.saved_unix,
     );
     report = platform_report(report, snapshot.payload.targets(), system);
-    let view = CatalogView::from_parts(
-        SourceIdentity {
-            reference: source.to_string(),
-            locked_url: Some(reference),
-            revision: snapshot.revision,
-            display: source.to_string(),
-        },
-        snapshot.payload,
-    );
-    visit_casks(&view, system, query, host, &report, sink)?;
+    visit_casks(&snapshot.payload, system, query, host, &report, sink)?;
     Ok(report)
 }
 
@@ -170,14 +156,7 @@ pub fn search_local_saved(
         saved.index().targets(),
         system,
     );
-    visit_casks(
-        &CatalogView::from_saved(saved),
-        system,
-        query,
-        host,
-        &report,
-        sink,
-    )?;
+    visit_casks(saved.index(), system, query, host, &report, sink)?;
     Ok(report)
 }
 
@@ -196,55 +175,29 @@ fn platform_report(mut report: SourceReport, targets: &[String], system: &str) -
 }
 
 fn visit_casks(
-    view: &CatalogView,
+    index: &CatalogIndex,
     system: &str,
     query: &SearchQuery,
     host: &CaskHost,
     report: &SourceReport,
     mut sink: impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
 ) -> Result<(), CatalogError> {
-    let Some(entries) = view.entries(system) else {
+    let Some(entries) = index.entries(system) else {
         return Ok(());
     };
     for (full_id, entry) in entries {
-        let meta = super::catalog_meta(&entry.token, entry);
-        let id = format!("cask:{full_id}");
-        let mut row = SearchResult {
-            id,
-            attribute: super::package_attribute(system, full_id),
-            name: meta.pname,
-            version: meta.version,
-            description: meta.description,
-            source: String::from("cask"),
-            reference: report.locked_reference.clone(),
-            revision: report.revision.clone(),
-            system: system.to_string(),
-            stale: report.status == SourceStatus::Stale,
-            support: None,
-            install_command: None,
-        };
+        let mut row = SearchResult::catalog(entry, "cask", system, report);
         let Some(rank) = query.rank(&row) else {
             continue;
         };
-        let support = match host.availability(view, system, &entry.source, &entry.token) {
-            Availability::Available => SupportBadge::Eligible,
-            Availability::Unavailable { reason } => {
-                if !query.unavailable && !query.exact(&[&entry.token, &row.name, full_id, &row.id])
-                {
-                    continue;
-                }
-                SupportBadge::Excluded {
-                    reason,
-                    detail: entry.detail.clone(),
-                }
-            }
-            Availability::Unknown { reason } => {
-                if !query.unavailable && !query.exact(&[&entry.token, &row.name, full_id, &row.id])
-                {
-                    continue;
-                }
-                SupportBadge::Unknown { reason }
-            }
+        let Some(support) = host
+            .availability(index, system, &entry.source, &entry.token)?
+            .search_badge(
+                query.unavailable || query.exact(&[&entry.token, &row.name, full_id, &row.id]),
+                entry.detail.as_deref(),
+            )
+        else {
+            continue;
         };
         row.support = Some(support);
         sink(row, rank)?;
@@ -258,17 +211,10 @@ pub(super) fn mark_checked(
     system: &str,
     identity: &SourceIdentity,
 ) -> Result<(), CatalogError> {
-    let snap = cache::Snapshot {
-        schema: cache::SNAPSHOT_SCHEMA,
-        kind: String::from("checked"),
-        source: source.to_string(),
-        locked_reference: identity.locked_url.clone(),
-        revision: identity.revision.clone(),
-        system: system.to_string(),
-        saved_unix: cache::now_unix(),
-        payload: (),
-    };
-    cache::write_snapshot(cache_dir, &snap)
+    cache::write_snapshot(
+        cache_dir,
+        &cache::Snapshot::new("checked", source, system, identity, ()),
+    )
 }
 
 fn checked_at(
@@ -317,16 +263,7 @@ pub fn prepare_catalog(
     };
     cache::write_snapshot(
         cache_dir,
-        &cache::IndexSnapshot {
-            schema: cache::SNAPSHOT_SCHEMA,
-            kind: String::from(cache::KIND_INDEX),
-            source: source.to_string(),
-            locked_reference: Some(reference.to_string()),
-            revision: Some(revision.to_string()),
-            system: system.to_string(),
-            saved_unix: cache::now_unix(),
-            payload: index,
-        },
+        &cache::IndexSnapshot::new(cache::KIND_INDEX, source, system, identity, index),
     )
 }
 
@@ -345,23 +282,14 @@ fn platform() -> String {
 ///
 /// Returns an error when the host record cannot be created, encoded, or written.
 pub fn record_search_system(cache_dir: &Path, system: &str) -> Result<(), CatalogError> {
-    use std::io::Write as _;
-    std::fs::create_dir_all(cache_dir).map_err(CatalogError::cache_write)?;
-    let mut file = tempfile::NamedTempFile::new_in(cache_dir).map_err(CatalogError::cache_write)?;
-    serde_json::to_writer(
-        &mut file,
+    cache::write_json(
+        cache_dir,
+        Path::new("search-host.json"),
         &PreparedHost {
             platform: platform(),
             system: system.to_string(),
         },
     )
-    .map_err(CatalogError::cache_write)?;
-    file.flush()
-        .and_then(|()| file.as_file().sync_all())
-        .map_err(CatalogError::cache_write)?;
-    file.persist(cache_dir.join("search-host.json"))
-        .map_err(CatalogError::cache_write)?;
-    Ok(())
 }
 
 /// Read the prepared system, or use the platform name for a first search.

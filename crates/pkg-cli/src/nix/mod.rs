@@ -20,7 +20,7 @@ mod error;
 mod host;
 mod index;
 mod manifest;
-mod process;
+use pkg_process as process;
 mod reference;
 mod report;
 mod runtime;
@@ -32,7 +32,7 @@ use std::process::Command;
 pub use conflict::ProfileConflict;
 pub use discovery::{MetadataNode, MetadataValue};
 pub use error::NixError;
-pub use host::{in_range, macos_product_version};
+pub use host::{HostVersionError, in_range, macos_product_version};
 pub use index::OFFICIAL_CASK_SOURCE;
 pub use index::{
     CATALOG_INDEX_SCHEMA, CatalogEntry, CatalogGenerator, CatalogIndex, CatalogInput,
@@ -94,8 +94,8 @@ impl Nix {
     }
 
     /// The complete argument vector for one native invocation.
-    fn argv(extra_args: &[&str]) -> Vec<String> {
-        let mut command_args: Vec<String> = [
+    fn argv<'a>(extra_args: &[&'a str]) -> Vec<&'a str> {
+        [
             "--extra-experimental-features",
             "nix-command flakes",
             // Explicitly refuse flake-provided nix.conf settings; this is the
@@ -111,10 +111,8 @@ impl Nix {
             "false",
         ]
         .into_iter()
-        .map(ToString::to_string)
-        .collect();
-        command_args.extend(extra_args.iter().map(|arg| (*arg).to_string()));
-        command_args
+        .chain(extra_args.iter().copied())
+        .collect()
     }
 
     /// Classify one reaped run into a [`NixError`], attaching the argument
@@ -122,13 +120,9 @@ impl Nix {
     /// Streamed children report no captured stderr (their streams went to
     /// the user's terminal); captured children keep theirs.
     fn finish(args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
-        if let Some(signal) = reaped.cancelled {
-            return Err(NixError::Interrupted {
-                args: args.iter().map(ToString::to_string).collect(),
-                signal,
-            });
-        }
-        if let Some(limit) = reaped.resource_limit {
+        if reaped.cancelled.is_none()
+            && let Some(limit) = reaped.resource_limit
+        {
             return Err(NixError::ResourceLimit(limit.to_string()));
         }
         match reaped.classify() {
@@ -159,14 +153,9 @@ impl Nix {
     /// interactive prompts stay visible. Raw stderr stays captured for
     /// the command's failure report. The verbose flag keeps the
     /// unfiltered stream.
-    fn run_filtered(&self, args: &[&str]) -> Result<(), NixError> {
-        let profile = args
-            .iter()
-            .position(|arg| *arg == "--profile")
-            .and_then(|index| args.get(index + 1))
-            .copied();
-        let mut reporter = report::mutation_reporter().scoped(profile, self.verbose);
-        let reaped = self.execute_with(args, IoMode::Filtered, Some(&mut reporter))?;
+    fn run_filtered(&self, profile: &str, args: &[&str]) -> Result<(), NixError> {
+        let mut reporter = report::MutationReporter::new(profile, self.verbose);
+        let reaped = self.execute(args, IoMode::Filtered(&mut reporter))?;
         // Keep raw stderr for the command's compact cause selection. It is
         // never replayed as a block in normal output.
         Self::finish(args, &reaped)
@@ -184,20 +173,7 @@ impl Nix {
         Self::finish(args, &reaped)
     }
 
-    /// Build and run one native child through the shared forward/reap
-    /// boundary.
-    /// Run one native child through the shared boundary without a sink.
-    fn execute(&self, args: &[&str], mode: IoMode) -> Result<Reaped, NixError> {
-        self.execute_with(args, mode, None)
-    }
-
-    /// Run one native child with an optional live stderr sink.
-    fn execute_with(
-        &self,
-        args: &[&str],
-        mode: IoMode,
-        sink: Option<&mut dyn process::StderrSink>,
-    ) -> Result<Reaped, NixError> {
+    fn command(&self, args: &[&str]) -> Command {
         // `--verbose` describes every native call here, captures included,
         // with the exact argument vector that will run.
         let command_line = Self::argv(args);
@@ -211,7 +187,12 @@ impl Nix {
             // disabling so colors are never suppressed by accident.
             command.env("NO_COLOR", "1");
         }
-        run_child(command, mode, sink).map_err(NixError::Spawn)
+        command
+    }
+
+    /// Run one native child with its selected stdio and reporting mode.
+    fn execute(&self, args: &[&str], mode: IoMode<'_>) -> Result<Reaped, NixError> {
+        run_child(self.command(args), mode, None, None).map_err(NixError::Process)
     }
 
     fn json<T: serde::de::DeserializeOwned>(
@@ -234,7 +215,7 @@ impl Nix {
     ///
     /// Returns an error if command setup or spawn fails, output reading or child reaping fails, Nix fails or is interrupted, or the JSON or profile manifest is invalid.
     pub fn profile_list(&self, profile: &Path) -> Result<BTreeMap<String, ProfileEntry>, NixError> {
-        let profile = profile.to_string_lossy().into_owned();
+        let profile = profile.to_string_lossy();
         let raw = self.json::<serde_json::Value>(
             "profile identity",
             &["profile", "list", "--profile", &profile, "--json"],
@@ -280,7 +261,7 @@ impl Nix {
         inputs: &[(&str, &str)],
     ) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
-        let profile = profile.to_string_lossy().into_owned();
+        let profile = profile.to_string_lossy();
         let mut args: Vec<&str> = vec!["profile", "add", "--profile", &profile];
         for &(input, reference) in inputs {
             args.extend(["--override-input", input, reference]);
@@ -288,7 +269,7 @@ impl Nix {
         // `--` keeps installables from being read as flags.
         args.push("--");
         args.extend(installables.iter().map(String::as_str));
-        self.run_filtered(&args)
+        self.run_filtered(&profile, &args)
     }
 
     /// Remove exact entries in one native operation.
@@ -300,13 +281,13 @@ impl Nix {
     ///
     /// Returns an error if command setup or spawn fails, stderr reading or child reaping fails, or Nix fails or is interrupted.
     pub fn profile_remove(&self, profile: &Path, entries: &[String]) -> Result<(), NixError> {
-        let profile = profile.to_string_lossy().into_owned();
+        let profile = profile.to_string_lossy();
         let mut args: Vec<&str> = vec!["profile", "remove", "--profile", &profile];
         if !entries.is_empty() {
             args.push("--");
             args.extend(entries.iter().map(String::as_str));
         }
-        self.run_filtered(&args)
+        self.run_filtered(&profile, &args)
     }
 
     /// Upgrade exact entries, or all entries when `entries` is `None`.
@@ -321,7 +302,7 @@ impl Nix {
         profile: &Path,
         entries: Option<&[String]>,
     ) -> Result<(), NixError> {
-        let profile = profile.to_string_lossy().into_owned();
+        let profile = profile.to_string_lossy();
         let mut args: Vec<&str> = vec!["profile", "upgrade", "--profile", &profile];
         match entries {
             Some(list) if !list.is_empty() => {
@@ -330,7 +311,7 @@ impl Nix {
             }
             _ => args.push("--all"),
         }
-        self.run_filtered(&args)
+        self.run_filtered(&profile, &args)
     }
 
     /// Switch a profile to a previously built and verified store profile.
@@ -343,16 +324,19 @@ impl Nix {
     /// Returns an error if the profile manifest cannot be read or decoded, command setup or spawn fails, stderr reading or child reaping fails, or Nix fails or is interrupted.
     pub fn profile_replace(&self, profile: &Path, replacement: &Path) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
-        let profile = profile.to_string_lossy().into_owned();
-        let replacement = replacement.to_string_lossy().into_owned();
-        self.run_filtered(&[
-            "build",
-            "--no-link",
-            "--profile",
+        let profile = profile.to_string_lossy();
+        let replacement = replacement.to_string_lossy();
+        self.run_filtered(
             &profile,
-            "--",
-            &replacement,
-        ])
+            &[
+                "build",
+                "--no-link",
+                "--profile",
+                &profile,
+                "--",
+                &replacement,
+            ],
+        )
     }
 
     /// Roll back to the previous or a selected native generation.
@@ -367,7 +351,7 @@ impl Nix {
         generation: Option<u64>,
     ) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
-        let profile = profile.to_string_lossy().into_owned();
+        let profile = profile.to_string_lossy();
         let generation = generation.map(|n| n.to_string());
         let mut args: Vec<&str> = vec!["profile", "rollback", "--profile", &profile];
         if let Some(number) = generation.as_deref() {
@@ -386,7 +370,7 @@ impl Nix {
     /// Returns an error if the profile manifest cannot be read or decoded, command setup or spawn fails, child reaping fails, or Nix fails or is interrupted.
     pub fn profile_wipe_history(&self, profile: &Path, age: &str) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
-        let profile = profile.to_string_lossy().into_owned();
+        let profile = profile.to_string_lossy();
         self.run_streamed(&[
             "profile",
             "wipe-history",
@@ -402,7 +386,7 @@ impl Nix {
     ///
     /// Returns an error if command setup or spawn fails, output reading or child reaping fails, or Nix fails or is interrupted.
     pub fn profile_history(&self, profile: &Path) -> Result<String, NixError> {
-        let profile = profile.to_string_lossy().into_owned();
+        let profile = profile.to_string_lossy();
         self.capture(&["profile", "history", "--profile", &profile])
     }
 
@@ -416,10 +400,17 @@ impl Nix {
         pattern: &str,
     ) -> Result<BTreeMap<String, SearchMeta>, NixError> {
         let args = ["search", reference, pattern, "--json"];
-        match self.discovery_json("search results", &args, "20") {
-            Err(NixError::ResourceLimit(_)) => self.discovery_json("search results", &args, "100"),
-            result => result,
-        }
+        let results: BTreeMap<String, SearchMeta> =
+            match self.discovery_json("search results", &args, "20") {
+                Err(NixError::ResourceLimit(_)) => {
+                    self.discovery_json("search results", &args, "100")
+                }
+                result => result,
+            }?;
+        Ok(results
+            .into_iter()
+            .map(|(attribute, meta)| (manifest::normalize_catalog_attribute(attribute), meta))
+            .collect())
     }
 
     /// Evaluate the default installation outputs without realizing them.
@@ -455,14 +446,6 @@ impl Nix {
             .trim()
             .to_string())
     }
-    /// Read one effective client-side setting, such as the sandbox flag.
-    /// # Errors
-    ///
-    /// Returns an error if command setup or spawn fails, output reading or child reaping fails, or the config command fails or is interrupted.
-    pub fn setting(&self, name: &str) -> Result<String, NixError> {
-        Ok(self.capture(&["config", "show", name])?.trim().to_string())
-    }
-
     /// Read effective client settings without printing the config document.
     /// # Errors
     ///

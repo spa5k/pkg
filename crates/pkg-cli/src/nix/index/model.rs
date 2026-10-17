@@ -132,10 +132,23 @@ pub struct CatalogEntry {
 
 /// One system section of the catalog index.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(try_from = "BTreeMap<String, serde_json::Value>")]
 pub struct CatalogSystem {
     /// The status entries for this system, keyed by the full entry
     /// identity `owner/tap/token`.
     pub entries: BTreeMap<String, CatalogEntry>,
+}
+
+impl TryFrom<BTreeMap<String, serde_json::Value>> for CatalogSystem {
+    type Error = serde_json::Error;
+
+    fn try_from(mut fields: BTreeMap<String, serde_json::Value>) -> Result<Self, Self::Error> {
+        let entries = fields.remove("entries").unwrap_or_default();
+        Ok(Self {
+            entries: serde_path_to_error::deserialize(entries)
+                .map_err(<Self::Error as serde::de::Error>::custom)?,
+        })
+    }
 }
 
 /// The decoded `catalogIndex` envelope of a casks flake.
@@ -144,77 +157,74 @@ pub struct CatalogSystem {
 /// `schema` identity and the `macosBaseline` field name included — so a
 /// published generation's capture file is the same strict schema-4 index
 /// the decoder consumes. No parallel encoding exists in this client.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct CatalogIndex {
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct IndexDocument {
     /// The schema identity accepted by the strict decoder and written on encode.
-    schema: String,
+    pub(super) schema: String,
     /// The generator provenance.
-    generator: CatalogGenerator,
+    pub(super) generator: CatalogGenerator,
     /// The pinned input provenance of every source in this catalog, keyed
     /// by source identity (`owner/tap`, or `homebrew/cask`).
-    inputs: BTreeMap<String, CatalogInput>,
+    pub(super) inputs: BTreeMap<String, CatalogInput>,
     /// The target systems the catalog was generated for.
-    targets: Vec<String>,
+    pub(super) targets: Vec<String>,
     /// The declared macOS baseline, for example `15.7.7`.
     #[serde(rename = "macosBaseline")]
-    macos_baseline: String,
+    pub(super) macos_baseline: String,
     /// The per-system status sections.
-    systems: BTreeMap<String, CatalogSystem>,
+    pub(super) systems: BTreeMap<String, CatalogSystem>,
 }
 
+/// A validated Catalog Index with source, status, and target checks.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct CatalogIndex(pub(super) IndexDocument);
+
 impl CatalogIndex {
-    /// The schema accepted by the strict decoder.
-    #[must_use]
-    pub fn schema(&self) -> &str {
-        &self.schema
-    }
-
-    /// Generator provenance from the decoded envelope.
-    #[must_use]
-    pub const fn generator(&self) -> &CatalogGenerator {
-        &self.generator
-    }
-
     /// Pinned input provenance from the decoded envelope.
     #[must_use]
     pub const fn inputs(&self) -> &BTreeMap<String, CatalogInput> {
-        &self.inputs
+        &self.0.inputs
     }
 
     /// Target systems from the decoded envelope.
     #[must_use]
     pub fn targets(&self) -> &[String] {
-        &self.targets
-    }
-
-    /// Declared macOS baseline from the decoded envelope.
-    #[must_use]
-    pub fn macos_baseline(&self) -> &str {
-        &self.macos_baseline
+        &self.0.targets
     }
 
     /// Per-system entry sections from the decoded envelope.
     #[must_use]
     pub const fn systems(&self) -> &BTreeMap<String, CatalogSystem> {
-        &self.systems
+        &self.0.systems
     }
 
-    pub(super) fn from_decoded(
-        schema: String,
-        generator: CatalogGenerator,
-        inputs: BTreeMap<String, CatalogInput>,
-        targets: Vec<String>,
-        macos_baseline: String,
-        systems: BTreeMap<String, CatalogSystem>,
-    ) -> Self {
-        Self {
-            schema,
-            generator,
-            inputs,
-            targets,
-            macos_baseline,
-            systems,
-        }
+    /// Whether the envelope declares this target system.
+    #[must_use]
+    pub fn targeted(&self, system: &str) -> bool {
+        self.0.targets.iter().any(|target| target == system)
+    }
+
+    /// The entries for one declared target system.
+    #[must_use]
+    pub fn entries(&self, system: &str) -> Option<&BTreeMap<String, CatalogEntry>> {
+        self.0.systems.get(system).map(|section| &section.entries)
+    }
+
+    /// The record with this complete source and token identity.
+    #[must_use]
+    pub fn record(&self, system: &str, source: &str, token: &str) -> Option<&CatalogEntry> {
+        self.entries(system)?
+            .get(&super::full_entry_id(source, token))
+    }
+
+    /// Sorted unique sources carrying this token, including excluded records.
+    #[must_use]
+    pub fn sources_with_token(&self, system: &str, token: &str) -> Vec<String> {
+        self.inputs()
+            .keys()
+            .filter(|source| self.record(system, source, token).is_some())
+            .cloned()
+            .collect()
     }
 }
 

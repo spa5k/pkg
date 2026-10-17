@@ -334,34 +334,13 @@ fn match_text(text: &str, term: &str, name: bool, broad: bool) -> Option<u32> {
 }
 
 fn edit_distance(left: &str, right: &str, max: u32) -> Option<u32> {
-    let a: Vec<char> = left.chars().collect();
-    let b: Vec<char> = right.chars().take(51).collect();
-    let max = usize::try_from(max).ok()?;
-    if b.len() > 50 || a.len().abs_diff(b.len()) > max {
+    let right_len = right.chars().take(51).count();
+    if right_len > 50 || left.chars().count().abs_diff(right_len) > usize::try_from(max).ok()? {
         return None;
     }
-    let mut older = [0_usize; 51];
-    let mut previous = [0_usize; 51];
-    for (column, cell) in previous.iter_mut().enumerate().take(b.len() + 1) {
-        *cell = column;
-    }
-    for (i, first) in a.iter().enumerate() {
-        let mut current = [0_usize; 51];
-        current[0] = i + 1;
-        for (j, second) in b.iter().enumerate() {
-            current[j + 1] = (current[j] + 1)
-                .min(previous[j + 1] + 1)
-                .min(previous[j] + usize::from(first != second));
-            if i > 0 && j > 0 && *first == b[j - 1] && a[i - 1] == *second {
-                current[j + 1] = current[j + 1].min(older[j - 1] + 1);
-            }
-        }
-        older = previous;
-        previous = current;
-    }
-    (previous[b.len()] <= max)
-        .then(|| u32::try_from(previous[b.len()]).ok())
-        .flatten()
+    u32::try_from(strsim::osa_distance(left, right))
+        .ok()
+        .filter(|distance| *distance <= max)
 }
 
 #[cfg(test)]
@@ -387,6 +366,16 @@ mod tests {
             support: None,
             install_command: None,
         }
+    }
+
+    #[test]
+    fn typo_distance_keeps_unicode_transpositions_and_input_bounds() {
+        assert_eq!(edit_distance("éab", "aéb", 1), Some(1));
+        assert_eq!(edit_distance("éab", "aéb", 0), None);
+        assert_eq!(edit_distance("ab", "bca", 2), None);
+        assert_eq!(edit_distance("ab", "bca", 3), Some(3));
+        assert_eq!(edit_distance(&"é".repeat(50), &"é".repeat(50), 0), Some(0));
+        assert_eq!(edit_distance(&"é".repeat(51), &"é".repeat(51), 0), None);
     }
 
     #[test]

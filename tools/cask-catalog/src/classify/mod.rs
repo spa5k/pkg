@@ -6,7 +6,7 @@
 //! excludes the token in this version (manager contract): no closure
 //! engine, no guessed resolution.
 
-use crate::effective::{self, RawRecord};
+use crate::effective;
 use crate::plan::{self, Plan};
 use crate::version::{less_than as version_lt, parse as version_parts};
 use serde::ser::SerializeStruct as _;
@@ -20,7 +20,8 @@ use std::net::IpAddr;
 /// tap capture; [`ExclusionReason::as_str`] is the emitted `reason`
 /// code. A typed reason keeps the code and the counting in emit from
 /// ever disagreeing about a spelling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum ExclusionReason {
     /// `disabled` flag set on the effective record.
     Disabled,
@@ -66,52 +67,55 @@ impl ExclusionReason {
     /// The emitted `reason` code (stable `pkg-cask-catalog/4` string).
     #[must_use]
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Disabled => "disabled",
-            Self::Deprecated => "deprecated",
-            Self::UnsupportedPlatform => "unsupported-platform",
-            Self::ArchUnsupported => "arch-unsupported",
-            Self::UnsupportedDownloadSpec => "unsupported-download-spec",
-            Self::FormulaDependency => "formula-dependency",
-            Self::CaskDependencyIntegration => "cask-dependency-integration",
-            Self::MissingUrl => "missing-url",
-            Self::UnsupportedUrl => "unsupported-url",
-            Self::MissingChecksum => "missing-checksum",
-            Self::MinimumOs => "minimum-os",
-            Self::MalformedRecord => "malformed-record",
-            Self::UnsupportedArtifact => "unsupported-artifact",
-            Self::UnsupportedContainer => "unsupported-container",
-            Self::InstallerScript => "installer-script",
-            Self::NoInstallableArtifact => "no-installable-artifact",
-            Self::RubyLoadError => "ruby-load-error",
-            Self::OriginMissing => "origin-missing",
-            Self::OriginMismatch => "origin-mismatch",
-        }
+        self.into()
     }
 }
 
-/// The one outcome for a target: an eligible typed plan, or an
-/// exclusion owning its reason and optional detail.
-///
-/// This replaces the old flat `TargetStatus` whose `status` string plus
-/// optional `kind`/`reason`/`detail`/`plan` fields could disagree. Now
-/// eligibility IS the variant, an exclusion always carries a typed
-/// reason, and the summary kind is derived from the plan.
+/// A refused Catalog Eligibility decision with one reason and optional detail.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TargetOutcome {
-    /// Eligible for this target; owns the typed plan.
-    Eligible {
-        /// The install plan for this target.
-        plan: Plan,
-    },
-    /// Excluded for this target; owns the reason code and detail.
-    Excluded {
-        /// Why the target is excluded.
-        reason: ExclusionReason,
-        /// Optional human-readable detail line.
-        detail: Option<String>,
-    },
+pub struct Exclusion {
+    /// The stable reason code for the refusal.
+    pub reason: ExclusionReason,
+    /// Optional human-readable detail.
+    pub detail: Option<String>,
 }
+
+impl Exclusion {
+    pub(crate) fn bare(reason: ExclusionReason) -> Self {
+        Self {
+            reason,
+            detail: None,
+        }
+    }
+
+    pub(crate) fn with_detail(reason: ExclusionReason, detail: String) -> Self {
+        Self {
+            reason,
+            detail: Some(detail),
+        }
+    }
+
+    pub(crate) fn malformed(detail: String) -> Self {
+        Self::with_detail(ExclusionReason::MalformedRecord, detail)
+    }
+
+    pub(crate) fn unsupported_kinds(kinds: &[String]) -> Self {
+        Self::with_detail(
+            ExclusionReason::UnsupportedArtifact,
+            format!("artifact kinds: {}", kinds.join(", ")),
+        )
+    }
+
+    pub(crate) fn installer_script(stanza: &str) -> Self {
+        Self::with_detail(
+            ExclusionReason::InstallerScript,
+            format!("stanza: {stanza}"),
+        )
+    }
+}
+
+/// An eligible plan or a recorded refusal for one target.
+pub type TargetOutcome = Result<Plan, Exclusion>;
 
 /// One target's published decision.
 ///
@@ -139,44 +143,29 @@ impl TargetDecision {
         Self {
             version: None,
             homepage: None,
-            outcome: TargetOutcome::Excluded {
-                reason,
-                detail: Some(detail),
-            },
+            outcome: Err(Exclusion::with_detail(reason, detail)),
         }
     }
 
     /// Whether this decision carries an eligible plan.
     #[must_use]
     pub fn is_eligible(&self) -> bool {
-        matches!(self.outcome, TargetOutcome::Eligible { .. })
+        self.outcome.is_ok()
     }
 
     /// The typed plan, present only when eligible.
     #[must_use]
     pub fn plan(&self) -> Option<&Plan> {
-        match &self.outcome {
-            TargetOutcome::Eligible { plan } => Some(plan),
-            TargetOutcome::Excluded { .. } => None,
-        }
+        self.outcome.as_ref().ok()
     }
 
     /// The emitted exclusion reason code, or `None` when eligible.
     #[must_use]
     pub fn reason_code(&self) -> Option<&'static str> {
-        match &self.outcome {
-            TargetOutcome::Eligible { .. } => None,
-            TargetOutcome::Excluded { reason, .. } => Some(reason.as_str()),
-        }
-    }
-
-    /// The exclusion detail line, or `None` when eligible or absent.
-    #[must_use]
-    pub fn detail(&self) -> Option<&str> {
-        match &self.outcome {
-            TargetOutcome::Eligible { .. } => None,
-            TargetOutcome::Excluded { detail, .. } => detail.as_deref(),
-        }
+        self.outcome
+            .as_ref()
+            .err()
+            .map(|exclusion| exclusion.reason.as_str())
     }
 }
 
@@ -188,20 +177,16 @@ impl Serialize for TargetDecision {
     /// stored, so it can never disagree with the plan it summarizes.
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut object = serializer.serialize_struct("TargetDecision", 7)?;
-        match &self.outcome {
-            TargetOutcome::Eligible { plan } => {
-                object.serialize_field("status", "eligible")?;
-                object.serialize_field("kind", &Some(summary_kind(plan)))?;
-                object.serialize_field("reason", &None::<&str>)?;
-                object.serialize_field("detail", &None::<String>)?;
+        let (status, kind, reason, detail) = match &self.outcome {
+            Ok(plan) => ("eligible", Some(summary_kind(plan)), None, None),
+            Err(Exclusion { reason, detail }) => {
+                ("excluded", None, Some(reason.as_str()), detail.as_deref())
             }
-            TargetOutcome::Excluded { reason, detail } => {
-                object.serialize_field("status", "excluded")?;
-                object.serialize_field("kind", &None::<&str>)?;
-                object.serialize_field("reason", &Some(reason.as_str()))?;
-                object.serialize_field("detail", detail)?;
-            }
-        }
+        };
+        object.serialize_field("status", status)?;
+        object.serialize_field("kind", &kind)?;
+        object.serialize_field("reason", &reason)?;
+        object.serialize_field("detail", &detail)?;
         object.serialize_field("version", &self.version)?;
         object.serialize_field("homepage", &self.homepage)?;
         object.serialize_field("plan", &self.plan())?;
@@ -211,38 +196,12 @@ impl Serialize for TargetDecision {
 
 /// Exclude with a reason and no detail (outcome level).
 fn excluded(reason: ExclusionReason) -> TargetOutcome {
-    TargetOutcome::Excluded {
-        reason,
-        detail: None,
-    }
-}
-
-/// Exclude as a malformed record with detail text.
-fn excluded_malformed(detail: String) -> TargetOutcome {
-    excluded_with_detail(ExclusionReason::MalformedRecord, detail)
+    Err(Exclusion::bare(reason))
 }
 
 /// Exclude with a reason and a detail line.
 fn excluded_with_detail(reason: ExclusionReason, detail: String) -> TargetOutcome {
-    TargetOutcome::Excluded {
-        reason,
-        detail: Some(detail),
-    }
-}
-
-/// Whether `supported_platforms` admits the target system.
-///
-/// `aarch64-darwin` maps to the exact `arm64_sequoia` platform (the
-/// baseline macOS 15.7.7 is Sequoia); any other arm64 tag is not enough.
-/// `x86_64-linux` needs its exact platform tag.
-fn platform_supported(tags: &[Value], system: &str) -> bool {
-    tags.iter()
-        .filter_map(Value::as_str)
-        .any(|tag| match system {
-            "aarch64-darwin" => tag == "arm64_sequoia",
-            "x86_64-linux" => tag == "x86_64_linux",
-            _ => false,
-        })
+    Err(Exclusion::with_detail(reason, detail))
 }
 
 /// A constraint failure: `malformed-record` for shapes the generator
@@ -265,11 +224,7 @@ fn platform_supported(tags: &[Value], system: &str) -> bool {
 /// The macOS bounds a record declares for one target (min, max).
 pub type MacosBounds = (Option<String>, Option<String>);
 
-fn macos_constraints(
-    eff: &Value,
-    system: &str,
-    baseline: &str,
-) -> Result<MacosBounds, (ExclusionReason, String)> {
+fn macos_constraints(eff: &Value, system: &str, baseline: &str) -> Result<MacosBounds, Exclusion> {
     let Some(depends) = eff.get("depends_on").filter(|v| !v.is_null()) else {
         return Ok((None, None));
     };
@@ -279,32 +234,17 @@ fn macos_constraints(
         let Some(field) = depends.get(key).filter(|v| !v.is_null()) else {
             continue;
         };
-        let Some(field) = field.as_object() else {
-            return Err((
-                ExclusionReason::MalformedRecord,
-                format!("{key} constraint is not an object"),
-            ));
-        };
-        for (op, values) in field {
-            let Some([value]) = values.as_array().map(std::vec::Vec::as_slice) else {
-                return Err((
-                    ExclusionReason::MalformedRecord,
-                    format!("{key} {op:?} is not a one-element array"),
-                ));
-            };
-            let Some(value) = value.as_str() else {
-                return Err((
-                    ExclusionReason::MalformedRecord,
-                    format!("{key} {op:?} value is not a string"),
-                ));
-            };
+        let field: std::collections::BTreeMap<&str, [&str; 1]> =
+            serde::Deserialize::deserialize(field).map_err(|error| {
+                Exclusion::malformed(format!("{key} constraint is malformed: {error}"))
+            })?;
+        for (op, [value]) in field {
             if version_parts(value).is_none() {
-                return Err((
-                    ExclusionReason::MalformedRecord,
-                    format!("non-numeric {key} version {value:?}"),
-                ));
+                return Err(Exclusion::malformed(format!(
+                    "non-numeric {key} version {value:?}"
+                )));
             }
-            match (mode, op.as_str()) {
+            match (mode, op) {
                 ("minimum", ">=") => {
                     min = Some(value.to_string());
                 }
@@ -312,10 +252,9 @@ fn macos_constraints(
                     max = Some(value.to_string());
                 }
                 _ => {
-                    return Err((
-                        ExclusionReason::MalformedRecord,
-                        format!("unsupported {key} operator {op:?}"),
-                    ));
+                    return Err(Exclusion::malformed(format!(
+                        "unsupported {key} operator {op:?}"
+                    )));
                 }
             }
         }
@@ -325,10 +264,9 @@ fn macos_constraints(
     if let (Some(min), Some(max)) = (&min, &max)
         && version_lt(max, min) == Some(true)
     {
-        return Err((
-            ExclusionReason::MalformedRecord,
-            format!("macOS range is inverted: >= {min} and <= {max}"),
-        ));
+        return Err(Exclusion::malformed(format!(
+            "macOS range is inverted: >= {min} and <= {max}"
+        )));
     }
     // Only now, with the whole declared range parsed and coherent, is
     // the baseline decision applied — and only on Darwin. A malformed
@@ -338,7 +276,7 @@ fn macos_constraints(
         if let Some(min) = &min
             && version_lt(baseline, min) == Some(true)
         {
-            return Err((
+            return Err(Exclusion::with_detail(
                 ExclusionReason::MinimumOs,
                 format!("requires macOS >= {min}; baseline is {baseline}"),
             ));
@@ -346,7 +284,7 @@ fn macos_constraints(
         if let Some(max) = &max
             && version_lt(max, baseline) == Some(true)
         {
-            return Err((
+            return Err(Exclusion::with_detail(
                 ExclusionReason::MinimumOs,
                 format!("requires macOS <= {max}; baseline is {baseline}"),
             ));
@@ -392,8 +330,7 @@ fn arch_detail(eff: &Value, system: &str) -> Option<String> {
 
 /// The summary kind string for an eligible plan.
 fn summary_kind(plan: &Plan) -> &'static str {
-    let kinds: Vec<&str> = plan.artifacts.iter().map(|a| a.kind).collect();
-    let has = |k: &str| kinds.contains(&k);
+    let has = |kind: &str| plan.artifacts.iter().any(|artifact| artifact.kind == kind);
     if has("app") {
         return if has("binary") { "app+cli" } else { "app" };
     }
@@ -494,35 +431,31 @@ pub fn destination_allowed(url: &str) -> Result<(), String> {
     if host.is_empty() {
         return Err(format!("URL has an empty host: {:?}", bounded(url)));
     }
-    match parsed.host() {
-        Some(url::Host::Ipv4(ip)) if !crate::net::ip_public(IpAddr::V4(ip)) => {
-            return Err(format!(
-                "host is a local or non-public IP literal: {:?}",
-                bounded(url)
-            ));
-        }
-        Some(url::Host::Ipv6(ip)) if !crate::net::ip_public(IpAddr::V6(ip)) => {
-            return Err(format!(
-                "host is a local or non-public IP literal: {:?}",
-                bounded(url)
-            ));
-        }
+    let public = match parsed.host() {
+        Some(url::Host::Ipv4(ip)) => crate::net::ip_public(IpAddr::V4(ip)),
+        Some(url::Host::Ipv6(ip)) => crate::net::ip_public(IpAddr::V6(ip)),
         Some(url::Host::Domain(_)) => {
-            let labels: Vec<&str> = host.split('.').collect();
-            if labels.len() < 2 {
+            let Some((_, suffix)) = host.rsplit_once('.') else {
                 return Err(format!(
                     "single-label host is not allowed: {:?}",
                     bounded(url)
                 ));
-            }
-            if LOCAL_SUFFIXES.contains(&labels[labels.len() - 1].to_ascii_lowercase().as_str()) {
+            };
+            if LOCAL_SUFFIXES.contains(&suffix.to_ascii_lowercase().as_str()) {
                 return Err(format!(
                     "local host name is not allowed: {:?}",
                     bounded(url)
                 ));
             }
+            true
         }
-        _ => {}
+        _ => true,
+    };
+    if !public {
+        return Err(format!(
+            "host is a local or non-public IP literal: {:?}",
+            bounded(url)
+        ));
     }
     Ok(())
 }
@@ -532,35 +465,12 @@ pub fn destination_allowed(url: &str) -> Result<(), String> {
 /// The effective record (base merged with the target variation) is
 /// computed first; every decision — flags, platform scope, arch,
 /// download specs, dependencies, URL, checksum, macOS minimums, plan —
-/// reads the effective record. Display fields are attached last so
+/// reads the effective record. The gate supplies platform evidence.
+/// Display fields are attached last so
 /// excluded tokens keep their known version and homepage.
 #[must_use]
-pub fn classify_target(record: &RawRecord, system: &str, baseline: &str) -> TargetDecision {
-    classify_gated(record, system, baseline, PlatformGate::Tags)
-}
-
-/// Classify one raw-exported record for one target system.
-///
-/// Same pipeline as [`classify_target`], but platform evidence comes from
-/// the upstream predicate boolean captured for this exact target by the
-/// pinned Homebrew exporter, never from an invented tag list.
-#[must_use]
-pub fn classify_tap_target(
-    record: &RawRecord,
-    system: &str,
-    baseline: &str,
-    upstream_supported: bool,
-) -> TargetDecision {
-    classify_gated(
-        record,
-        system,
-        baseline,
-        PlatformGate::Bool(upstream_supported),
-    )
-}
-
-fn classify_gated(
-    record: &RawRecord,
+pub fn classify_target(
+    record: &Value,
     system: &str,
     baseline: &str,
     gate: PlatformGate,
@@ -581,16 +491,26 @@ fn classify_gated(
     }
 }
 
-fn dependency_exclusion(eff: &Value) -> Option<TargetOutcome> {
-    let depends = eff.get("depends_on").filter(|v| !v.is_null())?;
+fn string_array<'a>(value: &'a Value, field: &str) -> Result<&'a [Value], Exclusion> {
+    value
+        .as_array()
+        .filter(|items| items.iter().all(Value::is_string))
+        .map(Vec::as_slice)
+        .ok_or_else(|| Exclusion::malformed(format!("{field} is not a string array")))
+}
+
+fn check_dependencies(eff: &Value) -> Result<(), Exclusion> {
+    let Some(depends) = eff.get("depends_on").filter(|v| !v.is_null()) else {
+        return Ok(());
+    };
     let Some(depends) = depends.as_object() else {
-        return Some(excluded_malformed(
+        return Err(Exclusion::malformed(
             "depends_on is not an object".to_string(),
         ));
     };
     for key in depends.keys() {
         if !KNOWN_DEPENDENCY_KEYS.contains(&key.as_str()) {
-            return Some(excluded_malformed(format!(
+            return Err(Exclusion::malformed(format!(
                 "unhandled depends_on key {key:?}"
             )));
         }
@@ -602,34 +522,29 @@ fn dependency_exclusion(eff: &Value) -> Option<TargetOutcome> {
         let Some(list) = depends.get(key).filter(|v| !v.is_null()) else {
             continue;
         };
-        let Some(items) = list.as_array() else {
-            return Some(excluded_malformed(format!(
-                "depends_on.{key} is not an array"
-            )));
-        };
-        if items.iter().any(|item| !item.is_string()) {
-            return Some(excluded_malformed(format!(
-                "depends_on.{key} has a non-string entry"
-            )));
-        }
+        let items = string_array(list, key)?;
         if !items.is_empty() {
-            return Some(excluded(reason));
+            return Err(Exclusion::bare(reason));
         }
     }
-    None
+    Ok(())
 }
 
-fn unsupported_download_spec(eff: &Value) -> Option<TargetOutcome> {
-    let specs = eff.get("url_specs").filter(|v| !v.is_null())?;
+fn check_download_specs(eff: &Value) -> Result<(), Exclusion> {
+    let Some(specs) = eff.get("url_specs").filter(|v| !v.is_null()) else {
+        return Ok(());
+    };
     let Some(map) = specs.as_object() else {
-        return Some(excluded_malformed("url_specs is not an object".to_string()));
+        return Err(Exclusion::malformed(
+            "url_specs is not an object".to_string(),
+        ));
     };
     let active = map.keys().filter(|key| key.as_str() != "verified");
     let active: Vec<&str> = active.map(String::as_str).collect();
     if active.is_empty() {
-        None
+        Ok(())
     } else {
-        Some(excluded_with_detail(
+        Err(Exclusion::with_detail(
             ExclusionReason::UnsupportedDownloadSpec,
             format!("url_specs: {}", active.join(", ")),
         ))
@@ -657,15 +572,13 @@ fn classify_effective(
     }
     match gate {
         PlatformGate::Tags => {
-            let Some(tags) = eff.get("supported_platforms").and_then(Value::as_array) else {
-                return excluded_malformed("no supported_platforms".to_string());
-            };
-            if tags.iter().any(|tag| !tag.is_string()) {
-                return excluded_malformed(
-                    "supported_platforms has a non-string entry".to_string(),
-                );
-            }
-            if !platform_supported(tags, system) {
+            let tags = string_array(
+                eff.get("supported_platforms").unwrap_or(&Value::Null),
+                "supported_platforms",
+            )?;
+            if !effective::variation_key_for(system)
+                .is_some_and(|expected| tags.iter().any(|tag| tag == expected))
+            {
                 return excluded(ExclusionReason::UnsupportedPlatform);
             }
         }
@@ -685,12 +598,8 @@ fn classify_effective(
     if let Some(detail) = arch_detail(eff, system) {
         return excluded_with_detail(ExclusionReason::ArchUnsupported, detail);
     }
-    if let Some(outcome) = unsupported_download_spec(eff) {
-        return outcome;
-    }
-    if let Some(outcome) = dependency_exclusion(eff) {
-        return outcome;
-    }
+    check_download_specs(eff)?;
+    check_dependencies(eff)?;
     let url = eff.get("url").and_then(Value::as_str).unwrap_or("");
     if url.is_empty() {
         return excluded(ExclusionReason::MissingUrl);
@@ -702,39 +611,14 @@ fn classify_effective(
         return excluded_with_detail(ExclusionReason::UnsupportedUrl, detail);
     }
     let sha = eff.get("sha256").and_then(Value::as_str).unwrap_or("");
-    if sha.is_empty()
-        || sha == "no_check"
-        || sha.len() != 64
-        || !sha.chars().all(|c| c.is_ascii_hexdigit())
-    {
+    if !crate::valid_sha256(sha) {
         return excluded(ExclusionReason::MissingChecksum);
     }
-    let (min_macos, max_macos) = match macos_constraints(eff, system, baseline) {
-        Ok(bounds) => bounds,
-        Err((reason, detail)) => return excluded_with_detail(reason, detail),
-    };
-    match plan::build_plan(eff, system) {
-        Ok(mut plan) => {
-            plan.min_macos = min_macos;
-            plan.max_macos = max_macos;
-            TargetOutcome::Eligible { plan }
-        }
-        Err(plan::PlanError::UnsupportedKinds(kinds)) => excluded_with_detail(
-            ExclusionReason::UnsupportedArtifact,
-            format!("artifact kinds: {}", kinds.join(", ")),
-        ),
-        Err(plan::PlanError::UnsupportedContainer(detail)) => {
-            excluded_with_detail(ExclusionReason::UnsupportedContainer, detail)
-        }
-        Err(plan::PlanError::InstallerScript(stanza)) => excluded_with_detail(
-            ExclusionReason::InstallerScript,
-            format!("stanza: {stanza}"),
-        ),
-        Err(plan::PlanError::NoInstallableArtifact) => {
-            excluded(ExclusionReason::NoInstallableArtifact)
-        }
-        Err(plan::PlanError::Malformed(detail)) => excluded_malformed(detail),
-    }
+    let (min_macos, max_macos) = macos_constraints(eff, system, baseline)?;
+    let mut plan = plan::build_plan(eff, system)?;
+    plan.min_macos = min_macos;
+    plan.max_macos = max_macos;
+    Ok(plan)
 }
 
 #[cfg(test)]

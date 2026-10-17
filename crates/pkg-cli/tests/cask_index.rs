@@ -130,12 +130,76 @@ fn upgrade_gates_the_installed_cask_source_after_configuration_changes() {
 }
 
 #[test]
+fn upgrade_checks_each_formula_branch_before_mutating_the_profile() {
+    let fixture = CaskFixture::new();
+    let available = formula_index_fixture(fixture.bin.path());
+    let mut index: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&available).unwrap()).unwrap();
+    let entry = &mut index["systems"]["x86_64-linux"]["entries"]["homebrew/core/awscli"];
+    entry["status"] = serde_json::json!("excluded");
+    entry["kind"] = serde_json::Value::Null;
+    entry["reason"] = serde_json::json!("disabled");
+    let excluded = fixture.bin.path().join("excluded-formula-index.json");
+    std::fs::write(&excluded, index.to_string()).unwrap();
+    let installed = serde_json::json!({"version": 3, "elements": {
+        "opaque-a": {"active": true, "attrPath": "packages.x86_64-linux.homebrew/core/awscli",
+            "originalUrl": "github:fixture/formulae/stable", "url": "github:fixture/formulae/1111111111111111111111111111111111111111", "storePaths": []},
+        "opaque-b": {"active": true, "attrPath": "packages.x86_64-linux.homebrew/core/awscli",
+            "originalUrl": "github:fixture/formulae/preview", "url": "github:fixture/formulae/2222222222222222222222222222222222222222", "storePaths": []}
+    }});
+    let profile = fixture.profile();
+    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("pkg-1-link", &profile).unwrap();
+    let calls = fixture.home.path().join("calls");
+    fixture.set_nix_script(&format!(
+        r"#!/usr/bin/python3
+import json,sys
+args=sys.argv[1:]; text=' '.join(args)
+with open({calls},'a') as log: log.write(text+'\n')
+if '--version' in args: print('nix (Nix) 2.35.2')
+elif 'config show system' in text: print('x86_64-linux')
+elif 'profile list' in text: print({installed})
+elif 'flake metadata' in text:
+ revision='2'*40 if '/preview' in text else '1'*40
+ print(json.dumps({{'url':'github:fixture/formulae/'+revision}}))
+elif '#formulaIndex' in text:
+ print(open({excluded} if '2'*40 in text else {available}).read())
+elif 'profile upgrade' in text: pass
+else: sys.exit(9)
+",
+        calls = serde_json::to_string(&calls).unwrap(),
+        installed = serde_json::to_string(&installed.to_string()).unwrap(),
+        excluded = serde_json::to_string(&excluded).unwrap(),
+        available = serde_json::to_string(&available).unwrap(),
+    ));
+    let (code, stdout, stderr) = fixture.run(&["upgrade", "opaque-a", "opaque-b", "--entry"]);
+    assert_eq!(code, 1, "{stdout}\n{stderr}");
+    assert!(stderr.contains("disabled"), "{stderr}");
+    let calls = std::fs::read_to_string(calls).unwrap();
+    for branch in ["stable", "preview"] {
+        assert!(
+            calls.lines().any(|line| line.contains("flake metadata")
+                && line.contains(&format!("github:fixture/formulae/{branch}"))),
+            "{calls}"
+        );
+    }
+    assert!(!calls.contains("profile upgrade"), "{calls}");
+    assert_eq!(
+        std::fs::read_link(profile).unwrap(),
+        Path::new("pkg-1-link")
+    );
+}
+
+#[test]
 fn cask_info_reports_recorded_exclusion() {
     let fixture = CaskFixture::new();
     let (code, stdout, _) = fixture.run(&["info", "cask:iterm2"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("Cannot install"), "{stdout}");
     assert!(stdout.contains("unsupported-platform"), "{stdout}");
+    let (code, stdout, _) = fixture.run(&["info", "cask:iterm2", "--verbose"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("URL: https://iterm2.com/"), "{stdout}");
 }
 
 #[test]
@@ -240,4 +304,58 @@ fn cask_discovery_cancellation_stops_info_and_install() {
             );
         }
     }
+}
+
+#[test]
+fn bare_cask_stays_ambiguous_when_one_source_excludes_it() {
+    use pkg_cli::tap::{
+        Registry, registry,
+        store::{Provenance, SourceStore},
+    };
+    let fixture = CaskFixture::new();
+    let state = fixture.home.path().join("state");
+    let source = "example/tools";
+    let origin = "https://github.com/example/homebrew-tools";
+    let revision = "1111111111111111111111111111111111111111";
+    let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let raw = serde_json::json!({
+        "schema": "pkg-cask-catalog/4", "generator": {"name": "cask-catalog", "version": "0.1.0"},
+        "inputs": {source: {"url": origin, "revision": revision, "sha256": hash, "license": "Homebrew data license",
+            "raw": {"archiveUrl": format!("https://github.com/example/homebrew-tools/archive/{revision}.tar.gz"), "archiveSha256": hash, "captureSha256": hash, "envelopeSchema": "pkg-tap-raw-export/1"}}},
+        "targets": ["x86_64-linux"], "macosBaseline": "15.7.7", "systems": {"x86_64-linux": {"entries": {
+            "example/tools/iterm2": {"source": source, "token": "iterm2", "name": "Tap terminal", "description": null,
+                "version": "1.0", "homepage": null, "status": "eligible", "kind": "binary", "reason": null, "detail": null}
+        }}}
+    });
+    let index = pkg_cli::nix::decode_catalog_index(&raw).unwrap();
+    let store = SourceStore::lock(&state, source).unwrap();
+    let staged = store.new_staging().unwrap();
+    std::fs::create_dir(staged.path().join("flake")).unwrap();
+    staged
+        .publish(
+            &Provenance {
+                source: source.to_owned(),
+                origin: origin.to_owned(),
+                revision: revision.to_owned(),
+                metadata_sha256: hash.to_owned(),
+                eligible: 1,
+                excluded: 0,
+                published_unix: 1,
+            },
+            &index,
+        )
+        .unwrap();
+    let mut registry = Registry::empty();
+    registry.approve(source, origin, 1);
+    registry.save(&registry::registry_path(&state)).unwrap();
+    let (code, _, error) = fixture.run(&["install", "cask:iterm2"]);
+    assert_eq!(code, 1, "{error}");
+    assert!(error.contains("ambiguous"), "{error}");
+    assert!(error.contains("cask:homebrew/cask/iterm2"), "{error}");
+    assert!(error.contains("cask:example/tools/iterm2"), "{error}");
+    assert!(!fixture.profile().exists());
+    let (code, output, error) = fixture.run(&["info", "cask:example/tools/iterm2"]);
+    assert_eq!(code, 0, "{error}");
+    assert!(output.contains("Tap terminal"), "{output}");
+    assert!(output.contains("Status: Available"), "{output}");
 }

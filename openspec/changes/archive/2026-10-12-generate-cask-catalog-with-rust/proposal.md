@@ -3,7 +3,7 @@
 Planning change, 28 September 2026. Implementation is substantially
 complete and verified on real hosts; per-task status and evidence
 live in the [tasks](tasks.md) and the [verification
-note](../../../docs/verification/2026-09-28-rust-cask-catalog.md).
+note](../../../../docs/verification/2026-09-28-rust-cask-catalog.md).
 Pending items are marked there, not hidden.
 
 Baseline: workspace sync at `f5c227032964990a8cb6833f64472f9925777c85`

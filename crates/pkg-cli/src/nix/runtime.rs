@@ -147,7 +147,8 @@ pub fn discover(configured: Option<&str>) -> Result<Nix, NixError> {
         .capture(&["--version"])
         .map(|text| text.trim().to_string())
         .map_err(|error| match (configured, error) {
-            (_, error @ NixError::Interrupted { .. }) | (None, error) => error,
+            (_, error) if error.signal().is_some() => error,
+            (None, error) => error,
             // A configured runtime that cannot even answer `--version` is
             // unusable; report it against the configured value, not as an
             // anonymous native failure.
@@ -355,8 +356,9 @@ mod tests {
             error
                 .source()
                 .unwrap()
-                .downcast_ref::<std::io::Error>()
+                .downcast_ref::<pkg_process::RunError>()
                 .unwrap()
+                .source
                 .kind(),
             std::io::ErrorKind::NotFound
         );
@@ -364,7 +366,7 @@ mod tests {
         let (path, _keep) = fake_runtime("echo probe-failed >&2; exit 7");
         let error = discover(Some(path.to_str().unwrap())).expect_err("probe failed");
         assert!(
-            matches!(error.source().unwrap().downcast_ref::<NixError>(), Some(NixError::Failed { status, stderr, .. }) if status == "exit code 7" && stderr.contains("probe-failed"))
+            matches!(error.source().unwrap().downcast_ref::<Box<NixError>>().map(AsRef::as_ref), Some(NixError::Failed { status, stderr, .. }) if status == "exit code 7" && stderr.contains("probe-failed"))
         );
 
         let (path, _keep) = fake_runtime("exit 130");
@@ -429,7 +431,7 @@ mod tests {
     fn direct_commands_share_the_classification() {
         let (ok, _keep) = fake_runtime("exit 0");
         assert_eq!(
-            run_direct(&ok, &[String::from("sync-trampolines")]).expect("runs"),
+            run_direct(&ok, &["sync-trampolines"]).expect("runs"),
             Outcome::Success
         );
 

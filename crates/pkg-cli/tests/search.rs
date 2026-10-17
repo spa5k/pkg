@@ -40,12 +40,9 @@ fn publish_search_tap(state: &std::path::Path) {
             .unwrap()
             .as_secs(),
     };
-    assert!(
-        store
-            .publish(staged, &provenance, &index)
-            .unwrap()
-            .finish()
-            .is_empty()
+    assert_eq!(
+        staged.publish(&provenance, &index).unwrap().finish(),
+        [] as [String; 0]
     );
 }
 
@@ -618,7 +615,7 @@ fn bare_install_miss_uses_targeted_metadata_with_related_packages() {
     let before = context.calls().lines().count();
     let (code, stdout, stderr) = context.run(&["install", "aws"]);
     assert_eq!(code, 1, "{stderr}");
-    assert!(stdout.is_empty());
+    assert_eq!(stdout, "");
     assert!(stderr.contains("needs an exact package ID"), "{stderr}");
     assert!(
         stderr.contains("Related packages:") && stderr.contains("nixpkgs:awscli2"),

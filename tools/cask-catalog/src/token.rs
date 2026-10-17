@@ -36,19 +36,15 @@ pub fn split_entry_id(id: &str) -> Option<(&str, &str)> {
 /// Nix attribute segments must quote them as one segment.
 #[must_use = "the result states whether the token can be a catalog key"]
 pub fn is_valid_token(token: &str) -> bool {
-    let Some(first) = token.chars().next() else {
-        return false;
-    };
-    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
-        return false;
-    }
-    if !token.chars().skip(1).all(|c| {
-        c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '+' | '.' | '_' | '-' | '@')
-    }) {
-        return false;
-    }
-    // No `..` component: never usable as one path segment.
-    !token.contains("..")
+    token.as_bytes().split_first().is_some_and(|(first, rest)| {
+        (first.is_ascii_lowercase() || first.is_ascii_digit())
+            && rest.iter().all(|c| {
+                c.is_ascii_lowercase()
+                    || c.is_ascii_digit()
+                    || matches!(c, b'+' | b'.' | b'_' | b'-' | b'@')
+            })
+            && !token.contains("..")
+    })
 }
 
 #[cfg(test)]

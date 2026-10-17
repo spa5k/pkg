@@ -5,6 +5,7 @@
 //! `fetch` and `import-tap` commands do bounded network access (see
 //! main.rs and `tap`).
 
+#![cfg(unix)]
 // Tests may abort on broken fixtures or failed setup; production code
 // denies explicit unwrap/expect/panic (these Clippy lints are denied by
 // the workspace for every non-test target).
@@ -49,7 +50,7 @@ pub const OFFICIAL_SOURCE: &str = "homebrew/cask";
 pub const HOMEBREW_PIN: &str = "cc9ff034b1d98cdd4061f68cf715bb967c483a8f";
 /// nixpkgs revision pinned for the raw Ruby export runtime and flake
 /// outputs (same pin as `nix/casks/flake.lock`).
-pub const NIXPKGS_PIN: &str = "567a49d1913ce81ac6e9582e3553dd90a955875f";
+pub const NIXPKGS_PIN: &str = "8edc0c72e3a38faf5434e40d1f19431125fe4b30";
 
 /// The committed input pin: exact snapshot identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,13 +190,26 @@ pub fn load_pin(path: &Path) -> Result<Pin, String> {
 ///
 /// Returns the actual digest when it does not match `expected`.
 pub fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), String> {
-    use sha2::{Digest, Sha256};
-    let actual = format!("{:x}", Sha256::digest(bytes));
+    let actual = sha256_hex(bytes);
     if actual.eq_ignore_ascii_case(expected) {
         Ok(())
     } else {
         Err(actual)
     }
+}
+
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    Sha256::digest(bytes)
+        .into_iter()
+        .flat_map(|byte| {
+            [
+                char::from(HEX[usize::from(byte >> 4)]),
+                char::from(HEX[usize::from(byte & 0x0f)]),
+            ]
+        })
+        .collect()
 }
 
 /// Read the raw snapshot bytes and verify them against the pin.
@@ -221,6 +235,17 @@ pub fn read_verified_input(path: &Path, pin: &Pin) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sha256_verification_preserves_canonical_hex_and_case_insensitive_comparison() {
+        let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(verify_sha256(b"abc", expected), Ok(()));
+        assert_eq!(
+            verify_sha256(b"abc", &expected.to_ascii_uppercase()),
+            Ok(())
+        );
+        assert_eq!(verify_sha256(b"abc", &"0".repeat(64)), Err(expected.into()));
+    }
 
     #[test]
     fn package_attribute_encoding_is_single_pass() {

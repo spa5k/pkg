@@ -3,7 +3,6 @@
 //! The native profile is authoritative. No config or cache file is
 //! authoritative for installed packages.
 
-use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// The dedicated package profile relative to the state base.
@@ -27,11 +26,13 @@ pub struct Paths {
 }
 
 /// A configuration or path error with a useful diagnostic.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     /// The home directory is unset or relative.
+    #[error("HOME is unset or relative; cannot derive pkg paths")]
     NoHome,
     /// An XDG base variable is set to a relative path.
+    #[error("{variable} must be an absolute path when set (got {value:?})")]
     RelativeBase {
         /// The variable name, for example `XDG_STATE_HOME`.
         variable: &'static str,
@@ -39,33 +40,11 @@ pub enum ConfigError {
         value: String,
     },
     /// The config file could not be read.
-    ReadFailed(std::io::Error),
+    #[error("cannot read config file: {0}")]
+    ReadFailed(#[source] std::io::Error),
     /// The config file is not valid TOML or has invalid values.
-    Invalid(toml::de::Error),
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoHome => write!(f, "HOME is unset or relative; cannot derive pkg paths"),
-            Self::RelativeBase { variable, value } => write!(
-                f,
-                "{variable} must be an absolute path when set (got {value:?})"
-            ),
-            Self::ReadFailed(error) => write!(f, "cannot read config file: {error}"),
-            Self::Invalid(detail) => write!(f, "invalid config: {detail}"),
-        }
-    }
-}
-
-impl std::error::Error for ConfigError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::ReadFailed(source) => Some(source),
-            Self::Invalid(source) => Some(source),
-            _ => None,
-        }
-    }
+    #[error("invalid config: {0}")]
+    Invalid(#[source] toml::de::Error),
 }
 
 fn home_dir() -> Result<PathBuf, ConfigError> {
@@ -119,24 +98,6 @@ impl Paths {
     }
 }
 
-/// The default Nixpkgs source reference (design D5).
-#[must_use]
-pub fn default_nixpkgs() -> String {
-    String::from("github:NixOS/nixpkgs/nixpkgs-unstable")
-}
-
-/// The default Cask product flake reference (design D6).
-#[must_use]
-pub fn default_casks() -> String {
-    String::from("github:spa5k/pkg/main?dir=nix/casks")
-}
-
-/// The default native Formula source.
-#[must_use]
-pub fn default_formulae() -> String {
-    String::from("github:spa5k/pkg/main?dir=nix/formulae")
-}
-
 /// Source references and display settings.
 ///
 /// This is the only persistent client configuration; installed state lives in
@@ -157,59 +118,50 @@ pub struct Config {
 
 /// Catalog source references.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct Sources {
     /// The Nixpkgs flake reference.
-    #[serde(default = "default_nixpkgs")]
     pub nixpkgs: String,
     /// The Cask product flake reference.
-    #[serde(default = "default_casks")]
     pub casks: String,
     /// The Formula product flake reference.
-    #[serde(default = "default_formulae")]
     pub formulae: String,
 }
 
 impl Default for Sources {
     fn default() -> Self {
         Self {
-            nixpkgs: default_nixpkgs(),
-            casks: default_casks(),
-            formulae: default_formulae(),
+            nixpkgs: String::from("github:NixOS/nixpkgs/nixpkgs-unstable"),
+            casks: String::from("github:spa5k/pkg/main?dir=nix/casks"),
+            formulae: String::from("github:spa5k/pkg/main?dir=nix/formulae"),
         }
     }
 }
 
 /// Output preferences.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct Display {
     /// Color policy. Only `never` has an effect: it disables colored
     /// output, including for native text pkg passes through. Any other
     /// value is accepted and leaves color handling unchanged; `pkg` has
     /// no setting that forces color on.
-    #[serde(default = "default_color")]
     pub color: String,
-}
-
-fn default_color() -> String {
-    String::from("auto")
 }
 
 impl Default for Display {
     fn default() -> Self {
         Self {
-            color: default_color(),
+            color: String::from("auto"),
         }
     }
 }
 
 /// Runtime selection.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct Runtime {
     /// Optional absolute or PATH-relative `nix` executable override.
-    #[serde(default)]
     pub nix: Option<String>,
 }
 

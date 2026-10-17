@@ -251,20 +251,21 @@ else map (inspect selected) paths"#
             "65536",
         ];
         bounded_args.extend_from_slice(args);
-        let command_line = Self::argv(&bounded_args);
-        if self.verbose {
-            eprintln!("pkg: nix {}", command_line.join(" "));
-        }
-        let mut command = std::process::Command::new(&self.executable);
-        command.args(command_line);
+        let mut command = self.command(&bounded_args);
         command.env("GC_INITIAL_HEAP_SIZE", "8388608");
         command.env("GC_FREE_SPACE_DIVISOR", divisor);
         command.env("MIMALLOC_PURGE_DELAY", "0");
-        if self.no_color {
-            command.env("NO_COLOR", "1");
-        }
-        let reaped =
-            process::run_child_bounded(command, 512 * 1024 * 1024).map_err(NixError::Spawn)?;
+        let reaped = process::run_child(
+            command,
+            process::IoMode::Capture,
+            Some(process::ChildLimits {
+                resident_bytes: Some(512 * 1024 * 1024),
+                wall_time: std::time::Duration::from_mins(2),
+                output_bytes: 16 * 1024 * 1024,
+            }),
+            None,
+        )
+        .map_err(NixError::Process)?;
         Self::finish(args, &reaped)?;
         serde_json::from_slice(&reaped.output.stdout).map_err(|error| NixError::Json {
             what,

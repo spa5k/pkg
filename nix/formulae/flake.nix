@@ -1,6 +1,6 @@
 {
   description = "pkg Homebrew Formulae as native Nix packages, without Brew";
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/8edc0c72e3a38faf5434e40d1f19431125fe4b30";
   outputs = { nixpkgs, ... }:
     import ./lib/catalog.nix {
       inherit nixpkgs;

@@ -16,11 +16,51 @@
 //! manual review instruction. No probe, no grep, no automatic chmod.
 
 use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::Command;
 
 use super::consent::stdin_is_terminal;
 use crate::nix::Nix;
+
+/// A sandbox setup failure retained until command reporting.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SetupError {
+    #[error("{0}")]
+    Message(String),
+    #[error("{0}")]
+    Native(#[from] crate::nix::NixError),
+    #[error("could not {operation}: {source}")]
+    Process {
+        operation: String,
+        #[source]
+        source: pkg_process::RunError,
+    },
+    #[error("{operation} was interrupted by signal {signal}")]
+    Interrupted { operation: String, signal: i32 },
+}
+
+impl From<String> for SetupError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<&str> for SetupError {
+    fn from(message: &str) -> Self {
+        Self::Message(message.to_owned())
+    }
+}
+
+impl SetupError {
+    pub(crate) fn signal(&self) -> Option<i32> {
+        match self {
+            Self::Native(error) => error.signal(),
+            Self::Process { source, .. } => source.cancelled,
+            Self::Interrupted { signal, .. } => Some(*signal),
+            Self::Message(_) => None,
+        }
+    }
+}
 
 /// The private build temp directory the daemon must hand to builds.
 const BUILDS_DIR: &str = "/nix/var/nix/builds";
@@ -58,14 +98,13 @@ enum GlobalConf {
 #[derive(Debug, Default, PartialEq, Eq)]
 struct World {
     builds_dir_ready: bool,
-    /// Whether the custom settings file exists and carries the
-    /// fail-closed settings. `None` means the file is absent.
-    custom_conf_settings: Option<bool>,
+    /// Whether the observed effective settings enable the sandbox and disable fallback.
+    sandbox_settings_ready: bool,
     nix_conf: GlobalConf,
-    determinate_plist: Option<PathBuf>,
+    determinate_plist_present: bool,
     grant_settings: Option<String>,
-    plist_has_environment: bool,
-    plist_has_tmpdir: bool,
+    /// None means no environment dictionary; Some records whether it has TMPDIR.
+    environment_tmpdir: Option<bool>,
 }
 
 /// Inspect the global config without reading its contents.
@@ -88,13 +127,10 @@ fn inspect_global_conf(path: &Path) -> Result<GlobalConf, String> {
             path.display()
         ));
     }
-    #[cfg(unix)]
     let readable = {
         use std::os::unix::fs::PermissionsExt as _;
         metadata.permissions().mode() & 0o004 != 0
     };
-    #[cfg(not(unix))]
-    let readable = true;
     Ok(if readable {
         GlobalConf::Readable
     } else {
@@ -102,43 +138,16 @@ fn inspect_global_conf(path: &Path) -> Result<GlobalConf, String> {
     })
 }
 
-/// How one settings file looks: missing, readable (with its content), or
-/// unreadable/unusable with the cause preserved.
-///
-/// The cause matters because callers decide control flow from this
-/// inspection: a missing file plans the append step, and a file that
-/// cannot be inspected must never become "append anyway".
-#[derive(Debug, PartialEq, Eq)]
-enum ConfFile {
-    /// The file does not exist.
-    Missing,
-    /// The file exists and was read; whether it carries the settings.
-    Read { has_settings: bool },
-    /// The file exists but could not be read (permission denied, or any
-    /// other error with the exact cause).
-    Unreadable(String),
-    /// The file exists but is not valid UTF-8; it cannot be inspected.
-    Malformed(String),
-}
-
-/// Read one settings file, distinguishing missing, unreadable, and
-/// malformed with the cause preserved.
-fn read_conf_file(path: &Path) -> ConfFile {
+/// Check custom-config readability and UTF-8, preserving the refusal cause.
+fn check_conf_file(path: &Path) -> Result<(), String> {
     match std::fs::read_to_string(path) {
-        Ok(text) => ConfFile::Read {
-            has_settings: text.contains("sandbox = true")
-                && text.contains("sandbox-fallback = false"),
-        },
-        Err(error) => match error.kind() {
-            std::io::ErrorKind::NotFound => ConfFile::Missing,
-            std::io::ErrorKind::PermissionDenied => {
-                ConfFile::Unreadable(format!("permission denied: {error}"))
-            }
-            std::io::ErrorKind::InvalidData => {
-                ConfFile::Malformed(format!("not valid UTF-8 text: {error}"))
-            }
-            _ => ConfFile::Unreadable(format!("{}: {error}", path.display())),
-        },
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(match error.kind() {
+            std::io::ErrorKind::PermissionDenied => format!("permission denied: {error}"),
+            std::io::ErrorKind::InvalidData => format!("not valid UTF-8 text: {error}"),
+            _ => format!("{}: {error}", path.display()),
+        }),
     }
 }
 
@@ -153,28 +162,18 @@ fn inspect() -> Result<World, String> {
 
 /// [`inspect`] against explicit paths, so the distinctions are testable.
 fn inspect_at(custom_conf: &Path, nix_conf: &Path) -> Result<World, String> {
-    let custom_conf_settings = match read_conf_file(custom_conf) {
-        ConfFile::Missing => None,
-        ConfFile::Read { has_settings } => Some(has_settings),
-        ConfFile::Unreadable(cause) | ConfFile::Malformed(cause) => {
-            return Err(format!(
-                "cannot inspect {}: {cause}; an administrator must review \
-                 it by hand before the sandbox setup runs",
-                custom_conf.display()
-            ));
-        }
-    };
+    check_conf_file(custom_conf).map_err(|cause| format!(
+        "cannot inspect {}: {cause}; an administrator must review it by hand before the sandbox setup runs",
+        custom_conf.display()
+    ))?;
     let nix_conf = inspect_global_conf(nix_conf)?;
     Ok(World {
         builds_dir_ready: Path::new(BUILDS_DIR).is_dir(),
-        custom_conf_settings,
+        sandbox_settings_ready: false,
         nix_conf,
-        determinate_plist: Path::new(DETERMINATE_PLIST)
-            .exists()
-            .then(|| PathBuf::from(DETERMINATE_PLIST)),
+        determinate_plist_present: Path::new(DETERMINATE_PLIST).exists(),
         grant_settings: None,
-        plist_has_environment: false,
-        plist_has_tmpdir: false,
+        environment_tmpdir: None,
     })
 }
 
@@ -187,17 +186,11 @@ fn step(summary: &str, argv: &[&str]) -> Step {
     }
 }
 
-/// Build one Step from string parts for the stdin-fed case.
-fn custom_step(summary: &str, parts: &[String], stdin: Option<String>) -> Step {
-    Step {
-        summary: String::from(summary),
-        argv: parts.to_vec(),
-        stdin,
+impl Step {
+    fn with_input(mut self, stdin: String) -> Self {
+        self.stdin = Some(stdin);
+        self
     }
-}
-
-fn owned(parts: &[&str]) -> Vec<String> {
-    parts.iter().map(|part| (*part).to_string()).collect()
 }
 
 /// What the planned setup does with this host.
@@ -247,24 +240,26 @@ fn plan(world: &World) -> PlanOutcome {
             &["sudo", "chmod", "0755", BUILDS_DIR],
         ));
     }
-    if world.custom_conf_settings != Some(true) {
-        let parts = owned(&["sudo", "tee", "-a", CUSTOM_CONF]);
-        steps.push(custom_step(
-            "append sandbox = true and sandbox-fallback = false to /etc/nix/nix.custom.conf",
-            &parts,
-            Some(String::from("sandbox = true\nsandbox-fallback = false\n")),
-        ));
+    if !world.sandbox_settings_ready {
+        steps.push(
+            step(
+                "append sandbox = true and sandbox-fallback = false to /etc/nix/nix.custom.conf",
+                &["sudo", "tee", "-a", CUSTOM_CONF],
+            )
+            .with_input(String::from("sandbox = true\nsandbox-fallback = false\n")),
+        );
     }
     if let Some(settings) = &world.grant_settings {
-        steps.push(custom_step(
-            "remove the known global /private/tmp and /private/var/tmp sandbox grants",
-            &owned(&["sudo", "tee", "-a", CUSTOM_CONF]),
-            Some(settings.clone()),
-        ));
+        steps.push(
+            step(
+                "remove the known global /private/tmp and /private/var/tmp sandbox grants",
+                &["sudo", "tee", "-a", CUSTOM_CONF],
+            )
+            .with_input(settings.clone()),
+        );
     }
-    if let Some(plist) = &world.determinate_plist {
-        let plist_text = plist.display().to_string();
-        if !world.plist_has_environment {
+    if world.determinate_plist_present {
+        if world.environment_tmpdir.is_none() {
             steps.push(step(
                 "create the daemon environment dictionary",
                 &[
@@ -274,7 +269,7 @@ fn plan(world: &World) -> PlanOutcome {
                     "EnvironmentVariables",
                     "-json",
                     "{}",
-                    &plist_text,
+                    DETERMINATE_PLIST,
                 ],
             ));
         }
@@ -283,7 +278,7 @@ fn plan(world: &World) -> PlanOutcome {
             &[
                 "sudo",
                 "plutil",
-                if world.plist_has_tmpdir {
+                if world.environment_tmpdir == Some(true) {
                     "-replace"
                 } else {
                     "-insert"
@@ -291,7 +286,7 @@ fn plan(world: &World) -> PlanOutcome {
                 "EnvironmentVariables.TMPDIR",
                 "-string",
                 BUILDS_DIR,
-                &plist_text,
+                DETERMINATE_PLIST,
             ],
         ));
         steps.push(step(
@@ -305,7 +300,13 @@ fn plan(world: &World) -> PlanOutcome {
         ));
         steps.push(step(
             "load the changed daemon service definition",
-            &["sudo", "launchctl", "bootstrap", "system", &plist_text],
+            &[
+                "sudo",
+                "launchctl",
+                "bootstrap",
+                "system",
+                DETERMINATE_PLIST,
+            ],
         ));
     }
     PlanOutcome::Steps(steps)
@@ -317,84 +318,103 @@ fn plan(world: &World) -> PlanOutcome {
 /// exits or closes its input before consuming the payload (for example a
 /// `tee` that could not open its target) must not be reported as a step
 /// whose input was delivered.
-fn run_step(step: &Step) -> Result<bool, String> {
-    let mut command = Command::new(&step.argv[0]);
-    command.args(&step.argv[1..]);
-    if step.stdin.is_some() {
-        command.stdin(Stdio::piped());
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("could not run {}: {error}", step.argv.join(" ")))?;
-    if let Some(text) = &step.stdin {
-        let input = match child.stdin.take() {
-            Some(mut stdin) => stdin
-                .write_all(text.as_bytes())
-                .and_then(|()| stdin.flush()),
-            None => Err(std::io::Error::other("the child has no piped stdin")),
-        };
-        if let Err(error) = input {
-            let _ = child.kill();
-            let waited = child.wait();
-            let mut message = format!("could not feed input to {}: {error}", step.argv.join(" "));
-            if let Err(error) = waited {
-                use std::fmt::Write as _;
-                let _ = write!(
-                    message,
-                    "; waiting for the failed child also failed: {error}"
-                );
-            }
-            return Err(message);
-        }
-    }
-    let mut status = child
-        .wait()
-        .map_err(|error| format!("waiting for {} failed: {error}", step.argv.join(" ")))?;
+fn run_step(step: &Step) -> Result<bool, SetupError> {
+    let run = || {
+        let mut command = Command::new(&step.argv[0]);
+        command.args(&step.argv[1..]);
+        pkg_process::run_child(
+            command,
+            pkg_process::IoMode::Stream,
+            None,
+            step.stdin.as_deref().map(str::as_bytes),
+        )
+        .map_err(|source| SetupError::Process {
+            operation: format!(
+                "{} {}",
+                if step.stdin.is_some() {
+                    "feed input to or supervise"
+                } else {
+                    "supervise"
+                },
+                step.argv.join(" ")
+            ),
+            source,
+        })
+    };
+    let mut reaped = run()?;
     if step.argv
-        == owned(&[
+        == [
             "sudo",
             "launchctl",
             "bootstrap",
             "system",
             DETERMINATE_PLIST,
-        ])
+        ]
     {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        if status.code() == Some(5) {
+        if reaped.output.status.code() == Some(5) {
             eprintln!("Waiting for launchd to finish removing the old daemon…");
         }
-        while status.code() == Some(5) && std::time::Instant::now() < deadline {
+        while reaped.cancelled.is_none()
+            && reaped.output.status.code() == Some(5)
+            && std::time::Instant::now() < deadline
+        {
             std::thread::sleep(std::time::Duration::from_millis(250));
-            status = command.status().map_err(|error| error.to_string())?;
+            reaped = run()?;
         }
     }
-    Ok(status.success())
+    match reaped.classify() {
+        pkg_process::Outcome::Success => Ok(true),
+        pkg_process::Outcome::Failed { .. } => Ok(false),
+        pkg_process::Outcome::Interrupted { signal } => Err(SetupError::Interrupted {
+            operation: step.argv.join(" "),
+            signal,
+        }),
+    }
+}
+
+/// Read one setup observation without losing cancellation.
+fn capture_probe(tool: &str, args: &[&str]) -> Result<Option<String>, SetupError> {
+    let operation = format!("{tool} {}", args.join(" "));
+    let (outcome, text) =
+        pkg_process::run_direct_captured(Path::new(tool), args).map_err(|source| {
+            SetupError::Process {
+                operation: format!("supervise {operation}"),
+                source,
+            }
+        })?;
+    match outcome {
+        pkg_process::Outcome::Success => Ok(Some(text)),
+        pkg_process::Outcome::Failed { .. } => Ok(None),
+        pkg_process::Outcome::Interrupted { signal } => {
+            Err(SetupError::Interrupted { operation, signal })
+        }
+    }
 }
 
 /// Verify the sandbox settings as seen from this account.
-fn readiness(nix: &Nix) -> Result<(), String> {
-    let config = nix.effective_config().map_err(|error| error.to_string())?;
+fn readiness(nix: &Nix) -> Result<(), SetupError> {
+    let config = nix.effective_config()?;
     cask_catalog::tap::verify_effective_config(&config, std::env::consts::OS)?;
     if cfg!(target_os = "macos") {
-        let output = Command::new("/bin/launchctl")
-            .args(["print", "system/systems.determinate.nix-daemon"])
-            .output()
-            .map_err(|error| error.to_string())?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        if !output.status.success()
-            || !text
+        let text = capture_probe(
+            "/bin/launchctl",
+            &["print", "system/systems.determinate.nix-daemon"],
+        )?;
+        if text.is_none_or(|text| {
+            !text
                 .lines()
                 .any(|line| line.trim() == "TMPDIR => /nix/var/nix/builds")
-        {
+        }) {
             return Err(String::from(
                 "The live daemon does not report TMPDIR=/nix/var/nix/builds. Reload its service with sudo launchctl bootout system/systems.determinate.nix-daemon, then sudo launchctl bootstrap system /Library/LaunchDaemons/systems.determinate.nix-daemon.plist.",
-            ));
+            ).into());
         }
     }
     Ok(())
 }
 
-fn verify(nix: &Nix) -> Result<bool, String> {
+fn verify(nix: &Nix) -> Result<bool, SetupError> {
     readiness(nix)?;
     println!(
         "pkg: effective grants and live daemon environment verified. The fresh build probe remains required."
@@ -408,47 +428,48 @@ fn verify(nix: &Nix) -> Result<bool, String> {
 /// manual path instead. Every command is one fixed argument vector. An
 /// uninspectable host (unreadable or malformed settings file) or an
 /// unreadable global config runs nothing.
-pub(crate) fn offer_and_apply(nix: &Nix) -> Result<bool, String> {
+pub(crate) fn offer_and_apply(nix: &Nix) -> Result<bool, SetupError> {
     if !stdin_is_terminal() {
         println!("pkg: run from a terminal to apply the one-time sandbox setup");
         return Ok(false);
     }
     let mut world = inspect()?;
     if world.nix_conf != GlobalConf::Unreadable {
-        let config = nix.effective_config().map_err(|error| error.to_string())?;
-        world.custom_conf_settings = Some(
-            config
-                .pointer("/sandbox/value")
+        let config = nix.effective_config()?;
+        world.sandbox_settings_ready = config
+            .pointer("/sandbox/value")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+            && config
+                .pointer("/sandbox-fallback/value")
                 .and_then(serde_json::Value::as_bool)
-                == Some(true)
-                && config
-                    .pointer("/sandbox-fallback/value")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(false),
-        );
+                == Some(false);
         if cfg!(target_os = "macos") {
             world.grant_settings = cask_catalog::tap::mac_setup_settings(&config).map_err(|error| format!("Automatic setup stopped. Review sandbox-paths, extra-sandbox-paths, and allowed-impure-host-deps in the daemon config by hand. {error}"))?;
-            if let Some(plist) = &world.determinate_plist {
-                let result = Command::new("/usr/bin/plutil")
-                    .args(["-extract", "EnvironmentVariables", "json", "-o", "-"])
-                    .arg(plist)
-                    .output()
-                    .map_err(|error| error.to_string())?;
-                if result.status.success() {
-                    let value: serde_json::Value =
-                        serde_json::from_slice(&result.stdout).map_err(|_| {
-                            String::from("Cannot inspect the daemon environment dictionary.")
-                        })?;
+            if world.determinate_plist_present {
+                if let Some(text) = capture_probe(
+                    "/usr/bin/plutil",
+                    &[
+                        "-extract",
+                        "EnvironmentVariables",
+                        "json",
+                        "-o",
+                        "-",
+                        DETERMINATE_PLIST,
+                    ],
+                )? {
+                    let value: serde_json::Value = serde_json::from_str(&text).map_err(|_| {
+                        String::from("Cannot inspect the daemon environment dictionary.")
+                    })?;
                     let environment = value
                         .as_object()
                         .ok_or("The daemon environment is not a dictionary.")?;
-                    world.plist_has_environment = true;
-                    world.plist_has_tmpdir = environment.contains_key("TMPDIR");
+                    world.environment_tmpdir = Some(environment.contains_key("TMPDIR"));
                 }
             } else {
                 return Err(String::from(
                     "The Determinate daemon plist was not found. Set its TMPDIR to /nix/var/nix/builds and reload your custom service by hand.",
-                ));
+                ).into());
             }
         }
     }
@@ -462,7 +483,7 @@ pub(crate) fn offer_and_apply(nix: &Nix) -> Result<bool, String> {
 }
 
 /// Ask once, run the steps, and verify.
-fn apply(nix: &Nix, steps: &[Step]) -> Result<bool, String> {
+fn apply(nix: &Nix, steps: &[Step]) -> Result<bool, SetupError> {
     if steps.is_empty() {
         return verify(nix);
     }
@@ -492,23 +513,24 @@ fn apply(nix: &Nix, steps: &[Step]) -> Result<bool, String> {
             return Err(format!(
                 "this step failed: {}. To restore the service, run sudo launchctl bootstrap system {DETERMINATE_PLIST}",
                 step.summary
-            ));
+            ).into());
         }
     }
     verify(nix)
 }
 
 /// One doctor observation for the tap sandbox gate; read-only.
-pub(crate) fn doctor_status(nix: &Nix) -> (String, String) {
-    match readiness(nix) {
+pub(crate) fn doctor_status(nix: &Nix) -> Result<(String, String), SetupError> {
+    Ok(match readiness(nix) {
         Ok(()) => (
             String::from("ok"),
             String::from(
                 "effective grants and live daemon environment pass; the fresh build probe remains required",
             ),
         ),
-        Err(error) => (String::from("blocked"), error),
-    }
+        Err(error) if error.signal().is_some() => return Err(error),
+        Err(error) => (String::from("blocked"), error.to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -518,12 +540,11 @@ mod tests {
     fn unconfigured() -> World {
         World {
             builds_dir_ready: false,
-            custom_conf_settings: None,
+            sandbox_settings_ready: false,
             nix_conf: GlobalConf::Readable,
-            determinate_plist: Some(PathBuf::from(DETERMINATE_PLIST)),
+            determinate_plist_present: true,
             grant_settings: None,
-            plist_has_environment: true,
-            plist_has_tmpdir: true,
+            environment_tmpdir: Some(true),
         }
     }
 
@@ -549,12 +570,11 @@ mod tests {
     fn plans_nothing_on_a_ready_host() {
         let world = World {
             builds_dir_ready: true,
-            custom_conf_settings: Some(true),
+            sandbox_settings_ready: true,
             nix_conf: GlobalConf::Readable,
-            determinate_plist: None,
+            determinate_plist_present: false,
             grant_settings: None,
-            plist_has_environment: false,
-            plist_has_tmpdir: false,
+            environment_tmpdir: None,
         };
         assert_eq!(plan(&world), PlanOutcome::Steps(Vec::new()));
     }
@@ -582,12 +602,11 @@ mod tests {
         // because no such step exists at all.
         let world = World {
             builds_dir_ready: false,
-            custom_conf_settings: None,
+            sandbox_settings_ready: false,
             nix_conf: GlobalConf::Unreadable,
-            determinate_plist: Some(PathBuf::from(DETERMINATE_PLIST)),
+            determinate_plist_present: true,
             grant_settings: None,
-            plist_has_environment: true,
-            plist_has_tmpdir: true,
+            environment_tmpdir: Some(true),
         };
         let PlanOutcome::ManualReview(instruction) = plan(&world) else {
             panic!("an unreadable global config refuses automatic setup");
@@ -613,21 +632,24 @@ mod tests {
         let custom = dir.path().join("nix.custom.conf");
         let nix_conf = dir.path().join("nix.conf");
 
-        // Missing files inspect cleanly: no settings, no global config.
+        // Missing files inspect cleanly; effective settings remain unobserved.
         let world = inspect_at(&custom, &nix_conf).expect("missing files inspect");
-        assert_eq!(world.custom_conf_settings, None);
+        assert!(!world.sandbox_settings_ready);
         assert_eq!(world.nix_conf, GlobalConf::Missing);
 
-        // A readable custom config reports its settings honestly.
+        // A readable UTF-8 custom config permits later effective-settings observation.
         std::fs::write(&custom, "sandbox = true\nsandbox-fallback = false\n")
             .expect("write settings");
         std::fs::write(&nix_conf, "sandbox = true\n").expect("write global");
         let world = inspect_at(&custom, &nix_conf).expect("readable files inspect");
-        assert_eq!(world.custom_conf_settings, Some(true));
+        assert!(
+            !world.sandbox_settings_ready,
+            "file readability does not prove effective settings"
+        );
         assert_eq!(world.nix_conf, GlobalConf::Readable);
         std::fs::write(&custom, "build-users-group = nixbld\n").expect("write other settings");
         let world = inspect_at(&custom, &nix_conf).expect("readable files inspect");
-        assert_eq!(world.custom_conf_settings, Some(false));
+        assert!(!world.sandbox_settings_ready);
 
         // A malformed (non-UTF-8) custom config is refused with its
         // cause: the append decision depends on this inspection.
@@ -684,18 +706,24 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let pid_file = dir.path().join("child-pid");
         let payload = format!("{}\n", "x".repeat(256 * 1024));
-        let step = custom_step(
+        let step = step(
             "feed a child that refuses input",
-            &owned(&[
+            &[
                 "/bin/sh",
                 "-c",
                 "echo $$ > \"$1\"; exec 0<&-; exec sleep 30",
                 "test-child",
                 pid_file.to_str().expect("pid path"),
-            ]),
-            Some(payload),
-        );
+            ],
+        )
+        .with_input(payload);
         let error = run_step(&step).expect_err("a closed stdin must fail the step");
+        assert_eq!(
+            error.signal(),
+            None,
+            "a delivery failure is not cancellation"
+        );
+        let error = error.to_string();
         assert!(error.contains("could not feed input"), "{error}");
         let pid: libc::pid_t = std::fs::read_to_string(pid_file)
             .expect("child pid")
@@ -715,6 +743,64 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn setup_steps_keep_child_cancellation() {
+        use std::os::unix::fs::PermissionsExt as _;
+        for body in [
+            String::from("exit 130"),
+            format!("kill -{} $$", libc::SIGINT),
+            format!("kill -{} $$", libc::SIGTERM),
+            format!("kill -{} $$", libc::SIGHUP),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let child = dir.path().join("step");
+            std::fs::write(&child, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let expected = if body == "exit 130" {
+                libc::SIGINT
+            } else {
+                body.split_whitespace()
+                    .nth(1)
+                    .unwrap()
+                    .trim_start_matches('-')
+                    .parse()
+                    .unwrap()
+            };
+            for input in [None, Some("x".repeat(5 * 1024 * 1024))] {
+                let mut request = step("cancelled setup child", &[child.to_str().unwrap()]);
+                request.stdin = input;
+                let error = run_step(&request).expect_err("cancelled step");
+                assert_eq!(error.signal(), Some(expected));
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn setup_readiness_keeps_native_probe_cancellation() {
+        use std::os::unix::fs::PermissionsExt as _;
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let executable = dir.path().join("nix");
+            std::fs::write(&executable, format!("#!/bin/sh\ncase \"$*\" in *--version*) echo 'nix (Nix) 2.35.2'; exit 0;; esac\nkill -{signal} $$\n")).expect("fake nix");
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+                .expect("executable");
+            let nix = crate::nix::discover(Some(executable.to_str().expect("nix path")))
+                .expect("runtime");
+            assert_eq!(
+                verify(&nix).expect_err("cancelled setup check").signal(),
+                Some(signal)
+            );
+            assert_eq!(
+                doctor_status(&nix)
+                    .expect_err("cancelled doctor check")
+                    .signal(),
+                Some(signal)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn failed_settings_queries_keep_their_cause() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().expect("tempdir");
@@ -727,9 +813,10 @@ mod tests {
         assert!(
             verify(&nix)
                 .expect_err("failed query must not become an empty setting")
+                .to_string()
                 .contains("fixture settings query failed")
         );
-        let (status, detail) = doctor_status(&nix);
+        let (status, detail) = doctor_status(&nix).expect("failed query is a doctor observation");
         assert_eq!(status, "blocked");
         assert!(detail.contains("fixture settings query failed"), "{detail}");
     }

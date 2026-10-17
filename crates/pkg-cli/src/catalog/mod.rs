@@ -24,15 +24,10 @@ mod native;
 mod routing;
 mod search;
 
-use std::fmt;
-
 use crate::nix::NixError;
 
 pub use availability::{Availability, CaskHost};
-pub use cask::{
-    CaskStatus, CatalogOnce, CatalogView, INDEX_ATTRIBUTE, native_package_attribute,
-    package_attribute, record, sources_with_token, status,
-};
+pub use cask::{CatalogOnce, CatalogView, native_package_attribute, package_attribute};
 pub use id::{CatalogId, CatalogIdKind, ParsedId, canonical_source, parse_id};
 pub use local::{
     missing_report, prepare_catalog, record_search_system, search_local_casks, search_local_native,
@@ -43,17 +38,23 @@ pub use matching::SearchQuery;
 pub use routing::Routing;
 pub use search::{
     ExactMatch, SearchResult, SourceKind, SourceReport, SourceStatus, SupportBadge, catalog_meta,
-    exact_lookup, exposed_attribute, prepare_source, report_for, resolve_bare, resolve_bare_cask,
+    exact_lookup, exposed_attribute, prepare_source, report_for, resolve_bare,
 };
 
 /// A catalog routing error.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
     /// Discovery was cancelled by a signal.
+    #[error("discovery cancelled by signal {0}")]
     Interrupted(i32),
     /// A name or attribute matched nothing in the queried source.
+    #[error("no supported exact match for `{0}`")]
     NotFound(String),
     /// A name matched more than one supported output.
+    #[error(
+        "{}",
+        choice_message(name, choices, "is ambiguous; choose a package ID")
+    )]
     Ambiguous {
         /// The requested name.
         name: String,
@@ -61,6 +62,7 @@ pub enum CatalogError {
         choices: Vec<String>,
     },
     /// A short alias only resolves to a hidden development package or variant.
+    #[error("{}", choice_message(name, choices, "needs an exact package ID"))]
     RequiresId {
         /// The requested short name.
         name: String,
@@ -68,11 +70,17 @@ pub enum CatalogError {
         choices: Vec<String>,
     },
     /// A source query failed. Native diagnostics are preserved.
+    #[error("{0}")]
     Source(String),
     /// A native source query failed.
-    Native(NixError),
+    #[error("{0}")]
+    Native(#[source] NixError),
+    /// A host-version probe was cancelled.
+    #[error("{0}")]
+    Host(#[source] std::sync::Arc<crate::nix::HostVersionError>),
     /// The disposable cache could not be written.
-    CacheWrite(Box<dyn std::error::Error + Send + Sync>),
+    #[error("cannot write discovery cache: {0}")]
+    CacheWrite(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl CatalogError {
@@ -82,44 +90,26 @@ impl CatalogError {
     }
 }
 
-impl fmt::Display for CatalogError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Interrupted(signal) => write!(f, "discovery cancelled by signal {signal}"),
-            Self::NotFound(name) => write!(f, "no supported exact match for `{name}`"),
-            Self::Ambiguous { name, choices } | Self::RequiresId { name, choices } => {
-                if matches!(self, Self::RequiresId { .. }) {
-                    write!(f, "`{name}` needs an exact package ID:")?;
-                } else {
-                    write!(f, "`{name}` is ambiguous; choose a package ID:")?;
-                }
-                for choice in choices.iter().take(8) {
-                    write!(f, "\n  {choice}")?;
-                }
-                if choices.len() > 8 {
-                    write!(
-                        f,
-                        "\n  {} more choices. Use `pkg search {name} --broad` to inspect them.",
-                        choices.len() - 8
-                    )?;
-                }
-                Ok(())
-            }
-            Self::Source(detail) => write!(f, "{detail}"),
-            Self::Native(source) => source.fmt(f),
-            Self::CacheWrite(detail) => write!(f, "cannot write discovery cache: {detail}"),
-        }
+impl From<rusqlite::Error> for CatalogError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::cache_write(error)
     }
 }
 
-impl std::error::Error for CatalogError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Native(source) => Some(source),
-            Self::CacheWrite(source) => Some(source.as_ref()),
-            _ => None,
-        }
+fn choice_message(name: &str, choices: &[String], header: &str) -> String {
+    use std::fmt::Write as _;
+    let mut message = format!("`{name}` {header}:");
+    for choice in choices.iter().take(8) {
+        let _ = write!(message, "\n  {choice}");
     }
+    if choices.len() > 8 {
+        let _ = write!(
+            message,
+            "\n  {} more choices. Use `pkg search {name} --broad` to inspect them.",
+            choices.len() - 8
+        );
+    }
+    message
 }
 
 impl From<NixError> for CatalogError {
@@ -127,6 +117,19 @@ impl From<NixError> for CatalogError {
         match error {
             NixError::Interrupted { signal, .. } => Self::Interrupted(signal),
             error => Self::Native(error),
+        }
+    }
+}
+
+impl CatalogError {
+    /// The cancellation signal retained by discovery or its native child.
+    #[must_use]
+    pub fn signal(&self) -> Option<i32> {
+        match self {
+            Self::Interrupted(signal) => Some(*signal),
+            Self::Native(error) => error.signal(),
+            Self::Host(error) => error.signal(),
+            _ => None,
         }
     }
 }
