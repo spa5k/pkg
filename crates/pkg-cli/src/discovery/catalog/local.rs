@@ -321,7 +321,8 @@ mod tests {
     #[test]
     fn cached_rows_keep_provenance_and_old_platform_data_stays_stale() {
         let raw: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/fixtures/catalog-index.json")).unwrap();
+            serde_json::from_str(include_str!("../../../tests/fixtures/catalog-index.json"))
+                .unwrap();
         let index = crate::nix::decode_catalog_index(&raw).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let mut snapshot = cache::IndexSnapshot {

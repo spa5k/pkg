@@ -16,12 +16,12 @@
 
 use crate::cli::{Cli, TapCommand};
 use crate::nix::OFFICIAL_CASK_SOURCE;
-use crate::tap::{self, consent, registry, store};
+use crate::tap::{consent, registry, store};
 
 mod staging;
 use staging::{StagedImport, stage_import_with_setup};
 
-use super::{CommandError, Session, print_json};
+use crate::commands::{CommandError, Session, print_json, session};
 
 /// Validate one requested revision pin, when present.
 ///
@@ -133,7 +133,7 @@ pub(super) fn add(
     };
 
     // Only now do the runtime and the importer run.
-    let session = super::session(cli)?;
+    let session = session(cli)?;
     let (staged_generation, staged) =
         stage_import_with_setup(&session, &source, &origin, revision.as_deref(), now_unix())?;
     let mut publication = staged_generation.publish(&staged.provenance, &staged.index)?;
@@ -241,7 +241,7 @@ pub(super) fn update(
         )
         .into());
     }
-    let session = super::session(cli)?;
+    let session = session(cli)?;
     // Targets come from the registry alone: a broken saved catalog must
     // not prevent repair with this command.
     let registry_path = registry::registry_path(&session.paths.state_home);
@@ -300,25 +300,7 @@ fn report_publication(
 /// source. `remove` still works, and `pkg tap update SOURCE` can repair the catalog.
 pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
     let paths = crate::config::paths()?;
-    let registry_path = registry::registry_path(&paths.state_home);
-    let registry = registry::Registry::load(&registry_path)?;
-    let rows: Vec<TapRow> = registry
-        .sources
-        .iter()
-        .map(|(source, entry)| {
-            let state = tap::SavedCatalogs::load_one(&registry, &paths.state_home, source);
-            let provenance = state.as_ref().ok().map(tap::SavedCatalog::provenance);
-            TapRow {
-                source: source.clone(),
-                origin: entry.origin.clone(),
-                revision: provenance.map(|value| value.revision.clone()),
-                eligible: provenance.map(|value| value.eligible),
-                excluded: provenance.map(|value| value.excluded),
-                added_unix: entry.added_unix,
-                error: state.err(),
-            }
-        })
-        .collect();
+    let rows = super::query::rows(&paths.state_home)?;
     if cli.json {
         print_json(&crate::output::envelope("tap-list", &rows))?;
     } else if rows.is_empty() {
@@ -348,18 +330,6 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
         }
     }
     Ok(())
-}
-
-/// One `pkg tap list` row.
-#[derive(serde::Serialize)]
-struct TapRow {
-    source: String,
-    origin: String,
-    revision: Option<String>,
-    eligible: Option<usize>,
-    excluded: Option<usize>,
-    added_unix: u64,
-    error: Option<String>,
 }
 
 /// `pkg tap remove SOURCE`
@@ -393,7 +363,7 @@ pub(super) fn remove(_cli: &Cli, source: &str) -> Result<(), CommandError> {
 }
 
 /// Dispatch one `pkg tap` subcommand.
-pub(super) fn dispatch(cli: &Cli, command: &TapCommand) -> Result<(), CommandError> {
+pub fn dispatch(cli: &Cli, command: &TapCommand) -> Result<(), CommandError> {
     match command {
         TapCommand::Add {
             source,
@@ -414,4 +384,23 @@ fn now_unix() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.as_secs())
         .unwrap_or_default()
+}
+
+/// Refresh registered sources without reading possibly damaged saved catalogs.
+pub fn refresh_registered(cli: &Cli, state_home: &std::path::Path) -> Result<bool, CommandError> {
+    let registry = registry::Registry::load(&registry::registry_path(state_home))?;
+    let mut failed = false;
+    for source in registry.sources.keys() {
+        match update(cli, Some(source), None) {
+            Ok(()) => {}
+            Err(error) if error.is_interrupted() || matches!(error, CommandError::Reported(_)) => {
+                return Err(error);
+            }
+            Err(error) => {
+                failed = true;
+                eprintln!("Failed: {source}: {error}");
+            }
+        }
+    }
+    Ok(failed)
 }

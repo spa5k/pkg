@@ -4,6 +4,8 @@
 //! ownership, and runs the pinned helper. Private payloads use one generated
 //! layout. Status reads the same derived source map without writing.
 mod assessment;
+mod command;
+pub(crate) use command::{command, refresh_after_profile_change};
 mod destination;
 pub(crate) mod error;
 mod helper;
@@ -49,14 +51,12 @@ pub(crate) fn sync(nix: &Nix, paths: &Paths) -> Result<(), AppError> {
             "pkg apps sync supports macOS only; .app bundles are not exposed on this platform",
         ));
     }
-    let profile = crate::profile_lock::LockedProfile::acquire(nix, paths)?;
+    let profile = crate::profile::LockedProfile::acquire(nix, paths)?;
     sync_locked(&profile)
 }
 
 /// Refresh launchers while the caller holds the profile lock.
-pub(crate) fn sync_locked(
-    profile: &crate::profile_lock::LockedProfile<'_>,
-) -> Result<(), AppError> {
+pub(crate) fn sync_locked(profile: &crate::profile::LockedProfile<'_>) -> Result<(), AppError> {
     let nix = profile.nix();
     let paths = profile.paths();
     if !cfg!(target_os = "macos") {
@@ -238,6 +238,6 @@ fn list_profile(
     nix: &Nix,
     profile: &Path,
 ) -> Result<BTreeMap<String, crate::nix::ProfileEntry>, AppError> {
-    nix.profile_list(profile)
+    crate::profile::entries(nix, profile)
         .map_err(|e| AppError::native(format!("could not list profile {}", profile.display()), e))
 }

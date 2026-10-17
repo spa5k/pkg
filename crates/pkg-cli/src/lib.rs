@@ -19,12 +19,13 @@
 
 pub mod apps;
 mod background;
-pub mod catalog;
+pub use discovery::catalog;
 pub mod cli;
 pub mod commands;
 pub mod config;
-mod installed;
+pub mod discovery;
 pub mod nix;
 pub mod output;
+mod profile;
 mod profile_lock;
 pub mod tap;

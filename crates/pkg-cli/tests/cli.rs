@@ -184,6 +184,81 @@ fn invalid_config_is_reported_without_replacing_the_file() {
 }
 
 #[test]
+fn profile_queries_preserve_native_state_without_creating_a_lock() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let manifest = serde_json::json!({
+        "version": 3,
+        "elements": { "native-hello": {
+            "active": true,
+            "attrPath": "legacyPackages.x86_64-linux.hello",
+            "originalUrl": "github:NixOS/nixpkgs/nixpkgs-unstable",
+            "url": "github:NixOS/nixpkgs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "storePaths": []
+        }}
+    })
+    .to_string();
+    let (nix, _runtime) = fake_nix(&format!(
+        "case \"$*\" in\n\
+         *--version*) echo 'nix (Nix) 2.35.2';;\n\
+         *'profile list'*) echo '{manifest}';;\n\
+         *'profile history'*) echo 'Version 3 (2026-10-18)';;\n\
+         *) echo \"unexpected nix call: $*\" >&2; exit 9;;\n\
+         esac"
+    ));
+    let path = format!(
+        "{}:/usr/bin:/bin",
+        nix.parent().expect("runtime directory").display()
+    );
+
+    let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["list", "--json"], &path);
+    assert_eq!(code, 0, "{stderr}");
+    let fresh: serde_json::Value = serde_json::from_str(&stdout).expect("list JSON");
+    assert_eq!(fresh["result"], serde_json::json!([]));
+    assert!(!home.path().join("state").exists());
+
+    let profiles = home.path().join("state/nix/profiles");
+    let generation = profiles.join("pkg-3-link");
+    std::fs::create_dir_all(&generation).expect("generation directory");
+    std::fs::write(generation.join("manifest.json"), &manifest).expect("native manifest");
+    let profile = profiles.join("pkg");
+    std::os::unix::fs::symlink("pkg-3-link", &profile).expect("active generation");
+
+    let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["list", "--json"], &path);
+    assert_eq!(code, 0, "{stderr}");
+    let installed: serde_json::Value = serde_json::from_str(&stdout).expect("list JSON");
+    assert_eq!(
+        installed["result"]
+            .as_array()
+            .expect("installed entries")
+            .len(),
+        1
+    );
+    assert_eq!(installed["result"][0]["entry_id"], "native-hello");
+    assert_eq!(installed["result"][0]["package_id"], "nixpkgs:hello");
+
+    let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["history"], &path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("3  2026-10-18  current"), "{stdout}");
+    assert_eq!(
+        std::fs::read_link(&profile).expect("profile link"),
+        std::path::Path::new("pkg-3-link")
+    );
+    assert_eq!(
+        std::fs::read_to_string(generation.join("manifest.json")).expect("native manifest"),
+        manifest
+    );
+    assert_eq!(
+        std::fs::read_dir(&profiles)
+            .expect("profile directory")
+            .count(),
+        2
+    );
+    for untouched in ["cache", "config", "state/pkg", "Applications"] {
+        assert!(!home.path().join(untouched).exists(), "{untouched}");
+    }
+}
+
+#[test]
 fn malformed_ids_are_refused_before_the_runtime_is_needed() {
     // Validation must not depend on a present Nix runtime.
     for args in [

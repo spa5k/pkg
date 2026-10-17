@@ -1,8 +1,9 @@
 //! Package Resolution owns source selection, aliases, metadata, and install gates.
 
-use super::{CommandError, Session, TapState};
 use crate::catalog::{self, CatalogId, CatalogIdKind, ParsedId};
+use crate::commands::{CommandError, Session};
 use crate::nix;
+use crate::tap::Catalogs;
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
 
@@ -36,7 +37,7 @@ pub(super) struct Resolution<'a> {
     session: &'a Session,
     pub(super) system: String,
     routing: catalog::Routing,
-    taps: Option<TapState>,
+    taps: Option<Catalogs>,
     casks: catalog::CatalogOnce<'a>,
     formulae: Option<catalog::brew::FormulaView>,
     host: catalog::CaskHost,
@@ -55,12 +56,16 @@ impl<'a> Resolution<'a> {
         })
     }
 
-    fn taps(&mut self) -> Result<&mut TapState, CommandError> {
+    fn taps(&mut self) -> Result<&mut Catalogs, CommandError> {
         match &mut self.taps {
             Some(state) => Ok(state),
             empty @ None => {
-                let state = TapState::load(self.session)?;
-                self.routing = state.routing.clone();
+                let state = Catalogs::load(&self.session.paths.state_home)?;
+                self.routing = catalog::Routing::from_registry(
+                    &self.session.config.sources,
+                    state.registry(),
+                    &self.session.paths.state_home,
+                )?;
                 Ok(empty.insert(state))
             }
         }
@@ -195,7 +200,7 @@ impl<'a> Resolution<'a> {
         })
     }
 
-    pub(super) fn install_batch(
+    fn install_batch(
         &mut self,
         parsed: Vec<ParsedId>,
     ) -> Result<IndexMap<String, String>, CommandError> {
@@ -310,7 +315,7 @@ pub(super) enum CaskDetails {
 }
 
 /// Check each upgrade against its installed original source before mutation.
-pub(super) fn gate_upgrade(
+pub fn gate_upgrade(
     session: &Session,
     installed: &BTreeMap<String, nix::ProfileEntry>,
     movable: &[String],
@@ -382,4 +387,22 @@ fn cask_identity(attr_path: &str) -> Option<(String, String, String)> {
     let id = cask_catalog::decode_package_attribute(segment).ok()?;
     let (source, token) = nix::split_entry_id(&id)?;
     Some((system, source.to_string(), token.to_string()))
+}
+
+/// Resolved install inputs, including the system used for package selection.
+pub struct InstallBatch {
+    pub(crate) system: String,
+    pub(crate) installables: IndexMap<String, String>,
+}
+
+pub fn resolve_install(
+    session: &Session,
+    parsed: Vec<ParsedId>,
+) -> Result<InstallBatch, CommandError> {
+    let mut resolution = Resolution::new(session)?;
+    let installables = resolution.install_batch(parsed)?;
+    Ok(InstallBatch {
+        system: resolution.system,
+        installables,
+    })
 }

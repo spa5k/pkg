@@ -11,6 +11,12 @@
 //! Revision and provenance files move with the generation. The registry
 //! records origin and consent.
 
+mod command;
+mod query;
+
+pub(crate) use command::{dispatch, refresh_registered};
+pub(crate) use query::{Catalogs, health};
+
 pub mod atomic;
 pub mod consent;
 pub mod registry;

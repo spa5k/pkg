@@ -144,7 +144,7 @@ mod tests {
     /// generated-catalog slice projected to the `catalogIndex` shape.
     fn fixture_view() -> CatalogView {
         let raw: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/fixtures/catalog-index.json"))
+            serde_json::from_str(include_str!("../../../tests/fixtures/catalog-index.json"))
                 .expect("valid json");
         CatalogView {
             identity: SourceIdentity {

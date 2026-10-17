@@ -2,21 +2,21 @@
 mod results;
 mod source;
 
-use super::CommandError;
 use crate::catalog;
 use crate::cli::Cli;
+use crate::commands::{CommandError, FAILURE, USAGE, concise_cause};
 use crate::output;
 use results::SearchSpool;
 use source::{SearchSource, search_input};
 use std::process::ExitCode;
 
-pub(super) fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), CommandError> {
+pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), CommandError> {
     let (text, source) = search_input(options)?;
     let query =
         catalog::SearchQuery::new(&text, options.matching.regex, options.results.unavailable)
             .map_err(|error| {
                 eprintln!("Invalid search pattern `{text}`: {error}");
-                CommandError::Reported(ExitCode::from(super::USAGE))
+                CommandError::Reported(ExitCode::from(USAGE))
             })?
             .broad(options.matching.broad)
             .fuzzy(!options.matching.no_fuzzy);
@@ -49,12 +49,12 @@ pub(super) fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), 
                 .display
                 .clone()
                 .unwrap_or_else(|| output::short_source(&report.source)),
-            super::concise_cause(report.detail.as_deref().unwrap_or("unknown cause"))
+            concise_cause(report.detail.as_deref().unwrap_or("unknown cause"))
         );
     }
     if failed {
         if rows.count == 0 {
-            return Err(CommandError::Reported(ExitCode::from(super::FAILURE)));
+            return Err(CommandError::Reported(ExitCode::from(FAILURE)));
         }
         eprintln!("Results are incomplete. Run `pkg setup` or repair the source shown above.");
     }
@@ -71,22 +71,25 @@ fn local_search(
 ) -> Result<(String, Vec<catalog::SourceReport>, SearchSpool), CommandError> {
     let system = catalog::search_system(&paths.cache_dir);
     let mut reports = Vec::new();
-    let registry = if source.needs_registry() {
-        match crate::tap::Registry::load(&crate::tap::registry::registry_path(&paths.state_home)) {
-            Ok(registry) => registry,
+    let mut taps = if source.needs_registry() {
+        match crate::tap::Catalogs::load(&paths.state_home) {
+            Ok(taps) => taps,
             Err(error) => {
                 if source.tap().is_some() {
                     return Err(error.into());
                 }
                 reports.push(catalog::missing_report("saved taps", &error));
-                crate::tap::Registry::empty()
+                crate::tap::Catalogs::from_registry(
+                    crate::tap::Registry::empty(),
+                    &paths.state_home,
+                )
             }
         }
     } else {
-        crate::tap::Registry::empty()
+        crate::tap::Catalogs::from_registry(crate::tap::Registry::empty(), &paths.state_home)
     };
     if let Some(source) = source.tap()
-        && !registry.sources.contains_key(source)
+        && !taps.registry().sources.contains_key(source)
     {
         return Err(format!("unknown search source `{source}`. Use nixpkgs, brew, homebrew, cask, homebrew/core, homebrew/cask, or a source from `pkg tap list`.").into());
     }
@@ -134,14 +137,16 @@ fn local_search(
         );
         reports.push(source_report(&config.sources.formulae, result)?);
     }
-    for tap_source in registry.sources.keys() {
+    let sources: Vec<_> = taps.registry().sources.keys().cloned().collect();
+    for tap_source in &sources {
         if !source.includes(tap_source) {
             continue;
         }
-        let result = crate::tap::SavedCatalogs::load_one(&registry, &paths.state_home, tap_source)
+        let result = taps
+            .saved_one(tap_source)
             .map_err(catalog::CatalogError::Source)
             .and_then(|saved| {
-                catalog::search_local_saved(&saved, &system, query, &host, |row, rank| {
+                catalog::search_local_saved(saved, &system, query, &host, |row, rank| {
                     rows.push(&row, rank)
                 })
             });
@@ -162,7 +167,7 @@ fn source_report(
 }
 
 pub(super) fn install_resolution_error(
-    session: &super::Session,
+    session: &crate::commands::Session,
     name: &str,
     source: Option<&str>,
     error: catalog::CatalogError,
@@ -215,5 +220,5 @@ pub(super) fn install_resolution_error(
     } else {
         eprintln!("Use `pkg search {name}` to find packages.");
     }
-    CommandError::Reported(ExitCode::from(super::FAILURE))
+    CommandError::Reported(ExitCode::from(FAILURE))
 }
