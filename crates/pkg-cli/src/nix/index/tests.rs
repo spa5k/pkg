@@ -171,7 +171,7 @@ fn raw_provenance_accepts_the_backend_envelope_shape() {
 /// Decodes the fixture: an actual generated-catalog slice (revision
 /// `245947c0`, schema `pkg-cask-catalog/4`) projected to the flake
 /// `catalogIndex` shape by the same rule `nix/casks/flake.nix` uses.
-/// Values are real generated data, not invented examples. The official
+/// The fixture preserves generated values. The official
 /// catalog is one source among possibly many: its identity is
 /// `homebrew/cask` and every entry key repeats source and token.
 #[test]
@@ -221,7 +221,7 @@ fn decodes_the_actual_catalog_index_slice() {
     );
     // The Linux variation sets `version` to null; Nix `or` does not
     // coalesce a present null to the base value, so the real index
-    // carries null here — the fixture must match that exactly.
+    // carries null here. The fixture must match that value.
     assert_eq!(raycast_linux.version, None);
     // Excluded records carry their generated reason; detail stays
     // string-or-null.
@@ -290,9 +290,8 @@ fn nullable_metadata_stays_null_and_tokens_coexist_per_source() {
     assert_eq!(index.inputs().len(), 2);
 }
 
-/// The envelope serializes back to the exact decode shape — published
-/// captures are written by the decoder's own types, and the full
-/// generated catalog layout (no `systems` sections) is refused here.
+/// Serialize captures in the decoder's schema-4 format.
+/// Reject the full generated catalog format, which lacks `systems` sections.
 #[test]
 fn envelope_round_trips_and_full_catalog_layout_is_refused() {
     let manifest = include_str!("../../../tests/fixtures/catalog-index.json");

@@ -50,9 +50,7 @@ pub struct SourceReport {
 impl SourceReport {
     /// The report for a source this system cannot query at all.
     ///
-    /// The target list comes from the catalog index envelope itself, so a
-    /// system outside the targets is an honest skip, never a disguised
-    /// network failure.
+    /// Skip a system only when the catalog index's target list excludes it.
     #[must_use]
     pub fn skipped_platform(source: &str, targets: &[String]) -> Self {
         Self {
@@ -207,19 +205,13 @@ fn strip_output_set<'a>(attr: &'a str, system: Option<&str>) -> &'a str {
     }
 }
 
-/// The exposed suffix of every attribute in one result set, with full
-/// paths kept where short forms would collide.
+/// Return an attribute's short suffix unless another attribute shares it.
 ///
-/// `packages.<system>.probe` and `legacyPackages.<system>.probe` expose
-/// the same short name. Two search rows, two bare-name choices, and two
-/// exact-lookup choices must never share one ID, and a choice must
-/// round-trip through `info` and `install`, so an attribute whose short
-/// form is claimed by another attribute keeps its full path. Uniquely
-/// short names stay short. `system` follows [`strip_output_set`]: the
-/// current system for search rows and bare resolution, `None` for the
-/// exact lookup, whose matches already name their own system.
-/// The short (exposed) suffix of one attribute, with the claim map used to
-/// decide whether that suffix is safe to expose.
+/// `packages.<system>.probe` and `legacyPackages.<system>.probe` share
+/// `probe`, so both keep their full paths. This keeps IDs unambiguous in
+/// search results, `info`, and `install`.
+/// Pass the current system for search and bare-name resolution. Pass `None`
+/// for exact lookups, whose matches already identify their system.
 fn exposed_form<'a>(
     attr: &'a str,
     claimed: &BTreeMap<&'a str, usize>,
@@ -248,22 +240,18 @@ fn unique_exposed_forms<'a>(attrs: &[&'a str], system: Option<&str>) -> Vec<&'a 
 
 /// Resolve a bare name to exactly one supported output.
 ///
-/// The Nixpkgs lane probes exact attributes at the current immutable source
+/// Nixpkgs resolution probes exact attributes at the current immutable source
 /// revision. Alias lookup may read a complete snapshot of that same revision.
-/// A missing snapshot never starts a full discovery scan. The cask
-/// lane resolves through the generated index of the official source and
-/// the saved catalogs of every registered tap: the name must equal one
-/// token exactly (fully anchored, token only — a display name is never a
-/// resolution), whatever the entry's status is, because the bare form
-/// cannot say which source the user meant. Bare resolution fails closed:
-/// an unreadable official index or a failed saved source is an error, never
-/// a silent answer from the remaining sources. `catalog` is the shared
-/// once-per-command index handle for the official source.
+/// A missing snapshot never starts a full discovery scan.
+/// Cask resolution reads the official index and every registered tap's saved catalog.
+/// Match tokens exactly, including excluded entries. Display names do not match.
+/// An unreadable official index or failed saved source fails resolution because
+/// an omitted source could change which package the name selects.
+/// `catalog` loads the official index once per command.
 ///
-/// On a system the catalogs do not target, a source contributes no
-/// choices at all, so it can never be a fatal requirement there.
-/// `nixpkgs` supplies the Source Reference and cache directory for the native
-/// lane. `None` selects cask-only resolution.
+/// Sources that do not target this system contribute no choices.
+/// `nixpkgs` supplies the native source reference and cache directory.
+/// `None` selects cask-only resolution.
 ///
 /// # Errors
 ///
@@ -668,11 +656,7 @@ mod tests {
         );
     }
 
-    /// Attributes that share one short name keep their full paths as IDs
-    /// and choices; unique short names stay short. This is the rule that
-    /// keeps `packages` and `legacyPackages` entries with the same name
-    /// from colliding in search rows, bare-name choices, and exact-lookup
-    /// choices (review 2026-09-30, P3).
+    /// Keep full paths for attributes that share a short name across output sets.
     #[test]
     fn shared_short_names_keep_full_paths_in_ids_and_choices() {
         let system = "x86_64-linux";

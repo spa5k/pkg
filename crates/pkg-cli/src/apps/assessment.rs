@@ -17,14 +17,11 @@ const SPCTL_STATUS_CHECK: &str = "spctl --status";
 /// The exact stdout line `spctl --status` prints when assessment is on.
 const ASSESSMENTS_ENABLED: &str = "assessments enabled";
 
-/// Active entries installed from this state home's local public tap store.
+/// Select active entries from this state home's local public tap store.
 ///
-/// An entry counts when its `original_url` is the store's stable
-/// `pkg/taps/src/{owner}/{tap}/current` reference, recognized by
-/// [`crate::tap::store::source_of_reference`] on path components alone,
-/// even if the source was later removed from the registry. Entries from
-/// Nixpkgs, self-built outputs, or any other source are not selected,
-/// and inactive entries are skipped. Selection borrows the profile entries.
+/// [`crate::tap::store::source_of_reference`] matches the entry's `original_url`
+/// against `pkg/taps/src/{owner}/{tap}/current`. This also matches entries
+/// whose source is no longer registered. The result borrows the profile entries.
 fn public_tap_entries<'a>(
     state_home: &'a Path,
     entries: &'a BTreeMap<String, crate::nix::ProfileEntry>,
@@ -35,18 +32,13 @@ fn public_tap_entries<'a>(
     })
 }
 
-/// macOS vendor assessment gate for local public tap apps.
+/// Check vendor signatures and Gatekeeper approval for local public tap apps.
 ///
-/// The selected entries are re-scanned with [`scan_apps`], and when they
-/// expose any `.app` bundle, Gatekeeper assessment must first be enabled
-/// ([`require_assessments_enabled`]) and then every resulting vendor
-/// bundle must pass [`assess_bundle`] before the sync continues. The gate
-/// runs before the destination write guard, marker handling, helper
-/// installation, and any launcher change, so a failure leaves the previous
-/// launchers and the recorded source map exactly as they were. Entries
-/// that expose no `.app` bundle (CLI-only outputs) need no assessment, and
-/// bundles from other sources (Nixpkgs, self-built, ad-hoc signed) are
-/// never assessed here.
+/// [`scan_apps`] finds the selected entries' `.app` bundles. If it finds any,
+/// [`require_assessments_enabled`] must pass before [`assess_bundle`] checks
+/// each bundle. These checks run before destination checks, helper installation,
+/// or launcher changes. A failure preserves the launchers and source map.
+/// Entries without app bundles and bundles from other sources need no check here.
 pub(super) fn assess_public_tap_apps(
     state_home: &Path,
     entries: &BTreeMap<String, crate::nix::ProfileEntry>,
@@ -56,9 +48,7 @@ pub(super) fn assess_public_tap_apps(
         // CLI-only public outputs carry no vendor bundle to expose.
         return Ok(());
     }
-    // Gatekeeper assessment must be enabled before any vendor bundle is
-    // trusted to pass `spctl --assess`: with assessment disabled, that
-    // check cannot mean anything.
+    // `spctl --assess` cannot confirm approval when Gatekeeper is disabled.
     require_assessments_enabled()?;
     for (_name, bundle) in apps {
         assess_bundle(&prepare_bundle(&bundle)?)?;
@@ -68,22 +58,16 @@ pub(super) fn assess_public_tap_apps(
 
 /// Whether a `spctl --status` stdout line confirms enabled assessment.
 ///
-/// Apple's `spctl` prints exactly `assessments enabled` or
-/// `assessments disabled`; anything else — including a disabled system,
-/// an unknown string, or tool noise — does not confirm the gate and
-/// must refuse.
+/// Accept only `assessments enabled`. All other output fails the check.
 fn confirms_enabled_assessment(stdout: &str) -> bool {
     stdout.trim() == ASSESSMENTS_ENABLED
 }
 
-/// Require, read-only, that Gatekeeper assessment is enabled.
+/// Check that Gatekeeper assessment is enabled.
 ///
-/// Runs `/usr/sbin/spctl --status` through the shared signal forward/reap
-/// boundary and accepts only a successful exit with the exact
-/// `assessments enabled` line. A disabled system, an unknown answer, a
-/// nonzero exit, or a failed execution refuses; system policy is never
-/// changed, bypassed, or recorded — the user enables assessment in System
-/// Settings.
+/// Run `/usr/sbin/spctl --status` with signal forwarding and child reaping.
+/// Require a successful exit and the exact `assessments enabled` line.
+/// The user must enable assessment in System Settings if it is disabled.
 fn require_assessments_enabled() -> Result<(), AppError> {
     match run_direct_captured(Path::new(SPCTL_BIN), &["--status"]) {
         Ok((Outcome::Success, stdout)) if confirms_enabled_assessment(&stdout) => Ok(()),
@@ -114,13 +98,10 @@ fn require_assessments_enabled() -> Result<(), AppError> {
     }
 }
 
-/// Verifies one vendor bundle with Apple's own read-only tools:
-/// signature first, Gatekeeper second.
+/// Check a vendor bundle's signature, then its Gatekeeper approval.
 ///
-/// Nothing is modified: no quarantine attribute is stripped, no
-/// signature is changed or re-created, the bundle is never opened, and
-/// a failed check has no bypass. Success records only that both checks
-/// passed; it does not claim the bundle is free of malware.
+/// The tools leave the bundle, its signature, and quarantine attributes
+/// unchanged. Passing both checks does not prove the bundle is free of malware.
 fn assess_bundle(bundle: &Path) -> Result<(), AppError> {
     let bundle_arg = || bundle.to_string_lossy();
     run_assessment_check(
@@ -143,8 +124,8 @@ fn assess_bundle(bundle: &Path) -> Result<(), AppError> {
     )
 }
 
-/// Runs one assessment tool through the shared signal forward/reap
-/// boundary and reports an exact outcome for the named bundle.
+/// Run an assessment tool with signal forwarding and child reaping.
+/// Include the bundle name in any error.
 fn run_assessment_check(
     tool: &Path,
     args: &[&str],
@@ -297,9 +278,7 @@ mod tests {
         assert!(detail.contains("Vendor.app"), "{error}");
         assert!(detail.contains(CODESIGN_CHECK), "{error}");
 
-        // Nothing about the destination changed: this proves the gate
-        // itself is read-only. It calls the gate directly and does not
-        // prove the full sync ordering, which the parent verifies on a VM.
+        // This direct check covers destination preservation, not sync ordering.
         assert!(dest.join("Old.app").join("trampoline").exists());
         assert!(
             fs::read_to_string(dest.join(".pkg-owned")).is_ok_and(|t| t == "pkg-apps-owned/1\n")

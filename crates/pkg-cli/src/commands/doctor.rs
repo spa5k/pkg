@@ -1,8 +1,7 @@
 //! Doctor: read-only runtime, profile, launcher, and tap status.
 //!
-//! Doctor reports and never repairs (design D7 review rule). Unhealthy
-//! required components make the command fail with a nonzero exit; a fresh
-//! profile, a home without taps, or a skipped platform component does not.
+//! Unhealthy required components cause a nonzero exit. A fresh profile,
+//! a home without taps, or a skipped platform component does not.
 
 use std::process::ExitCode;
 
@@ -76,28 +75,7 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
             let (sandbox_status, sandbox_detail) = crate::tap::setup::doctor_status(&runtime)?;
             rows.push(observed("tap sandbox", &sandbox_status, sandbox_detail));
 
-            match std::fs::symlink_metadata(&paths.profile) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => rows.push(observed(
-                    "pkg profile",
-                    "fresh",
-                    format!(
-                        "{} not created yet; the first install creates it",
-                        paths.profile.display()
-                    ),
-                )),
-                Err(error) => rows.push(observed("pkg profile", "unreadable", error.to_string())),
-                Ok(_) => match runtime.profile_list(&paths.profile) {
-                    Ok(entries) => rows.push(observed(
-                        "pkg profile",
-                        "ok",
-                        format!("{} ({} entries)", paths.profile.display(), entries.len()),
-                    )),
-                    Err(error) if error.signal().is_some() => return Err(error.into()),
-                    Err(error) => {
-                        rows.push(observed("pkg profile", "unreadable", error.to_string()));
-                    }
-                },
-            }
+            rows.push(crate::profile::status(&runtime, &paths)?);
             // App launcher drift is read through the apps module; doctor
             // reports it and never fixes it (design D7). Auto-skipped on
             // non-macOS systems.
@@ -126,12 +104,8 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
     } else {
         "defaults"
     };
-    // Saved tap health is read through the same strict per-source loader
-    // the query paths use; doctor reports the state and never repairs
-    // it. A registered tap without a usable published generation is
-    // unhealthy here, so a home in that state cannot pass doctor while
-    // its installs are being blocked.
-    rows.extend(tap_rows(&paths.state_home));
+    // Use the query loader so doctor and installation agree on tap health.
+    rows.extend(crate::tap::health(&paths.state_home));
     rows.push(observed(
         "config",
         config_status,
@@ -148,47 +122,6 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
         paths.cache_dir.display().to_string(),
     ));
     Ok(rows)
-}
-
-/// Read-only tap health rows: the registry, then one row per registered
-/// source.
-///
-/// Each source row reports whether its saved catalog generation is
-/// published, readable, and bound to its provenance, using the same
-/// loader the install and query paths use. An unhealthy row carries the
-/// loader's own repair command; a home with no registered taps is one
-/// healthy `none` row, not an error.
-fn tap_rows(state_home: &std::path::Path) -> Vec<DoctorRow> {
-    let registry =
-        match crate::tap::Registry::load(&crate::tap::registry::registry_path(state_home)) {
-            Ok(registry) => registry,
-            Err(error) => return vec![observed("tap registry", "unreadable", error)],
-        };
-    if registry.sources.is_empty() {
-        return vec![observed(
-            "taps",
-            "none",
-            String::from("no cask taps are registered"),
-        )];
-    }
-    registry
-        .sources
-        .keys()
-        .map(
-            |source| match crate::tap::SavedCatalogs::load_one(&registry, state_home, source) {
-                Ok(catalog) => observed(
-                    &format!("tap {source}"),
-                    "ok",
-                    format!(
-                        "{} entries saved at revision {}",
-                        catalog.provenance().eligible + catalog.provenance().excluded,
-                        catalog.provenance().revision
-                    ),
-                ),
-                Err(error) => observed(&format!("tap {source}"), "unhealthy", error),
-            },
-        )
-        .collect()
 }
 
 fn app_launchers_row(

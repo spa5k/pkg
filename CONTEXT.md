@@ -126,6 +126,11 @@ One installed occurrence recorded in the pkg Profile, with its source and
 realized package outputs. Its native identity is separate from a Package ID.
 _Avoid_: Package ID, catalog entry
 
+**Profile Change**:
+A change to installed Profile Entries, the active Generation, or retained
+Generations. The native pkg Profile determines what changed.
+_Avoid_: Catalog refresh, Tap Publication, launcher sync
+
 **Rollback**:
 The selection of the previous or a specified Generation as the active
 pkg Profile.
@@ -139,6 +144,11 @@ _Avoid_: Source refresh, Tap Publication
 **Launcher**:
 A pkg-owned macOS app entry point derived from an active Profile Entry.
 _Avoid_: App install, app copy
+
+**Launcher Refresh**:
+The update of pkg-owned Launchers to match active Profile Entries.
+It can fail after a Profile Change has completed.
+_Avoid_: Package installation, profile repair
 
 **Restored App Copy**:
 A disposable app copy that retains the vendor's external signatures.

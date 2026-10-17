@@ -1,14 +1,10 @@
 //! Saved catalog data of every registered tap.
 //!
-//! Query, gate, and bare-resolution paths read the locally saved catalog
-//! captures; they never execute tap Ruby. Loading is strict per source:
-//! when a source's saved catalog is missing or malformed, loading that
-//! source fails and no query silently proceeds without it. Who loads
-//! which source is the isolation rule (see the namespaced-cask-catalog
-//! spec): a qualified request reads only the source it names, through
-//! [`SavedCatalogs::load_one`]; bare-name resolution loads every source
-//! through the Package Resolution cache, because ignoring one failed
-//! source could select the wrong package.
+//! Queries and eligibility checks read saved captures without running tap Ruby.
+//! A qualified request loads only its named source through [`SavedCatalogs::load_one`].
+//! Bare-name resolution loads every source through the package resolution cache.
+//! Missing or malformed data fails the load because an omitted source could
+//! change which package a bare name selects.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -173,13 +169,10 @@ impl SavedCatalogs {
 
 /// Validate that one index envelope is bound to exactly one provenance.
 ///
-/// This is the one binding check shared by the staged import and the
-/// saved-capture load. The envelope must carry provenance for exactly the
-/// provenance's source (and nothing else), pin exactly its origin and
-/// revision, record the generation's capture hash in its raw input
-/// provenance, target exactly one system, and hold exactly the eligible
-/// and excluded entry counts the provenance claims. Staged import callers
-/// additionally require the one target to be the native system.
+/// Staged imports and saved-capture loads use this check. Require exactly
+/// one source and target. Match the origin, revision, raw capture hash,
+/// and eligible and excluded entry counts to the provenance.
+/// Staged imports also require the target to match the native system.
 /// # Errors
 ///
 /// Returns an error when the source, origin, revision, capture hash, sole target or target section, or eligible and excluded entry counts disagree.

@@ -76,10 +76,9 @@ enum Command {
         #[arg(long, default_value = "nix/casks/catalog")]
         out_dir: PathBuf,
     },
-    /// Import one raw Homebrew tap through the ACTUAL public flow
-    /// (GitHub identity check, codeload fetch, sandboxed Nix raw
-    /// export) into a self-contained native-only flake tree (schema
-    /// pkg-cask-catalog/4). Emits one JSON result on stdout.
+    /// Import a public Homebrew tap as a self-contained Nix flake.
+    /// Check GitHub identity, fetch the archive, and run the sandboxed export.
+    /// Generate a pkg-cask-catalog/4 catalog and print the import result as JSON.
     ImportTap(cask_catalog::tap::ImportRequest),
 }
 

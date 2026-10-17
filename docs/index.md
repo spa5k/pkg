@@ -18,6 +18,7 @@ The client is in development for x86_64 Linux and Apple silicon macOS.
 - [Commands and package IDs](commands.md)
 - [Supported runtimes and app limits](support.md)
 - [Privacy](privacy.md)
+- [Architecture and code ownership](architecture.md)
 
 ## Ownership
 

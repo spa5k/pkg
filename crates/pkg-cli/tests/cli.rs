@@ -184,6 +184,81 @@ fn invalid_config_is_reported_without_replacing_the_file() {
 }
 
 #[test]
+fn profile_queries_preserve_native_state_without_creating_a_lock() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let manifest = serde_json::json!({
+        "version": 3,
+        "elements": { "native-hello": {
+            "active": true,
+            "attrPath": "legacyPackages.x86_64-linux.hello",
+            "originalUrl": "github:NixOS/nixpkgs/nixpkgs-unstable",
+            "url": "github:NixOS/nixpkgs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "storePaths": []
+        }}
+    })
+    .to_string();
+    let (nix, _runtime) = fake_nix(&format!(
+        "case \"$*\" in\n\
+         *--version*) echo 'nix (Nix) 2.35.2';;\n\
+         *'profile list'*) echo '{manifest}';;\n\
+         *'profile history'*) echo 'Version 3 (2026-10-18)';;\n\
+         *) echo \"unexpected nix call: $*\" >&2; exit 9;;\n\
+         esac"
+    ));
+    let path = format!(
+        "{}:/usr/bin:/bin",
+        nix.parent().expect("runtime directory").display()
+    );
+
+    let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["list", "--json"], &path);
+    assert_eq!(code, 0, "{stderr}");
+    let fresh: serde_json::Value = serde_json::from_str(&stdout).expect("list JSON");
+    assert_eq!(fresh["result"], serde_json::json!([]));
+    assert!(!home.path().join("state").exists());
+
+    let profiles = home.path().join("state/nix/profiles");
+    let generation = profiles.join("pkg-3-link");
+    std::fs::create_dir_all(&generation).expect("generation directory");
+    std::fs::write(generation.join("manifest.json"), &manifest).expect("native manifest");
+    let profile = profiles.join("pkg");
+    std::os::unix::fs::symlink("pkg-3-link", &profile).expect("active generation");
+
+    let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["list", "--json"], &path);
+    assert_eq!(code, 0, "{stderr}");
+    let installed: serde_json::Value = serde_json::from_str(&stdout).expect("list JSON");
+    assert_eq!(
+        installed["result"]
+            .as_array()
+            .expect("installed entries")
+            .len(),
+        1
+    );
+    assert_eq!(installed["result"][0]["entry_id"], "native-hello");
+    assert_eq!(installed["result"][0]["package_id"], "nixpkgs:hello");
+
+    let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["history"], &path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("3  2026-10-18  current"), "{stdout}");
+    assert_eq!(
+        std::fs::read_link(&profile).expect("profile link"),
+        std::path::Path::new("pkg-3-link")
+    );
+    assert_eq!(
+        std::fs::read_to_string(generation.join("manifest.json")).expect("native manifest"),
+        manifest
+    );
+    assert_eq!(
+        std::fs::read_dir(&profiles)
+            .expect("profile directory")
+            .count(),
+        2
+    );
+    for untouched in ["cache", "config", "state/pkg", "Applications"] {
+        assert!(!home.path().join(untouched).exists(), "{untouched}");
+    }
+}
+
+#[test]
 fn malformed_ids_are_refused_before_the_runtime_is_needed() {
     // Validation must not depend on a present Nix runtime.
     for args in [
@@ -390,7 +465,7 @@ fn missing_nix_gives_vendor_guidance_not_a_silent_result() {
 /// PATH candidate, doctor becomes healthy without manual PATH setup. Both
 /// tiers are exercised with fakes under isolated homes. On a machine with
 /// a real system profile Nix that runtime wins instead, and the branches
-/// assert exactly what each machine can prove — the host Nix never masks
+/// assert which runtime each machine selects. The host Nix never masks
 /// a fake candidate silently.
 #[test]
 fn doctor_finds_a_user_profile_nix_when_path_has_none() {
@@ -607,7 +682,7 @@ fn encode_ref(path: &str) -> String {
 /// The upgrade refusal rules for removed taps, through a fake Nix runtime:
 /// an explicitly named entry from an unregistered tap is refused before
 /// any `profile upgrade` runs, and `--all` skips such entries with a note
-/// and passes only the explicit remaining IDs — never `--all`.
+/// and passes only the explicit remaining IDs without `--all`.
 #[test]
 fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     let bin = tempfile::tempdir().expect("tempdir");
@@ -708,7 +783,7 @@ fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     );
 
     // `--all` skips the removed tap entry with a clear note and passes the
-    // remaining entry IDs explicitly — never `--all`.
+    // remaining entry IDs explicitly without `--all`.
     let (code, stdout, stderr) = run(&["upgrade", "--all"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("tap-entry"), "skip note: {stdout}");
@@ -720,12 +795,8 @@ fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     assert!(!recorded.contains("--all"), "{recorded}");
 }
 
-/// Successful flake installs reduce native stderr to signal, not chatter:
-/// git fetch and evaluation lines are dropped, meaningful warnings stay,
-/// Nix's interactive trust prompt passes through before its newline
-/// exists, and the profile result is still reported. Proven with a fake
-/// Nix runtime that replays the Helix-style stderr captured from a real
-/// install.
+/// Filter fetch and evaluation messages while preserving warnings, interactive
+/// prompts, and the profile result. Replay stderr captured from a Helix install.
 #[test]
 fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
     let bin = tempfile::tempdir().expect("tempdir");

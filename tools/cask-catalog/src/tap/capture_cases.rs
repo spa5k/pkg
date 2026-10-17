@@ -1,19 +1,13 @@
-//! Regression tests over REAL native reader captures.
+//! Regression tests with native reader captures.
 //!
-//! Every test reads committed fixtures under
-//! `src/tap/testdata/native-captures/` only: the `capture` envelope is
-//! the actual upstream `pkg-tap-raw-export/1` output produced by the
-//! pinned reader on native runners, and the `sources/` trees are the
-//! exact data-only fixture tap trees that produced them (see the
-//! directory README for provenance and normalization). No `/tmp`
-//! ambient evidence and no silently-skipped test exists here: if a
-//! committed fixture is missing the test FAILS. The classifier result
-//! is never mocked; `validate_export` and the private `convert_capture`
-//! run against the actual envelope and the actual tree bytes.
+//! Read captures and source trees from `src/tap/testdata/native-captures/`.
+//! Native runners produced the `pkg-tap-raw-export/1` envelopes with the pinned
+//! reader. The directory README records their provenance and normalization.
+//! Missing fixtures fail the tests. `validate_export` and `convert_capture`
+//! use the committed envelope and tree bytes without mocking the classifier.
 //!
-//! The native aarch64-darwin captures convert on a Linux host too:
-//! conversion is pure over the capture plus the tree inventory and
-//! never runs Homebrew or Ruby.
+//! Conversion also runs on Linux for aarch64-darwin captures because it does
+//! not run Homebrew or Ruby.
 
 use super::capture::{Capture, convert_capture, validate_export};
 use super::{EXPORT_SCHEMA, sha256_hex, source_origin};
@@ -43,7 +37,7 @@ fn capture_json(system: &str, case: &str) -> Value {
 }
 
 /// SHA-256 inventory of one committed source fixture tree, keyed by
-/// source-relative path — exactly what `extract_tar_gz` would hand to
+/// source-relative path, matching what `extract_tar_gz` would hand to
 /// the importer for the real archive.
 fn source_tree(case: &str) -> BTreeMap<String, String> {
     fn walk(dir: &std::path::Path, prefix: &str, tree: &mut BTreeMap<String, String>) {
@@ -137,7 +131,7 @@ fn duplicate_token_refuses_the_whole_capture() {
 }
 
 /// Literal local, private, link-local, and IPv6-loopback download URLs
-/// are excluded from BOTH native targets. The reader itself exported
+/// are excluded from both native targets. The reader itself exported
 /// these records as ok; the destination policy must refuse them without
 /// any DNS lookup, so the exclusion has to appear in the generated
 /// catalog entry, not only in a fetch-time error.
@@ -263,7 +257,7 @@ fn helper_only_change_bumps_the_catalog_version() {
     for case in ["invalidation-alpha-v1", "invalidation-alpha-v2"] {
         // On darwin the app artifact is eligible; on linux the same
         // record is excluded (unsupported-artifact), but the effective
-        // version is still recorded in BOTH catalogs.
+        // version is still recorded in both catalogs.
         for system in ["aarch64-darwin", "x86_64-linux"] {
             let catalog = convert_case(system, case)
                 .unwrap_or_else(|e| panic!("{system}/{case} must convert: {e}"));
@@ -296,9 +290,7 @@ fn helper_only_change_bumps_the_catalog_version() {
     }
 }
 
-/// The native macOS capture is a first-class fixture: it converts and
-/// classifies on a Linux development host without any macOS or Homebrew
-/// involvement (pure conversion over committed bytes).
+/// Convert and classify the macOS capture on Linux without running Homebrew.
 #[test]
 fn native_macos_capture_converts_on_linux_host() {
     let catalog = convert_case("aarch64-darwin", "release-archive")
@@ -319,25 +311,13 @@ fn native_macos_capture_converts_on_linux_host() {
     );
 }
 
-/// Real NORMAL-MODE macOS capture of a legacy cask whose Ruby DSL uses
-/// `preflight do ... end` / `postflight do ... end` callback blocks.
-/// The pinned reader emits them as null-valued artifact keys
-/// (`{"preflight": null}`, `{"postflight": null}`) around the real
-/// `app` artifact. pkg never runs callback code, so those keys make
-/// the record uninstallable here: conversion excludes the legacy cask
-/// (reason `unsupported-artifact`, detail naming both callback keys)
-/// while the healthy binary control from the same tree stays eligible
-/// with a real plan. This exercises the private `convert_capture`
-/// end to end over committed bytes only.
+/// Convert a normal-mode macOS capture with `preflight` and `postflight` callbacks.
+/// The reader emits null-valued artifact keys around the `app` artifact.
+/// Require `unsupported-artifact` with both callback names in the detail.
+/// The binary control from the same tree must remain eligible.
 ///
-/// Provenance and normalization: same pins as the other fixtures
-/// (Homebrew cc9ff03..., reader 4.0.5, fixture revision aaa...a,
-/// probe `denied: host-read, host-write, loopback`). The envelope is
-/// the runner's `capture` field verbatim; runner stdout/stderr and Nix
-/// store paths are dropped (see the directory README). The source
-/// tree under `sources/flights` is the exact data-only fixture tap
-/// tree that produced it; each `pkg_origin.sha256` was verified
-/// against the committed file bytes.
+/// `sources/flights` contains the source tree. Its hashes, reader pins, and
+/// normalization follow the fixture directory's README.
 #[test]
 fn normal_mode_legacy_preflight_postflight_capture_excludes_the_callback_cask() {
     let catalog =

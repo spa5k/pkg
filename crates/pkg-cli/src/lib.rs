@@ -1,8 +1,7 @@
 //! The `pkg` client library.
 //!
-//! One crate owns the whole client: the reduced command grammar, configuration
-//! and paths, the concrete native Nix adapter, catalog name routing, command
-//! execution, and output envelopes (design D1).
+//! Parse commands, load configuration, run Nix, resolve catalog names,
+//! and format command results.
 
 #![cfg(unix)]
 // Tests may abort on broken fixtures or failed setup; production code
@@ -20,12 +19,13 @@
 
 pub mod apps;
 mod background;
-pub mod catalog;
+pub use discovery::catalog;
 pub mod cli;
 pub mod commands;
 pub mod config;
-mod installed;
+pub mod discovery;
 pub mod nix;
 pub mod output;
+mod profile;
 mod profile_lock;
 pub mod tap;

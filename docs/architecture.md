@@ -1,33 +1,128 @@
-# Module map
+# pkg architecture
 
 The client uses one external Nix runtime and one native profile.
 Nix owns installed state and generations.
 Catalog data is disposable.
 
+## The nouns
+
+These terms describe code ownership. Product terms are defined in
+[pkg Language](../CONTEXT.md).
+
+| Noun | Meaning in pkg |
+| --- | --- |
+| Feature | One pkg capability with one owner for its rules, commands, queries, and state access. Its directory name is its code identity. The client features are `profile`, `discovery`, `tap`, and `apps`. |
+| Command | A typed request to change state, such as installing a Package, approving a Tap, or refreshing Discovery Data. The owning feature checks the whole request before it writes. |
+| Query | A request to inspect packages, installed entries, generations, or health. It does not change the pkg Profile, Tap Approvals, or launchers. Discovery queries can fill disposable metadata caches. |
+| Outcome | An observed result of a Command. It can report a completed change, no change, a partial change, or unknown state. A successful child exit alone does not prove the requested state. |
+| Reaction | A follow-up action after an Outcome. For example, launcher refresh follows a completed profile operation. The caller runs it directly and reports its failure separately. |
+| Repository | The module that owns access to one kind of stored state. Nix owns the pkg Profile. The Tap Registry and Tap Snapshot store have their own owners. A cache is never installed-state authority. |
+| Operation | The ordered work needed to complete a Command: lock, check, apply, observe, and react. It runs in the current process. A later invocation reads current state before it attempts more work. |
+| Entry point | A CLI invocation, scheduled refresh invocation, or catalog tool invocation. It parses input and sends a typed request to its owner. It does not define package rules. |
+| Platform | Shared process supervision, configuration paths, locks, and output primitives. Feature rules stay with their owner. |
+
+Outcomes, Reactions, and Operations describe local, synchronous work.
+A Reaction runs under its Operation's ordering rules.
+An Operation does not persist waits or retry native mutations automatically.
+
+## Ownership rules
+
+- Read installed state from Nix. Never infer it from a catalog, cache, or launcher.
+- Keep package changes under one profile lock. Hold that lock through the final
+  native read and launcher refresh.
+- Keep queries separate from mutation code. `history` is a Query even though it
+  prints native text. `--json` is an output option, not a command classification.
+- Treat cache writes during discovery as derived work. They cannot approve a Tap,
+  publish a Tap Snapshot, or change installed packages.
+- Observe native state after a failed or interrupted mutation. Preserve the signal
+  and report known changes before returning an exit code.
+- Call another feature through its interface. Profile operations request launcher
+  refresh from Apps; they do not write launcher files.
+- Keep each store's lock and publication rules with its owner. The profile lock
+  serializes pkg clients. It does not prevent external Nix commands from running.
+
+## Feature interfaces
+
+Each feature groups its command paths, query paths, and state rules.
+The command dispatcher calls the feature interface.
+Setup and update compose Discovery and Tap commands under one refresh lock.
+Doctor reads feature queries and does not repair state.
+
+| Feature | Interface | Owned work |
+| --- | --- | --- |
+| Profile | `profile/mod.rs` | Install, remove, upgrade, rollback, prune, list, history, and native profile health. |
+| Discovery | `discovery/mod.rs` | Search, package information, resolved install batches, upgrade eligibility, and disposable catalog preparation. |
+| Taps | `tap/mod.rs` | Approval, import validation, publication, removal, saved catalog reads, and tap health. |
+| Apps | `apps/mod.rs` | Launcher commands, assessment, publication, health, and the reaction to a completed profile change. |
+| Cask generation | `tools/cask-catalog/src/lib.rs` | Capture, classification, build plans, and generated catalog output in its separate crate. |
+
+```text
+src/
+  commands/          argument dispatch, session, diagnostics, and combined setup/update
+  profile/
+    mod.rs           profile command and query interface
+    change.rs        typed requests, lock, preflight, mutation, and observation
+    query.rs         native entries, generation history, and profile health
+    lock.rs          held profile lease
+    installed.rs     installed identity and entry selection
+    conflict.rs      file conflicts and verified package owners
+  discovery/
+    mod.rs           search, information, and resolution interface
+    catalog/         IDs, routing, disposable snapshots, and matching
+    resolution.rs    source selection, install batches, and upgrade eligibility
+    search/          source selection, bounded result storage, and rendering
+    info.rs          package information
+    refresh.rs       disposable catalog preparation
+  tap/
+    mod.rs           tap command and query interface
+    command/         approval, staging, validation, publication, and removal
+    query.rs         registry snapshots, lazy catalog reads, and health
+    registry.rs      approval records
+    saved.rs         strict saved catalog loading
+    store.rs         locked generation publication and recovery
+  apps/
+    mod.rs           launcher synchronization and health
+    command.rs       explicit commands and the profile-change reaction
+```
+
+Profile operations request a resolved install batch from Discovery.
+They check withdrawn source approval through Taps.
+Apps reads native entries through the Profile query interface.
+The Apps reaction takes the held profile lease, so launcher refresh cannot lose
+its ordering with the package change.
+Discovery reads each selected Tap Snapshot through Taps.
+A qualified request isolates an unrelated broken source.
+Bare-name resolution requires all approved sources to prevent hidden ambiguity.
+
+The public `pkg_cli::catalog` import remains available as a re-export of
+`discovery::catalog`.
+The [verification record](verification/2026-10-18-feature-model.md) lists the
+checks and platform limits.
+
+## Module map
+
 ```mermaid
 flowchart TD
     CLI[cli: parse arguments] --> Commands[commands: dispatch and session]
-    Commands --> Search[search: source selection and results]
-    Commands --> Info[info and list: package queries]
-    Commands --> Lifecycle[lifecycle: parse change requests]
-    Lifecycle --> Change[change: lock, preflight, mutate, postflight]
-    Search --> Catalog[catalog: IDs, routing, snapshots, matching]
-    Info --> Catalog
-    Lifecycle --> Resolution[resolution: package requests and install gates]
-    Info --> Resolution
-    Resolution --> Catalog
-    Catalog --> Nix[nix: native command interface]
-    Lifecycle --> Nix
-    Change --> Nix
-    Nix --> Process[pkg-process: supervise children and cancellation]
-    Process --> Runtime[External Nix]
-    Change --> Apps[apps: assess and sync launchers]
-    Apps --> Process
-    Apps --> Profile[Native profile outputs]
-    Runtime --> Profile
-    Tap[tap: approved sources and saved catalogs] --> Catalog
-    Generator[cask-catalog: capture, classify, plan, emit] --> Tap
+    Commands --> Discovery[discovery: search and resolution]
+    Commands --> Profile[profile: package changes and queries]
+    Commands --> Taps[tap: approvals and snapshots]
+    Commands --> Apps[apps: launchers and health]
+    Profile -->|resolved install batch| Discovery
+    Profile -->|source approval query| Taps
+    Discovery -->|saved catalog query| Taps
+    Profile -->|launcher reaction under held lock| Apps
+    Apps -->|native entry query| Profile
+    Discovery --> Nix[nix: native command interface]
+    Profile --> Nix
+    Taps --> Nix
+    Apps --> Nix
+    Taps --> Generator[cask-catalog: capture, classify, plan, emit]
+    Nix --> Process[pkg-process: children and cancellation]
     Generator --> Process
+    Apps --> Process
+    Process --> Runtime[External Nix]
+    Runtime --> State[Native profile and generations]
 ```
 
 ## Find the owner
@@ -39,15 +134,18 @@ Paths below start at the repository root.
 | Argument grammar | `crates/pkg-cli/src/cli.rs` |
 | Command dispatch and session | `crates/pkg-cli/src/commands/mod.rs` |
 | Typed command errors and signal exit codes | `crates/pkg-cli/src/commands/error.rs` |
-| Search source groups and prefixes | `crates/pkg-cli/src/commands/search/source.rs` |
-| Search collection | `crates/pkg-cli/src/commands/search/mod.rs` |
-| Bounded result storage and output | `crates/pkg-cli/src/commands/search/results.rs` |
-| Package information and installed entries | `crates/pkg-cli/src/commands/info.rs`, `list.rs` |
-| Package Resolution and upgrade eligibility | `crates/pkg-cli/src/commands/resolution.rs` |
-| Package change requests and history | `crates/pkg-cli/src/commands/lifecycle.rs` |
-| Locked native package changes and app refresh ordering | `crates/pkg-cli/src/commands/change.rs` |
-| Checked profile lock ownership | `crates/pkg-cli/src/profile_lock.rs` |
-| Name resolution and disposable snapshots | `crates/pkg-cli/src/catalog/` |
+| Search source groups and prefixes | `crates/pkg-cli/src/discovery/search/source.rs` |
+| Search collection | `crates/pkg-cli/src/discovery/search/mod.rs` |
+| Bounded result storage and output | `crates/pkg-cli/src/discovery/search/results.rs` |
+| Package information | `crates/pkg-cli/src/discovery/info.rs` |
+| Installed entries and history | `crates/pkg-cli/src/profile/query.rs` |
+| Package Resolution and upgrade eligibility | `crates/pkg-cli/src/discovery/resolution.rs` |
+| Profile feature interface | `crates/pkg-cli/src/profile/mod.rs` |
+| Locked native package changes and state observation | `crates/pkg-cli/src/profile/change.rs` |
+| Profile file conflict reporting | `crates/pkg-cli/src/profile/conflict.rs` |
+| Checked profile lock ownership | `crates/pkg-cli/src/profile/lock.rs` |
+| Shared advisory lock primitive | `crates/pkg-cli/src/profile_lock.rs` |
+| Name resolution and disposable snapshots | `crates/pkg-cli/src/discovery/catalog/` |
 | External Nix discovery | `crates/pkg-cli/src/nix/runtime.rs` |
 | Native command interface | `crates/pkg-cli/src/nix/mod.rs` |
 | Child supervision and cancellation | `crates/pkg-process/src/lib.rs` |
@@ -55,7 +153,9 @@ Paths below start at the repository root.
 | Generated index types and validation | `crates/pkg-cli/src/nix/index/` |
 | Generated index target and entry lookups | `crates/pkg-cli/src/nix/index/model.rs` |
 | Tap approval and atomic publication | `crates/pkg-cli/src/tap/` |
-| Tap commands and import validation | `crates/pkg-cli/src/commands/tap/` |
+| Tap commands and import validation | `crates/pkg-cli/src/tap/command/` |
+| Tap snapshots and health queries | `crates/pkg-cli/src/tap/query.rs` |
+| App commands and launcher reaction | `crates/pkg-cli/src/apps/command.rs` |
 | App sync coordination | `crates/pkg-cli/src/apps/mod.rs` |
 | Bundle discovery and private payload preparation | `crates/pkg-cli/src/apps/scan.rs`, `payload.rs` |
 | Public tap app assessment | `crates/pkg-cli/src/apps/assessment.rs` |
@@ -76,7 +176,7 @@ Installation checks the full batch before it changes the profile.
 Qualified requests read only their selected source.
 Bare requests check every source for ambiguity.
 A package mutation takes the profile lock and calls Nix.
-Upgrade preparation selects entries and validates the Tap Registry once.
+Upgrade preparation selects entries and reads one Tap Registry snapshot through Taps.
 It checks removed Tap Sources before it reports Fixed Reference skips.
 It checks the full remaining batch before it changes the profile.
 The held-profile value binds app refresh to the same profile and lock.

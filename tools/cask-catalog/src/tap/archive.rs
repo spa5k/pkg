@@ -1,8 +1,7 @@
 //! Strict codeload `tar.gz` unpacking and source-tree inventory.
 //!
-//! The tap archive is data only: every member is unpacked under strict
-//! path, type, count, and byte limits so a hostile archive cannot escape
-//! the staging tree or bomb the host. See [`extract_tar_gz`].
+//! [`extract_tar_gz`] validates paths and entry types, then limits file counts
+//! and decoded bytes. Archive contents cannot write outside the staging tree.
 
 use super::safe_segment;
 use super::sha256_hex;
@@ -55,15 +54,10 @@ pub(super) fn tree_inventory(tree: &Path) -> Result<BTreeMap<String, String>, St
     }
     Ok(inventory)
 }
-// ---------------------------------------------------------------------------
-// Strict tar.gz extraction (tap tree as data only)
-// ---------------------------------------------------------------------------
-
-/// Erroring counting reader around the gzip stream: bounds ALL decoded
-/// bytes (entry headers, file data, end-of-archive padding). A plain
-/// `take` would masquerade the over-limit case as clean EOF and silently
-/// accept a stream that is really a decompression bomb. The source is
-/// deliberately a memory decoder: its reads cannot return Interrupted.
+/// Limit all decoded gzip bytes, including tar headers and trailing padding.
+///
+/// Return an error when the limit is exceeded. `Read::take` would report EOF
+/// and could accept an oversized stream. The in-memory decoder cannot return Interrupted.
 struct BoundedGzReader<'a> {
     inner: flate2::read::GzDecoder<&'a [u8]>,
     remaining: u64,
@@ -79,12 +73,8 @@ impl<'a> BoundedGzReader<'a> {
         }
     }
 
-    /// Finish the bounded stream AFTER the tar reader stopped: consume
-    /// every remaining decoded byte so hidden decompression padding after
-    /// the tar end is rejected by the same bound, and gzip-level
-    /// truncation or damage surfaces as a read error instead of a clean
-    /// early EOF. A tar stream is 512-byte blocked; a decoded length off
-    /// that grid means the tar itself was truncated.
+    /// Consume decoded bytes after the tar end under the same byte limit.
+    /// Report gzip damage and reject lengths that are not whole 512-byte tar blocks.
     fn finish(&mut self) -> Result<(), String> {
         // Keep 64 KiB reads: decoder read size affects which damage or
         // byte-limit error is returned first.
@@ -126,10 +116,8 @@ impl Read for BoundedGzReader<'_> {
     }
 }
 
-/// Validate a `pax_global_header` (`XGlobalHeader`) member: bounded in
-/// size and, record by record, ONLY `comment` metadata keys. `path`,
-/// `linkpath`, or any other override key could move data around the
-/// strict extraction rules, so those are refused.
+/// Limit a `pax_global_header` member's size and accept only `comment` keys.
+/// Reject overrides such as `path` and `linkpath` that could bypass path checks.
 fn validate_global_pax_header<R: Read>(entry: &mut tar::Entry<'_, R>) -> Result<(), String> {
     let size = entry
         .header()
@@ -169,7 +157,7 @@ fn validate_global_pax_header<R: Read>(entry: &mut tar::Entry<'_, R>) -> Result<
     Ok(())
 }
 
-/// Unpack a gzip tarball into `dest` under STRICT rules:
+/// Unpack a gzip tarball into `dest` under these rules:
 ///
 /// * every entry path must be relative, single common top-level
 ///   prefix (stripped), with no absolute/dotdot/dot/backslash/control
@@ -540,9 +528,8 @@ mod tests {
             extract_tar_gz_limited(&good, &dir.path().join("ok"), 64 * 1024, 100, 1024).is_ok()
         );
 
-        // HEADER BOMB: no file data at all, but many directory headers
-        // whose DECODED bytes pass the small limit — refused by the
-        // counting reader, not masqueraded as clean EOF.
+        // Directory headers alone exceed the decoded byte limit.
+        // The counting reader must report an error instead of EOF.
         let headers: Vec<(&str, &str, tar::EntryType)> = (0..200)
             .map(|i| {
                 (
@@ -564,7 +551,7 @@ mod tests {
         );
 
         // PADDING BOMB: a valid small tar followed by a large run of
-        // zero blocks AFTER the end-of-archive marker. The tar reader
+        // zero blocks after the end-of-archive marker. The tar reader
         // stops at the marker; finishing the bounded stream rejects
         // the hidden decompression padding.
         let mut padded = tar_bytes(&[("p/a.rb", "x", tar::EntryType::Regular)]);
@@ -667,8 +654,8 @@ mod tests {
         };
         let dir = tempfile::tempdir().expect("tempdir");
 
-        // NFC and NFD spellings of "Café.rb" are BOTH refused outright:
-        // no Unicode normalization comparison is attempted.
+        // Reject both NFC and NFD spellings of "Café.rb".
+        // Do not compare normalized Unicode forms.
         for name in ["p/Casks/Caf\u{e9}.rb", "p/Casks/Cafe\u{301}.rb"] {
             let bad = gz(tar_bytes(&[("p/Casks/plain.rb", "x"), (name, "y")]));
             let err = extract_tar_gz(&bad, &dir.path().join("nonascii"))
@@ -677,7 +664,7 @@ mod tests {
         }
 
         // Focused path-case control: the ASCII case check still fires
-        // BEFORE any directory is created, and plain ASCII paths pass.
+        // before creating any directory. Plain ASCII paths pass.
         let ok = gz(tar_bytes(&[("p/Casks/A.rb", "x")]));
         assert_eq!(extract_tar_gz(&ok, &dir.path().join("ascii")).unwrap(), 1);
     }

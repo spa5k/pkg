@@ -1,13 +1,9 @@
 //! Filtered live reporting for long native profile mutations.
 //!
-//! Native profile mutations stream fetch, build, and removal
-//! progress on stderr. Raw passthrough turns one install into dozens of
-//! git transfer lines. The reporter keeps the stream readable: transfer
-//! and evaluation chatter is dropped, one compact status line shows the
-//! current fetch, copy, or build. Warnings and Nix's interactive trust
-//! prompts reach the user immediately. The command reports the cause
-//! after checking the profile. Raw stderr stays captured for decoding
-//! and is visible under `--verbose`.
+//! Show the current fetch, copy, or build in one status line. Filter transfer
+//! and evaluation messages. Show warnings and interactive trust prompts as
+//! they arrive. Capture raw stderr for error decoding and show it with
+//! `--verbose`. Commands report failures after checking the profile.
 
 use std::io::IsTerminal as _;
 use std::io::Write as _;

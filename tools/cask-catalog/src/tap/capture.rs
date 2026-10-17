@@ -18,9 +18,8 @@ const APP_RUNTIME_PY: &str = include_str!("../../../../nix/casks/lib/app-runtime
 const PUBLIC_FETCH_NIX: &str = include_str!("../../../../nix/casks/lib/public-fetch.nix");
 const SAFE_FETCH_PY: &str = include_str!("../../../../nix/casks/lib/safe-fetch.py");
 const FLAKE_TEMPLATE: &str = include_str!("flake-template.nix");
-/// Shared catalog projection helper: the SAME `lib/catalog.nix` the
-/// official `nix/casks/flake.nix` uses, copied verbatim into the
-/// generated tree so both wrappers share one algorithm.
+/// Copy the official flake's `lib/catalog.nix` into generated trees so
+/// both use the same catalog projection.
 const CATALOG_NIX: &str = include_str!("../../../../nix/casks/lib/catalog.nix");
 /// Committed lock for the pinned nixpkgs revision the template names.
 /// Copied into the generated tree so evaluation never writes a lock.
@@ -42,13 +41,11 @@ const ASSETS: &[(&str, &str)] = &[
     ("lib/licenses/homebrew-cask-LICENSE.txt", HOMEBREW_LICENSE),
 ];
 
-/// export.json byte limit (bounded read BEFORE the JSON parse).
+/// Limit `export.json` bytes before parsing JSON.
 pub(super) const MAX_EXPORT_BYTES: usize = 32 * 1024 * 1024;
 
-/// Validate one raw-export `pkg_origin` against the ACTUAL extracted
-/// source tree: the path must exist (exact spelling), the SHA-256 must
-/// match the file bytes on disk, and the file must name the token.
-/// Ruby output is never trusted alone.
+/// Check `pkg_origin` against the extracted source tree.
+/// Require an exact path match, matching file SHA-256, and a filename for the token.
 fn validate_pkg_origin(
     origin: &Value,
     tree: &BTreeMap<String, String>,
@@ -77,10 +74,6 @@ fn validate_pkg_origin(
     }
     Ok(origin)
 }
-
-// ---------------------------------------------------------------------------
-// Envelope validation and capture conversion
-// ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
 struct ExportEnvelope {
@@ -191,11 +184,9 @@ fn excluded_status(reason: ExclusionReason, detail: &str) -> TargetDecision {
     TargetDecision::bare_with_detail(reason, detail.chars().take(200).collect::<String>())
 }
 
-/// Convert a VALIDATED raw-export envelope into the self-contained
-/// flake directory tree under `output_dir/flake/`.
+/// Convert a validated raw-export envelope into `output_dir/flake/`.
 ///
-/// Private helper: the public [`super::import`] drives the whole actual flow;
-/// unit tests call this directly with fixture envelopes.
+/// [`super::import`] runs the import. Tests call this helper with fixture envelopes.
 pub(super) struct Capture {
     pub(super) source: String,
     pub(super) origin: String,
@@ -255,12 +246,9 @@ pub(super) fn convert_capture(
             .and_then(Value::as_str)
             .ok_or_else(|| "export cask without a token string".to_string())?
             .to_string();
-        // In-band load-error records (upstream "records" array mixes ok
-        // and error records) become excluded entries, but their provenance
-        // is validated and RETAINED exactly like a success: the exporter
-        // computes pkg_origin before the fork, so a missing or mismatched
-        // origin means the inventory is incomplete and the capture is
-        // refused, never silently accepted.
+        // Keep validated provenance for excluded load-error records too.
+        // The exporter computes pkg_origin before the fork, so missing or
+        // mismatched origins mean an incomplete inventory and fail the capture.
         let (status, origin_field, raw) = if let Some(error) =
             cask.get("pkg_error").and_then(Value::as_str)
         {
@@ -285,7 +273,7 @@ pub(super) fn convert_capture(
         } else {
             let mut status = tap_status(cask, system);
             // Provenance is verified against the actual source tree, not
-            // the Ruby output: eligible entries REQUIRE a matching
+            // the Ruby output. Eligible entries require a matching
             // origin; any hash/token mismatch downgrades the entry.
             let origin_field = match cask.get("pkg_origin") {
                 None | Some(Value::Null) => {
@@ -528,7 +516,7 @@ mod tests {
         assert_eq!(badplat["version"], "2");
         let broken = &catalog["entries"]["example/foo/broken"];
         assert_eq!(broken["targets"][system]["reason"], "ruby-load-error");
-        // The load-error record keeps its VALIDATED provenance.
+        // The load-error record keeps its validated provenance.
         assert_eq!(broken["origin"]["path"], "Casks/broken.rb");
 
         for asset in [
@@ -579,11 +567,8 @@ mod tests {
         reason = "Nix derivation paths use the exact .drv suffix"
     )]
     fn generated_flake_nix_evaluates_drv_path_offline_with_pinned_inputs() {
-        // End-to-end eval contract, not just a Nix parse: the generated
-        // standalone flake must evaluate one package's drvPath OFFLINE
-        // with the committed lock (no implicit lock write, no outside
-        // paths). Guarded: needs nix on PATH plus a cached pinned
-        // nixpkgs; machines without the cache skip.
+        // Evaluate a generated package's drvPath offline with the committed
+        // lock and no outside paths. Skip if Nix or the pinned Nixpkgs is unavailable.
         let Some(nix) = nix_on_path() else {
             eprintln!("ignored (no nix on PATH): offline drvPath eval contract not exercised");
             return;

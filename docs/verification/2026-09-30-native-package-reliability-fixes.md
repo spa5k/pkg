@@ -28,8 +28,8 @@ start on macOS 27. The helper fix is already in this branch's base. See the
 Owners: [child process boundary](https://github.com/spa5k/pkg/blob/1c1164b42052e09dd1dfa544987d5f38d100d81f/crates/pkg-cli/src/nix/process.rs),
 [source references](../../crates/pkg-cli/src/nix/reference.rs),
 [tap loading](../../crates/pkg-cli/src/commands/mod.rs),
-[namespace resolution](../../crates/pkg-cli/src/catalog/search.rs),
-[lifecycle gates](../../crates/pkg-cli/src/commands/lifecycle.rs),
+[namespace resolution](../../crates/pkg-cli/src/discovery/catalog/search.rs),
+[lifecycle gates](../../crates/pkg-cli/src/profile/mod.rs),
 [constraint generation](../../tools/cask-catalog/src/classify/mod.rs), and
 [archive extraction](../../nix/casks/lib/plan.py).
 

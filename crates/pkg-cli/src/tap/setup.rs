@@ -1,19 +1,13 @@
-//! One-time, consent-gated setup for the tap-import sandbox gate.
+//! Set up the tap-import sandbox after user approval.
 //!
-//! The importer refuses to run tap Ruby until the Nix daemon is proven
-//! sandboxed. The daemon is a privileged, machine-wide service, so pkg
-//! never changes it silently: this module prints the exact administrator
-//! steps, asks once on the terminal, runs each step through sudo with one
-//! argument vector (never a shell string), and verifies the result from
-//! this account. A refusal runs nothing. The fresh in-build probe inside
-//! the next import stays the authoritative check either way.
+//! The importer requires a sandboxed Nix daemon before it runs tap Ruby.
+//! Print the administrator steps and ask for approval on the terminal.
+//! Run approved steps through sudo with argument arrays, then verify the
+//! result from this account. The next import also checks its build sandbox.
 //!
-//! Fail-closed rule: administrator steps run only when their
-//! preconditions are inspectable from this account. A global
-//! `/etc/nix/nix.conf` that exists but is not world-readable stops ALL
-//! automatic steps: pkg cannot prove what the file holds (it may carry
-//! `access-tokens` or other secrets), so the only honest answer is the
-//! manual review instruction. No probe, no grep, no automatic chmod.
+//! Stop before administrator steps if this account cannot check their
+//! preconditions. If `/etc/nix/nix.conf` exists but is not world-readable,
+//! require manual review. It may contain `access-tokens` or other secrets.
 
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -218,9 +212,7 @@ fn manual_review(nix_conf: &str) -> String {
 /// The exact administrator steps this host still needs, in run order, or
 /// the refusal with manual instructions.
 ///
-/// The refusal comes first: when the global config is not world-readable
-/// no administrator step of any kind runs — not the build directory, not
-/// the custom settings, not the daemon restart.
+/// An existing global config that is not world-readable prevents every step.
 fn plan(world: &World) -> PlanOutcome {
     if world.nix_conf == GlobalConf::Unreadable {
         return PlanOutcome::ManualReview(manual_review(NIX_CONF));
@@ -596,10 +588,7 @@ mod tests {
 
     #[test]
     fn unreadable_global_config_refuses_all_administrator_steps() {
-        // The refusal comes before every step kind: not the build
-        // directory, not the custom settings append, not the daemon
-        // restart. No failure can reach a chmod of the global config
-        // because no such step exists at all.
+        // Unreadable global config must block every administrator step.
         let world = World {
             builds_dir_ready: false,
             sandbox_settings_ready: false,
@@ -699,10 +688,8 @@ mod tests {
 
     #[test]
     fn required_stdin_write_failure_surfaces() {
-        // The child closes its stdin immediately while the payload is far
-        // larger than the pipe buffer: the required piped write must fail
-        // loudly (EPIPE once the read end is gone), never count as a
-        // delivered step.
+        // The payload exceeds the pipe buffer. Closing stdin must report
+        // a write failure instead of claiming successful input delivery.
         let dir = tempfile::tempdir().expect("tempdir");
         let pid_file = dir.path().join("child-pid");
         let payload = format!("{}\n", "x".repeat(256 * 1024));

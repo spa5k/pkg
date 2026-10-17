@@ -1,7 +1,6 @@
-//! Configuration, fixed paths, and source references (design D3, D5).
+//! Configuration, fixed paths, and source references.
 //!
-//! The native profile is authoritative. No config or cache file is
-//! authoritative for installed packages.
+//! The native profile records installed packages.
 
 use std::path::{Path, PathBuf};
 
@@ -142,10 +141,8 @@ impl Default for Sources {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Display {
-    /// Color policy. Only `never` has an effect: it disables colored
-    /// output, including for native text pkg passes through. Any other
-    /// value is accepted and leaves color handling unchanged; `pkg` has
-    /// no setting that forces color on.
+    /// `never` disables color, including in text from Nix.
+    /// Other values leave color handling unchanged.
     pub color: String,
 }
 

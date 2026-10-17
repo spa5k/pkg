@@ -5,9 +5,9 @@ use std::process::ExitCode;
 
 use crate::catalog;
 use crate::nix::{self, NixError, ProfileEntry};
-use crate::tap::{registry, store};
 
-use super::{CommandError, Session, apps_refresh_after_mutation, installed_entries, lifecycle};
+use super::query::{active_generation, optional_history};
+use super::{CommandError, Session, installed_entries};
 
 pub(super) enum Request<'a> {
     Profile(ProfileChange<'a>),
@@ -47,7 +47,7 @@ enum Prepared {
 }
 
 pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), CommandError> {
-    let profile = crate::profile_lock::LockedProfile::acquire(&session.nix, &session.paths)?;
+    let profile = super::LockedProfile::acquire(&session.nix, &session.paths)?;
     let request = match request {
         Request::Prune { days } => return prune(session, days),
         Request::Profile(request) => request,
@@ -62,7 +62,7 @@ pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), Com
     let after = installed_entries(session)
         .map_err(|error| report_postflight_failure(prepared.action(), &error))?;
     let report = prepared.completed(session, &before, &after);
-    apps_refresh_after_mutation(&profile, prepared.action(), &report.names)?;
+    crate::apps::refresh_after_profile_change(&profile, prepared.action(), &report.names)?;
     print!("{}", report.text);
     Ok(())
 }
@@ -81,7 +81,7 @@ fn prepare(
             entries,
             exact_entry,
         } => {
-            let targets = crate::installed::select(
+            let targets = super::installed::select(
                 before,
                 &session.config,
                 &session.paths.state_home,
@@ -100,7 +100,7 @@ fn prepare(
             exact_entry,
         } => prepare_upgrade(session, before, entries, all, exact_entry),
         ProfileChange::Rollback(generation) => {
-            let previous = lifecycle::active_generation(&session.paths.profile);
+            let previous = active_generation(&session.paths.profile);
             report_rollback_target(session, generation, previous)?;
             Ok(Some(Prepared::Rollback {
                 generation,
@@ -167,7 +167,7 @@ impl Prepared {
         error: &NixError,
     ) -> CommandError {
         if let Self::Rollback { previous, .. } = self
-            && let Some(number) = lifecycle::active_generation(&session.paths.profile)
+            && let Some(number) = active_generation(&session.paths.profile)
                 .filter(|number| Some(*number) != *previous)
         {
             eprintln!("Partial: generation {number} is active. App launchers may need an update.");
@@ -225,7 +225,7 @@ impl Prepared {
                 generation,
                 previous,
             } => {
-                let current = lifecycle::active_generation(&session.paths.profile);
+                let current = active_generation(&session.paths.profile);
                 let destination = current.or(*generation).map_or_else(
                     || String::from("the previous generation"),
                     |number| format!("generation {number}"),
@@ -257,7 +257,7 @@ impl Prepared {
         if matches!(self, Self::Install { .. }) {
             let commands: BTreeSet<_> = changed
                 .iter()
-                .flat_map(|entry| crate::installed::commands(entry, &session.paths.profile))
+                .flat_map(|entry| super::installed::commands(entry, &session.paths.profile))
                 .collect();
             if !commands.is_empty() {
                 let shown = commands
@@ -372,7 +372,7 @@ fn prepare_upgrade(
         if entries.is_empty() {
             return Err(String::from("upgrade needs entry IDs or --all").into());
         }
-        crate::installed::select(
+        super::installed::select(
             installed,
             &session.config,
             &session.paths.state_home,
@@ -384,14 +384,10 @@ fn prepare_upgrade(
         println!("No installed entries; nothing to upgrade.");
         return Ok(None);
     }
-    let registry = registry::Registry::load(&registry::registry_path(&session.paths.state_home))?;
+    let taps = crate::tap::Catalogs::load(&session.paths.state_home)?;
     let mut retained = Vec::new();
     for entry in selected {
-        let removed_source =
-            store::source_of_reference(&session.paths.state_home, &installed[&entry].original_url)
-                .filter(|source| {
-                    source != nix::OFFICIAL_CASK_SOURCE && registry.origin(source).is_none()
-                });
+        let removed_source = taps.withdrawn_source(&installed[&entry].original_url);
         if let Some(source) = removed_source {
             if !all {
                 return Err(format!(
@@ -424,7 +420,7 @@ fn prepare_upgrade(
         }
         return Ok(None);
     };
-    super::resolution::gate_upgrade(session, installed, targets.as_slice())?;
+    crate::discovery::gate_upgrade(session, installed, targets.as_slice())?;
     eprintln!(
         "Upgrading: {}",
         selected_names(session, installed, targets.as_slice()).join(", ")
@@ -474,28 +470,7 @@ fn already_installed(
 }
 
 fn package_id(session: &super::Session, entry: &ProfileEntry) -> String {
-    crate::installed::package_id(entry, &session.config, &session.paths.state_home)
-}
-
-fn optional_history(session: &super::Session) -> Result<Option<BTreeSet<u64>>, NixError> {
-    match session.nix.profile_history(&session.paths.profile) {
-        Ok(text) => Ok(Some(history_numbers(&text))),
-        Err(error) if error.signal().is_some() => Err(error),
-        Err(_) => Ok(None),
-    }
-}
-
-fn history_numbers(text: &str) -> std::collections::BTreeSet<u64> {
-    crate::output::strip_ansi(text)
-        .lines()
-        .filter_map(|line| {
-            line.strip_prefix("Version ")?
-                .split_once(" (")?
-                .0
-                .parse()
-                .ok()
-        })
-        .collect()
+    super::installed::package_id(entry, &session.config, &session.paths.state_home)
 }
 
 #[cfg(test)]
@@ -536,8 +511,9 @@ mod tests {
     reason = "isolated reporting fixtures fail directly when setup is unavailable"
 )]
 mod reporting_tests {
-    use super::super::{finish, mutation_failed};
+    use super::super::mutation_failed;
     use super::*;
+    use crate::commands::finish;
     use crate::config::{Config, Paths};
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -619,7 +595,7 @@ mod reporting_tests {
                     child
                         .args([
                             "--exact",
-                            "commands::change::reporting_tests::cancelled_supervision_report_child",
+                            "profile::change::reporting_tests::cancelled_supervision_report_child",
                             "--nocapture",
                         ])
                         .env(SIGNAL, signal.to_string())

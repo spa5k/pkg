@@ -2,7 +2,7 @@
 
 use crate::cli::SearchOptions;
 
-use super::super::CommandError;
+use crate::commands::CommandError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum SearchSource {
@@ -102,7 +102,7 @@ pub(super) fn search_input(
                 explicit.label()
             );
             return Err(CommandError::Reported(std::process::ExitCode::from(
-                super::super::USAGE,
+                crate::commands::USAGE,
             )));
         }
     };

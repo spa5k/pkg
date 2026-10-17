@@ -57,11 +57,8 @@ fn stage_import(
     let locked = store::SourceStore::lock(&session.paths.state_home, source)?;
     let staged = locked.new_staging()?;
     let system = session.nix.system()?;
-    // The stage boundary: everything above is local state only; from here
-    // the approved source's data is fetched and its Ruby runs under the
-    // sandboxed Nix build. Name the approved source, origin, and scope
-    // before it starts — for `--trust` and updates too, which otherwise
-    // print only after success.
+    // Report the source and origin before fetching or running sandboxed Ruby.
+    // `--trust` and updates need this message because they skip the consent prompt.
     eprintln!("Importing tap: {source}…");
     let request = cask_catalog::tap::ImportRequest {
         source: String::from(source),
@@ -82,10 +79,8 @@ fn stage_import(
         )
         .into());
     }
-    // Only the importer's generated flake root — exactly the canonical
-    // `staging/flake` directory — is returned for publication. The
-    // untrusted checkout and the captures beside it never become the
-    // active flake root.
+    // Publish only the generated `staging/flake` directory, not the checkout
+    // or captures beside it.
     let flake_path = validated_flake_path(staged.path(), &result.flake_path)?;
     let provenance = store::Provenance {
         source: String::from(source),
@@ -112,12 +107,8 @@ fn stage_import(
 /// Require the importer's flake root to be exactly the real directory
 /// `staging/flake`.
 ///
-/// The whole untrusted checkout is never assumed to be the flake: only
-/// the canonical returned path counts, it must equal the canonical staging
-/// directory's `flake` child (so `flake_path.parent()` is always staging
-/// itself), and it must be a real directory. Root paths, paths outside
-/// staging, and any other in-staging path are refused before Nix
-/// evaluation or publication.
+/// Require a real directory whose canonical path is the canonical staging
+/// directory's `flake` child. Reject all other paths before evaluation or publication.
 fn validated_flake_path(
     staging: &std::path::Path,
     flake_path: &std::path::Path,
@@ -154,12 +145,9 @@ fn validated_flake_path(
 /// Check the staged index envelope against the agreed import before
 /// publication.
 ///
-/// The one shared binding check ([`tap::validate_binding`]) compares the
-/// envelope against the generation's provenance: exactly the agreed
-/// source, its origin and revision, the importer's capture hash in the
-/// raw provenance, exactly one target, and the importer's entry counts.
-/// Staged import adds the one native fact: the single target must be this
-/// host's system.
+/// [`tap::validate_binding`] checks the source, origin, revision, capture hash,
+/// entry counts, and single target against the generation's provenance.
+/// Staging also requires that target to match this host's system.
 fn check_staged_index(
     index: &crate::nix::CatalogIndex,
     provenance: &store::Provenance,

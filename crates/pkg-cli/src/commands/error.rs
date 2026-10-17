@@ -9,7 +9,7 @@ use crate::nix::NixError;
 
 /// A command failure, retained until the runner reports it.
 #[derive(Debug, thiserror::Error)]
-pub(super) enum CommandError {
+pub enum CommandError {
     #[error("{0}")]
     Message(String),
     #[error("{0}")]
@@ -54,11 +54,11 @@ impl From<String> for CommandError {
 }
 
 impl CommandError {
-    pub(super) fn is_interrupted(&self) -> bool {
+    pub fn is_interrupted(&self) -> bool {
         self.signal().is_some()
     }
 
-    pub(super) fn signal(&self) -> Option<i32> {
+    pub fn signal(&self) -> Option<i32> {
         match self {
             Self::Native(error) | Self::TapValidation(error) => error.signal(),
             Self::Catalog(error) => error.signal(),
@@ -77,7 +77,7 @@ impl CommandError {
     }
 }
 
-pub(super) fn signal_exit(signal: i32) -> ExitCode {
+pub fn signal_exit(signal: i32) -> ExitCode {
     ExitCode::from(u8::try_from(128 + signal).unwrap_or(super::FAILURE))
 }
 

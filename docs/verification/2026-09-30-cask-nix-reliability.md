@@ -75,7 +75,7 @@ Evidence: the six `hex-path-*` records in `parent/results.json` and
 
 ### P2 — An unrelated broken tap blocks a qualified install
 
-Owner: [install setup](../../crates/pkg-cli/src/commands/lifecycle.rs), line 33;
+Owner: [install setup](../../crates/pkg-cli/src/profile/mod.rs);
 [saved tap loading](../../crates/pkg-cli/src/tap/saved.rs).
 
 Trigger: leave a valid registry entry for a tap without a usable published
@@ -128,7 +128,7 @@ Keep the read-only bundle minimum check at build time. Evidence:
 
 ### P3 — Info can give two identical, unusable choices
 
-Owner: [exact lookup choices](../../crates/pkg-cli/src/catalog/search.rs),
+Owner: [exact lookup choices](../../crates/pkg-cli/src/discovery/catalog/search.rs),
 lines 1034–1041.
 
 Trigger: a configured flake exposes `probe` through both

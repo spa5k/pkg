@@ -1,5 +1,5 @@
 //! Bounded search result storage and output.
-use super::super::CommandError;
+use crate::commands::CommandError;
 use crate::{catalog, output};
 
 pub(super) struct SearchSpool {

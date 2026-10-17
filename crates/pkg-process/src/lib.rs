@@ -1,9 +1,9 @@
-//! Child process supervision: one signal forward and reap boundary.
+//! Child process supervision, signal forwarding, and reaping.
 //!
-//! Every external child of pkg — Nix commands, tap imports, and app helpers — runs through [`run_child`]. Termination signals sent only
-//! to pkg are forwarded to the registered child, the child is reaped, and
-//! pkg stays alive to re-read state and report. Every reaped run is
-//! classified exactly once, into [`Outcome`], by the code that reaped it.
+//! [`run_child`] runs Nix commands, tap imports, and app helpers. It forwards
+//! termination signals to the child and reaps it. This lets pkg read state
+//! again and report the result after cancellation. [`Reaped::classify`]
+//! converts the result to an [`Outcome`].
 
 #![cfg(unix)]
 #![cfg_attr(
@@ -21,7 +21,7 @@ use std::process::{Child, Command, ExitStatus, Output, Stdio};
 #[cfg(test)]
 mod tests;
 
-/// How a native child's stdio is wired.
+/// Input and output handling for a child process.
 pub enum IoMode<'sink> {
     /// Capture stdout/stderr through pipes.
     Capture,
@@ -33,16 +33,14 @@ pub enum IoMode<'sink> {
 
 /// A reaped child with output, cancellation, and resource status.
 pub struct Reaped {
-    /// The child's output record; stdout and stderr buffers are empty for
+    /// The child's output. The stdout and stderr buffers are empty for
     /// streamed children.
     pub output: Output,
-    /// A termination signal pkg received and forwarded to the child during
-    /// the run, when one was.
+    /// The first termination signal pkg received during the run, if any.
     ///
-    /// It is captured before the forwarding dispositions are restored,
-    /// because classification happens after restoration and the exit status
-    /// alone cannot prove cancellation: the verified runtime handles SIGINT
-    /// itself and then exits with a plain code 1.
+    /// The supervisor records this signal before it restores the previous
+    /// signal handlers. The exit status alone cannot identify cancellation.
+    /// Nix can handle SIGINT and exit with code 1.
     pub cancelled: Option<i32>,
     /// A failed resource bound, after group cleanup.
     pub resource_limit: Option<&'static str>,
@@ -69,12 +67,11 @@ impl From<std::io::Error> for RunError {
 }
 
 impl Reaped {
-    /// Classify this run into the one shared outcome.
+    /// Classify this run by cancellation and exit status.
     ///
-    /// Cancellation wins over exit status: a child that was signalled — or
-    /// that handled SIGINT and exited 130 — is an interruption, not a plain
-    /// failure, so callers re-read native state instead of trusting the
-    /// exit code.
+    /// Cancellation takes priority over the exit status. Without a resource-limit
+    /// failure, exit code 130 also counts as interrupted. Callers must read native
+    /// state again because the child may have applied part of the operation.
     #[must_use]
     pub fn classify(&self) -> Outcome {
         if let Some(signal) = self.cancelled.or_else(|| {
@@ -95,20 +92,18 @@ impl Reaped {
     }
 }
 
-/// The classified outcome of one external child through the boundary.
+/// The result of a child process.
 ///
-/// One representation serves native Nix commands (wrapped into
-/// the native adapter error with their argument vector) and direct helper
-/// commands (returned as is).
+/// The Nix adapter adds the command arguments when it converts this result
+/// to an error. Direct helper commands return it without conversion.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// The command exited successfully.
     Success,
     /// The command was cancelled by a termination signal during the run.
     ///
-    /// The child was reaped and pkg stayed alive; the operation may have
-    /// partially applied, so callers must finish their own bookkeeping
-    /// and report.
+    /// The supervisor has reaped the child. The operation may have applied
+    /// some changes, so callers must check state and report the result.
     Interrupted {
         /// The terminating signal number.
         signal: i32,
@@ -1189,19 +1184,16 @@ fn resident_bytes(_pid: u32) -> Option<u64> {
     None
 }
 
-/// Run one direct external command through the shared signal forward/reap
-/// boundary used for native Nix children, capturing stdout and the
-/// classified outcome.
+/// Run an external command and return its stdout and classified outcome.
 ///
-/// Termination signals sent only to pkg are forwarded to the child, the
-/// child is reaped, and pkg stays alive, so an interrupted command is
-/// reported as [`Outcome::Interrupted`] instead of killing pkg mid-run.
-/// Stderr is captured into the outcome; stdout is returned alongside it.
+/// [`run_child`] forwards termination signals and reaps the child.
+/// Cancellation returns [`Outcome::Interrupted`]. Failed commands include
+/// captured stderr in the outcome.
 /// # Errors
 ///
 /// Returns an error if signal setup, child setup, spawning, signal forwarding,
 /// exit observation, stream supervision, reaping, or signal restoration fails.
-/// Nonzero exits and cancellation are returned as [`Outcome`] values.
+/// Nonzero exits and cancellation return [`Outcome`] values.
 pub fn run_direct_captured(
     executable: &std::path::Path,
     args: &[&str],
@@ -1216,26 +1208,21 @@ pub fn run_direct_captured(
     })
 }
 
-/// Run one direct external command through the shared signal forward/reap
-/// boundary, discarding captured stdout.
+/// Run an external command and discard its captured stdout.
 ///
-/// Termination signals sent only to pkg are forwarded to the child, the
-/// child is reaped, and pkg stays alive, so an interrupted command is
-/// reported as [`Outcome::Interrupted`] instead of killing pkg mid-run.
-/// Stderr is captured for diagnostics; use [`run_direct_captured`] when
-/// stdout matters.
+/// This calls [`run_direct_captured`]. Use that function when the caller
+/// needs stdout.
 /// # Errors
 ///
 /// Returns an error if signal setup, child setup, spawning, signal forwarding,
 /// exit observation, stream supervision, reaping, or signal restoration fails.
-/// Nonzero exits and cancellation are returned as [`Outcome`] values.
+/// Nonzero exits and cancellation return [`Outcome`] values.
 pub fn run_direct(executable: &std::path::Path, args: &[&str]) -> Result<Outcome, RunError> {
     run_direct_captured(executable, args).map(|(outcome, _)| outcome)
 }
 
-/// The cancellation signal for a finished child, when the run was
-/// cancelled: a signalled child, then a child that exited 130 after
-/// handling SIGINT itself.
+/// Read the terminating signal from the exit status.
+/// Treat exit code 130 as a handled SIGINT.
 fn unix_signal(status: ExitStatus) -> Option<i32> {
     if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
         return Some(signal);

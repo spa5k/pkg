@@ -1,12 +1,11 @@
 # cask-catalog audit tool
 
-`audit.py` is a stdlib-only, offline, rerunnable maintainer audit. It never
-downloads anything; every input is an explicit local path.
+`audit.py` checks local snapshots with the Python standard library.
+It makes no network requests.
 
 ## Usage
 
-One command, no inline comments (they would swallow the continuation
-backslashes):
+Run this command without inline comments. Comments would break the line continuations.
 
 ```
 python3 tools/cask-catalog/audit.py \
@@ -18,74 +17,76 @@ python3 tools/cask-catalog/audit.py \
   --retrieved 2026-09-28T18:27:51Z
 ```
 
-The three data paths above are optional arguments with exactly these
-defaults (verified in the `argparse` parser; none is required): a pinned raw
-brew-api snapshot, the generated catalog, and a local copy of the 90d
-cask-install analytics. `--analytics-url`/`--retrieved` are provenance fields recorded
-verbatim in the report; the script performs no network access. Fetch each
-snapshot yourself and pin it (sha256, date range, retrieval time, source URL)
-before running.
+The optional `--input`, `--catalog`, and `--analytics` arguments default to
+the paths shown above. They name a raw brew-api snapshot, the generated
+catalog, and 90-day cask-install analytics.
+The report records `--analytics-url` and `--retrieved` as supplied.
+Download each snapshot before the audit.
+Record its SHA-256, date range, retrieval time, and source URL.
 
-## Semantics
+## Input checks
 
-- Envelope (schema `pkg-cask-catalog/4` only; no older-schema fallback):
-  the catalog must declare exactly this schema, an `inputs` map, and an
-  official input at `inputs["homebrew/cask"]` with kind `json-snapshot`
-  and `raw` set to null (`raw.path`/`raw.sha256`
-  sub-provenance is no longer present). The input's primary `sha256` must
-  equal the raw input file's
-  exact bytes. Anything else is invalid input (exit 2).
-- Identity: catalog entries are keyed by their original qualified
-  `source/token` identity. Each row carries `source` plus the bare
-  `token`; the key must agree with both. Rows whose source is not
-  `homebrew/cask` and bare tokens appearing under more than one key are
-  invariant violations — they are never silently dropped and a duplicate
-  never overwrites the first row. After this check the audit normalizes
-  entries to bare tokens for all analytics joins and checks; the raw
-  snapshot agrees with the catalog both ways on bare tokens.
-- Ranking: per-token integer install counts (comma-stripped, array rows
-  summed), sorted count-descending with token-ascending stable tie-break.
-  Top-1000 truncates the ranking exactly; missing tokens are reported, never
-  replaced by lower-ranked ones. Negative or non-numeric counts are rejected
-  as invalid input (exit 2), never silently used.
-- Structural invariants run over **all** catalog rows, not just the
-  top1000: qualified key/source/token agreement with full bare-token
-  validity (charset, no `..`) and both-ways raw agreement, exact target
-  set (the official catalog has both targets; single-target raw tap
-  catalogs are out of scope here), provenance agreement (revision 40-hex,
-  http(s) URL, official input sha256 equals the raw file's actual
-  bytes), eligible⇔plan+kind, excluded⇔reason with null
-  plan/kind, absolute http(s) source urls with 64-hex checksums, relative
-  non-traversing artifact sources and single-component ASCII-control-free
-  targets (pkg `target` is null by design), a bounded platform-scope
-  re-derivation (disabled/deprecated/`supported_platforms`/`depends_on.linux`
-  on the effective variation-merged record), and no plan-internal duplicate
-  destinations. The platform check is a bounded re-derivation of the first
-  decision stages, not full classifier equivalence.
-- Cross-token shared destinations (stable/beta variants writing the same
-  bundle name) are reported informationally. They are not a catalog invariant
-  failure; deciding how such installs are coordinated (for example, refusing
-  or serializing them) belongs to the native Nix runtime, which this tool
-  does not model.
-- Whole-catalog popularity weighting uses actual analytics counts for every
-  token that appears in the pinned analytics; tokens absent from analytics
-  contribute zero and the count of matched tokens is reported, so a zero
-  never masquerades as "no data".
-- Exit codes: `0` clean, `1` invariant violations, `2` invalid input.
-  Documented exclusion reasons (`unsupported-platform`, `missing-checksum`,
-  `deprecated`, ...) are outcomes to aggregate, not failures.
+The catalog must declare schema `pkg-cask-catalog/4` and an `inputs` map.
+`inputs["homebrew/cask"]` must have kind `json-snapshot` and null `raw`.
+Its `sha256` must match the raw input file's bytes.
+Invalid input exits with code 2.
+
+Entry keys must match each row's `source/token` identity.
+The audit reports sources other than `homebrew/cask` as invariant violations.
+Duplicate bare tokens also fail this check.
+It then uses bare tokens to join analytics and compare the raw snapshot with the catalog.
+Both inputs must contain the same token set.
+
+## Ranking
+
+The audit removes commas from integer install counts and sums array rows per token.
+It sorts counts in descending order, then tokens in ascending order for ties.
+The top 1,000 report keeps that ranking.
+It reports missing tokens without substituting lower-ranked tokens.
+Negative or nonnumeric counts are invalid input.
+
+Popularity weighting uses each matched token's analytics count across the whole catalog.
+Tokens absent from analytics contribute zero.
+The report includes the matched-token count.
+
+## Catalog checks
+
+The audit checks every catalog row, including rows outside the top 1,000:
+
+- Qualified keys, sources, and tokens must agree. Tokens must use the allowed
+  characters and contain no `..` component.
+- The official catalog must declare both targets. Single-target tap catalogs
+  are outside this audit's scope.
+- Provenance must have a 40-hex revision and an HTTP or HTTPS URL.
+  The official input hash must match the raw file's bytes.
+- Eligible entries must have a plan and kind. Excluded entries must have a
+  reason and null plan and kind.
+- Plan source URLs must be absolute HTTP or HTTPS URLs with 64-hex checksums.
+- Artifact sources must be relative and contain no traversal. Targets must
+  have one component and no ASCII control characters. A pkg artifact's target is null.
+- Plans must have no duplicate destinations.
+- Platform checks use `disabled`, `deprecated`, `supported_platforms`, and
+  `depends_on.linux` after merging the target variation.
+
+The platform check covers only the first classifier decisions.
+It does not reproduce the full classifier.
+The report lists destinations shared by different tokens as information.
+For example, stable and beta variants can use the same bundle name.
+The native Nix runtime handles install conflicts.
+
+Exit code 0 means no violations. Code 1 means invariant violations.
+Code 2 means invalid input.
+The report counts exclusions such as `unsupported-platform`, `missing-checksum`,
+and `deprecated` as catalog outcomes.
 
 ## Provenance note
 
-This audit is a **metadata** audit. No cask was downloaded, unpacked,
-installed, or executed; "eligible" rows were never executed — pkg plans are
-recorded, never run. The audit validates structural invariants and popularity
-coverage of the pinned data, not successful installs and not full classifier
-equivalence. Inline `_selfcheck` assertions (ranking aggregation, tie-breaks,
-truncation, count rejection, variation merge, platform gate, token and
-artifact-name validation, and the schema-4 identity boundaries:
-qualified-key mismatch, unexpected source, and duplicate bare tokens)
-run on every invocation — no test framework.
+The audit checks metadata and popularity coverage of pinned data.
+It does not download or install casks, execute plans, or prove that eligible
+packages install successfully.
+`_selfcheck` assertions run on every invocation.
+They cover ranking, invalid counts, variation merges, platform checks, token
+and artifact names, and schema-4 identity checks.
 
 ## Fixtures
 
@@ -93,28 +94,27 @@ run on every invocation — no test framework.
 small data-driven records adapted from Homebrew/brew test fixtures (revision
 `cc9ff034b1d98cdd4061f68cf715bb967c483a8f`, BSD-2-Clause; the full upstream
 [`LICENSE.txt`](fixtures/upstream/LICENSE.txt) is copied next to them). The
-adaptation into our raw input shape: `file://#{TEST_FIXTURE_DIR}/...` URLs
-become synthetic `https://fixtures.invalid/...` URLs (nothing downloads; the
-generator refuses non-http(s) URLs by design), source artifact names and the
-declared relative rename intent are preserved (`{"target": "..."}` item
-options inside the artifact list, never absolute paths), `depends_on arch`
-uses the brew-api `{"type": "arm", "bits": 64}` shape, and the pkg fixture's
-entry-level `allow_untrusted` side key stays where the API puts it — the plan
-builder treats that one inert side key as ignorable. This is not a claim that
-unsupported .pkg options are handled: active item options still refuse (an
-installer `choices` object excludes as `installer-script`; unknown option
-keys or a pkg rename are `malformed-record`), and only the entry-level side
-keys `target` and `allow_untrusted` are inert. One Linux AppImage record and
-one whole-array variation replacement record are included; a missing
-`variations` entry is valid (the base record serves that target) while
-`supported_platforms` is required.
+adaptation makes these changes:
+
+- Replace `file://#{TEST_FIXTURE_DIR}/...` with synthetic
+  `https://fixtures.invalid/...` URLs. Tests do not download them.
+- Keep artifact source names and relative renames as `{"target": "..."}`
+  options in the artifact list.
+- Use `{"type": "arm", "bits": 64}` for `depends_on arch`.
+- Keep the pkg fixture's entry-level `allow_untrusted` key. The plan builder
+  ignores that key and entry-level `target`.
+
+Active item options still cause exclusions.
+Installer `choices` use `installer-script`.
+Unknown option keys and pkg renames use `malformed-record`.
+The fixtures include a Linux AppImage and a whole-array variation replacement.
+A missing variation uses the base record. `supported_platforms` is required.
+
 [`expectations.json`](fixtures/upstream/expectations.json) was derived
 manually from the classify/plan/effective rules before the generator ran,
-then compared against the actual `cargo run generate` output over a temporary
-pin carrying the fixture file's exact sha256; `tests/upstream.rs` now re-runs
-the real `classify_target` over every record on both targets inside normal
-CI (`cargo test -p cask-catalog --test upstream`), so the adapted Homebrew
-cases are exercised continuously instead of sitting as unused data. Upstream
-behaviors we do not implement (old_tokens migration, `--no-binaries` plan
-flags, `conflicts_with` serialization, executing pkg installers) are recorded
-as out-of-scope/refused in the audit notes, not claimed as supported.
+then compared against `cargo run generate` output with a temporary pin for
+the fixture file's SHA-256.
+`tests/upstream.rs` runs `classify_target` for every record on both targets in CI.
+Run it with `cargo test -p cask-catalog --test upstream`.
+The audit notes record unsupported behavior, including `old_tokens` migration,
+`--no-binaries` plan flags, `conflicts_with` serialization, and pkg installer execution.

@@ -1,18 +1,12 @@
-//! The concrete native Nix adapter (design D1, D2).
+//! Run native Nix commands and decode their output.
 //!
-//! This module owns process construction and native output decoding. Callers
-//! ask for profile operations and never touch Nix JSON fields. There is no
-//! broker protocol, no runtime installation, and no generic backend trait.
+//! Callers request profile operations and receive decoded results.
 //!
-//! Output shapes in this module were captured from the verified runtime
-//! (Determinate 3.22.1, Nix 2.35.2, aarch64-darwin). Only that baseline is
-//! claimed as tested; this adapter enforces the shapes it decodes instead of
-//! an invented version floor.
+//! Output formats come from Determinate 3.22.1 and Nix 2.35.2 on aarch64-darwin.
+//! Decoding checks compatibility without a minimum runtime version check.
 //!
-//! Layout: `error` holds the failure modes, `process` the shared signal
-//! forward/reap boundary for every external child, `manifest` the decoded
-//! native output shapes, and the `reference` module the pure reference
-//! rules.
+//! `error` defines failures, `manifest` decodes output, and `reference`
+//! classifies references. `pkg-process` forwards signals and reaps children.
 
 mod conflict;
 mod discovery;
@@ -49,9 +43,8 @@ pub use runtime::discover;
 
 /// The only natively verified runtime baseline.
 ///
-/// pkg does not enforce an invented minimum version. Compatibility is
-/// enforced by decoding the exact native output shapes below; a runtime that
-/// speaks a different shape fails with a decode diagnostic, not a guess.
+/// Decoding checks the runtime's output format. An incompatible format
+/// produces a decode error.
 pub const TESTED_BASELINE: &str = "2.35.2";
 
 /// The resolved native runtime.
@@ -78,8 +71,7 @@ impl Nix {
 
     /// Trace every native command line to stderr before it runs.
     ///
-    /// With this off, `--verbose` would describe only some calls; the
-    /// adapter is the single place where every native invocation passes.
+    /// This covers every native invocation for `--verbose` output.
     #[must_use]
     pub fn verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
@@ -147,7 +139,7 @@ impl Nix {
         Ok(String::from_utf8_lossy(&reaped.output.stdout).into_owned())
     }
 
-    /// Run a native command with stderr reduced to progress and signal.
+    /// Run a native command with filtered progress output on stderr.
     ///
     /// Fetch, clone, and evaluation chatter is filtered. Warnings and
     /// interactive prompts stay visible. Raw stderr stays captured for
