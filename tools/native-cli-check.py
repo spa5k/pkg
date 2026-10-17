@@ -112,6 +112,8 @@ def main():
         assert result.returncode == code, results[-1]
         return result.stdout
 
+    print(run(nix, "--version").strip(), flush=True)
+
     def flake(version, collision=False):
         def drv(name, v):
             return (f'builtins.derivation {{ name = "{name}-{v}"; system = "{system}"; '
@@ -278,8 +280,11 @@ def main():
     assert os.readlink(profile) == before_link
     registry.write_text("broken registry")
     run(pkg, "install", "brew:formula-alias", "brew:formula-probe", "brew:formula-bottle")
-    assert len(entries()) == 2, entries()
-    assert {row["package_id"] for row in entries()} == {"brew:homebrew/core/formula-probe", "brew:homebrew/core/formula-bottle"}
+    installed_formulae = entries()
+    assert len(installed_formulae) == 2, installed_formulae
+    assert {row["package_id"] for row in installed_formulae} == {
+        "brew:homebrew/core/formula-probe", "brew:homebrew/core/formula-bottle"
+    }, installed_formulae
     info = json.loads(run(pkg, "info", "brew:formula-alias", "--json"))["result"]
     assert info["installed_state"] == "installed" and info["formula_kind"] == "nixpkgs-equivalent", info
     run(pkg, "install", "brew:formula-alias")
