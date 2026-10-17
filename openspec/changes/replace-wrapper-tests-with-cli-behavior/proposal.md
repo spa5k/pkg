@@ -14,6 +14,11 @@ compiled CLI and the existing real Nix lifecycle check. Remove their redundant
 internal tests after keeper proof. Keep the typed config error check because
 CLI text cannot prove that the original error type survives.
 
+Extend the native journey with real failed builds, concurrent CLI processes,
+selected rollback, and deletion of expired generations. Run the Linux journey
+in E2B and the macOS journey locally. Correct the doctor cache assertion so it
+checks pkg's cache and permits Nix's own cache files.
+
 ## Scope
 
 This change has no product behavior change. It adds no test framework or

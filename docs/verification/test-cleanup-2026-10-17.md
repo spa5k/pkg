@@ -4,6 +4,8 @@ Date: 2026-10-17.
 Baseline: `ddac23afc19a3185fb73e8b2a3db51b55862c849`, fetched from `origin/main`.
 Host: macOS, Apple silicon. Compiler: Rust 1.99.0. Nix: 2.35.2, Determinate Nix 3.22.1.
 Branch: `feat/test-behavior-cleanup`.
+The later [native end-to-end extension](native-e2e-2026-10-17.md) records the
+additional Linux, concurrency, build-failure, and expired-generation proof.
 The pre-existing untracked paths `.agents/skills/.agents/` and
 `.agents/skills/skills-lock.json` were excluded from this change.
 

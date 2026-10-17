@@ -17,3 +17,14 @@ Before removal, run each keeper and compare the schema test with an isolated
 version mutation. Also verify the new CLI checks against option, config, age,
 and color mutations. Keep the bounded results in the audit report. The existing
 CI routing stays unchanged.
+
+The native journey also owns failed batch builds and upgrades. It compares the
+manifest, active link, and generation links before and after each failure. Two
+real CLI processes check profile lock contention and cancellation. Selected
+rollback must restore an executable from the requested generation.
+
+Set generation symlink modification times in the disposable profile to exercise
+native age selection. Keep one recent generation and age the current generation
+as well as the expired history. Prune must remove only expired non-current
+generations, with Nix's cutoff generation retained. Retained generations must
+still restore usable commands. The CI jobs save command results and signal logs.
