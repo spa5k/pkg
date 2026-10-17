@@ -186,4 +186,17 @@ jobs:
         run: cargo test --locked -p pkg-cli --lib --all-features native_flake_discovery -- --ignored
 
       - name: Native package lifecycle and regression checks
-        run: python3 tools/native-cli-check.py --pkg target/release/pkg
+        run: >-
+          python3 tools/native-cli-check.py --pkg target/release/pkg
+          --evidence-dir "${{ runner.temp }}/pkg-native-evidence"
+
+      - name: Native lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-lifecycle-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/pkg-native-evidence/results.json
+            ${{ runner.temp }}/pkg-native-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 7

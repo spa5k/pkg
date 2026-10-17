@@ -1,8 +1,5 @@
-//! Direct checks for the reduced client grammar and path rules.
+//! Compiled CLI checks with temporary homes and controlled child output.
 
-// This integration-test crate is built without `cfg(test)`, so the
-// crate-root test opt-out does not apply; the same reasoned exception
-// is declared here once.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -11,20 +8,6 @@
 )]
 
 use std::process::Command;
-
-fn pkg(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
-    command.args(args).env_remove("XDG_STATE_HOME");
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    let output = command.output().expect("spawn pkg");
-    (
-        output.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    )
-}
 
 #[test]
 fn help_lists_d4_commands_and_no_removed_ones() {
@@ -69,15 +52,37 @@ fn help_lists_d4_commands_and_no_removed_ones() {
 }
 
 #[test]
-fn removed_commands_are_usage_errors() {
-    for removed in ["pin", "unpin", "outdated", "repair", "gc"] {
-        let (code, _, stderr) = pkg(&[removed], &[]);
-        assert_eq!(code, 2, "`{removed}` must fail as a usage error");
-        assert!(
-            stderr.contains("removed") || stderr.contains("Usage"),
-            "`{removed}` diagnostic should explain the removal"
-        );
+fn invalid_command_combinations_fail_before_loading_config() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let config = home.path().join("config/pkg");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("config.toml"), "invalid = [").unwrap();
+    for args in [
+        &["pin", "ripgrep"][..],
+        &["unpin", "ripgrep"],
+        &["outdated"],
+        &["repair"],
+        &["gc"],
+        &["verify"],
+        &["system", "uninstall"],
+        &["--dry-run", "install", "nixpkgs:ripgrep"],
+        &["install", "--keep-first", "nixpkgs:ripgrep"],
+        &["install"],
+        &["add"],
+        &["remove"],
+        &["uninstall"],
+        &["upgrade"],
+        &["upgrade", "--all", "ripgrep"],
+        &["upgrade", "--all", "--entry"],
+    ] {
+        let (code, stdout, stderr) = run_pkg_under_home(home.path(), args, "/nonexistent");
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        assert!(stdout.is_empty(), "{args:?}: {stdout}");
+        assert!(stderr.contains("Usage:"), "{args:?}: {stderr}");
+        assert!(!stderr.contains("invalid config"), "{args:?}: {stderr}");
     }
+    assert!(!home.path().join("state").exists());
+    assert!(!home.path().join("cache").exists());
 }
 
 #[test]
@@ -115,24 +120,67 @@ fn shellenv_is_idempotent_and_uses_the_dedicated_profile() {
             );
         }
     }
-    let (code, _, _) = pkg(&["shellenv"], &[]);
-    assert_eq!(code, 0);
 }
 
 #[test]
 fn relative_xdg_bases_are_rejected() {
-    let (code, _, stderr) = pkg(&["shellenv"], &[("XDG_STATE_HOME", "relative/state")]);
-    assert_eq!(code, 1);
-    assert!(stderr.contains("absolute"), "stderr: {stderr}");
+    for variable in ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"] {
+        let (code, stdout, stderr) = pkg(&["shellenv"], &[(variable, "relative/base")]);
+        assert_eq!(code, 1, "{variable}: {stderr}");
+        assert!(stdout.is_empty(), "{variable}: {stdout}");
+        assert!(
+            stderr.contains(variable) && stderr.contains("absolute"),
+            "{stderr}"
+        );
+    }
 }
 
 #[test]
 fn prune_requires_an_explicit_positive_age() {
-    let (code, _, stderr) = pkg(&["prune", "--older-than", "0d"], &[]);
-    assert_eq!(code, 1);
-    assert!(stderr.contains("positive"));
-    let (code, _, _) = pkg(&["prune"], &[]);
-    assert_eq!(code, 2, "missing --older-than is a usage error");
+    for (age, diagnostic) in [
+        ("0d", "positive"),
+        ("30", "end in `d`"),
+        ("-1d", "number of days"),
+        ("", "end in `d`"),
+        ("18446744073709551616d", "number of days"),
+    ] {
+        let (code, stdout, stderr) = pkg(&["prune", &format!("--older-than={age}")], &[]);
+        assert_eq!(code, 1, "{age:?}: {stderr}");
+        assert!(stdout.is_empty(), "{age:?}: {stdout}");
+        assert!(stderr.contains(diagnostic), "{age:?}: {stderr}");
+        assert!(
+            !stderr.contains("Nix"),
+            "validation before runtime: {stderr}"
+        );
+    }
+    let (code, stdout, stderr) = pkg(&["prune"], &[]);
+    assert_eq!(code, 2, "{stderr}");
+    assert_eq!(stdout, "");
+}
+
+#[test]
+fn invalid_config_is_reported_without_replacing_the_file() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let config = home.path().join("config/pkg");
+    std::fs::create_dir_all(&config).unwrap();
+    let file = config.join("config.toml");
+    for text in [
+        "invalid = [",
+        "sources = 3",
+        "soruces = {}",
+        "[sources]\nnixpkg = 'github:NixOS/nixpkgs'",
+        "[display]\ncolour = 'never'",
+        "[runtime]\nnix_path = '/usr/bin/nix'",
+    ] {
+        std::fs::write(&file, text).unwrap();
+        let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["doctor"], "/nonexistent");
+        assert_eq!(code, 1, "{text}: {stderr}");
+        assert!(stdout.is_empty(), "{text}: {stdout}");
+        assert!(stderr.contains("invalid config"), "{text}: {stderr}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+    }
+    assert!(!home.path().join("state").exists());
+    assert!(!home.path().join("cache").exists());
 }
 
 #[test]
@@ -173,7 +221,7 @@ fn invalid_search_pattern_is_a_usage_error_before_runtime_discovery() {
 
 #[test]
 fn cold_search_gives_setup_guidance_without_a_runtime() {
-    let (code, stdout, stderr) = run_with_home(&["search", "ripgrep"], &[("PATH", "/nonexistent")]);
+    let (code, stdout, stderr) = pkg(&["search", "ripgrep"], &[("PATH", "/nonexistent")]);
     assert_eq!(code, 1);
     assert!(stdout.is_empty(), "{stdout}");
     assert!(stderr.contains("search data is not ready"), "{stderr}");
@@ -272,15 +320,12 @@ fn make_executable(_path: &std::path::Path) {}
 /// environment entries the caller chooses. Subprocess isolation keeps the
 /// test away from the runner's real files; the standard profile paths
 /// under the fresh home hold nothing unless the test creates them.
-fn run_with_home(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
+fn pkg(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
     let home = tempfile::tempdir().expect("tempdir");
     let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
     command
         .args(args)
         .env_remove("NO_COLOR")
-        .env_remove("XDG_STATE_HOME")
-        .env_remove("XDG_CACHE_HOME")
-        .env_remove("XDG_CONFIG_HOME")
         .env("HOME", home.path())
         .env("XDG_STATE_HOME", home.path().join("state"))
         .env("XDG_CACHE_HOME", home.path().join("cache"))
@@ -302,9 +347,6 @@ fn run_pkg_under_home(home: &std::path::Path, args: &[&str], path: &str) -> (i32
     command
         .args(args)
         .env_remove("NO_COLOR")
-        .env_remove("XDG_STATE_HOME")
-        .env_remove("XDG_CACHE_HOME")
-        .env_remove("XDG_CONFIG_HOME")
         .env("HOME", home)
         .env("XDG_STATE_HOME", home.join("state"))
         .env("XDG_CACHE_HOME", home.join("cache"))
@@ -328,8 +370,7 @@ fn missing_nix_gives_vendor_guidance_not_a_silent_result() {
     // (the alpha.4 fix); with nothing there, the not-found guidance must
     // appear with the searched locations.
     if system_profile_nix_present() {
-        let (code, stdout, stderr) =
-            run_with_home(&["doctor", "--verbose"], &[("PATH", "/usr/bin:/bin")]);
+        let (code, stdout, stderr) = pkg(&["doctor", "--verbose"], &[("PATH", "/usr/bin:/bin")]);
         let _ = code; // daemon health is machine state; discovery is not.
         let expected = system_profile_nix_version();
         assert!(
@@ -337,8 +378,7 @@ fn missing_nix_gives_vendor_guidance_not_a_silent_result() {
             "the system profile Nix must be found and probed without PATH: {stdout}{stderr}"
         );
     } else {
-        let (code, stdout, stderr) =
-            run_with_home(&["doctor", "--verbose"], &[("PATH", "/nonexistent")]);
+        let (code, stdout, stderr) = pkg(&["doctor", "--verbose"], &[("PATH", "/nonexistent")]);
         assert_eq!(code, 1);
         let text = format!("{stdout}{stderr}");
         assert!(text.contains("Determinate"), "guidance: {text}");
@@ -1182,5 +1222,46 @@ os.kill(os.getpid(),sig)
                 );
             }
         }
+    }
+}
+
+#[test]
+fn history_color_policy_applies_to_native_output() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let (runtime, _keep) = fake_nix(
+        "case \"$*\" in
+  *--version*) echo 'nix (Nix) 2.35.2';;
+  *'profile history'*) printf '\\033[31mVersion 3 (2026-10-17)\\033[0m\\n\\033[1;32mgen 3\\033[m plain\\033b\\033[';;
+  *) exit 9;;
+esac",
+    );
+    let config = home.path().join("config/pkg");
+    std::fs::create_dir_all(&config).unwrap();
+    for (color, flags, expected) in [
+        (
+            "auto",
+            &[][..],
+            "\x1b[31mVersion 3 (2026-10-17)\x1b[0m\n\x1b[1;32mgen 3\x1b[m plain\x1bb\x1b[",
+        ),
+        (
+            "auto",
+            &["--no-color"][..],
+            "Version 3 (2026-10-17)\ngen 3 plain\x1bb",
+        ),
+        ("never", &[][..], "Version 3 (2026-10-17)\ngen 3 plain\x1bb"),
+    ] {
+        std::fs::write(
+            config.join("config.toml"),
+            format!(
+                "[runtime]\nnix = '{}'\n[display]\ncolor = '{color}'\n",
+                runtime.display()
+            ),
+        )
+        .unwrap();
+        let mut args = vec!["history", "--verbose"];
+        args.extend_from_slice(flags);
+        let (code, stdout, stderr) = run_pkg_under_home(home.path(), &args, "/usr/bin:/bin");
+        assert_eq!(code, 0, "{color}, {flags:?}: {stderr}");
+        assert_eq!(stdout, expected, "{color}, {flags:?}: {stderr}");
     }
 }

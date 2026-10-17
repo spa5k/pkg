@@ -705,6 +705,25 @@ mod tests {
 
     #[test]
     fn stage_and_publication_keep_the_source_lock_until_drop() {
+        const CHILD: &str = "PKG_SOURCE_LOCK_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // Sibling tests can fork while this test holds the lock. Their
+            // inherited descriptors can delay release until exec closes them.
+            let output =
+                std::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .args([
+                        "--exact",
+                        "tap::store::tests::stage_and_publication_keep_the_source_lock_until_drop",
+                        "--test-threads=1",
+                    ])
+                    .env(CHILD, "1")
+                    .output()
+                    .expect("runs isolated source-lock check");
+            assert!(output.status.success(), "{output:?}");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.contains("1 passed;"), "{stdout}");
+            return;
+        }
         let state = tempfile::tempdir().expect("tempdir");
         let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
         let probe = std::fs::OpenOptions::new()
