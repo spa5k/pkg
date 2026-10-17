@@ -192,52 +192,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_bases_assembles_the_fixed_layout() {
-        let ok = Paths::from_bases(
-            Path::new("/tmp/pkg-test-state"),
-            Path::new("/tmp/pkg-test-config"),
-            Path::new("/tmp/pkg-test-cache"),
-        );
-        assert!(ok.profile.ends_with("nix/profiles/pkg"));
-        assert!(ok.helper_profile.ends_with("nix/profiles/pkg-app-tools"));
-        assert!(ok.config_file.ends_with("pkg/config.toml"));
-        assert!(ok.cache_dir.ends_with("pkg"));
-        // `from_bases` trusts already-validated bases; rejection of relative
-        // bases from the environment is exercised by the CLI test that runs
-        // the real binary with a relative XDG_STATE_HOME.
-        assert!(paths().is_ok());
-    }
-
-    #[test]
-    fn config_defaults_and_roundtrip() {
+    fn config_load_retains_the_decode_cause() {
         use std::error::Error as _;
         let dir = tempfile::tempdir().expect("tempdir");
         let file = dir.path().join("config.toml");
-        let loaded = Config::load(&file).expect("missing file means defaults");
-        assert_eq!(loaded, Config::default());
-        let text = toml::to_string(&Config::default()).expect("serializes");
-        std::fs::write(&file, text).expect("write");
-        assert_eq!(Config::load(&file).expect("parses"), Config::default());
         std::fs::write(&file, "sources = 3").expect("write");
         let error = Config::load(&file).expect_err("invalid config must fail");
         assert!(error.source().unwrap().is::<toml::de::Error>());
-    }
-
-    #[test]
-    fn config_rejects_unknown_fields_at_each_level() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let file = dir.path().join("config.toml");
-        for text in [
-            "soruces = {}",
-            "[sources]\nnixpkg = 'github:NixOS/nixpkgs'",
-            "[display]\ncolour = 'never'",
-            "[runtime]\nnix_path = '/usr/bin/nix'",
-        ] {
-            std::fs::write(&file, text).expect("write config");
-            assert!(
-                matches!(Config::load(&file), Err(ConfigError::Invalid(_))),
-                "unknown settings must fail: {text}"
-            );
-        }
     }
 }

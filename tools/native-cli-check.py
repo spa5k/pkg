@@ -128,8 +128,43 @@ def main():
             + (' legacyPackages.' + system + '.probe = ' + drv("probe", "1") + ';'
                if collision else '') + ' }; }')
 
+    def query(command, *arguments, code=0):
+        envelope = json.loads(run(pkg, command, *arguments, "--json", code=code))
+        assert set(envelope) == {"schema", "command", "result"}, envelope
+        assert envelope["schema"] == 1, envelope
+        assert envelope["command"] == command, envelope
+        return envelope["result"]
+
     def entries():
-        return json.loads(run(pkg, "--json", "list"))["result"]
+        return query("list")
+
+    configured = config.read_text()
+    config.unlink()
+    for empty_bases in (False, True):
+        bases = {key: env[key] for key in
+                 ("XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME")}
+        if empty_bases:
+            env.update({key: "" for key in bases})
+        doctor = {row["component"]: row for row in query("doctor")}
+        config_base = Path(env["HOME"]) / ".config" if empty_bases else root / "config"
+        cache_base = Path(env["HOME"]) / ".cache" if empty_bases else root / "cache"
+        state_base = Path(env["HOME"]) / ".local/state" if empty_bases else root / "state"
+        assert doctor["config"] == dict(component="config", status="defaults",
+                                         detail=str(config_base / "pkg/config.toml")), doctor
+        assert doctor["discovery cache"]["detail"] == str(cache_base / "pkg"), doctor
+        assert doctor["pkg profile"]["status"] == "fresh", doctor
+        assert doctor["taps"]["status"] == "none", doctor
+        assert run(pkg, "doctor") == "Healthy: no problems found.\n"
+        assert "config: defaults" in run(pkg, "doctor", "--verbose")
+        assert not (config_base / "pkg/config.toml").exists()
+        assert not cache_base.exists()
+        assert not any(path.is_file() or path.is_symlink()
+                       for path in state_base.rglob("*"))
+        assert entries() == []
+        assert run(pkg, "list") == "No packages installed.\nNext: pkg search QUERY\n"
+        assert not (state_base / "nix/profiles/pkg").exists()
+        env.update(bases)
+    config.write_text(configured)
 
     flake("1")
     flake_file = source / "flake.nix"
@@ -164,12 +199,35 @@ def main():
     assert "Commands: probe" in installed, installed
     assert "Installing: nixpkgs:probe" in results[-1]["stderr"], results[-1]
     assert run(str(profile / "bin/probe")).strip() == "1"
+    installed_entry = entries()[0]
+    assert installed_entry["package_id"] == "nixpkgs:probe", installed_entry
+    assert installed_entry["name"] == "probe", installed_entry
+    assert installed_entry["entry_id"], installed_entry
+    manifest = json.loads((profile / "manifest.json").read_text())
+    native_entry = manifest["elements"][installed_entry["entry_id"]]
+    assert installed_entry["source"] == native_entry["originalUrl"], installed_entry
+    assert installed_entry["locked_source"] == native_entry["url"], installed_entry
+    assert installed_entry["revision"] is None, installed_entry
+    before_manifest = (profile / "manifest.json").read_bytes()
+    before_link = os.readlink(profile)
+    for arguments in (("upgrade", "--all", installed_entry["entry_id"]),
+                      ("--json", "remove", "--entry", installed_entry["entry_id"]),
+                      ("--json", "prune", "--older-than=1d")):
+        run(pkg, *arguments, code=2)
+        assert (profile / "manifest.json").read_bytes() == before_manifest
+        assert os.readlink(profile) == before_link
+    for name in ("remove", "uninstall"):
+        run(pkg, "--verbose", name, "--entry", "--", "-missing", code=1)
+        assert "-missing" in results[-1]["stderr"], results[-1]
+        assert (profile / "manifest.json").read_bytes() == before_manifest
+        assert os.readlink(profile) == before_link
+    assert run(str(profile / "bin/probe")).strip() == "1"
     flake("2")
-    run(pkg, "upgrade", "--all")
+    run(pkg, "upgrade", installed_entry["entry_id"], "--entry")
     assert run(str(profile / "bin/probe")).strip() == "2"
     run(pkg, "rollback")
     assert run(str(profile / "bin/probe")).strip() == "1"
-    removed = run(pkg, "uninstall", entries()[0]["entry_id"])
+    removed = run(pkg, "uninstall", "--entry", "--", entries()[0]["entry_id"])
     assert "Removed: nixpkgs:probe" in removed, removed
     assert "Removing: nixpkgs:probe" in results[-1]["stderr"], results[-1]
     assert "error (ignored)" not in results[-1]["stderr"], results[-1]
@@ -181,7 +239,7 @@ def main():
     for namespace, version in (("packages", "2"), ("legacyPackages", "1")):
         attribute = f"{namespace}.{system}.probe"
         assert attribute in diagnostic, diagnostic
-        info = json.loads(run(pkg, "--json", "info", "nixpkgs:" + attribute))["result"]
+        info = query("info", "nixpkgs:" + attribute)
         assert info["version"] == version, info
     flake("2")
 
@@ -193,8 +251,22 @@ def main():
     run(pkg, "install", "nixpkgs:probe")
     assert run(str(profile / "bin/probe")).strip() == "2"
     run(pkg, "info", "probe", code=1)
-    doctor = json.loads(run(pkg, "--json", "doctor", code=1))["result"]
-    assert "fixture/broken" in json.dumps(doctor), doctor
+    profile_bytes = (profile / "manifest.json").read_bytes()
+    profile_link = os.readlink(profile)
+    registry_bytes = registry.read_bytes()
+    doctor = {row["component"]: row for row in query("doctor", code=1)}
+    assert doctor["tap fixture/broken"]["status"] == "unhealthy", doctor
+    assert "pkg tap update fixture/broken" in doctor["tap fixture/broken"]["detail"], doctor
+    human = run(pkg, "doctor", code=1)
+    assert "Needs attention:" in human and "pkg tap update fixture/broken" in human, human
+    assert registry.read_bytes() == registry_bytes
+    assert not (registry.parent / "fixture").exists()
+    registry.write_text("{ not json")
+    doctor = {row["component"]: row for row in query("doctor", code=1)}
+    assert doctor["tap registry"]["status"] == "unreadable", doctor
+    assert registry.read_text() == "{ not json"
+    assert (profile / "manifest.json").read_bytes() == profile_bytes
+    assert os.readlink(profile) == profile_link
     registry.unlink()
     run(pkg, "remove", entries()[0]["entry_id"])
 
@@ -279,13 +351,13 @@ def main():
     assert (profile / "manifest.json").read_bytes() == before_manifest
     assert os.readlink(profile) == before_link
     registry.write_text("broken registry")
-    run(pkg, "install", "brew:formula-alias", "brew:formula-probe", "brew:formula-bottle")
+    run(pkg, "add", "brew:formula-alias", "brew:formula-probe", "brew:formula-bottle", "nixpkgs:probe")
     installed_formulae = entries()
-    assert len(installed_formulae) == 2, installed_formulae
+    assert len(installed_formulae) == 3, installed_formulae
     assert {row["package_id"] for row in installed_formulae} == {
-        "brew:homebrew/core/formula-probe", "brew:homebrew/core/formula-bottle"
+        "brew:homebrew/core/formula-probe", "brew:homebrew/core/formula-bottle", "nixpkgs:probe"
     }, installed_formulae
-    info = json.loads(run(pkg, "info", "brew:formula-alias", "--json"))["result"]
+    info = query("info", "brew:formula-alias")
     assert info["installed_state"] == "installed" and info["formula_kind"] == "nixpkgs-equivalent", info
     run(pkg, "install", "brew:formula-alias")
     assert "Already installed" in results[-1]["stdout"], results[-1]
@@ -305,9 +377,22 @@ def main():
     assert run(str(profile / "bin/formula-bottle")).strip() == "2"
     run(pkg, "rollback")
     assert run(str(profile / "bin/formula-probe")).strip() == "1"
-    run(pkg, "remove", "brew:formula-probe", "brew:homebrew/core/formula-bottle")
+    run(pkg, "remove", "brew:formula-probe", "brew:homebrew/core/formula-bottle", "nixpkgs:probe")
     assert entries() == []
     print("PASS: Formula alias, native state, duplicate install, refusals, upgrade, rollback and removal")
+
+    active_manifest = (profile / "manifest.json").read_bytes()
+    active_link = os.readlink(profile)
+    generation_links = {path.name: os.readlink(path)
+                        for path in profile.parent.glob("pkg-*-link")}
+    assert len(generation_links) > 1, generation_links
+    for age in ("30d", "30D"):
+        assert run(pkg, "prune", "--older-than", age) == "No old generations to prune.\n"
+        assert (profile / "manifest.json").read_bytes() == active_manifest
+        assert os.readlink(profile) == active_link
+        assert {path.name: os.readlink(path)
+                for path in profile.parent.glob("pkg-*-link")} == generation_links
+    print("PASS: CLI usage refusal, JSON schema, doctor read-only state and prune retention")
 
     if platform.system() == "Darwin":
         host = subprocess.check_output(["/usr/bin/sw_vers", "-productVersion"], text=True).strip()
