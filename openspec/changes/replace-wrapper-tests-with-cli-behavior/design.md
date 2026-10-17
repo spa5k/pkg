@@ -28,3 +28,7 @@ native age selection. Keep one recent generation and age the current generation
 as well as the expired history. Prune must remove only expired non-current
 generations, with Nix's cutoff generation retained. Retained generations must
 still restore usable commands. The CI jobs save command results and signal logs.
+
+Run the source-store lock ownership check in its own test process. Sibling tests
+must not inherit its held descriptor during fork. Keep every existing lock probe
+and the immediate release check. Require exactly one child test to execute.
