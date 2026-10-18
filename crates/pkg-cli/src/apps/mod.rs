@@ -4,6 +4,8 @@
 //! ownership, and runs the pinned helper. Private payloads use one generated
 //! layout. Status reads the same derived source map without writing.
 mod assessment;
+mod command;
+pub(crate) use command::{command, refresh_after_profile_change};
 mod destination;
 pub(crate) mod error;
 mod helper;
@@ -30,7 +32,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 pub(crate) use storage::setup_storage;
 
-/// Refreshes macOS launchers (and Dock entries) for active profile outputs.
+/// Refresh macOS launchers and Dock entries for active profile outputs.
 ///
 /// Reads the active profile, collects intact `.app` bundles from its store
 /// outputs, prepares externally signed copies when required, and builds a
@@ -39,8 +41,7 @@ pub(crate) use storage::setup_storage;
 /// and source map only after helper success and a second ownership check.
 /// A failed helper or publication keeps the previous launcher folder and
 /// source map. Dock state may change after helper work starts. With no
-/// active apps, sync is a no-op unless an owned destination still holds
-/// stale launchers to remove; an unowned folder is never touched.
+/// active apps, sync only removes stale launchers from an owned destination.
 /// # Errors
 ///
 /// Returns an error if the host is not macOS, a profile lock or read fails, app assessment fails, or helper, destination, or launcher operations fail.
@@ -50,14 +51,12 @@ pub(crate) fn sync(nix: &Nix, paths: &Paths) -> Result<(), AppError> {
             "pkg apps sync supports macOS only; .app bundles are not exposed on this platform",
         ));
     }
-    let profile = crate::profile_lock::LockedProfile::acquire(nix, paths)?;
+    let profile = crate::profile::LockedProfile::acquire(nix, paths)?;
     sync_locked(&profile)
 }
 
 /// Refresh launchers while the caller holds the profile lock.
-pub(crate) fn sync_locked(
-    profile: &crate::profile_lock::LockedProfile<'_>,
-) -> Result<(), AppError> {
+pub(crate) fn sync_locked(profile: &crate::profile::LockedProfile<'_>) -> Result<(), AppError> {
     let nix = profile.nix();
     let paths = profile.paths();
     if !cfg!(target_os = "macos") {
@@ -71,28 +70,22 @@ pub(crate) fn sync_locked(
     let _lock = crate::profile_lock::ProfileLock::acquire(&paths.state_home.join("apps"))?;
     let entries = list_profile(nix, &paths.profile)?;
     let apps = scan_apps(entries.iter())?;
-    // Vendor assessment runs under the sync lock before launcher writes:
-    // the destination guard, the marker, the helper profile, and any
-    // launcher change all come later, so a failed check leaves the
-    // previous launchers and source map untouched. Preparing a private
-    // cache copy does not run vendor code or change the package profile.
+    // Assess vendor bundles under the sync lock before any launcher writes.
+    // A private cache copy does not run vendor code or change the profile.
     assess_public_tap_apps(&paths.state_home, &entries)?;
     let dest = destination_path()?;
     let state = inspect_destination(&dest)?;
 
     if apps.is_empty() {
         return match state {
-            // Owned folder, no apps left: drop stale trampolines in place.
-            // The folder is marker-verified pkg property; nothing outside it
-            // is touched, and no helper is needed for removal.
+            // Remove stale launchers from the owned folder without the helper.
             DestinationState::Owned => {
                 clear_launchers(&dest)?;
                 write_marker(&dest)?;
                 write_source_map(&dest, &apps)?;
                 Ok(())
             }
-            // No destination, or one pkg does not own: nothing of pkg's to
-            // manage, in particular no helper download and no folder touched.
+            // No owned launchers need removal.
             DestinationState::Missing | DestinationState::Unowned { .. } => Ok(()),
         };
     }
@@ -245,6 +238,6 @@ fn list_profile(
     nix: &Nix,
     profile: &Path,
 ) -> Result<BTreeMap<String, crate::nix::ProfileEntry>, AppError> {
-    nix.profile_list(profile)
+    crate::profile::entries(nix, profile)
         .map_err(|e| AppError::native(format!("could not list profile {}", profile.display()), e))
 }

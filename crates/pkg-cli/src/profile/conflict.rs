@@ -30,7 +30,7 @@ pub(super) fn report(
         .map(|(key, entry)| {
             (
                 key,
-                package_label(&crate::installed::package_id(
+                package_label(&super::installed::package_id(
                     entry,
                     &session.config,
                     &session.paths.state_home,

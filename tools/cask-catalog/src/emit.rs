@@ -1,14 +1,13 @@
 //! Whole-catalog generation (schema `pkg-cask-catalog/4`).
 //!
-//! Integrity checks, one deterministic catalog with per-source `inputs`
-//! provenance and source-qualified entry identities, and a printable
-//! coverage summary.
+//! Validate inputs and generate a deterministic catalog with source provenance,
+//! source-qualified entry IDs, and a coverage summary.
 //!
 //! Entry map keys are the single identity `source/token` (for the
 //! official snapshot source `homebrew/cask/token`; for raw taps
 //! `owner/tap/token`). Each entry repeats its bare `token` and `source`
 //! fields. The official driver reads the pinned JSON snapshot; the raw
-//! tap driver lives in `tap.rs` and feeds the same entry shape.
+//! tap driver lives in `tap` and produces the same entry format.
 
 use crate::classify::{PlatformGate, TargetDecision, classify_target};
 use crate::effective;
@@ -34,10 +33,9 @@ pub struct InputProvenance {
     pub url: String,
     /// Exact revision the url names.
     pub revision: String,
-    /// SHA-256 of the pinned source bytes (`url` for JSON snapshots;
-    /// for raw taps the exact-revision codeload archive —
-    /// `raw.archiveSha256` repeats it and `raw.captureSha256` is the
-    /// separate export.json metadata capture hash).
+    /// SHA-256 of the pinned JSON snapshot or exact-revision codeload archive.
+    /// For taps, `raw.archiveSha256` repeats this hash and `raw.captureSha256`
+    /// records the separate `export.json` metadata hash.
     pub sha256: String,
     /// Upstream data license attribution.
     pub license: String,
@@ -163,10 +161,8 @@ pub fn official_input(pin: &Pin) -> (String, InputProvenance) {
             sha256: pin.sha256.clone(),
             license: pin.license.clone(),
             kind: "json-snapshot",
-            // Client contract: the client requires null/absent raw for
-            // json-snapshot inputs — `url` and `sha256` above already
-            // name the exact pinned snapshot bytes, so a `raw` object
-            // would only repeat provenance with no new meaning.
+            // JSON snapshots use `url` and `sha256` for provenance.
+            // The client requires `raw` to be null or absent for these inputs.
             raw: Value::Null,
         },
     )

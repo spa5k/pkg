@@ -292,14 +292,9 @@ pub fn build_plan(eff: &Value, system: &str) -> Result<Plan, Exclusion> {
         }
     }
 
-    // The unambiguous direct AppImage download: on Linux, a URL whose
-    // path ends `.AppImage` with exactly one binary whose source also
-    // ends `.AppImage` is promoted to the appimage plan and archive,
-    // keeping the already-normalized binary target verbatim. Every
-    // other recognizable AppImage-as-binary shape refuses closed with a
-    // bounded error instead of producing a raw executable that needs
-    // host libfuse. Explicit `app_image` handling is untouched, and
-    // non-Linux systems never enter this path.
+    // On Linux, convert a direct .AppImage download with one matching binary
+    // to an AppImage plan. Keep the normalized target. Reject other binary
+    // .AppImage forms because running them as raw executables needs host libfuse.
     let promoted_appimage = if system == "x86_64-linux" {
         normalize_appimage_binaries(&mut artifacts, url_path_ends_with_appimage(&url))?
     } else {
@@ -400,12 +395,9 @@ fn collect_artifacts(eff: &Value, system: &str) -> Result<CollectedArtifacts, Ex
     Ok(CollectedArtifacts { artifacts, naked })
 }
 
-/// Fail-closed AppImage-as-binary normalization on Linux. A direct
-/// `.AppImage` download whose only installable is exactly one binary
-/// with a matching source is promoted to the appimage plan (target
-/// preserved verbatim). Any other binary `.AppImage` source — including
-/// inside archives, mixed artifact sets, anchored sources, and mismatched
-/// lone sources on a direct URL — refuses with a bounded error.
+/// Convert a Linux binary to an `AppImage` plan only for a direct `.AppImage`
+/// download with one matching, unanchored binary source. Keep its target.
+/// Reject archived, mixed, anchored, or mismatched binary `.AppImage` sources.
 fn normalize_appimage_binaries(
     artifacts: &mut [PlanArtifact],
     direct_appimage_url: bool,
@@ -415,7 +407,7 @@ fn normalize_appimage_binaries(
         return Ok(false);
     }
     // Any binary `.AppImage` source refuses when the download is not a
-    // direct `.AppImage` URL — including `$APPDIR`-anchored ones. Only
+    // direct `.AppImage` URL, including `$APPDIR`-anchored ones. Only
     // the direct promotion predicate requires an unanchored source.
     let any_appimage_source = artifacts
         .iter()

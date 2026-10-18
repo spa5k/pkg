@@ -1,19 +1,11 @@
-use super::TapState;
-use crate::catalog::Routing;
-use crate::config::Sources;
+use super::Catalogs;
 use crate::tap::Registry;
 use crate::tap::saved::SavedCatalogs;
 use crate::tap::store::{self, Provenance, SourceStore};
-use std::collections::BTreeMap;
 use std::path::Path;
 
 fn load(registry: &Registry, state_home: &Path) -> Result<SavedCatalogs, String> {
-    let mut state = TapState {
-        routing: Routing::from_registry(&Sources::default(), registry, state_home)?,
-        registry: registry.clone(),
-        state_home: state_home.to_owned(),
-        saved: BTreeMap::new(),
-    };
+    let mut state = Catalogs::from_registry(registry.clone(), state_home);
     state.saved_all()
 }
 
@@ -143,11 +135,8 @@ fn publish_apps(state: &std::path::Path) {
         .expect("publishes");
 }
 
-/// A qualified read of one source is isolated from an unrelated
-/// broken tap (review 2026-09-30, P2): loading every source fails on
-/// the broken one, while loading the healthy source alone succeeds.
-/// Bare-name resolution uses the strict whole-set load; qualified
-/// requests use the per-source load.
+/// A qualified read succeeds even when an unrelated tap is broken.
+/// Loading all sources for bare-name resolution must still fail.
 #[test]
 fn load_one_isolates_a_qualified_read_from_a_broken_unrelated_tap() {
     let state = tempfile::tempdir().expect("tempdir");
@@ -166,8 +155,11 @@ fn load_one_isolates_a_qualified_read_from_a_broken_unrelated_tap() {
     assert!(error.contains("other/cli"), "{error}");
 
     // The per-source load reads exactly the source it names.
-    let catalog = SavedCatalogs::load_one(&registry, state.path(), "somebody/apps")
-        .expect("a healthy source loads alone");
+    let mut snapshot = Catalogs::from_registry(registry.clone(), state.path());
+    let catalog = snapshot
+        .saved_one("somebody/apps")
+        .expect("a healthy source loads alone")
+        .clone();
     assert_eq!(catalog.source(), "somebody/apps");
     assert!(catalog.index().systems().contains_key("x86_64-linux"));
     let catalogs = SavedCatalogs::from_catalogs([catalog.clone()]).expect("keys derive");
@@ -179,12 +171,14 @@ fn load_one_isolates_a_qualified_read_from_a_broken_unrelated_tap() {
     assert!(SavedCatalogs::from_catalogs([catalog.clone(), catalog]).is_err());
 
     // The broken source still fails its own qualified read.
-    let error = SavedCatalogs::load_one(&registry, state.path(), "other/cli")
+    let error = snapshot
+        .saved_one("other/cli")
         .expect_err("the broken source fails its own load");
     assert!(error.contains("other/cli"), "{error}");
 
     // An unregistered source is refused, never guessed.
-    let error = SavedCatalogs::load_one(&registry, state.path(), "ghost/apps")
+    let error = snapshot
+        .saved_one("ghost/apps")
         .expect_err("an unregistered source is refused");
     assert!(error.contains("ghost/apps"), "{error}");
 }

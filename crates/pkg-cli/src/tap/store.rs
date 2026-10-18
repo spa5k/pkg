@@ -1,38 +1,25 @@
-//! The durable per-source tap store (state home, never the cache).
+//! Store tap generations under the state home.
 //!
-//! Layout under the state home's tap namespace (`pkg/taps`), all real
-//! directories:
+//! Layout under `pkg/taps`:
 //!
 //! ```text
-//! pkg/taps/src/{owner}/{tap}/current/     the active generation (REAL dir)
+//! pkg/taps/src/{owner}/{tap}/current/     the active generation directory
 //! pkg/taps/src/{owner}/{tap}/generations/ immutable former generations
 //! pkg/taps/src/{owner}/{tap}/lock         the per-source publication lock
 //! ```
 //!
-//! `current` is the stable reference installs and upgrades name
-//! (`path:...current`), so a native profile upgrade follows the tap
-//! forward while a rollback keeps the previously locked outputs. Because
-//! Nix rejects `path:` roots that are symlinks, `current` is a real
-//! directory and an update replaces it with one atomic directory exchange
-//! (`renameat2(RENAME_EXCHANGE)` / `renameatx_np(RENAME_SWAP)`). The
-//! registry records only origin and consent; the revision and provenance
-//! live inside the generation, so one atomic exchange commits the entire
-//! active generation without a registry race.
+//! Installs and upgrades use the stable `path:...current` reference. Rollback
+//! keeps the previously locked outputs. Nix rejects symlink roots, so updates
+//! replace the real `current` directory with an atomic exchange. Revision and
+//! provenance files move with the generation. The registry holds origin and consent.
 //!
-//! Ownership rule of publication: only the importer-generated flake root
-//! becomes `current`; the untrusted checkout and captures stay outside the
-//! active Nix flake root. Staging directories are random directories
-//! inside `generations/` (same filesystem) whose inner `flake/` directory
-//! is the published root. A first publication renames that inner flake
-//! into `current` and the disposable staging parent (holding the raw
-//! checkout) is removed before the publication is returned. An update
-//! exchanges `current` with the inner flake, so the exchanged-out old
-//! generation is already sitting at its final immutable path the moment
-//! the exchange commits — the returned publication owns that retained
-//! state: `finish` clears this run's fetch scratch best effort, `undo`
-//! rolls the publication back after a registry failure, and dropping an
-//! unfinished publication performs no fallible rollback at all (the old
-//! generation is conservatively retained with its scratch).
+//! Stage imports in random directories under `generations/` on the same
+//! filesystem. Publish only their generated `flake/` child. A first publication
+//! renames it to `current` and removes the staging parent. An update exchanges
+//! it with `current`, leaving the old generation at its final immutable path.
+//! [`Publication::finish`] removes fetch files, and [`Publication::undo`]
+//! attempts rollback after a registry failure. Dropping an unfinished publication
+//! keeps the old generation and fetch files without attempting rollback.
 
 use std::path::{Path, PathBuf};
 
@@ -59,9 +46,8 @@ pub fn store_root(state_home: &Path) -> PathBuf {
 
 /// Validate one source identity for filesystem use and split it.
 ///
-/// Only a strict `owner/tap` slug — never the reserved official source —
-/// may become a filesystem path, so the helpers below can never be path
-/// traversal gadgets.
+/// Require a valid `owner/tap` slug and reject the reserved official source
+/// before using it in a filesystem path.
 fn checked_source(source: &str) -> Result<(&str, &str), String> {
     if source == OFFICIAL_CASK_SOURCE {
         return Err(format!(
@@ -269,14 +255,10 @@ impl SourceStore {
     /// Stage a new generation: a fresh random directory under
     /// `generations/`, on the same filesystem as `current`.
     ///
-    /// The caller hands this directory to the importer as its output root;
-    /// the importer's generated flake root lives inside it (the seam
-    /// promises `output_dir/flake`). Because staging already lives at a
-    /// final path under `generations/`, an update's atomic exchange of the
-    /// inner flake with `current` leaves the exchanged-out old generation
-    /// at its already-final immutable path: no post-commit rename is
-    /// needed and none exists. The returned generation is tied to THIS
-    /// source, whose store and exclusive lock move into the returned stage.
+    /// The importer writes its generated flake to `output_dir/flake`.
+    /// Exchanging this child with `current` leaves the old generation at
+    /// its final immutable path without another rename. The returned stage
+    /// owns this source's store and exclusive lock.
     /// # Errors
     ///
     /// Returns an error if the staging directory cannot be created.
@@ -356,15 +338,10 @@ impl SourceStore {
 
     /// Undo a replacing publication whose registry write failed.
     ///
-    /// One exchange puts the former active generation back at `current`;
-    /// the withdrawn new generation (at `saved_generation` after the
-    /// first exchange) is then removed best effort and otherwise simply
-    /// retained. No fallible cleanup runs after the committing exchange:
-    /// a successful return states exactly one fact — the previous
-    /// generation is active again — and never promises the withdrawn one
-    /// was removed. Every failure of the exchange itself reports the exact
-    /// known state: the old generation is still preserved at
-    /// `saved_generation` and the new one is still active.
+    /// Exchange the old generation back to `current`, then try to remove
+    /// the withdrawn generation. Cleanup failure does not fail the restore.
+    /// If the exchange fails, the new generation remains active and the old
+    /// generation remains at `saved_generation`.
     fn undo_replaced_publication(&self, saved_generation: &Path) -> Result<(), String> {
         atomic::exchange_directories(saved_generation, &self.current())?;
         // Best effort only: a failed removal retains the withdrawn
@@ -564,14 +541,10 @@ impl StagedGeneration {
 
 /// One committed publication owning its retained and scratch state.
 ///
-/// The publication owns everything the commit left behind: the preserved
-/// old generation and this run's fetch scratch inside the staging parent
-/// of a replacing publication. [`Publication::finish`] clears the scratch
-/// best effort after the run fully succeeded; [`Publication::undo`]
-/// rolls the publication back after a registry failure. Dropping an
-/// unfinished publication performs NO fallible rollback: the preserved
-/// old generation and the scratch are conservatively retained, so a
-/// drop can never report a rollback it did not verify.
+/// A replacement keeps the old generation and fetch files in the staging parent.
+/// [`Publication::finish`] attempts to remove the fetch files after success.
+/// [`Publication::undo`] attempts rollback after a registry failure.
+/// Dropping an unfinished publication keeps these files without attempting rollback.
 pub struct Publication {
     store: SourceStore,
     published: Published,
@@ -590,14 +563,10 @@ impl Publication {
 
     /// Finish the publication: clear this run's fetch scratch best effort.
     ///
-    /// After a successful publication (and its registry commit, where one
-    /// exists) the staging parent of a replacing publication holds the
-    /// preserved old generation at `preserved` and this run's fetch scratch
-    /// (the raw checkout, the captures) beside it. Only the immediate
-    /// scratch children are removed; the preserved old flake is never
-    /// touched. Failures are returned as warnings for the caller to print
-    /// and never change the command's success; nothing is cleaned up when
-    /// the run failed or rolled back. Calling `finish` again is a no-op.
+    /// After publication and any registry commit, remove the checkout and
+    /// capture files beside the preserved old generation. Keep that generation.
+    /// Return cleanup failures as warnings without changing command success.
+    /// Failed or rolled-back runs skip cleanup. Repeated calls do nothing.
     pub fn finish(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
         let Some(staging) = self.staging.take() else {
@@ -903,8 +872,8 @@ mod tests {
         );
 
         // Undoing the replacement restores the old active generation; the
-        // withdrawn new one is removed best effort (normally succeeds in
-        // tests) or retained — never a claim of a failed restoration.
+        // withdrawn new one is removed if possible. Cleanup failure must
+        // not report a failed restoration.
         publication.undo().expect("undoes");
         let store = SourceStore::lock(state.path(), "somebody/apps").expect("locks after undo");
         assert_eq!(std::fs::read_to_string(&marker).expect("read"), "old");
@@ -1004,9 +973,8 @@ mod tests {
         drop(apps);
 
         // Publish a first and then a replacing generation; drop the
-        // publication without finish or undo: the old generation must be
-        // retained — Drop performs no fallible rollback — and this run's
-        // scratch stays beside it.
+        // publication without finish or undo. Drop must retain the old
+        // generation and this run's fetch files without attempting rollback.
         for content in ["old", "new"] {
             let apps = SourceStore::lock(state.path(), "somebody/apps").expect("locks");
             let staged = apps.new_staging().expect("stages");
@@ -1058,12 +1026,8 @@ mod tests {
         let flake = staging.join("flake");
         std::fs::create_dir(&flake).expect("flake dir");
         std::fs::write(flake.join("flake.nix"), "new").expect("write");
-        // Make the capture write fail without blocking the cleanup that
-        // the failed publish itself performs: the provenance target
-        // inside the flake root is a directory, so `File::create` on it
-        // fails. (The old chmod-0o500 injection needed a hand-rolled
-        // restore before the caller-dropped guard could clean up, and it
-        // could not fail at all under root.)
+        // A directory at the provenance path makes `File::create` fail,
+        // including under root, without blocking staging cleanup.
         let new_rev = "1b56ceb53d693f3f3e0eaea0f9f4d5b8cf5b9b9d1b";
         std::fs::create_dir(flake.join(PROVENANCE_FILE)).expect("blocking dir");
         let failed = staged.publish(&provenance(new_rev), &index(new_rev));

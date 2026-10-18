@@ -1,4 +1,4 @@
-//! Output envelopes and human presentation (design D4).
+//! JSON output and terminal text.
 //!
 //! Query commands (search, info, list, doctor) offer a small versioned JSON
 //! result. Mutating commands show native progress and a short final result.
@@ -135,7 +135,7 @@ pub struct ListRow {
     pub name: String,
     /// The original moving reference the entry was installed from.
     pub source: String,
-    /// The locked source Nix resolved, reported separately (manager review 4).
+    /// The locked source reference that Nix resolved.
     pub locked_source: String,
     /// The locked revision, when present.
     pub revision: Option<String>,
@@ -242,8 +242,7 @@ static CSI: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
 
 /// Remove ANSI escape sequences from native text.
 ///
-/// `--no-color` must hold for text pkg passes through from Nix (native
-/// history) even when the runtime colorizes anyway (manager review 4).
+/// Apply `--no-color` to Nix output, including profile history.
 #[must_use]
 pub fn strip_ansi(text: &str) -> String {
     CSI.replace_all(text, "").into_owned()

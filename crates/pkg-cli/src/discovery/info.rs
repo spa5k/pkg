@@ -1,13 +1,14 @@
 //! Package metadata, availability, and installed identity.
-use super::{CommandError, installed_entries, print_json, session};
 use crate::catalog;
 use crate::cli::Cli;
+use crate::commands::{CommandError, print_json, session};
 use crate::nix::{self, ProfileEntry};
 use crate::output;
+use crate::profile::installed_entries;
 
 use super::resolution::{CaskDetails, PackageMetadata, Resolution, ResolvedPackage};
 
-pub(super) fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
+pub fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
     // IDs are validated before the runtime is touched, so malformed input is
     // refused identically with or without Nix present.
     let parsed = catalog::parse_id(id)?;

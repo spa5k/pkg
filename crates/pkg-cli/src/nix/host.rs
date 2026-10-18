@@ -1,9 +1,7 @@
-//! Host macOS version reading for the cask runtime range gate.
+//! Read the host macOS version for cask version checks.
 //!
-//! The version comes from the ABSOLUTE `/usr/bin/sw_vers` path through the
-//! shared child signal boundary, so an interrupted read is classified and
-//! pkg stays alive. No environment override exists in production: the
-//! native macOS parent tests this against the real host.
+//! Run `/usr/bin/sw_vers` with signal forwarding and child reaping.
+//! Production code has no environment override for the version.
 
 use super::process::Outcome;
 
@@ -44,7 +42,7 @@ pub use cask_catalog::version::{in_range, parse as parse_numeric_version};
 /// single non-empty NUMERIC version line: success output is validated
 /// through the same strict parser the bounds use. The caller fails
 /// closed on that error. This function must only be called for a macOS
-/// cask gate decision — never for Linux, Nixpkgs, or untargeted
+/// cask eligibility decision. Never use it for Linux, Nixpkgs, or untargeted
 /// catalogs.
 /// # Errors
 ///

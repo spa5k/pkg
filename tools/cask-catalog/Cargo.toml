@@ -1,7 +1,7 @@
-# cask-catalog — maintainer tool for the pkg Cask catalog.
+# cask-catalog generates the pkg Cask catalog and imports public taps.
 #
-# `fetch` and `import-tap` are bounded network steps (maintainer machines
-# only); `import-tap` additionally drives a local sandboxed Nix build.
+# `fetch` and `import-tap` limit network requests and download sizes.
+# `import-tap` also runs a local sandboxed Nix build.
 # `generate` reads the pinned input and writes deterministic catalog data.
 
 [package]
@@ -11,13 +11,13 @@ edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
 publish = false
-description = "Maintainer tool for the pkg Cask catalog: pinned snapshot generation and raw public tap import"
+description = "Generate the pkg Cask catalog from pinned snapshots and import public taps"
 
 [dependencies]
 # Static enum names are derived at compile time; no runtime conversion.
 strum_macros = "=0.28.0"
 pkg-process = { path = "../../crates/pkg-process" }
-libc = "=0.2.190"
+libc = "=0.2.191"
 clap = { version = "=4.6.7", features = ["derive"] }
 flate2 = "=1.1.10"
 reqwest = { version = "=0.13.5", default-features = false, features = [

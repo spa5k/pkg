@@ -146,7 +146,8 @@ mod tests {
     #[test]
     fn cancelled_host_probes_are_errors_only_when_the_record_needs_them() {
         let raw: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/fixtures/catalog-index.json")).unwrap();
+            serde_json::from_str(include_str!("../../../tests/fixtures/catalog-index.json"))
+                .unwrap();
         let index = nix::decode_catalog_index(&raw).unwrap();
         for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
             for error in [

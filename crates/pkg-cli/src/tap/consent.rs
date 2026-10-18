@@ -18,10 +18,8 @@ pub enum Decision {
 
 /// Ask for consent on the terminal.
 ///
-/// Interactive input reads one line and requires an explicit `y` or
-/// `yes`; everything else — including end of input — is a refusal. When
-/// stdin is not a terminal the prompt is skipped and consent is refused:
-/// automation must pass `--trust`.
+/// Read one line and accept only `y` or `yes`. Refuse all other input,
+/// including end of input. Without a terminal, require `--trust`.
 #[must_use]
 pub fn ask(_source: &str, origin: &str, trusted: bool) -> Decision {
     if trusted {

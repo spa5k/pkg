@@ -292,9 +292,8 @@ fn eligible_maximum_macos_reaches_the_plan() {
 
 #[test]
 fn inverted_macos_range_is_refused_on_every_target() {
-    // Bounds are collected on ALL targets before any baseline
-    // decision, so an inverted range is malformed on Linux too —
-    // previously Linux accepted it because it never collected min.
+    // Validate bounds before the baseline decision on every target.
+    // An inverted range must also fail on Linux.
     let both = ["arm64_sequoia", "x86_64_linux"];
     let rec = record(
         &both,

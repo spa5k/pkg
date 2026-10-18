@@ -1,13 +1,10 @@
 //! The disposable discovery snapshot cache.
 //!
-//! Derived data only: the one latest complete discovery metadata snapshot
-//! per source, system, and kind, re-validated on read and filtered locally
-//! per query. Nothing here is authoritative for installed packages. The
-//! locked revision lives *inside* each record as an identity field: a
-//! record is reused fresh only when its revision equals the freshly
-//! resolved one, and a new revision atomically replaces the previous
-//! snapshot, so the cache never grows per revision. Legacy per-query
-//! `search-*.json` files are never read by the current discovery path.
+//! Keep one complete snapshot per source, system, and kind. Reads validate
+//! its identity before queries filter it locally. A snapshot is fresh only
+//! when its recorded revision matches the resolved revision. A new revision
+//! atomically replaces the previous snapshot. The native profile records
+//! installed packages. Discovery ignores legacy `search-*.json` files.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,9 +14,7 @@ use crate::nix::CatalogIndex;
 
 /// The snapshot cache schema version.
 ///
-/// The `kind` field plus this schema version distinguish current
-/// snapshots from every older cache shape, so an old per-query
-/// `search-*.json` file can never be read as a snapshot.
+/// Reads check this version and `kind` to reject older cache formats.
 pub const SNAPSHOT_SCHEMA: u32 = 4;
 
 /// The cask snapshot kind: the complete generated index envelope.
@@ -85,12 +80,9 @@ impl<P> Snapshot<P> {
 
 /// Read the latest snapshot of one kind, source, and system, if valid.
 ///
-/// `revision` is `Some(expected)` for fresh reuse: the record's own
-/// revision must equal it. `None` is the stale fallback after a metadata
-/// or live failure, when the current revision is unknown. Every identity
-/// field (schema, kind, source, system, revision when given) is
-/// re-checked on read, so a renamed, rewritten, stale-schema, or corrupt
-/// file is ignored, never answered as a different identity.
+/// `Some(expected)` requires a matching revision. `None` permits a stale
+/// snapshot when metadata lookup or evaluation fails. Reads also validate
+/// the schema, kind, source, and system. Invalid files return no snapshot.
 #[must_use]
 pub fn read_snapshot<P>(
     cache_dir: &Path,
@@ -105,9 +97,7 @@ where
     let path = cache_dir.join(snapshot_path(kind, source, system));
     let text = std::fs::read_to_string(path).ok()?;
     let snap: Snapshot<P> = serde_json::from_str(&text).ok()?;
-    // Only immutable provenance is ever written: a record without its own
-    // non-empty revision and locked reference is corrupt and is never
-    // presented as valid cache, stale fallback included.
+    // Stale snapshots also require a nonempty revision and locked reference.
     let provenance = snap
         .revision
         .as_deref()
@@ -136,12 +126,10 @@ pub fn read_index_snapshot(
     read_snapshot(cache_dir, KIND_INDEX, source, system, revision)
 }
 
-/// Write one snapshot atomically (temp file + rename).
+/// Write a temporary snapshot file and rename it over the previous snapshot.
 ///
-/// The one file per kind, source, and system is replaced, so a new
-/// revision succeeds without keeping history, and every reader sees
-/// either the old or the new complete file, never a torn one. A failed
-/// write leaves the old latest snapshot in place for the stale fallback.
+/// Readers see a complete old or new file. A failed write preserves the old
+/// snapshot for use when metadata lookup or evaluation fails.
 pub fn write_snapshot<P: serde::Serialize>(
     cache_dir: &Path,
     snap: &Snapshot<P>,
@@ -175,8 +163,7 @@ pub(super) fn write_json(
 
 /// One snapshot file name for a kind, source, and system.
 ///
-/// Revision is deliberately not part of the key: exactly one latest
-/// snapshot is kept per identity, replaced on every new revision.
+/// Omit the revision so new snapshots replace the same file.
 fn snapshot_path(kind: &str, source: &str, system: &str) -> PathBuf {
     PathBuf::from(format!("catalog-{}.json", cache_key(kind, source, system)))
 }

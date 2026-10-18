@@ -121,7 +121,7 @@ fn consent_recheck_refuses_a_concurrently_removed_source() {
     // Fresh approval also passes when the entry stayed or appeared.
     assert!(recheck_consent(&registry::Registry::empty(), "somebody/apps", ORIGIN, true).is_ok());
     // The race: the entry is gone under the lock and this invocation
-    // did not explicitly approve — refuse before anything runs.
+    // did not explicitly approve. Refuse before anything runs.
     let error = recheck_consent(&registry::Registry::empty(), "somebody/apps", ORIGIN, false)
         .expect_err("a vanished approval must be refused");
     assert!(message(error).contains("removed"));

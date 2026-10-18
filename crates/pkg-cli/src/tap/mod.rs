@@ -6,12 +6,16 @@
 //! Nothing in this module executes Ruby: queries read only the saved,
 //! strictly validated catalog captures published here.
 //!
-//! Publication model (see `store`): one stable REAL `current` directory
-//! per source, replaced by one atomic directory exchange, with the
-//! exchanged-out generation preserved immutably for native rollback. The
-//! registry records only origin and consent; revision and provenance live
-//! inside the generation, so one exchange commits the whole active
-//! generation without a registry race.
+//! `store` keeps a real `current` directory per source. An atomic exchange
+//! replaces it and preserves the old generation for native rollback.
+//! Revision and provenance files move with the generation. The registry
+//! records origin and consent.
+
+mod command;
+mod query;
+
+pub(crate) use command::{dispatch, refresh_registered};
+pub(crate) use query::{Catalogs, health};
 
 pub mod atomic;
 pub mod consent;
