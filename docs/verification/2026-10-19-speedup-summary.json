@@ -1326,7 +1326,7 @@
   "slower_or_mixed": [
     "Small startup commands remain mixed; some final medians are slower.",
     "Linux 1,000-package history and recent-prune medians are slower.",
-    "Mac tap update sample is slower and includes a retained GitHub HTTP403.",
+    "Mac tap update sample is slower and includes a retained GitHub HTTP 403.",
     "Fresh-home cold installs show no clear general gain while the shared store is warm.",
     "App sync with30 apps remains mixed."
   ],
@@ -1335,9 +1335,9 @@
     "Installer transport uses local HTTP; public CDN latency and external Nix provisioning are excluded.",
     "Repeated package tests use a warm shared Nix store; first fetches are excluded observations.",
     "The10M comparison uses the selected ID-buffer client as baseline, not origin/main.",
-    "The Linux10M recovery covers the literal limited-output case; the complete5M matrix covers full dense output.",
+    "The Linux10M recovery covers the literal limited-output case; the complete 5M matrix covers full dense output.",
     "The Linux1,000-package repeat uses ten100-package groups because one1000-argument command exceeded the2GiB host limit.",
-    "The Mac tap payload measurement uses three balanced install pairs and two pairs for other cases after a retained HTTP403; no general tap speed gain is claimed.",
+    "The Mac tap payload measurement uses three balanced install pairs and two pairs for other cases after a retained HTTP 403; no general tap speed gain is claimed.",
     "Formula batches increase peak memory from244to353MiB on Mac and303to419MiB on Linux; Nix daemon memory is excluded.",
     "Synthetic catalogs can exceed page cache; no fully resident-memory claim is made.",
     "Vendor GUIs, fresh privileged Mac app storage, and public CDN latency are not timed."

@@ -19,7 +19,7 @@ Raw per-sample scratch files were intentionally removed; the benchmark tools rem
 | Dense real search | 0.869 s → 0.464 s | 0.786 s → 0.427 s |
 | Dense 5M-row search | 79.206 s → 43.496 s | 66.497 s → 43.516 s |
 
-The Linux 1,000-package repeat covers all 1,000 packages in ten 100-package groups on the2 GiB host.
+The Linux 1,000-package repeat covers all 1,000 packages in ten 100-package groups on the 2 GiB host.
 The Mac repeat-all command improves from 174.769 s to 0.909 s.
 
 ## Final command matrix
@@ -58,7 +58,7 @@ Output bytes, totals, and complete database hashes match.
 All-source dense output improves from 1.238 s to 0.740 s on Mac and 1.195 s to 0.683 s on Linux.
 Larger catalogs use exact output hashes, immutable inputs, and separate resource passes.
 The 10M comparison uses the selected ID-buffer client as baseline.
-The Linux 10M recovery covers literal limited output; complete full-output coverage is at5M.
+The Linux 10M recovery covers literal limited output; complete full-output coverage is at 5M.
 
 ## Installer, packages, profiles, apps, and taps
 
@@ -77,7 +77,7 @@ The Linux 10M recovery covers literal limited output; complete full-output cover
 | Mac public tap install | 1,042.646 → 918.043 ms |
 
 The Mac tap payload checks executable version, compressed manpage, three completions, metadata, update, upgrade, removal, and cleanup.
-One final baseline tap update returned GitHub HTTP403 and is retained as a limit, not a speed result.
+One final baseline tap update returned GitHub HTTP 403 and is retained as a limit, not a speed result.
 The complete Linux public lifecycle already covers revocation and expected refusals.
 
 ## Verification
@@ -91,14 +91,13 @@ The complete Linux public lifecycle already covers revocation and expected refus
 
 ## Limits
 
-
 - Raw per-sample evidence files were intentionally removed from Git. Use the retained benchmark tools to reproduce samples.
 - Installer transport uses local HTTP; public CDN latency and external Nix provisioning are excluded.
 - Repeated package tests use a warm shared Nix store; first fetches are excluded observations.
 - The 10M comparison uses the selected ID-buffer client as baseline, not origin/main.
-- The Linux 10M recovery covers the literal limited-output case; the complete5M matrix covers full dense output.
-- The Linux 1,000-package repeat uses ten 100-package groups because one 1000-argument command exceeded the2 GiB host limit.
-- The Mac tap payload measurement uses three balanced install pairs and two pairs for other cases after a retained HTTP403; no general tap speed gain is claimed.
+- The Linux 10M recovery covers the literal limited-output case; the complete 5M matrix covers full dense output.
+- The Linux 1,000-package repeat uses ten 100-package groups because one 1000-argument command exceeded the 2 GiB host limit.
+- The Mac tap payload measurement uses three balanced install pairs and two pairs for other cases after a retained HTTP 403; no general tap speed gain is claimed.
 - Formula batches increase peak memory from 244 to 353 MiB on Mac and 303 to 419 MiB on Linux; Nix daemon memory is excluded.
 - Synthetic catalogs can exceed page cache; no fully resident-memory claim is made.
 - Vendor GUIs, fresh privileged Mac app storage, and public CDN latency are not timed.
