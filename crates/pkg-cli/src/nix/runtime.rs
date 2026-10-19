@@ -1,4 +1,4 @@
-//! External Nix executable discovery and version probing.
+//! External Nix executable discovery.
 use super::{Nix, NixError};
 use std::path::{Path, PathBuf};
 
@@ -116,10 +116,11 @@ fn resolve(
 /// stable Nix installation profile paths (system profile, modern per-user
 /// state profile, legacy per-user profile). A configured value stays the
 /// only candidate and never falls back. Nothing is installed or repaired
-/// here. Decoding checks the runtime's output format.
+/// here. Discovery starts no child process. Each operation checks the
+/// runtime's output format. Doctor requests a separate version probe.
 /// # Errors
 ///
-/// Returns an error if no usable runtime is found, a configured runtime is unusable, the current directory cannot be read for a relative path, or the version probe cannot start, complete, or be reaped.
+/// Returns an error if no executable is found, a configured path is not an executable file, or the current directory cannot be read for a relative path.
 pub fn discover(configured: Option<&str>) -> Result<Nix, NixError> {
     let path = std::env::var_os("PATH");
     let state = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty());
@@ -136,27 +137,12 @@ pub fn discover(configured: Option<&str>) -> Result<Nix, NixError> {
         cwd.join(resolved)
     };
     let executable = std::fs::canonicalize(&absolute).unwrap_or(absolute);
-    let mut runtime = Nix {
+    Ok(Nix {
         executable,
-        version: String::new(),
+        configured: configured.map(ToString::to_string),
         verbose: false,
         no_color: false,
-    };
-    runtime.version = runtime
-        .capture(&["--version"])
-        .map(|text| text.trim().to_string())
-        .map_err(|error| match (configured, error) {
-            (_, error) if error.signal().is_some() => error,
-            (None, error) => error,
-            // A configured runtime that cannot even answer `--version` is
-            // unusable; report it against the configured value, not as an
-            // anonymous native failure.
-            (Some(requested), source) => NixError::ConfiguredProbe {
-                requested: requested.to_string(),
-                source: Box::new(source),
-            },
-        })?;
-    Ok(runtime)
+    })
 }
 
 #[cfg(test)]
@@ -334,14 +320,35 @@ mod tests {
         );
     }
 
+    /// Discovery must not start a child before the requested operation.
+    #[test]
+    fn discovery_starts_no_child_before_the_requested_operation() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let marker = root.path().join("calls");
+        let (path, _keep) = fake_runtime(&format!(
+            "printf '%s\\n' \"$*\" >> '{}'; echo 'history text'",
+            marker.display()
+        ));
+        let runtime = discover(Some(path.to_str().expect("utf8 path"))).expect("discovers");
+        assert!(!marker.exists(), "discovery must not start a version probe");
+        assert_eq!(
+            runtime
+                .profile_history(&root.path().join("profile"))
+                .expect("history"),
+            "history text\n"
+        );
+        let calls = std::fs::read_to_string(marker).expect("calls");
+        assert_eq!(calls.lines().count(), 1);
+        assert!(calls.contains("profile history"));
+    }
+
     /// Check discovery's exit-status classification with a real child process.
     #[test]
-    fn discover_captures_the_version_from_a_real_child() {
+    fn explicit_version_probe_captures_output_and_preserves_failures() {
         use std::error::Error as _;
         let (path, _keep) = fake_runtime("echo 'nix (Nix) 2.35.2'");
-        let runtime = discover(Some(path.to_str().expect("utf8 path")))
-            .expect("discovery captures the child's version");
-        assert_eq!(runtime.version(), "nix (Nix) 2.35.2");
+        let runtime = discover(Some(path.to_str().expect("utf8 path"))).expect("discovers");
+        assert_eq!(runtime.version().expect("version"), "nix (Nix) 2.35.2");
         assert_eq!(
             runtime.executable(),
             path.canonicalize().expect("canonical")
@@ -360,13 +367,19 @@ mod tests {
         );
 
         let (path, _keep) = fake_runtime("echo probe-failed >&2; exit 7");
-        let error = discover(Some(path.to_str().unwrap())).expect_err("probe failed");
+        let error = discover(Some(path.to_str().unwrap()))
+            .expect("discovers")
+            .version()
+            .expect_err("probe failed");
         assert!(
             matches!(error.source().unwrap().downcast_ref::<Box<NixError>>().map(AsRef::as_ref), Some(NixError::Failed { status, stderr, .. }) if status == "exit code 7" && stderr.contains("probe-failed"))
         );
 
         let (path, _keep) = fake_runtime("exit 130");
-        let error = discover(Some(path.to_str().unwrap())).expect_err("probe cancelled");
+        let error = discover(Some(path.to_str().unwrap()))
+            .expect("discovers")
+            .version()
+            .expect_err("probe cancelled");
         assert!(matches!(error, NixError::Interrupted { signal: 2, .. }));
     }
 

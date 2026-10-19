@@ -41,3 +41,7 @@ __pycache__/
 *.py[cod]
 .cache/
 *.log
+
+# Nested skill-manager state is local tooling input, not repository policy.
+.agents/skills/.agents/
+.agents/skills/skills-lock.json

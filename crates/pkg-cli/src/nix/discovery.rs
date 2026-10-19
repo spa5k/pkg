@@ -34,6 +34,17 @@ pub enum MetadataValue {
     Error,
 }
 
+/// A unique derivation whose metadata and output paths were evaluated.
+#[derive(Clone, serde::Deserialize)]
+pub struct OutputMatch {
+    /// The full matched native attribute.
+    pub(crate) attribute: String,
+    /// Store paths selected by the request.
+    pub(crate) paths: Vec<String>,
+    #[serde(rename = "meta")]
+    _metadata: SearchMeta,
+}
+
 pub(super) fn nix_json(value: &impl serde::Serialize) -> Result<String, NixError> {
     let json = serde_json::to_string(value).map_err(|error| NixError::Json {
         what: "metadata arguments",
@@ -48,6 +59,47 @@ pub(super) fn nix_json(value: &impl serde::Serialize) -> Result<String, NixError
 }
 
 impl Nix {
+    /// Check install outputs against one locked source in bounded batches.
+    /// Ambiguous or oversized requests return no fast result.
+    pub(crate) fn install_outputs(
+        &self,
+        reference: &str,
+        system: &str,
+        requests: &[Vec<String>],
+    ) -> Result<Vec<Option<OutputMatch>>, NixError> {
+        let identity = self.source_identity(reference)?;
+        let Some(locked) = identity.locked_url else {
+            return Ok(vec![None; requests.len()]);
+        };
+        let reference = nix_json(&locked)?;
+        let system = nix_json(&system)?;
+        let query = include_str!("install-outputs.nix");
+        let mut matches = Vec::with_capacity(requests.len());
+        for chunk in requests.chunks(128) {
+            let requests = nix_json(&chunk)?;
+            if requests.len() > 64 * 1024 {
+                matches.extend(vec![None; chunk.len()]);
+                continue;
+            }
+            let expression = format!(
+                "({query}) {{ reference = builtins.fromJSON {reference}; system = builtins.fromJSON {system}; requests = builtins.fromJSON {requests}; }}"
+            );
+            let rows: Vec<Option<OutputMatch>> = self.discovery_json(
+                "batch install outputs",
+                &["eval", "--json", "--expr", &expression],
+                "20",
+            )?;
+            if rows.len() != chunk.len() {
+                return Err(NixError::Decode {
+                    what: "batch install outputs",
+                    detail: String::from("result count does not match the request count"),
+                });
+            }
+            matches.extend(rows);
+        }
+        Ok(matches)
+    }
+
     pub(crate) fn exact_metadata(
         &self,
         reference: &str,
@@ -159,10 +211,11 @@ in map inspect paths"#
         Ok(pinned)
     }
 
-    /// Evaluate at most one batch of names and descriptions with a 512 MiB RSS limit.
+    /// Evaluate names and descriptions in bounded requests with a 512 MiB RSS limit.
     /// # Errors
     ///
-    /// Returns an error if argument encoding, child setup, stream reading, or reaping fails.
+    /// Returns an error if argument encoding, child setup, stream reading, or reaping fails,
+    /// or one encoded path exceeds the argument limit.
     /// Also fails when evaluation is interrupted, exceeds its resource budget,
     /// exits unsuccessfully, or returns invalid metadata JSON.
     pub fn metadata_batch(
@@ -172,6 +225,18 @@ in map inspect paths"#
         root: &str,
         paths: &[Vec<String>],
     ) -> Result<Vec<MetadataNode>, NixError> {
+        if nix_json(&paths)?.len() > 64 * 1024 {
+            if paths.len() == 1 {
+                return Err(NixError::Decode {
+                    what: "metadata arguments",
+                    detail: String::from("one encoded path exceeds the 64 KiB argument limit"),
+                });
+            }
+            let (left, right) = paths.split_at(paths.len() / 2);
+            let mut nodes = self.metadata_batch(reference, system, root, left)?;
+            nodes.extend(self.metadata_batch(reference, system, root, right)?);
+            return Ok(nodes);
+        }
         match self.metadata_batch_with_gc(reference, system, root, paths, "20") {
             Err(NixError::ResourceLimit(_)) if paths.len() == 1 => {
                 self.metadata_batch_with_gc(reference, system, root, paths, "100")
@@ -295,6 +360,77 @@ mod tests {
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
         let nix = crate::nix::discover(executable.to_str()).unwrap();
         (temp, nix)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn metadata_batches_bound_arguments_without_losing_paths() {
+        let capture = tempfile::tempdir().unwrap();
+        let calls = capture.path().join("expressions");
+        let cases = format!(
+            r#"*'eval --json --expr'*)
+  for argument in "$@"; do
+    case "$argument" in
+      'let'*)
+        [ "${{#argument}}" -le 70000 ] || exit 88
+        printf '%s\000' "$argument" >> '{}';;
+    esac
+  done
+  echo '[]';;"#,
+            calls.display()
+        );
+        let (_runtime, nix) = fake_runtime(&cases);
+        let paths: Vec<_> = (0..200)
+            .map(|index| {
+                vec![
+                    String::from("legacyPackages"),
+                    String::from("x86_64-linux"),
+                    format!("package-{index}-{}", "x".repeat(512)),
+                ]
+            })
+            .collect();
+        assert!(
+            nix.metadata_batch(
+                "github:example/packages",
+                "x86_64-linux",
+                "legacyPackages",
+                &paths,
+            )
+            .is_ok(),
+            "all child arguments stay within their limit"
+        );
+        let expressions = std::fs::read_to_string(&calls).unwrap();
+        let mut evaluated = Vec::new();
+        let mut children = 0;
+        for expression in expressions.split('\0').filter(|value| !value.is_empty()) {
+            children += 1;
+            let literal = expression
+                .split_once("paths = builtins.fromJSON ")
+                .unwrap()
+                .1
+                .split_once(';')
+                .unwrap()
+                .0;
+            let json: String = serde_json::from_str(literal).unwrap();
+            let chunk: Vec<Vec<String>> = serde_json::from_str(&json).unwrap();
+            evaluated.extend(chunk);
+        }
+        assert!(children > 1, "the input requires multiple bounded children");
+        assert_eq!(evaluated, paths, "each path is evaluated once, in order");
+        let oversized = [vec!["x".repeat(64 * 1024)]];
+        assert!(matches!(
+            nix.metadata_batch(
+                "github:example/packages",
+                "x86_64-linux",
+                "legacyPackages",
+                &oversized,
+            ),
+            Err(NixError::Decode {
+                what: "metadata arguments",
+                ..
+            })
+        ));
+        assert_eq!(std::fs::read(calls).unwrap().len(), expressions.len());
     }
 
     #[cfg(unix)]

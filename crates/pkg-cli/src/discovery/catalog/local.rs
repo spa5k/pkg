@@ -82,23 +82,39 @@ pub fn search_local_native(
         snapshot.header.revision.clone(),
         saved,
     );
-    snapshot.visit(|attribute, exposed, meta| {
-        let row = SearchResult {
-            id: format!("nixpkgs:{exposed}"),
-            attribute,
-            name: meta.pname,
-            version: meta.version,
-            description: meta.description,
-            source: String::from("nixpkgs"),
-            reference: Some(snapshot.header.reference.clone()),
-            revision: snapshot.header.revision.clone(),
-            system: system.to_string(),
-            stale: report.status == SourceStatus::Stale,
-            support: None,
-            install_command: None,
+    let mut id = String::new();
+    snapshot.visit(|package| {
+        id.clear();
+        id.reserve("nixpkgs:".len() + package.exposed.len());
+        id.push_str("nixpkgs:");
+        id.push_str(package.exposed);
+        let fields = super::matching::SearchFields {
+            id: &id,
+            attribute: package.attribute,
+            name: package.name,
+            version: package.version,
+            description: package.description,
+            source: "nixpkgs",
+            system,
         };
-        if let Some(rank) = query.rank(&row) {
-            sink(row, rank)?;
+        if let Some(rank) = query.rank_fields(&fields) {
+            sink(
+                SearchResult {
+                    id: std::mem::take(&mut id),
+                    attribute: package.attribute.to_string(),
+                    name: package.name.to_string(),
+                    version: package.version.to_string(),
+                    description: package.description.to_string(),
+                    source: String::from("nixpkgs"),
+                    reference: Some(snapshot.header.reference.clone()),
+                    revision: snapshot.header.revision.clone(),
+                    system: system.to_string(),
+                    stale: report.status == SourceStatus::Stale,
+                    support: None,
+                    install_command: None,
+                },
+                rank,
+            )?;
         }
         Ok(())
     })?;

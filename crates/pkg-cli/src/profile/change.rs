@@ -52,17 +52,19 @@ pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), Com
         Request::Prune { days } => return prune(session, days),
         Request::Profile(request) => request,
     };
-    let before = installed_entries(session)?;
-    let Some(prepared) = prepare(session, request, &before)? else {
+    let state = super::query::installed_state(session)?;
+    let empty = BTreeMap::new();
+    let before = state.as_ref().map_or(&empty, nix::CheckedProfile::entries);
+    let Some(prepared) = prepare(session, request, before)? else {
         return Ok(());
     };
-    if let Err(error) = prepared.apply(session) {
-        return Err(prepared.failed(session, &before, &error));
+    if let Err(error) = prepared.apply(session, state.as_ref()) {
+        return Err(prepared.failed(session, before, &error));
     }
     let after = installed_entries(session)
         .map_err(|error| report_postflight_failure(prepared.action(), &error))?;
-    let report = prepared.completed(session, &before, &after);
-    crate::apps::refresh_after_profile_change(&profile, prepared.action(), &report.names)?;
+    let report = prepared.completed(session, before, &after);
+    crate::apps::refresh_after_profile_change(&profile, &after, prepared.action(), &report.names)?;
     print!("{}", report.text);
     Ok(())
 }
@@ -116,9 +118,14 @@ fn prepare_install(
     installables: IndexMap<String, String>,
     system: &str,
 ) -> Result<Option<Prepared>, CommandError> {
+    let checked = batch_installed(&session.nix, before, &installables, system)?;
     let mut targets = Vec::new();
     for (installable, name) in installables {
-        if already_installed(&session.nix, before, &installable, system)? {
+        let installed = match checked.get(&installable) {
+            Some(&installed) => installed,
+            None => already_installed(&session.nix, before, &installable, system)?,
+        };
+        if installed {
             println!("Already installed: {name}");
         } else {
             targets.push((installable, name));
@@ -148,15 +155,25 @@ impl Prepared {
         self.into()
     }
 
-    fn apply(&self, session: &Session) -> Result<(), NixError> {
+    fn apply(
+        &self,
+        session: &Session,
+        state: Option<&nix::CheckedProfile<'_>>,
+    ) -> Result<(), NixError> {
         let profile = &session.paths.profile;
         match self {
-            Self::Install { targets, .. } => session.nix.profile_add(profile, targets),
+            Self::Install { targets, .. } => state.map_or_else(
+                || session.nix.profile_add(profile, targets),
+                |state| state.add(targets),
+            ),
             Self::Remove(targets) => session.nix.profile_remove(profile, targets),
             Self::Upgrade(targets) => session
                 .nix
                 .profile_upgrade(profile, Some(targets.as_slice())),
-            Self::Rollback { generation, .. } => session.nix.profile_rollback(profile, *generation),
+            Self::Rollback { generation, .. } => state.map_or_else(
+                || session.nix.profile_rollback(profile, *generation),
+                |state| state.rollback(*generation),
+            ),
         }
     }
 
@@ -428,6 +445,74 @@ fn prepare_upgrade(
     Ok(Some(Prepared::Upgrade(targets)))
 }
 
+fn matching_entry(entry: &ProfileEntry, reference: &str, attribute: &str, system: &str) -> bool {
+    entry.active
+        && entry.original_url == reference
+        && (entry.attr_path == attribute
+            || catalog::exposed_attribute(&entry.attr_path, system) == attribute)
+}
+
+fn batch_installed(
+    nix: &nix::Nix,
+    installed: &BTreeMap<String, ProfileEntry>,
+    installables: &IndexMap<String, String>,
+    system: &str,
+) -> Result<BTreeMap<String, bool>, NixError> {
+    let mut groups: BTreeMap<&str, Vec<(&str, Vec<String>)>> = BTreeMap::new();
+    for installable in installables.keys() {
+        let Some((reference, attribute)) = installable.split_once('#') else {
+            continue;
+        };
+        let plain = attribute.split('.').all(|segment| {
+            let mut bytes = segment.bytes();
+            bytes
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        });
+        if !plain
+            || !installed
+                .values()
+                .any(|entry| matching_entry(entry, reference, attribute, system))
+        {
+            continue;
+        }
+        groups.entry(reference).or_default().push((
+            installable,
+            attribute.split('.').map(String::from).collect(),
+        ));
+    }
+    let mut checked = BTreeMap::new();
+    for (reference, group) in groups {
+        if group.len() < 2 {
+            continue;
+        }
+        let (installables, requests): (Vec<_>, Vec<_>) = group.into_iter().unzip();
+        let rows = match nix.install_outputs(reference, system, &requests) {
+            Ok(rows) => rows,
+            Err(NixError::Failed { .. } | NixError::ResourceLimit(_)) => continue,
+            Err(error) => return Err(error),
+        };
+        for (installable, row) in installables.into_iter().zip(rows) {
+            let Some(mut row) = row else { continue };
+            row.paths.sort();
+            let identical = installed.values().any(|entry| {
+                if !entry.active
+                    || entry.original_url != reference
+                    || entry.attr_path != row.attribute
+                {
+                    return false;
+                }
+                let mut paths = entry.store_paths.clone();
+                paths.sort();
+                paths == row.paths
+            });
+            checked.insert(installable.to_string(), identical);
+        }
+    }
+    Ok(checked)
+}
+
 fn already_installed(
     nix: &nix::Nix,
     installed: &BTreeMap<String, ProfileEntry>,
@@ -443,12 +528,7 @@ fn already_installed(
         .replace('"', "");
     let candidates: Vec<_> = installed
         .values()
-        .filter(|entry| {
-            entry.active
-                && entry.original_url == reference
-                && (entry.attr_path == attribute
-                    || catalog::exposed_attribute(&entry.attr_path, system) == attribute)
-        })
+        .filter(|entry| matching_entry(entry, reference, &attribute, system))
         .collect();
     if candidates.is_empty() {
         return Ok(false);

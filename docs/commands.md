@@ -245,7 +245,8 @@ revision. It does not fetch the Homebrew API on the user's machine.
 The daily catalog job refreshes this source. Maintainers refresh the pinned
 Core input with [the Formula generator](../tools/formula-catalog/README.md).
 
-Preparation evaluates metadata in batches of 256 attributes. Each evaluator
+Preparation evaluates metadata in batches of up to 512 attributes.
+Encoded path lists stay within 64 KiB. Each evaluator
 has a 512 MiB RSS budget. The memory guard stops at 480 MiB. A stopped
 batch is split and retried. An entry that still exceeds the budget fails
 the refresh. Catalog publication is atomic for each source. A source can

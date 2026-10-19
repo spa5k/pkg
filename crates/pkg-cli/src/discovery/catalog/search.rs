@@ -296,14 +296,14 @@ pub fn resolve_bare(
                 let query = super::SearchQuery::new(name, false, false)
                     .map_err(|error| CatalogError::Source(error.to_string()))?
                     .fuzzy(false);
-                snapshot.visit(|attr, exposed, meta| {
-                    if attr.rsplit('.').next() == Some(name) || meta.pname == name {
+                snapshot.visit(|package| {
+                    if package.attribute.rsplit('.').next() == Some(name) || package.name == name {
                         let row = SearchResult {
-                            id: format!("nixpkgs:{exposed}"),
-                            attribute: attr,
-                            name: meta.pname,
-                            version: meta.version,
-                            description: meta.description,
+                            id: format!("nixpkgs:{}", package.exposed),
+                            attribute: package.attribute.to_string(),
+                            name: package.name.to_string(),
+                            version: package.version.to_string(),
+                            description: package.description.to_string(),
                             source: String::from("nixpkgs"),
                             reference: Some(reference.to_string()),
                             revision: identity.revision.clone(),
@@ -313,7 +313,9 @@ pub fn resolve_bare(
                             install_command: None,
                         };
                         requires_id |= query.rank(&row).is_none();
-                        choices.push(CatalogId::nixpkgs(&exposed).map_err(CatalogError::Source)?);
+                        choices.push(
+                            CatalogId::nixpkgs(package.exposed).map_err(CatalogError::Source)?,
+                        );
                     }
                     Ok(())
                 })?;

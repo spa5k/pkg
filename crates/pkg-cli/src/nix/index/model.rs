@@ -126,12 +126,48 @@ pub struct CatalogEntry {
 }
 
 /// One system section of the catalog index.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-#[serde(try_from = "BTreeMap<String, serde_json::Value>")]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CatalogSystem {
     /// The status entries for this system, keyed by the full entry
     /// identity `owner/tap/token`.
     pub entries: BTreeMap<String, CatalogEntry>,
+}
+
+impl<'de> serde::Deserialize<'de> for CatalogSystem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(CatalogSystemVisitor)
+    }
+}
+
+struct CatalogSystemVisitor;
+
+impl<'de> serde::de::Visitor<'de> for CatalogSystemVisitor {
+    type Value = CatalogSystem;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a catalog system object")
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: serde::de::MapAccess<'de>,
+    {
+        let mut entries = None;
+        while let Some(field) = map.next_key::<String>()? {
+            if field == "entries" {
+                entries = Some(map.next_value()?);
+            } else {
+                let _: serde::de::IgnoredAny = map.next_value()?;
+            }
+        }
+        Ok(CatalogSystem {
+            entries: entries
+                .ok_or_else(|| <M::Error as serde::de::Error>::missing_field("entries"))?,
+        })
+    }
 }
 
 impl TryFrom<BTreeMap<String, serde_json::Value>> for CatalogSystem {

@@ -109,9 +109,11 @@ def main():
     results = []
 
     def run(*command, code=0, timeout=180):
+        started = time.perf_counter()
         result = subprocess.run(command, env=env, text=True, capture_output=True,
                                 timeout=timeout)
         results.append(dict(command=command, code=result.returncode,
+                            elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
                             stdout=result.stdout, stderr=result.stderr))
         (root / "results.json").write_text(json.dumps(results, indent=2))
         assert result.returncode == code, results[-1]

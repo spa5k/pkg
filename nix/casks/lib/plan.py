@@ -640,17 +640,24 @@ def extract_7zz(src, dest):
         os.symlink(target, os.path.join(dest, name))
 
 
-def stage_payload(src, staging, declared, url_name, default, strip_suffix=""):
+def stage_payload(
+    src, staging, declared, url_name, default, strip_suffix="", gzip_payload=False
+):
     """Copy a whole-file payload under its VALIDATED DECLARED relative
     path (artifact source), creating parents; the URL basename is only a
-    fallback when no artifact source was declared."""
+    fallback when no artifact source was declared. Decode gzip payloads
+    while writing the validated destination."""
     name = (declared or url_name or default).split("?")[0]
     if strip_suffix and name.endswith(strip_suffix):
         name = name[: -len(strip_suffix)]
     safe_rel_path(name, "staged payload name")
     dest = os.path.join(staging, name)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    shutil.copy(src, dest)
+    if gzip_payload:
+        with gzip.open(src, "rb") as source, open(dest, "wb") as target:
+            shutil.copyfileobj(source, target)
+    else:
+        shutil.copy(src, dest)
 
 
 def cmd_unpack(src, staging, url_name, raw_name="", fallback_name=""):
@@ -693,6 +700,7 @@ def cmd_unpack(src, staging, url_name, raw_name="", fallback_name=""):
                     url_name,
                     "payload.bin",
                     strip_suffix=".gz",
+                    gzip_payload=True,
                 )
             else:
                 die(f"unresolved archive format (mime: {mime})")

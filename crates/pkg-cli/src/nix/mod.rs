@@ -51,9 +51,36 @@ pub const TESTED_BASELINE: &str = "2.35.2";
 #[derive(Debug, Clone)]
 pub struct Nix {
     executable: PathBuf,
-    version: String,
+    configured: Option<String>,
     verbose: bool,
     no_color: bool,
+}
+
+/// A decoded profile bound to the runtime and path used for its preflight.
+#[derive(Debug)]
+pub(crate) struct CheckedProfile<'a> {
+    nix: &'a Nix,
+    profile: &'a Path,
+    entries: BTreeMap<String, ProfileEntry>,
+}
+
+impl CheckedProfile<'_> {
+    pub(crate) const fn entries(&self) -> &BTreeMap<String, ProfileEntry> {
+        &self.entries
+    }
+
+    pub(crate) fn into_entries(self) -> BTreeMap<String, ProfileEntry> {
+        self.entries
+    }
+
+    pub(crate) fn add(&self, installables: &[String]) -> Result<(), NixError> {
+        self.nix
+            .add_to_checked_profile(self.profile, installables, &[])
+    }
+
+    pub(crate) fn rollback(&self, generation: Option<u64>) -> Result<(), NixError> {
+        self.nix.rollback_checked_profile(self.profile, generation)
+    }
 }
 
 impl Nix {
@@ -63,10 +90,21 @@ impl Nix {
         &self.executable
     }
 
-    /// The probed version string.
-    #[must_use]
-    pub fn version(&self) -> &str {
-        &self.version
+    /// Probe the version for runtime diagnostics.
+    /// # Errors
+    ///
+    /// Returns an error if the version command cannot start, complete, or be reaped.
+    pub fn version(&self) -> Result<String, NixError> {
+        self.capture(&["--version"])
+            .map(|text| text.trim().to_string())
+            .map_err(|error| match (&self.configured, error) {
+                (_, error) if error.signal().is_some() => error,
+                (None, error) => error,
+                (Some(requested), source) => NixError::ConfiguredProbe {
+                    requested: requested.clone(),
+                    source: Box::new(source),
+                },
+            })
     }
 
     /// Trace every native command line to stderr before it runs.
@@ -215,6 +253,18 @@ impl Nix {
         manifest::decode_profile_manifest(&raw)
     }
 
+    pub(crate) fn checked_profile<'a>(
+        &'a self,
+        profile: &'a Path,
+    ) -> Result<CheckedProfile<'a>, NixError> {
+        let entries = self.profile_list(profile)?;
+        Ok(CheckedProfile {
+            nix: self,
+            profile,
+            entries,
+        })
+    }
+
     /// Check the profile manifest shape read-only before a mutation.
     ///
     /// Required runtime capabilities are checked before any mutation: the
@@ -253,6 +303,15 @@ impl Nix {
         inputs: &[(&str, &str)],
     ) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
+        self.add_to_checked_profile(profile, installables, inputs)
+    }
+
+    fn add_to_checked_profile(
+        &self,
+        profile: &Path,
+        installables: &[String],
+        inputs: &[(&str, &str)],
+    ) -> Result<(), NixError> {
         let profile = profile.to_string_lossy();
         let mut args: Vec<&str> = vec!["profile", "add", "--profile", &profile];
         for &(input, reference) in inputs {
@@ -343,6 +402,14 @@ impl Nix {
         generation: Option<u64>,
     ) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
+        self.rollback_checked_profile(profile, generation)
+    }
+
+    fn rollback_checked_profile(
+        &self,
+        profile: &Path,
+        generation: Option<u64>,
+    ) -> Result<(), NixError> {
         let profile = profile.to_string_lossy();
         let generation = generation.map(|n| n.to_string());
         let mut args: Vec<&str> = vec!["profile", "rollback", "--profile", &profile];

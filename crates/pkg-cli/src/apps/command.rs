@@ -51,13 +51,14 @@ fn setup() -> Result<(), CommandError> {
 /// systems app exposure does not apply and this is a no-op.
 pub fn refresh_after_profile_change(
     profile: &crate::profile::LockedProfile<'_>,
+    entries: &std::collections::BTreeMap<String, crate::nix::ProfileEntry>,
     action: &str,
     names: &[String],
 ) -> Result<(), CommandError> {
     if !cfg!(target_os = "macos") {
         return Ok(());
     }
-    match super::sync_locked(profile) {
+    match super::sync_locked(profile, entries) {
         Ok(()) => Ok(()),
         Err(detail) => {
             if names.is_empty() {

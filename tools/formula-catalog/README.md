@@ -20,6 +20,13 @@ The first run needs Nix and network access for pinned Nixpkgs metadata.
 Later runs reuse disposable metadata under `.cache/formula-catalog`.
 Delete that directory to repeat the native evaluation.
 
+Cold evaluation uses batches of at most 4,096 candidate names.
+Each encoded name list stays below 64 KiB to leave room in the native
+command argument. A batch shrinks when names are long.
+An oversized single name fails before Nix starts.
+Use `tools/formula-metadata-speed-check.py` with a new `--cache` path
+to measure a cold run and check the exact committed catalog bytes.
+
 To update Core data, fetch `https://formulae.brew.sh/api/formula.json`.
 Keep the response below 64 MiB. Compute its SHA-256 digest. Pass the file
 and digest to `generate.py --input PATH --sha256 DIGEST`. Review the result.

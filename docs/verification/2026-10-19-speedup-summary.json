@@ -1,0 +1,1353 @@
+{
+  "schema": "pkg-speed-record/1",
+  "complete": true,
+  "base": "c4c9f66c262f41b2e9034d5d1045d9967623d59e",
+  "branch": "feat/pkg-speedup",
+  "scope": "Consolidated end-to-end pkg speed record. Raw per-sample files were intentionally removed; benchmark tools remain reproducible.",
+  "method": {
+    "medians": true,
+    "balanced_pairs": {
+      "commands": 16,
+      "installer_ordinary_modes": 16,
+      "installer_full_preparation": 2,
+      "profile_scale": 4,
+      "real_packages": 4,
+      "public_tap_mac_install": 3,
+      "public_tap_mac_other": 2
+    },
+    "excluded_first_pair": true,
+    "startup_and_output_included": true,
+    "release_transport": "local HTTP",
+    "toolchain": "Rust 1.99.0, normal Cargo release profile",
+    "hosts": {
+      "macos": "Apple M4, Determinate 3.22.1 / Nix 2.35.2",
+      "linux": "E2B x86_64, 2 vCPU, about 2 GiB RAM, Determinate 3.22.5 / Nix 2.35.2"
+    }
+  },
+  "identities": {
+    "macos_binary": {
+      "path": "/tmp/pkg-speedup/combined-validation-recheck-macos/pkg-combined-validation-trial-macos",
+      "bytes": 12868320,
+      "sha256": "76b358d92b7b5b70be60f7baf55030583b23d15008b3575661048013231bba8d"
+    },
+    "linux_binary": {
+      "path": "/tmp/combined-validation-recheck-linux/pkg-combined-validation-trial-linux",
+      "bytes": 15636072,
+      "sha256": "745979a28918ac54245919acc81d2b8d46323e52d3c8a48db7a02e37471dccfc"
+    },
+    "matching_source_and_test_files": 100,
+    "ci": "PR #120 all required checks passed on 2026-10-19"
+  },
+  "verification": {
+    "rust_full_both_hosts": true,
+    "native_lifecycle_commands": {
+      "macos": 118,
+      "linux": 101
+    },
+    "exact_search_comparisons_per_host": 780,
+    "repeat_behavior_checks_per_host": 20,
+    "installer_syntax_shellcheck": true,
+    "dependency_policy": true,
+    "formula_cask_and_docs_checks": true,
+    "benchmark_lint_format": true,
+    "all_outputs_exact": true,
+    "exact_search_comparisons": {
+      "macos": 780,
+      "linux": 260,
+      "linux_scope": "retained accepted-stage exact output matrix"
+    },
+    "repeat_behavior_checks": {
+      "macos": 20,
+      "linux": 20,
+      "linux_scope": "accepted repeated-install stage"
+    }
+  },
+  "earlier_stage_results": {
+    "list_empty_profile": {
+      "macos": {
+        "baseline_ms": 86.0,
+        "candidate_ms": 8.0
+      },
+      "linux": {
+        "baseline_ms": 28.0,
+        "candidate_ms": 2.0
+      }
+    },
+    "full_installer_plus_preparation": {
+      "macos": {
+        "baseline_ms": 331239.0,
+        "candidate_ms": 240785.0
+      },
+      "linux": {
+        "baseline_ms": 436933.0,
+        "candidate_ms": 300716.0
+      }
+    },
+    "cold_formula_metadata": {
+      "macos": {
+        "baseline_ms": 91181.0,
+        "candidate_ms": 9405.0
+      },
+      "linux": {
+        "baseline_ms": 111494.0,
+        "candidate_ms": 11038.0
+      }
+    },
+    "full_catalog_setup": {
+      "macos": {
+        "baseline_ms": 265304.0,
+        "candidate_ms": 176526.0
+      },
+      "linux": {
+        "baseline_ms": 359321.0,
+        "candidate_ms": 251601.0
+      }
+    }
+  },
+  "metrics": {
+    "commands": {
+      "macos": {
+        "version": {
+          "baseline_ms": 6.377,
+          "candidate_ms": 6.296,
+          "reduction_percent": 1.3
+        },
+        "help": {
+          "baseline_ms": 6.038,
+          "candidate_ms": 6.124,
+          "reduction_percent": -1.4
+        },
+        "completion_bash": {
+          "baseline_ms": 6.714,
+          "candidate_ms": 6.341,
+          "reduction_percent": 5.6
+        },
+        "completion_zsh": {
+          "baseline_ms": 7.178,
+          "candidate_ms": 7.437,
+          "reduction_percent": -3.6
+        },
+        "completion_fish": {
+          "baseline_ms": 6.435,
+          "candidate_ms": 6.478,
+          "reduction_percent": -0.7
+        },
+        "shellenv": {
+          "baseline_ms": 6.071,
+          "candidate_ms": 6.129,
+          "reduction_percent": -1.0
+        },
+        "list_empty": {
+          "baseline_ms": 75.909,
+          "candidate_ms": 6.606,
+          "reduction_percent": 91.3
+        },
+        "tap_list_empty": {
+          "baseline_ms": 6.104,
+          "candidate_ms": 6.06,
+          "reduction_percent": 0.7
+        },
+        "background_status_disabled": {
+          "baseline_ms": 6.436,
+          "candidate_ms": 6.762,
+          "reduction_percent": -5.1
+        },
+        "background_disable_absent": {
+          "baseline_ms": 6.596,
+          "candidate_ms": 6.036,
+          "reduction_percent": 8.5
+        },
+        "doctor_empty": {
+          "baseline_ms": 296.219,
+          "candidate_ms": 280.742,
+          "reduction_percent": 5.2
+        },
+        "setup_warm": {
+          "baseline_ms": 411.958,
+          "candidate_ms": 334.827,
+          "reduction_percent": 18.7
+        },
+        "update_warm": {
+          "baseline_ms": 443.303,
+          "candidate_ms": 364.967,
+          "reduction_percent": 17.7
+        },
+        "update_catalogs_only": {
+          "baseline_ms": 449.512,
+          "candidate_ms": 364.541,
+          "reduction_percent": 18.9
+        },
+        "search_nixpkgs_128": {
+          "baseline_ms": 6.827,
+          "candidate_ms": 7.268,
+          "reduction_percent": -6.5
+        },
+        "search_casks_1000": {
+          "baseline_ms": 13.729,
+          "candidate_ms": 11.488,
+          "reduction_percent": 16.3
+        },
+        "search_formulae_2000": {
+          "baseline_ms": 17.605,
+          "candidate_ms": 13.957,
+          "reduction_percent": 20.7
+        },
+        "search_all_sources": {
+          "baseline_ms": 27.723,
+          "candidate_ms": 21.977,
+          "reduction_percent": 20.7
+        },
+        "search_text": {
+          "baseline_ms": 7.191,
+          "candidate_ms": 7.843,
+          "reduction_percent": -9.1
+        },
+        "info_nixpkgs": {
+          "baseline_ms": 294.421,
+          "candidate_ms": 226.271,
+          "reduction_percent": 23.1
+        },
+        "info_cask": {
+          "baseline_ms": 326.297,
+          "candidate_ms": 245.702,
+          "reduction_percent": 24.7
+        },
+        "info_formula": {
+          "baseline_ms": 320.127,
+          "candidate_ms": 247.483,
+          "reduction_percent": 22.7
+        },
+        "apps_sync_empty": {
+          "baseline_ms": 135.106,
+          "candidate_ms": 76.599,
+          "reduction_percent": 43.3
+        },
+        "list_1": {
+          "baseline_ms": 141.159,
+          "candidate_ms": 79.344,
+          "reduction_percent": 43.8
+        },
+        "list_text_1": {
+          "baseline_ms": 139.362,
+          "candidate_ms": 72.617,
+          "reduction_percent": 47.9
+        },
+        "doctor_1": {
+          "baseline_ms": 351.645,
+          "candidate_ms": 346.897,
+          "reduction_percent": 1.4
+        },
+        "history_1": {
+          "baseline_ms": 150.29,
+          "candidate_ms": 79.899,
+          "reduction_percent": 46.8
+        },
+        "install_duplicate_1": {
+          "baseline_ms": 355.766,
+          "candidate_ms": 297.201,
+          "reduction_percent": 16.5
+        },
+        "prune_recent_1": {
+          "baseline_ms": 362.634,
+          "candidate_ms": 285.854,
+          "reduction_percent": 21.2
+        },
+        "list_10": {
+          "baseline_ms": 143.895,
+          "candidate_ms": 74.022,
+          "reduction_percent": 48.6
+        },
+        "list_text_10": {
+          "baseline_ms": 150.463,
+          "candidate_ms": 77.874,
+          "reduction_percent": 48.2
+        },
+        "doctor_10": {
+          "baseline_ms": 343.794,
+          "candidate_ms": 350.932,
+          "reduction_percent": -2.1
+        },
+        "history_10": {
+          "baseline_ms": 145.618,
+          "candidate_ms": 77.551,
+          "reduction_percent": 46.7
+        },
+        "install_duplicate_10": {
+          "baseline_ms": 384.091,
+          "candidate_ms": 323.582,
+          "reduction_percent": 15.8
+        },
+        "prune_recent_10": {
+          "baseline_ms": 344.967,
+          "candidate_ms": 285.159,
+          "reduction_percent": 17.3
+        },
+        "list_100": {
+          "baseline_ms": 138.226,
+          "candidate_ms": 72.739,
+          "reduction_percent": 47.4
+        },
+        "list_text_100": {
+          "baseline_ms": 118.118,
+          "candidate_ms": 64.126,
+          "reduction_percent": 45.7
+        },
+        "doctor_100": {
+          "baseline_ms": 355.988,
+          "candidate_ms": 352.178,
+          "reduction_percent": 1.1
+        },
+        "history_100": {
+          "baseline_ms": 147.368,
+          "candidate_ms": 79.756,
+          "reduction_percent": 45.9
+        },
+        "install_duplicate_100": {
+          "baseline_ms": 379.527,
+          "candidate_ms": 307.549,
+          "reduction_percent": 19.0
+        },
+        "prune_recent_100": {
+          "baseline_ms": 376.822,
+          "candidate_ms": 297.568,
+          "reduction_percent": 21.0
+        },
+        "install_warm": {
+          "baseline_ms": 519.75,
+          "candidate_ms": 307.532,
+          "reduction_percent": 40.8
+        },
+        "upgrade_changed": {
+          "baseline_ms": 374.347,
+          "candidate_ms": 249.321,
+          "reduction_percent": 33.4
+        },
+        "rollback_previous": {
+          "baseline_ms": 492.947,
+          "candidate_ms": 291.514,
+          "reduction_percent": 40.9
+        },
+        "rollback_explicit": {
+          "baseline_ms": 413.536,
+          "candidate_ms": 215.391,
+          "reduction_percent": 47.9
+        },
+        "remove_warm": {
+          "baseline_ms": 356.972,
+          "candidate_ms": 217.54,
+          "reduction_percent": 39.1
+        }
+      },
+      "linux": {
+        "version": {
+          "baseline_ms": 1.844,
+          "candidate_ms": 1.867,
+          "reduction_percent": -1.2
+        },
+        "help": {
+          "baseline_ms": 2.168,
+          "candidate_ms": 2.267,
+          "reduction_percent": -4.6
+        },
+        "completion_bash": {
+          "baseline_ms": 2.196,
+          "candidate_ms": 2.175,
+          "reduction_percent": 1.0
+        },
+        "completion_zsh": {
+          "baseline_ms": 2.544,
+          "candidate_ms": 2.53,
+          "reduction_percent": 0.6
+        },
+        "completion_fish": {
+          "baseline_ms": 2.364,
+          "candidate_ms": 2.383,
+          "reduction_percent": -0.8
+        },
+        "shellenv": {
+          "baseline_ms": 2.102,
+          "candidate_ms": 2.05,
+          "reduction_percent": 2.5
+        },
+        "list_empty": {
+          "baseline_ms": 28.901,
+          "candidate_ms": 2.282,
+          "reduction_percent": 92.1
+        },
+        "tap_list_empty": {
+          "baseline_ms": 2.013,
+          "candidate_ms": 2.0,
+          "reduction_percent": 0.6
+        },
+        "background_status_disabled": {
+          "baseline_ms": 2.033,
+          "candidate_ms": 2.01,
+          "reduction_percent": 1.1
+        },
+        "background_disable_absent": {
+          "baseline_ms": 1.908,
+          "candidate_ms": 1.94,
+          "reduction_percent": -1.7
+        },
+        "doctor_empty": {
+          "baseline_ms": 80.727,
+          "candidate_ms": 80.475,
+          "reduction_percent": 0.3
+        },
+        "setup_warm": {
+          "baseline_ms": 197.935,
+          "candidate_ms": 157.619,
+          "reduction_percent": 20.4
+        },
+        "update_warm": {
+          "baseline_ms": 196.817,
+          "candidate_ms": 153.543,
+          "reduction_percent": 22.0
+        },
+        "update_catalogs_only": {
+          "baseline_ms": 188.911,
+          "candidate_ms": 159.894,
+          "reduction_percent": 15.4
+        },
+        "search_nixpkgs_128": {
+          "baseline_ms": 5.046,
+          "candidate_ms": 4.104,
+          "reduction_percent": 18.7
+        },
+        "search_casks_1000": {
+          "baseline_ms": 12.578,
+          "candidate_ms": 8.849,
+          "reduction_percent": 29.6
+        },
+        "search_formulae_2000": {
+          "baseline_ms": 18.318,
+          "candidate_ms": 13.479,
+          "reduction_percent": 26.4
+        },
+        "search_all_sources": {
+          "baseline_ms": 25.036,
+          "candidate_ms": 18.636,
+          "reduction_percent": 25.6
+        },
+        "search_text": {
+          "baseline_ms": 5.495,
+          "candidate_ms": 5.24,
+          "reduction_percent": 4.6
+        },
+        "info_nixpkgs": {
+          "baseline_ms": 124.616,
+          "candidate_ms": 100.68,
+          "reduction_percent": 19.2
+        },
+        "info_cask": {
+          "baseline_ms": 148.41,
+          "candidate_ms": 121.532,
+          "reduction_percent": 18.1
+        },
+        "info_formula": {
+          "baseline_ms": 146.889,
+          "candidate_ms": 123.203,
+          "reduction_percent": 16.1
+        },
+        "apps_sync_empty": {
+          "baseline_ms": 24.701,
+          "candidate_ms": 1.923,
+          "reduction_percent": 92.2
+        },
+        "list_1": {
+          "baseline_ms": 57.252,
+          "candidate_ms": 32.613,
+          "reduction_percent": 43.0
+        },
+        "list_text_1": {
+          "baseline_ms": 60.402,
+          "candidate_ms": 35.103,
+          "reduction_percent": 41.9
+        },
+        "doctor_1": {
+          "baseline_ms": 104.112,
+          "candidate_ms": 103.134,
+          "reduction_percent": 0.9
+        },
+        "history_1": {
+          "baseline_ms": 57.319,
+          "candidate_ms": 32.606,
+          "reduction_percent": 43.1
+        },
+        "install_duplicate_1": {
+          "baseline_ms": 164.19,
+          "candidate_ms": 129.611,
+          "reduction_percent": 21.1
+        },
+        "prune_recent_1": {
+          "baseline_ms": 154.339,
+          "candidate_ms": 127.245,
+          "reduction_percent": 17.6
+        },
+        "list_10": {
+          "baseline_ms": 61.468,
+          "candidate_ms": 34.672,
+          "reduction_percent": 43.6
+        },
+        "list_text_10": {
+          "baseline_ms": 59.123,
+          "candidate_ms": 35.228,
+          "reduction_percent": 40.4
+        },
+        "doctor_10": {
+          "baseline_ms": 108.641,
+          "candidate_ms": 111.781,
+          "reduction_percent": -2.9
+        },
+        "history_10": {
+          "baseline_ms": 58.403,
+          "candidate_ms": 34.329,
+          "reduction_percent": 41.2
+        },
+        "install_duplicate_10": {
+          "baseline_ms": 162.69,
+          "candidate_ms": 137.075,
+          "reduction_percent": 15.7
+        },
+        "prune_recent_10": {
+          "baseline_ms": 161.755,
+          "candidate_ms": 133.319,
+          "reduction_percent": 17.6
+        },
+        "list_100": {
+          "baseline_ms": 60.867,
+          "candidate_ms": 38.498,
+          "reduction_percent": 36.8
+        },
+        "list_text_100": {
+          "baseline_ms": 57.684,
+          "candidate_ms": 34.373,
+          "reduction_percent": 40.4
+        },
+        "doctor_100": {
+          "baseline_ms": 108.946,
+          "candidate_ms": 115.055,
+          "reduction_percent": -5.6
+        },
+        "history_100": {
+          "baseline_ms": 60.45,
+          "candidate_ms": 36.559,
+          "reduction_percent": 39.5
+        },
+        "install_duplicate_100": {
+          "baseline_ms": 161.471,
+          "candidate_ms": 138.234,
+          "reduction_percent": 14.4
+        },
+        "prune_recent_100": {
+          "baseline_ms": 156.636,
+          "candidate_ms": 131.072,
+          "reduction_percent": 16.3
+        },
+        "install_warm": {
+          "baseline_ms": 186.491,
+          "candidate_ms": 132.175,
+          "reduction_percent": 29.1
+        },
+        "upgrade_changed": {
+          "baseline_ms": 139.439,
+          "candidate_ms": 114.704,
+          "reduction_percent": 17.7
+        },
+        "rollback_previous": {
+          "baseline_ms": 395.053,
+          "candidate_ms": 135.365,
+          "reduction_percent": 65.7
+        },
+        "rollback_explicit": {
+          "baseline_ms": 174.494,
+          "candidate_ms": 103.224,
+          "reduction_percent": 40.8
+        },
+        "remove_warm": {
+          "baseline_ms": 117.666,
+          "candidate_ms": 103.516,
+          "reduction_percent": 12.0
+        }
+      }
+    },
+    "native_catalog": {
+      "macos": {
+        "literal": {
+          "baseline_ms": 232.704,
+          "candidate_ms": 125.463,
+          "reduction_percent": 46.1
+        },
+        "literal_no_fuzzy": {
+          "baseline_ms": 163.911,
+          "candidate_ms": 89.699,
+          "reduction_percent": 45.3
+        },
+        "typo": {
+          "baseline_ms": 206.803,
+          "candidate_ms": 108.975,
+          "reduction_percent": 47.3
+        },
+        "short": {
+          "baseline_ms": 173.97,
+          "candidate_ms": 93.612,
+          "reduction_percent": 46.2
+        },
+        "multiple_words": {
+          "baseline_ms": 180.103,
+          "candidate_ms": 97.778,
+          "reduction_percent": 45.7
+        },
+        "broad": {
+          "baseline_ms": 220.794,
+          "candidate_ms": 131.909,
+          "reduction_percent": 40.3
+        },
+        "regex": {
+          "baseline_ms": 159.964,
+          "candidate_ms": 87.149,
+          "reduction_percent": 45.5
+        },
+        "all_results": {
+          "baseline_ms": 291.376,
+          "candidate_ms": 172.066,
+          "reduction_percent": 40.9
+        },
+        "dense": {
+          "baseline_ms": 869.165,
+          "candidate_ms": 464.488,
+          "reduction_percent": 46.6
+        },
+        "unicode": {
+          "baseline_ms": 193.774,
+          "candidate_ms": 97.172,
+          "reduction_percent": 49.9
+        },
+        "development": {
+          "baseline_ms": 247.185,
+          "candidate_ms": 153.48,
+          "reduction_percent": 37.9
+        },
+        "library": {
+          "baseline_ms": 186.201,
+          "candidate_ms": 88.885,
+          "reduction_percent": 52.3
+        },
+        "system_tool": {
+          "baseline_ms": 202.611,
+          "candidate_ms": 113.134,
+          "reduction_percent": 44.2
+        }
+      },
+      "linux": {
+        "literal": {
+          "baseline_ms": 209.974,
+          "candidate_ms": 124.506,
+          "reduction_percent": 40.7
+        },
+        "literal_no_fuzzy": {
+          "baseline_ms": 175.585,
+          "candidate_ms": 104.215,
+          "reduction_percent": 40.6
+        },
+        "typo": {
+          "baseline_ms": 210.8,
+          "candidate_ms": 130.666,
+          "reduction_percent": 38.0
+        },
+        "short": {
+          "baseline_ms": 178.054,
+          "candidate_ms": 109.921,
+          "reduction_percent": 38.3
+        },
+        "multiple_words": {
+          "baseline_ms": 163.209,
+          "candidate_ms": 99.871,
+          "reduction_percent": 38.8
+        },
+        "broad": {
+          "baseline_ms": 221.13,
+          "candidate_ms": 145.869,
+          "reduction_percent": 34.0
+        },
+        "regex": {
+          "baseline_ms": 128.925,
+          "candidate_ms": 76.782,
+          "reduction_percent": 40.4
+        },
+        "all_results": {
+          "baseline_ms": 286.804,
+          "candidate_ms": 174.983,
+          "reduction_percent": 39.0
+        },
+        "dense": {
+          "baseline_ms": 786.354,
+          "candidate_ms": 426.752,
+          "reduction_percent": 45.7
+        },
+        "unicode": {
+          "baseline_ms": 172.928,
+          "candidate_ms": 109.499,
+          "reduction_percent": 36.7
+        },
+        "development": {
+          "baseline_ms": 238.156,
+          "candidate_ms": 163.184,
+          "reduction_percent": 31.5
+        },
+        "library": {
+          "baseline_ms": 175.252,
+          "candidate_ms": 101.219,
+          "reduction_percent": 42.2
+        },
+        "system_tool": {
+          "baseline_ms": 246.246,
+          "candidate_ms": 148.423,
+          "reduction_percent": 39.7
+        }
+      }
+    },
+    "all_sources": {
+      "macos": {
+        "cask_literal": {
+          "baseline_ms": 133.725,
+          "candidate_ms": 93.182,
+          "reduction_percent": 30.3
+        },
+        "cask_typo": {
+          "baseline_ms": 109.374,
+          "candidate_ms": 71.755,
+          "reduction_percent": 34.4
+        },
+        "cask_broad": {
+          "baseline_ms": 106.934,
+          "candidate_ms": 78.507,
+          "reduction_percent": 26.6
+        },
+        "cask_regex": {
+          "baseline_ms": 110.377,
+          "candidate_ms": 84.534,
+          "reduction_percent": 23.4
+        },
+        "cask_dense": {
+          "baseline_ms": 160.358,
+          "candidate_ms": 115.553,
+          "reduction_percent": 27.9
+        },
+        "brew_literal": {
+          "baseline_ms": 172.012,
+          "candidate_ms": 122.871,
+          "reduction_percent": 28.6
+        },
+        "brew_alias": {
+          "baseline_ms": 170.813,
+          "candidate_ms": 134.5,
+          "reduction_percent": 21.3
+        },
+        "brew_broad": {
+          "baseline_ms": 158.887,
+          "candidate_ms": 118.693,
+          "reduction_percent": 25.3
+        },
+        "brew_library": {
+          "baseline_ms": 162.243,
+          "candidate_ms": 121.368,
+          "reduction_percent": 25.2
+        },
+        "brew_regex": {
+          "baseline_ms": 164.344,
+          "candidate_ms": 119.164,
+          "reduction_percent": 27.5
+        },
+        "all_literal": {
+          "baseline_ms": 497.306,
+          "candidate_ms": 308.625,
+          "reduction_percent": 37.9
+        },
+        "all_typo": {
+          "baseline_ms": 455.142,
+          "candidate_ms": 291.851,
+          "reduction_percent": 35.9
+        },
+        "all_broad": {
+          "baseline_ms": 553.334,
+          "candidate_ms": 351.264,
+          "reduction_percent": 36.5
+        },
+        "all_unicode": {
+          "baseline_ms": 448.53,
+          "candidate_ms": 275.055,
+          "reduction_percent": 38.7
+        },
+        "all_dense": {
+          "baseline_ms": 1238.126,
+          "candidate_ms": 740.132,
+          "reduction_percent": 40.2
+        }
+      },
+      "linux": {
+        "cask_literal": {
+          "baseline_ms": 172.135,
+          "candidate_ms": 102.0,
+          "reduction_percent": 40.7
+        },
+        "cask_typo": {
+          "baseline_ms": 145.967,
+          "candidate_ms": 91.477,
+          "reduction_percent": 37.3
+        },
+        "cask_broad": {
+          "baseline_ms": 129.859,
+          "candidate_ms": 83.582,
+          "reduction_percent": 35.6
+        },
+        "cask_regex": {
+          "baseline_ms": 141.805,
+          "candidate_ms": 89.794,
+          "reduction_percent": 36.7
+        },
+        "cask_dense": {
+          "baseline_ms": 187.027,
+          "candidate_ms": 116.15,
+          "reduction_percent": 37.9
+        },
+        "brew_literal": {
+          "baseline_ms": 193.794,
+          "candidate_ms": 122.357,
+          "reduction_percent": 36.9
+        },
+        "brew_alias": {
+          "baseline_ms": 188.63,
+          "candidate_ms": 121.167,
+          "reduction_percent": 35.8
+        },
+        "brew_broad": {
+          "baseline_ms": 190.404,
+          "candidate_ms": 123.192,
+          "reduction_percent": 35.3
+        },
+        "brew_library": {
+          "baseline_ms": 175.597,
+          "candidate_ms": 115.137,
+          "reduction_percent": 34.4
+        },
+        "brew_regex": {
+          "baseline_ms": 171.887,
+          "candidate_ms": 111.605,
+          "reduction_percent": 35.1
+        },
+        "all_literal": {
+          "baseline_ms": 551.954,
+          "candidate_ms": 351.137,
+          "reduction_percent": 36.4
+        },
+        "all_typo": {
+          "baseline_ms": 538.788,
+          "candidate_ms": 322.76,
+          "reduction_percent": 40.1
+        },
+        "all_broad": {
+          "baseline_ms": 566.112,
+          "candidate_ms": 360.37,
+          "reduction_percent": 36.3
+        },
+        "all_unicode": {
+          "baseline_ms": 473.433,
+          "candidate_ms": 290.581,
+          "reduction_percent": 38.6
+        },
+        "all_dense": {
+          "baseline_ms": 1195.106,
+          "candidate_ms": 683.208,
+          "reduction_percent": 42.8
+        }
+      }
+    },
+    "shipping_installer": {
+      "macos": {
+        "client_only": {
+          "baseline_ms": 371.95,
+          "candidate_ms": 287.381,
+          "reduction_percent": 22.7
+        },
+        "bash_paths": {
+          "baseline_ms": 289.973,
+          "candidate_ms": 219.726,
+          "reduction_percent": 24.2
+        },
+        "zsh_paths": {
+          "baseline_ms": 294.51,
+          "candidate_ms": 219.888,
+          "reduction_percent": 25.3
+        },
+        "custom_paths": {
+          "baseline_ms": 319.756,
+          "candidate_ms": 240.999,
+          "reduction_percent": 24.6
+        },
+        "repeat_bash_paths": {
+          "baseline_ms": 410.91,
+          "candidate_ms": 310.012,
+          "reduction_percent": 24.6
+        },
+        "prepare_no_background": {
+          "baseline_ms": 288450.024,
+          "candidate_ms": 191611.658,
+          "reduction_percent": 33.6
+        }
+      },
+      "linux": {
+        "client_only": {
+          "baseline_ms": 756.231,
+          "candidate_ms": 317.443,
+          "reduction_percent": 58.0
+        },
+        "bash_paths": {
+          "baseline_ms": 676.721,
+          "candidate_ms": 293.468,
+          "reduction_percent": 56.6
+        },
+        "zsh_paths": {
+          "baseline_ms": 731.559,
+          "candidate_ms": 302.158,
+          "reduction_percent": 58.7
+        },
+        "custom_paths": {
+          "baseline_ms": 807.668,
+          "candidate_ms": 326.949,
+          "reduction_percent": 59.5
+        },
+        "repeat_bash_paths": {
+          "baseline_ms": 950.99,
+          "candidate_ms": 344.25,
+          "reduction_percent": 63.8
+        },
+        "prepare_no_background": {
+          "baseline_ms": 354472.406,
+          "candidate_ms": 252834.75,
+          "reduction_percent": 28.7
+        }
+      }
+    },
+    "repeated_batches": {
+      "repeat_batch_1": {
+        "baseline_ms": 383.361,
+        "candidate_ms": 294.837,
+        "reduction_percent": 23.1
+      },
+      "repeat_batch_10": {
+        "baseline_ms": 1969.593,
+        "candidate_ms": 298.432,
+        "reduction_percent": 84.8
+      },
+      "repeat_batch_100": {
+        "baseline_ms": 16849.385,
+        "candidate_ms": 340.966,
+        "reduction_percent": 98.0
+      },
+      "repeat_batch_256": {
+        "baseline_ms": 44414.603,
+        "candidate_ms": 435.182,
+        "reduction_percent": 99.0
+      }
+    },
+    "real_packages": {
+      "nix_native": {
+        "status": "passed",
+        "baseline_ms": 406.919,
+        "candidate_ms": 236.619
+      },
+      "formula_equivalent": {
+        "status": "passed",
+        "baseline_ms": 751.567,
+        "candidate_ms": 566.885
+      },
+      "formula_bottle": {
+        "status": "passed",
+        "baseline_ms": 812.507,
+        "candidate_ms": 609.514
+      },
+      "cask_dmg": {
+        "status": "passed",
+        "baseline_ms": 2801.133,
+        "candidate_ms": 1973.182
+      },
+      "cask_zip": {
+        "status": "passed",
+        "baseline_ms": 2699.237,
+        "candidate_ms": 1854.466
+      },
+      "cask_extra_imageoptim": {
+        "status": "passed",
+        "baseline_ms": 2402.548,
+        "candidate_ms": 1602.503
+      },
+      "cask_extra_jumpcut": {
+        "status": "passed",
+        "baseline_ms": 2789.453,
+        "candidate_ms": 2004.284
+      },
+      "cask_extra_diversion": {
+        "status": "passed",
+        "baseline_ms": 1063.345,
+        "candidate_ms": 803.284
+      }
+    },
+    "profile_scale": {
+      "macos": {
+        "list_json_1000": {
+          "baseline_ms": 177.93349999999998,
+          "candidate_ms": 111.854,
+          "reduction_percent": 37.1
+        },
+        "list_text_1000": {
+          "baseline_ms": 180.954,
+          "candidate_ms": 116.667,
+          "reduction_percent": 35.5
+        },
+        "history_1000": {
+          "baseline_ms": 168.9595,
+          "candidate_ms": 99.5695,
+          "reduction_percent": 41.1
+        },
+        "prune_recent_1000": {
+          "baseline_ms": 422.8275,
+          "candidate_ms": 378.10699999999997,
+          "reduction_percent": 10.6
+        },
+        "repeat_all_1000": {
+          "baseline_ms": 174769.12800000003,
+          "candidate_ms": 909.402,
+          "reduction_percent": 99.5
+        }
+      },
+      "linux": {
+        "list_json_1000": {
+          "baseline_ms": 85.249,
+          "candidate_ms": 63.2805,
+          "reduction_percent": 25.8
+        },
+        "list_text_1000": {
+          "baseline_ms": 109.8905,
+          "candidate_ms": 64.86449999999999,
+          "reduction_percent": 41.0
+        },
+        "history_1000": {
+          "baseline_ms": 385.93899999999996,
+          "candidate_ms": 492.158,
+          "reduction_percent": -27.5
+        },
+        "prune_recent_1000": {
+          "baseline_ms": 741.6279999999999,
+          "candidate_ms": 1200.2424999999998,
+          "reduction_percent": -61.8
+        },
+        "repeat_group_000": {
+          "baseline_ms": 12300.559000000001,
+          "candidate_ms": 202.015,
+          "reduction_percent": 98.4
+        },
+        "repeat_group_001": {
+          "baseline_ms": 12325.3115,
+          "candidate_ms": 182.5505,
+          "reduction_percent": 98.5
+        },
+        "repeat_group_002": {
+          "baseline_ms": 12803.127,
+          "candidate_ms": 201.42000000000002,
+          "reduction_percent": 98.4
+        },
+        "repeat_group_003": {
+          "baseline_ms": 12978.7955,
+          "candidate_ms": 241.13,
+          "reduction_percent": 98.1
+        },
+        "repeat_group_004": {
+          "baseline_ms": 13297.324499999999,
+          "candidate_ms": 196.5635,
+          "reduction_percent": 98.5
+        },
+        "repeat_group_005": {
+          "baseline_ms": 12987.119,
+          "candidate_ms": 193.974,
+          "reduction_percent": 98.5
+        },
+        "repeat_group_006": {
+          "baseline_ms": 12621.309000000001,
+          "candidate_ms": 311.334,
+          "reduction_percent": 97.5
+        },
+        "repeat_group_007": {
+          "baseline_ms": 13056.0475,
+          "candidate_ms": 187.288,
+          "reduction_percent": 98.6
+        },
+        "repeat_group_008": {
+          "baseline_ms": 13017.8645,
+          "candidate_ms": 202.25,
+          "reduction_percent": 98.4
+        },
+        "repeat_group_009": {
+          "baseline_ms": 13394.642,
+          "candidate_ms": 213.36450000000002,
+          "reduction_percent": 98.4
+        }
+      }
+    },
+    "large_search": {
+      "macos": {
+        "100k": {
+          "baseline_ms": 695.81,
+          "candidate_ms": 417.038,
+          "reduction_percent": 40.1,
+          "rows": 100002,
+          "peak_mib": {
+            "baseline": 24.91,
+            "candidate": 24.94
+          }
+        },
+        "1m": {
+          "baseline_ms": 7733.298,
+          "candidate_ms": 4211.602,
+          "reduction_percent": 45.5,
+          "rows": 1000002,
+          "peak_mib": {
+            "baseline": 24.88,
+            "candidate": 24.91
+          }
+        },
+        "5m": {
+          "baseline_ms": 79205.574,
+          "candidate_ms": 43495.556,
+          "reduction_percent": 45.1,
+          "rows": 5000002,
+          "peak_mib": {
+            "baseline": 24.69,
+            "candidate": 24.89
+          }
+        },
+        "10m": {
+          "baseline_ms": 25341.27,
+          "candidate_ms": 11350.076,
+          "reduction_percent": 55.2,
+          "rows": 10000002,
+          "peak_mib": {
+            "baseline": 19.83,
+            "candidate": 19.86
+          }
+        }
+      },
+      "linux": {
+        "100k": {
+          "baseline_ms": 693.594,
+          "candidate_ms": 370.169,
+          "reduction_percent": 46.6,
+          "rows": 100002,
+          "peak_mib": {
+            "baseline": 20.85,
+            "candidate": 20.77
+          }
+        },
+        "1m": {
+          "baseline_ms": 7144.453,
+          "candidate_ms": 3626.259,
+          "reduction_percent": 49.2,
+          "rows": 1000002,
+          "peak_mib": {
+            "baseline": 20.92,
+            "candidate": 20.39
+          }
+        },
+        "5m": {
+          "baseline_ms": 66496.916,
+          "candidate_ms": 43515.863,
+          "reduction_percent": 34.6,
+          "rows": 5000002,
+          "peak_mib": {
+            "baseline": 20.35,
+            "candidate": 20.29
+          }
+        },
+        "10m": {
+          "baseline_ms": 78918.737,
+          "candidate_ms": 66660.627,
+          "reduction_percent": 15.5,
+          "rows": 10000002,
+          "peak_mib": {
+            "baseline": 14.88,
+            "candidate": 15.25
+          }
+        }
+      }
+    },
+    "public_tap": {
+      "macos": {
+        "install": {
+          "baseline_ms": 1042.646,
+          "candidate_ms": 918.043,
+          "reduction_percent": 12.0
+        },
+        "repeat_install": {
+          "baseline_ms": 1111.293,
+          "candidate_ms": 1035.236,
+          "reduction_percent": 6.8
+        },
+        "pinned_tap_update": {
+          "baseline_ms": 8057.1365000000005,
+          "candidate_ms": 8680.571,
+          "reduction_percent": -7.7
+        },
+        "fixed_upgrade": {
+          "baseline_ms": 909.672,
+          "candidate_ms": 843.8265,
+          "reduction_percent": 7.2
+        },
+        "remove": {
+          "baseline_ms": 338.84000000000003,
+          "candidate_ms": 229.8465,
+          "reduction_percent": 32.2
+        }
+      },
+      "linux_earlier_stage": {
+        "install": {
+          "baseline_ms": 821.854,
+          "candidate_ms": 796.994,
+          "reduction_percent": 3.0
+        },
+        "repeat_install": {
+          "baseline_ms": 1051.149,
+          "candidate_ms": 949.045,
+          "reduction_percent": 9.7
+        },
+        "pinned_tap_update": {
+          "baseline_ms": 2949.225,
+          "candidate_ms": 3022.299,
+          "reduction_percent": -2.5
+        },
+        "fixed_upgrade": {
+          "baseline_ms": 854.362,
+          "candidate_ms": 918.369,
+          "reduction_percent": -7.5
+        },
+        "remove": {
+          "baseline_ms": 100.331,
+          "candidate_ms": 81.13,
+          "reduction_percent": 19.2
+        }
+      }
+    },
+    "small_search_controls": {
+      "macos": {
+        "origin-to-final": {
+          "json": {
+            "left_ms": 5.3175,
+            "right_ms": 5.0355
+          },
+          "text": {
+            "left_ms": 5.4305,
+            "right_ms": 5.4975000000000005
+          }
+        },
+        "origin-AA": {
+          "json": {
+            "left_ms": 5.6895,
+            "right_ms": 5.6255
+          },
+          "text": {
+            "left_ms": 5.635,
+            "right_ms": 5.6765
+          }
+        },
+        "final-AA": {
+          "json": {
+            "left_ms": 5.3454999999999995,
+            "right_ms": 5.17
+          },
+          "text": {
+            "left_ms": 5.361000000000001,
+            "right_ms": 5.433
+          }
+        },
+        "final-to-origin": {
+          "json": {
+            "left_ms": 5.371,
+            "right_ms": 5.589
+          },
+          "text": {
+            "left_ms": 5.529999999999999,
+            "right_ms": 5.6235
+          }
+        }
+      },
+      "linux": {
+        "origin-to-final": {
+          "json": {
+            "left_ms": 5.3865,
+            "right_ms": 4.0015
+          },
+          "text": {
+            "left_ms": 5.059,
+            "right_ms": 4.609
+          }
+        },
+        "origin-AA": {
+          "json": {
+            "left_ms": 5.0135000000000005,
+            "right_ms": 4.941
+          },
+          "text": {
+            "left_ms": 5.5715,
+            "right_ms": 5.0825
+          }
+        },
+        "final-AA": {
+          "json": {
+            "left_ms": 4.5305,
+            "right_ms": 4.7445
+          },
+          "text": {
+            "left_ms": 4.6594999999999995,
+            "right_ms": 4.7989999999999995
+          }
+        },
+        "final-to-origin": {
+          "json": {
+            "left_ms": 4.3255,
+            "right_ms": 5.4235
+          },
+          "text": {
+            "left_ms": 5.5935,
+            "right_ms": 6.3745
+          }
+        }
+      }
+    }
+  },
+  "slower_or_mixed": [
+    "Small startup commands remain mixed; some final medians are slower.",
+    "Linux 1,000-package history and recent-prune medians are slower.",
+    "Mac tap update sample is slower and includes a retained GitHub HTTP403.",
+    "Fresh-home cold installs show no clear general gain while the shared store is warm.",
+    "App sync with30 apps remains mixed."
+  ],
+  "limits": [
+    "Raw per-sample evidence files were intentionally removed from Git. Use the retained benchmark tools to reproduce samples.",
+    "Installer transport uses local HTTP; public CDN latency and external Nix provisioning are excluded.",
+    "Repeated package tests use a warm shared Nix store; first fetches are excluded observations.",
+    "The10M comparison uses the selected ID-buffer client as baseline, not origin/main.",
+    "The Linux10M recovery covers the literal limited-output case; the complete5M matrix covers full dense output.",
+    "The Linux1,000-package repeat uses ten100-package groups because one1000-argument command exceeded the2GiB host limit.",
+    "The Mac tap payload measurement uses three balanced install pairs and two pairs for other cases after a retained HTTP403; no general tap speed gain is claimed.",
+    "Formula batches increase peak memory from244to353MiB on Mac and303to419MiB on Linux; Nix daemon memory is excluded.",
+    "Synthetic catalogs can exceed page cache; no fully resident-memory claim is made.",
+    "Vendor GUIs, fresh privileged Mac app storage, and public CDN latency are not timed."
+  ],
+  "sandbox_cleanup": {
+    "final_e2b_sandbox": "ihvedz52tne5zuhr7gxnl",
+    "stopped": true
+  },
+  "files_retained": [
+    "2026-10-19-speedup-summary.md",
+    "2026-10-19-speedup-summary.json"
+  ]
+}

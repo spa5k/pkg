@@ -32,6 +32,10 @@ verifies the archive checksum, and installs:
 - `~/.local/bin/pkg` — the whole client;
 - `~/.local/share/pkg/completions/{bash,zsh,fish}.txt` — completions.
 
+The downloader needs `gzip` and temporary space for both the compressed
+archive and its uncompressed tar contents. It removes these temporary files
+when it exits.
+
 The client and completions land under `~/.local`. The downloader also
 prepares catalogs in the pkg cache. It enables a daily user refresh job.
 The first preparation can take several minutes. Progress goes to the terminal.

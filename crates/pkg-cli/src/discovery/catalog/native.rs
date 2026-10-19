@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, OpenFlags, params};
 
-use crate::nix::{MetadataNode, MetadataValue, Nix, NixError, SearchMeta, SourceIdentity};
+use crate::nix::{MetadataNode, MetadataValue, Nix, NixError, SourceIdentity};
 use crate::profile_lock::ProfileLock;
 
 use super::{CatalogError, cache, exposed_attribute};
@@ -22,11 +22,21 @@ pub(super) struct Header {
     complete: bool,
     #[serde(default)]
     pub(super) saved_unix: u64,
+    #[serde(default)]
+    unique_exposed: bool,
 }
 
 pub(super) struct Snapshot {
     connection: Connection,
     pub(super) header: Header,
+}
+
+pub(super) struct Package<'a> {
+    pub attribute: &'a str,
+    pub exposed: &'a str,
+    pub name: &'a str,
+    pub version: &'a str,
+    pub description: &'a str,
 }
 
 fn path(cache_dir: &Path, source: &str, system: &str) -> PathBuf {
@@ -144,7 +154,7 @@ impl Snapshot {
         loop {
             let jobs: Vec<(String, String)> = {
                 let mut statement = connection
-                    .prepare("SELECT path, root FROM pending ORDER BY root, path LIMIT 256")?;
+                    .prepare("SELECT path, root FROM pending ORDER BY root, path LIMIT 512")?;
                 statement
                     .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
                     .collect::<Result<_, _>>()?
@@ -173,21 +183,27 @@ impl Snapshot {
             revision: Some(revision.to_string()),
             complete: true,
             saved_unix: cache::now_unix(),
+            unique_exposed: false,
         };
-        Self::publish(connection, &staging, &header, cache_dir)
+        Self::publish(connection, &staging, header, cache_dir)
     }
 
     fn publish(
         mut connection: Connection,
         staging: &Path,
-        header: &Header,
+        mut header: Header,
         cache_dir: &Path,
     ) -> Result<Self, CatalogError> {
         let transaction = connection.transaction()?;
         transaction.execute_batch("INSERT INTO claims SELECT exposed, count(*) FROM packages GROUP BY exposed; DROP TABLE pending;")?;
+        header.unique_exposed = transaction.query_row(
+            "SELECT NOT EXISTS(SELECT 1 FROM claims WHERE n > 1)",
+            [],
+            |row| row.get(0),
+        )?;
         transaction.execute(
             "INSERT INTO metadata VALUES (?1)",
-            [serde_json::to_string(header).map_err(CatalogError::cache_write)?],
+            [serde_json::to_string(&header).map_err(CatalogError::cache_write)?],
         )?;
         transaction.commit()?;
         connection
@@ -207,23 +223,33 @@ impl Snapshot {
 
     pub(super) fn visit(
         &self,
-        mut visitor: impl FnMut(String, String, SearchMeta) -> Result<(), CatalogError>,
+        mut visitor: impl FnMut(Package<'_>) -> Result<(), CatalogError>,
     ) -> Result<(), CatalogError> {
-        let mut statement = self.connection.prepare("SELECT p.attribute, CASE WHEN c.n>1 THEN p.attribute ELSE p.exposed END, p.pname, p.version, p.description FROM packages p JOIN claims c ON c.exposed=p.exposed ORDER BY p.attribute")?;
+        let query = if self.header.unique_exposed {
+            "SELECT attribute, exposed, pname, version, description FROM packages ORDER BY attribute"
+        } else {
+            "SELECT p.attribute, CASE WHEN c.n>1 THEN p.attribute ELSE p.exposed END, p.pname, p.version, p.description FROM packages p JOIN claims c ON c.exposed=p.exposed ORDER BY p.attribute"
+        };
+        let mut statement = self.connection.prepare(query)?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
-            visitor(
-                row.get(0)?,
-                row.get(1)?,
-                SearchMeta {
-                    pname: row.get(2)?,
-                    version: row.get(3)?,
-                    description: row.get(4)?,
-                },
-            )?;
+            visitor(Package {
+                attribute: text(row, 0)?,
+                exposed: text(row, 1)?,
+                name: text(row, 2)?,
+                version: text(row, 3)?,
+                description: text(row, 4)?,
+            })?;
         }
         Ok(())
     }
+}
+
+fn text<'a>(row: &'a rusqlite::Row<'_>, column: usize) -> rusqlite::Result<&'a str> {
+    let value = row.get_ref(column)?;
+    value.as_str().map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(column, value.data_type(), Box::new(error))
+    })
 }
 
 fn is_absent_at(nodes: &[MetadataNode], requested_path: &[String]) -> bool {
@@ -322,6 +348,159 @@ mod tests {
     use super::*;
 
     const SYSTEM: &str = "x86_64-linux";
+
+    #[test]
+    fn snapshot_visits_preserve_text_and_reject_invalid_utf8() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT);
+                 CREATE TABLE claims(exposed TEXT, n INTEGER);
+                 INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', '');
+                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', '別名', '2.0', 'Unicode description');
+                 INSERT INTO claims VALUES ('editor', 2);",
+            )
+            .unwrap();
+        let snapshot = Snapshot {
+            connection,
+            header: Header {
+                schema: 1,
+                source: String::from("fixture"),
+                system: String::from(SYSTEM),
+                reference: String::from("fixture-reference"),
+                revision: Some(String::from("fixture-revision")),
+                complete: true,
+                saved_unix: 1,
+                unique_exposed: false,
+            },
+        };
+        let mut visited = Vec::new();
+        snapshot
+            .visit(|package| {
+                visited.push((
+                    package.attribute.to_string(),
+                    package.exposed.to_string(),
+                    crate::nix::SearchMeta {
+                        pname: package.name.to_string(),
+                        version: package.version.to_string(),
+                        description: package.description.to_string(),
+                    },
+                ));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(visited.len(), 2);
+        assert_eq!(visited[0].0, "legacyPackages.x86_64-linux.editor");
+        assert_eq!(visited[0].1, visited[0].0);
+        assert_eq!(visited[0].2.pname, "別名");
+        assert_eq!(visited[1].1, visited[1].0);
+        assert_eq!(visited[1].2.pname, "Éditeur");
+        assert_eq!(visited[1].2.version, "1.2");
+        assert_eq!(visited[1].2.description, "");
+
+        snapshot
+            .connection
+            .execute("UPDATE packages SET pname=CAST(X'ff' AS TEXT)", [])
+            .unwrap();
+        assert!(snapshot.visit(|_| Ok(())).is_err());
+    }
+
+    fn header() -> Header {
+        Header {
+            schema: 1,
+            source: String::from("fixture"),
+            system: String::from(SYSTEM),
+            reference: String::from("fixture-reference"),
+            revision: Some(String::from("fixture-revision")),
+            complete: true,
+            saved_unix: 1,
+            unique_exposed: false,
+        }
+    }
+
+    #[test]
+    fn legacy_metadata_keeps_collision_resolution() {
+        let mut value = serde_json::to_value(header()).unwrap();
+        value.as_object_mut().unwrap().remove("unique_exposed");
+        let decoded: Header = serde_json::from_value(value).unwrap();
+        assert!(!decoded.unique_exposed);
+    }
+
+    #[test]
+    fn published_snapshots_resolve_unique_and_ambiguous_exposed_names() {
+        for ambiguous in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let staging = directory.path().join("staging.sqlite");
+            let connection = Connection::open(&staging).unwrap();
+            connection.execute_batch(
+                "CREATE TABLE metadata(value TEXT NOT NULL);
+                 CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL) WITHOUT ROWID;
+                 CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;
+                 CREATE TABLE pending(path TEXT PRIMARY KEY, root TEXT NOT NULL) WITHOUT ROWID;
+                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', 'Unicode description');"
+            ).unwrap();
+            if ambiguous {
+                connection.execute_batch("INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', '別名', '2.0', '');").unwrap();
+            }
+            let snapshot =
+                Snapshot::publish(connection, &staging, header(), directory.path()).unwrap();
+            assert_eq!(snapshot.header.unique_exposed, !ambiguous);
+            let mut rows = Vec::new();
+            snapshot
+                .visit(|package| {
+                    rows.push((
+                        package.attribute.to_string(),
+                        package.exposed.to_string(),
+                        package.name.to_string(),
+                    ));
+                    Ok(())
+                })
+                .unwrap();
+            if ambiguous {
+                assert_eq!(
+                    rows,
+                    vec![
+                        (
+                            String::from("legacyPackages.x86_64-linux.editor"),
+                            String::from("legacyPackages.x86_64-linux.editor"),
+                            String::from("Éditeur")
+                        ),
+                        (
+                            String::from("packages.x86_64-linux.editor"),
+                            String::from("packages.x86_64-linux.editor"),
+                            String::from("別名")
+                        ),
+                    ]
+                );
+            } else {
+                assert_eq!(
+                    rows,
+                    vec![(
+                        String::from("legacyPackages.x86_64-linux.editor"),
+                        String::from("editor"),
+                        String::from("Éditeur")
+                    )]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unique_snapshot_visits_still_reject_invalid_utf8() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(
+            "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT);
+             INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', CAST(X'ff' AS TEXT), '1.2', '');"
+        ).unwrap();
+        let snapshot = Snapshot {
+            connection,
+            header: Header {
+                unique_exposed: true,
+                ..header()
+            },
+        };
+        assert!(snapshot.visit(|_| Ok(())).is_err());
+    }
 
     #[test]
     fn absent_metadata_for_a_different_path_fails_batch_validation() {
@@ -493,7 +672,7 @@ mod tests {
         assert!(empty.header.complete);
         let mut packages = 0;
         empty
-            .visit(|_, _, _| {
+            .visit(|_| {
                 packages += 1;
                 Ok(())
             })
@@ -508,7 +687,7 @@ mod tests {
         let snapshot = snapshot(&nix, cache_dir.path(), &reference).unwrap();
         let mut packages = 0;
         snapshot
-            .visit(|_, _, _| {
+            .visit(|_| {
                 packages += 1;
                 Ok(())
             })

@@ -326,7 +326,7 @@ class DownloaderTests(unittest.TestCase):
             fake_bin.joinpath("uname").write_text(
                 '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; esac\n'
             )
-            for name in ("curl", "tar", "install", "awk", "grep", "sed", "cmp", "tail", "mktemp"):
+            for name in ("curl", "tar", "gzip", "install", "awk", "grep", "sed", "cmp", "tail", "mktemp"):
                 fake_bin.joinpath(name).write_text("#!/bin/sh\nexit 99\n")
                 fake_bin.joinpath(name).chmod(0o700)
             fake_bin.joinpath("uname").chmod(0o700)
@@ -353,7 +353,7 @@ class DownloaderTests(unittest.TestCase):
         self.assertIn("shasum -a 256", text)
         self.assertIn("sha256sum", text)
         # Members are read to stdout into chosen temporary files only.
-        self.assertIn("tar -xOzf", text)
+        self.assertIn("tar -xOf", text)
         self.assertNotIn("tar -xzf", text)
         self.assertNotIn(' -C "$tmp"', text)
         # The client must exist and must not be empty.

@@ -1,9 +1,22 @@
 //! Relevance and visibility rules shared by every local source.
 
+use std::borrow::Cow;
+
 use super::{SearchResult, exposed_attribute};
 
 /// The first relevance band reserved for approximate names.
 pub const FUZZY_RANK: u32 = 1 << 24;
+
+/// Borrowed fields needed to match a package before creating an output row.
+pub(super) struct SearchFields<'a> {
+    pub id: &'a str,
+    pub attribute: &'a str,
+    pub name: &'a str,
+    pub version: &'a str,
+    pub description: &'a str,
+    pub source: &'a str,
+    pub system: &'a str,
+}
 
 /// A validated discovery query with conservative name matching.
 pub struct SearchQuery {
@@ -69,9 +82,15 @@ impl SearchQuery {
     }
 
     pub(super) fn exact(&self, values: &[&str]) -> bool {
-        self.literal
-            .as_ref()
-            .is_some_and(|query| values.iter().any(|value| value.to_lowercase() == *query))
+        self.literal.as_ref().is_some_and(|query| {
+            values.iter().any(|value| {
+                if value.is_ascii() {
+                    value.eq_ignore_ascii_case(query)
+                } else {
+                    value.to_lowercase() == *query
+                }
+            })
+        })
     }
 
     pub(super) fn includes_hidden(&self) -> bool {
@@ -107,30 +126,46 @@ impl SearchQuery {
     /// Match one row and return its relevance order, smaller first.
     #[must_use]
     pub fn rank(&self, row: &SearchResult) -> Option<u32> {
+        self.rank_fields(&SearchFields {
+            id: &row.id,
+            attribute: &row.attribute,
+            name: &row.name,
+            version: &row.version,
+            description: &row.description,
+            source: &row.source,
+            system: &row.system,
+        })
+    }
+
+    pub(super) fn rank_fields(&self, row: &SearchFields<'_>) -> Option<u32> {
         if let Some(pattern) = &self.pattern {
-            return [&row.id, &row.attribute, &row.name, &row.description]
+            return [row.id, row.attribute, row.name, row.description]
                 .iter()
                 .any(|value| pattern.is_match(value))
                 .then_some(0);
         }
-        let identity = row
-            .id
-            .split_once(':')
-            .map_or(row.id.as_str(), |(_, name)| name);
+        let identity = row.id.split_once(':').map_or(row.id, |(_, name)| name);
         let name = if row.source == "nixpkgs" {
-            exposed_attribute(&row.attribute, &row.system)
+            exposed_attribute(row.attribute, row.system)
         } else {
             identity.rsplit('/').next().unwrap_or(identity)
         };
-        let description = row.description.to_lowercase();
-        if !self.visible(row, name, identity, &description) {
-            return None;
-        }
-        if self.exact(&[&row.id, identity, name]) {
+        if self.exact(&[row.id, identity, name]) {
             return Some(0);
         }
-        let names = [name.to_lowercase(), row.name.to_lowercase()];
-        if self.exact(&[&row.name]) {
+        if !self.visible_name(row.source, name) {
+            return None;
+        }
+        let description = lowercase(row.description);
+        if !self.broad
+            && matches!(row.source, "nixpkgs" | "brew")
+            && !self.library_query()
+            && declared_library(&description)
+        {
+            return None;
+        }
+        let names = [lowercase(name), lowercase(row.name)];
+        if self.exact(&[row.name]) {
             return Some(100_000 + preference(row, &names[0], &description, &self.terms));
         }
         let mut worst = 0;
@@ -160,7 +195,7 @@ impl SearchQuery {
             worst = worst.max(tier);
             sum += tier;
         }
-        let length = u32::try_from(names.iter().map(String::len).min().unwrap_or(0))
+        let length = u32::try_from(names.iter().map(|name| name.len()).min().unwrap_or(0))
             .unwrap_or(u32::MAX)
             .min(1023);
         Some(
@@ -171,24 +206,18 @@ impl SearchQuery {
         )
     }
 
-    fn visible(&self, row: &SearchResult, name: &str, identity: &str, description: &str) -> bool {
-        if self.broad || self.exact(&[&row.id, identity, name]) {
+    fn visible_name(&self, source: &str, name: &str) -> bool {
+        if self.broad {
             return true;
         }
         let query = self.literal.as_deref().unwrap_or("");
-        if row.source == "nixpkgs" && development_namespace(name) && !query.contains('.') {
-            return false;
-        }
-        if matches!(row.source.as_str(), "nixpkgs" | "brew")
-            && declared_library(description)
-            && !self.library_query()
-        {
+        if source == "nixpkgs" && development_namespace(name) && !query.contains('.') {
             return false;
         }
         if name.contains('@') && !query.contains('@') {
             return false;
         }
-        let lower = name.to_lowercase();
+        let lower = lowercase(name);
         ![
             "-unwrapped",
             "_unwrapped",
@@ -203,7 +232,7 @@ impl SearchQuery {
         .any(|suffix| lower.ends_with(suffix) && !query.contains(suffix))
     }
 
-    fn typo_rank(&self, names: &[String]) -> Option<u32> {
+    fn typo_rank(&self, names: &[Cow<'_, str>]) -> Option<u32> {
         if !self.fuzzy || self.terms.len() != 1 {
             return None;
         }
@@ -215,14 +244,30 @@ impl SearchQuery {
         let max = if length >= 8 { 2 } else { 1 };
         names
             .iter()
-            .flat_map(|name| std::iter::once(name.as_str()).chain(words(name)))
+            .enumerate()
+            .filter(|(index, name)| !names[..*index].iter().any(|previous| previous == *name))
+            .flat_map(|(_, name)| {
+                std::iter::once(name.as_ref())
+                    .chain(words(name).filter(move |word| *word != name.as_ref()))
+            })
             .filter_map(|name| edit_distance(term, name, max))
             .min()
             .map(|distance| FUZZY_RANK + distance * 1024)
     }
 }
 
-fn preference(row: &SearchResult, name: &str, description: &str, terms: &[String]) -> u32 {
+fn lowercase(text: &str) -> Cow<'_, str> {
+    if text
+        .bytes()
+        .all(|byte| byte.is_ascii() && !byte.is_ascii_uppercase())
+    {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(text.to_lowercase())
+    }
+}
+
+fn preference(row: &SearchFields<'_>, name: &str, description: &str, terms: &[String]) -> u32 {
     if terms.len() == 1 {
         let query = &terms[0];
         if let Some(rest) = name.strip_prefix(query) {
@@ -338,7 +383,37 @@ fn edit_distance(left: &str, right: &str, max: u32) -> Option<u32> {
     if right_len > 50 || left.chars().count().abs_diff(right_len) > usize::try_from(max).ok()? {
         return None;
     }
-    u32::try_from(strsim::osa_distance(left, right))
+    let distance = if left.is_ascii() && right.is_ascii() {
+        let mut rows = [[0_usize; 51]; 3];
+        let [mut previous_two, mut previous, mut current] = rows.each_mut();
+        for column in 0..=right_len {
+            previous_two[column] = column;
+            previous[column] = column;
+        }
+        let left = left.as_bytes();
+        let right = right.as_bytes();
+        for (row, &left_byte) in left.iter().enumerate() {
+            current[0] = row + 1;
+            for (column, &right_byte) in right.iter().enumerate() {
+                current[column + 1] = (current[column] + 1)
+                    .min(previous[column + 1] + 1)
+                    .min(previous[column] + usize::from(left_byte != right_byte));
+                if row > 0
+                    && column > 0
+                    && left_byte != right_byte
+                    && left_byte == right[column - 1]
+                    && right_byte == left[row - 1]
+                {
+                    current[column + 1] = current[column + 1].min(previous_two[column - 1] + 1);
+                }
+            }
+            (previous_two, previous, current) = (previous, current, previous_two);
+        }
+        previous[right_len]
+    } else {
+        strsim::osa_distance(left, right)
+    };
+    u32::try_from(distance)
         .ok()
         .filter(|distance| *distance <= max)
 }
@@ -374,8 +449,106 @@ mod tests {
         assert_eq!(edit_distance("éab", "aéb", 0), None);
         assert_eq!(edit_distance("ab", "bca", 2), None);
         assert_eq!(edit_distance("ab", "bca", 3), Some(3));
+        assert_eq!(edit_distance(&"a".repeat(50), &"a".repeat(50), 0), Some(0));
+        assert_eq!(edit_distance(&"a".repeat(51), &"a".repeat(51), 0), None);
         assert_eq!(edit_distance(&"é".repeat(50), &"é".repeat(50), 0), Some(0));
         assert_eq!(edit_distance(&"é".repeat(51), &"é".repeat(51), 0), None);
+    }
+
+    #[test]
+    fn ascii_typo_distance_matches_the_reference_for_short_strings() {
+        let mut values = vec![String::new()];
+        let mut start = 0;
+        for _ in 0..5 {
+            let end = values.len();
+            for index in start..end {
+                for character in ['a', 'b', 'c'] {
+                    let mut value = values[index].clone();
+                    value.push(character);
+                    values.push(value);
+                }
+            }
+            start = end;
+        }
+        assert_eq!(values.len(), 364);
+        for left in &values {
+            for right in &values {
+                let distance = u32::try_from(strsim::osa_distance(left, right)).unwrap();
+                for max in 0..=3 {
+                    assert_eq!(
+                        edit_distance(left, right, max),
+                        (distance <= max).then_some(distance),
+                        "{left:?} / {right:?} / {max}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_typo_distance_matches_the_reference_near_length_limits() {
+        for length in 0..=55 {
+            let left: String = (0..length)
+                .map(|index| ['a', 'b', 'c', 'd', 'e'][index % 5])
+                .collect();
+            for other_length in 0..=55 {
+                let mut right = left.clone();
+                right.truncate(other_length);
+                while right.len() < other_length {
+                    right.push('x');
+                }
+                let mut transposed = right.as_bytes().to_vec();
+                for pair in transposed.as_chunks_mut::<2>().0 {
+                    pair.swap(0, 1);
+                }
+                let transposed = String::from_utf8(transposed).unwrap();
+                for right in [&right, &transposed] {
+                    let distance = u32::try_from(strsim::osa_distance(&left, right)).unwrap();
+                    for max in 0..=3 {
+                        let expected = (other_length <= 50 && distance <= max).then_some(distance);
+                        assert_eq!(
+                            edit_distance(&left, right, max),
+                            expected,
+                            "{left:?} / {right:?} / {max}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn case_insensitive_matches_keep_unicode_lowercase_expansions() {
+        for (query, token) in [
+            ("EDITOR", "editor"),
+            ("éditeur", "ÉDITEUR"),
+            ("İ", "İ"),
+            ("i\u{307}", "İ"),
+        ] {
+            let package = row(&format!("cask:homebrew/cask/{token}"), token, "");
+            assert_eq!(
+                SearchQuery::new(query, false, false)
+                    .unwrap()
+                    .rank(&package),
+                Some(0),
+                "{query} / {token}"
+            );
+        }
+        let package = row("nixpkgs:editor", "Editor", "Éditeur pour ÄPFEL");
+        assert!(
+            SearchQuery::new("äpfel", false, false)
+                .unwrap()
+                .fuzzy(false)
+                .rank(&package)
+                .is_some()
+        );
+        assert!(
+            SearchQuery::new("ÉDIT", false, false)
+                .unwrap()
+                .fuzzy(false)
+                .rank(&row("cask:homebrew/cask/editor", "Éditeur", ""))
+                .is_some()
+        );
     }
 
     #[test]
