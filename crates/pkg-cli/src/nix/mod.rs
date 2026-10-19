@@ -143,6 +143,12 @@ impl Nix {
         self
     }
 
+    /// Whether native command lines are traced for `--verbose` output.
+    #[must_use]
+    pub fn is_verbose(&self) -> bool {
+        self.verbose
+    }
+
     /// Ask native children not to color their output (`NO_COLOR=1`).
     #[must_use]
     pub fn no_color(mut self, no_color: bool) -> Self {

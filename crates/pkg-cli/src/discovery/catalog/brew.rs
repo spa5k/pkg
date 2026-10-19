@@ -143,8 +143,7 @@ pub(crate) fn search(
     let Some(snapshot) =
         cache::read_snapshot::<serde_json::Value>(cache_dir, KIND, source, system, None)
     else {
-        let mut report =
-            super::missing_report(source, "Formula search data is not ready. Run `pkg setup`.");
+        let mut report = super::not_ready_report(source);
         report.display = Some(String::from("Homebrew Formulae"));
         return Ok(report);
     };

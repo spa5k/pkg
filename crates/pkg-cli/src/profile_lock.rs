@@ -12,6 +12,15 @@ pub struct ProfileLock {
 impl ProfileLock {
     /// Lock a profile's sibling file without following its generation link.
     pub fn acquire(profile: &Path) -> Result<Self, String> {
+        Self::acquire_waiting(
+            profile,
+            &format!("Waiting for another pkg command: {}", profile.display()),
+        )
+    }
+
+    /// Lock like [`Self::acquire`], and print `waiting` if another process
+    /// holds the lock.
+    pub fn acquire_waiting(profile: &Path, waiting: &str) -> Result<Self, String> {
         let parent = profile.parent().ok_or("profile has no parent directory")?;
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         let mut name = profile
@@ -38,7 +47,7 @@ impl ProfileLock {
         match file.try_lock() {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
-                eprintln!("Waiting for another pkg command: {}", profile.display());
+                crate::output::note(waiting);
                 file.lock().map_err(|error| error.to_string())?;
             }
             Err(std::fs::TryLockError::Error(error)) => return Err(error.to_string()),

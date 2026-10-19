@@ -6,9 +6,9 @@
 native Nix profile per user. Nix owns package state, generations, rollback,
 and roots. `pkg` owns names, commands, output, and desktop app launchers.
 
-`pkg` requires an external Nix installation. It does not install, update,
-repair, or remove Nix. Install Determinate Nix from
-[the vendor](https://docs.determinate.systems/determinate-nix/) first.
+`pkg` needs Nix. When Nix is missing, the installer offers to install
+[Determinate Nix](https://docs.determinate.systems/determinate-nix/).
+`pkg` does not update, repair, or remove Nix.
 
 The completed Rust quality work follows
 [Enforce Rust quality](openspec/changes/archive/2026-10-12-enforce-rust-quality/proposal.md) and
@@ -29,40 +29,22 @@ Completed and superseded plans are listed in the
 
 ## Install
 
-1. Install [Determinate Nix](https://docs.determinate.systems/determinate-nix/)
-   on your machine. `pkg` never does this step for you.
-2. Install the client from the
-   [v0.2.0-alpha.16 release](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.16):
+```sh
+curl -fsSL https://github.com/spa5k/pkg/releases/latest/download/install.sh | sh
+```
 
-   ```sh
-   curl -fsSL -o pkg-install.sh \
-     https://raw.githubusercontent.com/spa5k/pkg/v0.2.0-alpha.16/install.sh
-   sh pkg-install.sh
-   ```
+Then open a new terminal window.
 
-The downloader installs `~/.local/bin/pkg` and completions under
-`~/.local/share/pkg/completions`. It is client-only: it downloads and
-verifies the release archive, never installs Nix, and never uses `sudo`.
-It prepares local search when Nix is present. It also enables a daily user
-job to refresh official catalogs. Set `PKG_INSTALL_BACKGROUND=0` to prepare
-without this job. Set `PKG_INSTALL_PREPARE=0` to skip both steps.
-It sets up the `pkg` client `PATH` and the `pkg` profile `PATH` for Bash
-and Zsh automatically; set `PKG_INSTALL_SHELL_SETUP=0` to opt out.
-
-`pkg` finds the Nix runtime through `PATH`, then at the standard Nix
-profile locations (`/nix/var/nix/profiles/default/bin`, the per-user
-state profile, `~/.nix-profile`), so a shell without Nix on `PATH` still
-works. An explicitly configured `runtime.nix` always wins and never
-falls back. You can also build the archive from a checkout of this
-repository: `tools/release/package_client.sh x86_64-linux`
-(or `aarch64-darwin`).
+The installer puts `pkg` in `~/.local/bin` and sets up Bash, Zsh, or Fish.
+When Nix is missing, it asks once whether to install Nix. A daily job
+updates `pkg` and its search data. Run the same command again to repair
+the setup. Run `pkg self uninstall` to remove `pkg`.
 
 Details are in the [install guide](docs/install.md).
 
 ## Use `pkg`
 
 ```sh
-pkg setup                  # Prepare search and enable daily refresh
 pkg search ripgrep         # Search local catalogs
 pkg search aws             # Rank tools before helpers; hide library noise
 pkg search aws --source homebrew # Show Homebrew Formulae and Casks
@@ -72,14 +54,13 @@ pkg search ripgrpe          # Show similar names when no literal result exists
 pkg info nixpkgs:ripgrep   # Show source, attribute, and revision
 pkg install nixpkgs:ripgrep # Install one exact package ID
 pkg list                   # List installed entries
-pkg update                 # Refresh official catalogs and saved taps
+pkg update                 # Update pkg and its search data
 pkg upgrade --all          # Follow each entry's original reference
 pkg history                # Show native profile generations
 pkg rollback               # Return to the previous generation
 pkg prune --older-than 30d # Remove old generations
 pkg remove ripgrep         # Remove an installed entry
-pkg doctor                 # Read-only runtime and profile status
-pkg shellenv               # Print PATH setup for Bash/Zsh
+pkg doctor                 # Check the setup
 pkg apps sync              # Rebuild macOS app launchers
 ```
 
@@ -99,8 +80,8 @@ On macOS, `pkg` exposes app bundles from supported packages as launchers in
 
 ## What `pkg` does not do
 
-- `pkg` does not install, update, repair, or remove the Nix runtime.
-- `pkg` uses a daily user job for catalog refresh. It exits after each run.
+- `pkg` does not update, repair, or remove the Nix runtime.
+- `pkg` uses a daily user job to update itself and its catalogs. It exits after each run.
   It has no broker, root helper, or privileged service.
 - `pkg` does not sign or host a package channel or central index.
 - `pkg` does not install or invoke Homebrew. Casks come from a generated

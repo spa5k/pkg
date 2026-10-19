@@ -1,23 +1,17 @@
-//! Doctor: read-only runtime, profile, launcher, and tap status.
+//! Doctor: read-only runtime, profile, launcher, tap, and setup status.
 //!
 //! Unhealthy required components cause a nonzero exit. A fresh profile,
-//! a home without taps, or a skipped platform component does not.
+//! a home without taps, or a skipped platform component does not. An off
+//! background job or a short `PATH` needs attention but does not fail.
 
 use std::process::ExitCode;
 
 use crate::cli::Cli;
 use crate::config::{self, Config};
 use crate::nix;
-use crate::output::{self, DoctorRow};
+use crate::output::{self, DoctorRow, UNHEALTHY_STATUSES};
 
 use super::{CommandError, FAILURE, discover_runtime, print_json};
-
-/// Doctor statuses that make the overall result unhealthy.
-///
-/// A missing runtime, an unreachable daemon, an unreadable profile, and
-/// unhealthy app launchers all fail doctor with a nonzero exit; a fresh
-/// profile or a skipped platform component does not.
-const UNHEALTHY_STATUSES: [&str; 4] = ["missing", "unreachable", "unreadable", "unhealthy"];
 
 /// One doctor observation with a detail line; every row carries one.
 fn observed(component: &str, status: &str, detail: String) -> DoctorRow {
@@ -124,7 +118,57 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
         cache_status,
         paths.cache_dir.display().to_string(),
     ));
+    rows.push(background_row(&paths)?);
+    rows.push(shell_row(&paths));
     Ok(rows)
+}
+
+fn background_row(paths: &crate::config::Paths) -> Result<DoctorRow, CommandError> {
+    Ok(match crate::background::state(paths) {
+        Ok(crate::background::State::On) => observed(
+            "background refresh",
+            "on",
+            String::from("pkg and its search data update daily"),
+        ),
+        Ok(crate::background::State::Off) => observed(
+            "background refresh",
+            "off",
+            String::from(
+                "pkg and its search data do not update. Turn it on: pkg background enable",
+            ),
+        ),
+        Err(error) if error.signal().is_some() => return Err(error.into()),
+        Err(error) => observed("background refresh", "off", error.to_string()),
+    })
+}
+
+fn shell_row(paths: &crate::config::Paths) -> DoctorRow {
+    let packages = paths.profile.join("bin");
+    let client = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf));
+    let missing: Vec<String> = client
+        .into_iter()
+        .chain([packages])
+        .filter(|directory| !output::on_path(directory))
+        .map(|directory| directory.display().to_string())
+        .collect();
+    if missing.is_empty() {
+        observed(
+            "shell",
+            "ok",
+            String::from("pkg and installed packages are on PATH"),
+        )
+    } else {
+        observed(
+            "shell",
+            "not on path",
+            format!(
+                "{} is not on PATH. Open a new terminal window. If that does not help, run the pkg installer again.",
+                missing.join(" and ")
+            ),
+        )
+    }
 }
 
 fn app_launchers_row(

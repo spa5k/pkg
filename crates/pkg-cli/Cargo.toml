@@ -44,6 +44,8 @@ percent-encoding = "=2.3.2"
 # Replace directories with atomic rename operations.
 rustix = { version = "=1.1.5", features = ["fs"] }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
+# Compare the client version with the newest published release.
+semver = "=1.0.28"
 # `cask_catalog::tap` fetches public taps, runs sandboxed Ruby, and generates
 # catalogs and flakes. The client handles consent, registration, and publication.
 cask-catalog = { path = "../../tools/cask-catalog" }

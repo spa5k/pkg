@@ -30,8 +30,8 @@ pub use availability::{Availability, CaskHost};
 pub use cask::{CatalogOnce, CatalogView, native_package_attribute, package_attribute};
 pub use id::{CatalogId, CatalogIdKind, ParsedId, canonical_source, parse_id};
 pub use local::{
-    missing_report, prepare_catalog, record_search_system, search_local_casks, search_local_native,
-    search_local_saved, search_system,
+    NOT_READY, missing_report, not_ready_report, prepare_catalog, record_search_system,
+    search_local_casks, search_local_native, search_local_saved, search_system,
 };
 pub(crate) use matching::FUZZY_RANK;
 pub use matching::SearchQuery;

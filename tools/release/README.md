@@ -21,6 +21,12 @@ the third-party Rust dependency license texts and notices plus
 `licenses/THIRDPARTY.md`. It contains no privileged helper, private Nix
 bundle, or product catalog asset.
 
+The `client-release` workflow attaches both archives, one merged
+`SHA256SUMS`, and the tag's `install.sh` to a draft release. Publish the
+draft as the latest release. Do not mark it as a pre-release. The stable
+install URL `releases/latest/download/install.sh` and `pkg update` read
+only the latest release.
+
 The recipe was run for the `v0.2.0-alpha.1` candidate; the produced
 archive is covered by the
 [verification records](../../docs/verification/native-client-quality-2026-09-28.md).

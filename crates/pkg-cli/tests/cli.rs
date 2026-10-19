@@ -14,29 +14,26 @@ fn help_lists_d4_commands_and_no_removed_ones() {
     let (code, stdout, _) = pkg(&["--help"], &[]);
     assert_eq!(code, 0);
     for kept in [
-        "search",
-        "info",
-        "install",
-        "list",
-        "remove",
-        "update",
-        "upgrade",
-        "history",
-        "rollback",
-        "prune",
-        "doctor",
-        "shellenv",
-        "completion",
-        "apps",
+        "search", "info", "install", "list", "remove", "update", "upgrade", "history", "rollback",
+        "prune", "doctor", "apps", "self",
     ] {
         assert!(stdout.contains(kept), "help must list {kept}");
     }
     for removed in [
-        "pin", "unpin", "outdated", "repair", "gc", "verify", "system",
+        "pin", "unpin", "outdated", "repair", "gc", "verify", "system", "setup",
     ] {
         assert!(
             !stdout.contains(&format!(" {removed} ")),
             "help must not list {removed}"
+        );
+    }
+    // Plumbing for the installer and scripts stays callable but hidden.
+    for hidden in ["background", "shellenv", "completion"] {
+        assert!(
+            !stdout
+                .lines()
+                .any(|line| line.trim_start().starts_with(hidden)),
+            "help must hide {hidden}: {stdout}"
         );
     }
     assert!(stdout.contains("[alias: add]"), "{stdout}");
@@ -295,16 +292,26 @@ fn invalid_search_pattern_is_a_usage_error_before_runtime_discovery() {
 }
 
 #[test]
-fn cold_search_gives_setup_guidance_without_a_runtime() {
-    let (code, stdout, stderr) = pkg(&["search", "ripgrep"], &[("PATH", "/nonexistent")]);
-    assert_eq!(code, 1);
+fn cold_search_prepares_data_and_explains_a_missing_runtime() {
+    // A configured runtime never falls back, so the host Nix stays unused.
+    let home = tempfile::tempdir().expect("temporary home");
+    let config = home.path().join("config/pkg");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("config.toml"),
+        "[runtime]\nnix = \"/nonexistent/bin/nix\"\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) =
+        run_pkg_under_home(home.path(), &["search", "ripgrep"], "/nonexistent");
+    assert_eq!(code, 1, "{stderr}");
     assert!(stdout.is_empty(), "{stdout}");
-    assert!(stderr.contains("search data is not ready"), "{stderr}");
-    assert!(stderr.contains("pkg setup"), "{stderr}");
     assert!(
-        !stderr.contains("Nix executable"),
-        "no runtime discovery: {stderr}"
+        stderr.contains("the configured Nix executable (/nonexistent/bin/nix) is unusable"),
+        "first search needs the runtime to prepare data: {stderr}"
     );
+    assert!(!stderr.contains("pkg setup"), "{stderr}");
+    assert!(!home.path().join("cache/pkg/refresh.pkg-lock").exists());
 }
 
 /// Whether `path` is a regular file with an executable bit, mirroring the

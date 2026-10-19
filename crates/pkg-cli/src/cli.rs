@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
     name = "pkg",
     version,
     about = "Find and manage packages.",
-    help_template = "{about}\n\nFind:     search, info, list\nChange:   install/add, remove/uninstall, upgrade, rollback\nMaintain: setup, update, background, history, prune, doctor, apps\nSources:  tap add, tap list, tap update, tap remove\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
+    help_template = "{about}\n\nFind:     search, info, list\nChange:   install/add, remove/uninstall, upgrade, rollback\nMaintain: update, history, prune, doctor, apps, self uninstall\nSources:  tap add, tap list, tap update, tap remove\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
     disable_help_subcommand = true
 )]
 pub struct Cli {
@@ -58,20 +58,14 @@ pub enum Command {
         #[arg(long)]
         entry: bool,
     },
-    /// Refresh disposable discovery data. Does not change the profile.
+    /// Update pkg and its search data. Does not change installed packages.
     Update {
-        /// Refresh official catalogs only. Used by the scheduled user job.
+        /// Skip saved taps. Used by the scheduled user job.
         #[arg(long, hide = true)]
-        catalogs_only: bool,
+        scheduled: bool,
     },
-    /// Prepare local search and enable daily background refresh.
-    Setup {
-        /// Prepare catalogs without a scheduled user job.
-        #[arg(long)]
-        no_background: bool,
-    },
-    /// Control the daily user job for official catalog refresh.
-    #[command(subcommand)]
+    /// Control the daily user job for updates and search data.
+    #[command(subcommand, hide = true)]
     Background(BackgroundCommand),
     /// Upgrade installed entries following their original references.
     Upgrade {
@@ -101,8 +95,10 @@ pub enum Command {
     /// Read runtime, profile, and launcher status. Never repairs.
     Doctor,
     /// Print idempotent Bash/Zsh path settings for this profile.
+    #[command(hide = true)]
     Shellenv,
     /// Generate shell completion for supported commands.
+    #[command(hide = true)]
     Completion {
         /// Target shell.
         shell: Shell,
@@ -113,6 +109,20 @@ pub enum Command {
     /// Manage local public Homebrew Cask taps.
     #[command(subcommand)]
     Tap(TapCommand),
+    /// Manage pkg itself.
+    #[command(name = "self", subcommand)]
+    Client(ClientCommand),
+}
+
+/// Commands for the pkg client itself.
+#[derive(Debug, Subcommand)]
+pub enum ClientCommand {
+    /// Remove pkg from this computer. Keeps Nix and installed packages.
+    Uninstall {
+        /// Remove without a confirmation prompt.
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 /// Local search inputs and output controls.
@@ -159,12 +169,12 @@ pub struct SearchResultOptions {
     pub unavailable: bool,
 }
 
-/// Controls for the scheduled official catalog refresh.
+/// Controls for the scheduled user job.
 #[derive(Debug, Subcommand)]
 pub enum BackgroundCommand {
-    /// Enable daily refresh for the current user.
+    /// Enable the daily job for the current user and start it now.
     Enable,
-    /// Disable daily refresh and remove pkg-owned job files.
+    /// Disable the daily job and remove pkg-owned job files.
     Disable,
     /// Show whether the user job is enabled.
     Status,

@@ -13,6 +13,8 @@ Terminal progress shows elapsed seconds during native work. A mutation reports
 operation and macOS launcher refresh finish. If the profile changes but
 launcher refresh fails, it reports `Partial`, the cause, and `pkg apps sync` as
 the next step. Use `--verbose` to see native commands and detailed output.
+On a terminal, long operations show one status line that changes in place.
+Logs and pipes get plain lines.
 Query commands keep JSON output and shell commands keep script-only stdout.
 
 `pkg add` is an alias of `pkg install`. `pkg uninstall` is an alias of
@@ -46,16 +48,13 @@ native diagnostic. `pkg` does not select a package or change its priority.
 | `pkg install ID…` or `pkg add ID…` | Resolve all names, then run one native profile add. |
 | `pkg list` | Read the dedicated profile. Shows package IDs and native entry IDs. |
 | `pkg remove ID… [--entry]` or `pkg uninstall ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. |
-| `pkg setup [--no-background]` | Prepare local catalogs. Enable daily user refresh unless disabled. |
-| `pkg background enable/disable/status` | Control daily official catalog refresh. |
-| `pkg update` | Refresh discovery data. Does not change installed packages. Also refresh saved tap catalogs under their recorded consent. |
+| `pkg update` | Update the installed client to the newest release, then refresh official catalogs and saved tap catalogs under their recorded consent. Does not change installed packages. |
 | `pkg upgrade ID… [--entry]` / `--all` | Follow each entry's original reference. Reports fixed references. After `tap remove`, `--all` filters removed-source references and forwards the remaining entries by explicit native entry IDs (not native `--all`); upgrading a removed-source entry refuses. |
 | `pkg history` | Show native profile generations. |
 | `pkg rollback [N]` | Use Nix's native previous or selected generation. Refreshes launchers. |
 | `pkg prune --older-than Nd` | Remove only eligible non-current generations. Requires an explicit positive age. |
-| `pkg doctor` | Read-only runtime, profile, and launcher status. Repairs nothing. |
-| `pkg shellenv` | Print idempotent Bash/Zsh path settings. Does not edit shell files. |
-| `pkg completion SHELL` | Generate completions for the current grammar. |
+| `pkg doctor` | Read-only runtime, profile, launcher, daily job, and `PATH` status. Repairs nothing. |
+| `pkg self uninstall [--yes]` | Remove the client, completions, shell setup, daily job, settings, and search data. Nix and installed packages stay. Without a terminal, `--yes` is required. |
 | `pkg apps sync` | Rebuild pkg-owned macOS launchers from the active profile. |
 | `pkg apps setup` | Create private app storage on the Nix volume. Requests administrator access once. |
 | `pkg tap add SOURCE [--revision SHA] [--trust]` | Save a public tap. Ask approval before any fetch, import, or Ruby runs. |
@@ -63,7 +62,11 @@ native diagnostic. `pkg` does not select a package or change its priority.
 | `pkg tap update [SOURCE] [--revision SHA]` | Re-import saved tap catalogs at a pinned revision. Runs tap Ruby under the same rules as `add`. |
 | `pkg tap remove SOURCE` | Block future use of a source. Installed packages stay. |
 
-Removed commands: `pin`, `unpin`, `outdated`, `repair`, `gc`, and
+Hidden commands: `pkg background enable/disable/status` controls the daily
+job. `pkg shellenv` prints Bash/Zsh `PATH` settings. `pkg completion SHELL`
+prints completions. The installer uses them. They do not show in help.
+
+Removed commands: `setup`, `pin`, `unpin`, `outdated`, `repair`, `gc`, and
 `system uninstall`. Removed options: global dry-run, build approval,
 `--keep-going`, and JSONL progress. Use normal CLI usage errors for them.
 
@@ -90,7 +93,8 @@ change
   ordinary sandboxed Nix derivation. `tap update` may execute source
   revision Ruby under the same restrictions.
 - `pkg update` refreshes official catalogs and saved taps. The daily user
-  job refreshes official catalogs only. It runs no tap Ruby.
+  job updates the client and refreshes official catalogs only. It runs no
+  tap Ruby.
 - Normal `search`, `info`, and `install` of saved catalogs run no source
   Ruby and never prompt.
 - `tap remove` blocks future use of a source. It does not uninstall
@@ -235,10 +239,10 @@ with no declared executables. An absent executable field is not treated as
 an empty list. Casks use the same host availability rules in search, info,
 and install.
 
-The installer prepares local catalogs. `pkg setup` and `pkg update` can
-prepare them manually. Normal search uses local files without Nix or
-network access. A missing catalog gives a setup instruction. Data older
-than one day is marked stale. Verbose output includes catalog age and
+The daily job prepares local catalogs. The first search prepares missing
+catalogs itself. `pkg update` refreshes them manually. Normal search uses
+local files without Nix or network access. Data older than three days is
+marked stale. Verbose output includes catalog age and
 revision. A failed refresh keeps the previous complete snapshot.
 Formula preparation evaluates the generated `formulaIndex` at a locked Git
 revision. It does not fetch the Homebrew API on the user's machine.
@@ -279,7 +283,7 @@ Row fields:
 | `reference` | string, nullable | Locked native reference. |
 | `revision` | string, nullable | Native source revision. |
 | `system` | string | Search target system. |
-| `stale` | boolean | Local catalog is older than one day, or its age is unknown. |
+| `stale` | boolean | Local catalog is older than three days, or its age is unknown. |
 | `support` | object, nullable | `{"status":"eligible"}`, `{"status":"excluded","reason":…,"detail":…}`, or `{"status":"unknown","reason":…}` for Casks and Formulae. Nixpkgs rows have `null`. Eligible is a metadata status, not an installation promise. |
 | `install_command` | array of strings, optional | Suggested pkg install command for eligible Formulae. Absent for unsupported Formulae and other rows. |
 
@@ -347,9 +351,11 @@ and `detail` (string, nullable). Statuses by component: `nix runtime`
 `ok`/`missing`; `nix daemon` `ok`/`unreachable`; `pkg profile`
 `ok`/`unreadable`/`fresh`; `app launchers`
 `healthy`/`unhealthy`/`skipped`/`unknown`/`unreadable`; `config` `present`/`defaults`;
-`discovery cache` `present`/`empty`. `doctor` exits nonzero when any
-status is `missing`, `unreachable`, `unreadable`, or `unhealthy`. It
-never repairs anything.
+`discovery cache` `present`/`empty`; `background refresh` `on`/`off`;
+`shell` `ok`/`not on path`. `doctor` exits nonzero when any status is
+`missing`, `unreachable`, `unreadable`, or `unhealthy`. `off` and
+`not on path` are listed under `Needs attention:` and do not change the
+exit status. It never repairs anything.
 
 ## Package IDs
 

@@ -16,10 +16,15 @@ daemon is unavailable, `doctor` states that directly.
 
 ## Runtime problems
 
-`pkg` requires an external Nix installation. If `pkg doctor` reports a
-missing runtime, install or repair Nix through
-[Determinate](https://docs.determinate.systems/determinate-nix/). `pkg`
-never installs or repairs the runtime itself.
+`pkg` needs Nix. If `pkg doctor` reports a missing runtime, run the pkg
+installer again. It offers to install
+[Determinate Nix](https://docs.determinate.systems/determinate-nix/) when
+no Nix exists. To repair a Nix that does not work, use the vendor's
+instructions. `pkg` never repairs the runtime itself.
+
+If `pkg doctor` reports `background refresh: off`, run
+`pkg background enable`. If it reports `shell: not on path`, open a new
+terminal window. If that does not help, run the pkg installer again.
 
 If `pkg doctor` reports an unavailable daemon, start or enable the Nix
 daemon with your administrator tools. Do not add yourself to

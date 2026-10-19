@@ -58,7 +58,8 @@ Doctor reads feature queries and does not repair state.
 
 ```text
 src/
-  commands/          argument dispatch, session, diagnostics, and combined setup/update
+  commands/          argument dispatch, session, diagnostics, update, and self uninstall
+  client.rs          installed client layout and client self-update
   profile/
     mod.rs           profile command and query interface
     change.rs        typed requests, lock, preflight, mutation, and observation
@@ -134,6 +135,9 @@ Paths below start at the repository root.
 | Argument grammar | `crates/pkg-cli/src/cli.rs` |
 | Command dispatch and session | `crates/pkg-cli/src/commands/mod.rs` |
 | Typed command errors and signal exit codes | `crates/pkg-cli/src/commands/error.rs` |
+| Installed client layout and self-update | `crates/pkg-cli/src/client.rs` |
+| Client removal | `crates/pkg-cli/src/commands/uninstall.rs` |
+| Daily user job | `crates/pkg-cli/src/background.rs` |
 | Search source groups and prefixes | `crates/pkg-cli/src/discovery/search/source.rs` |
 | Search collection | `crates/pkg-cli/src/discovery/search/mod.rs` |
 | Bounded result storage and output | `crates/pkg-cli/src/discovery/search/results.rs` |

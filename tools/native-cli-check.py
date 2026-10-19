@@ -163,7 +163,13 @@ def main():
         assert doctor["discovery cache"]["detail"] == str(cache_base / "pkg"), doctor
         assert doctor["pkg profile"]["status"] == "fresh", doctor
         assert doctor["taps"]["status"] == "none", doctor
-        assert run(pkg, "doctor") == "Healthy: no problems found.\n"
+        # The test home has no daily job and no pkg PATH entries. Doctor
+        # shows both as attention items and still exits successfully.
+        assert doctor["background refresh"]["status"] == "off", doctor
+        assert doctor["shell"]["status"] == "not on path", doctor
+        human = run(pkg, "doctor")
+        assert human.startswith("Needs attention:\n"), human
+        assert "background refresh:" in human and "shell:" in human, human
         assert "config: defaults" in run(pkg, "doctor", "--verbose")
         assert not (config_base / "pkg/config.toml").exists()
         assert doctor["discovery cache"]["status"] == "empty", doctor

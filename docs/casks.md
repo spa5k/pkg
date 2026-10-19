@@ -149,8 +149,8 @@ Known scope limits, by design:
 ## How the client uses the index
 
 - Search reads a complete local snapshot of `catalogIndex`. Normal search
-  makes no source request. The installer, `pkg setup`, `pkg update`, and
-  the daily user job prepare official snapshots. Saved tap captures are
+  makes no source request. The daily user job, `pkg update`, and the
+  first search prepare official snapshots. Saved tap captures are
   refreshed by `pkg tap update` or the saved-tap phase of `pkg update`.
 - Search uses literal text by default. `--regex` enables Rust regular
   expressions. Both forms ignore case and match tokens, names, IDs, and
