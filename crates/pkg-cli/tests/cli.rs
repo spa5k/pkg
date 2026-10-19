@@ -596,8 +596,6 @@ fn doctor_forwards_verbose_and_no_color_to_native_children() {
     // NO_COLOR through its store-info text, which doctor prints verbatim,
     // and answers `profile list` with a valid empty native manifest (the
     // read-only apps status asks for it even when the profile is absent).
-    // (The version probe inside discovery always ran without options; that
-    // pre-existing behavior is unchanged.)
     let bin = tempfile::tempdir().expect("tempdir");
     let home = tempfile::tempdir().expect("tempdir");
     let nix = bin.path().join("nix");

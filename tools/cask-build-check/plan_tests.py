@@ -354,7 +354,7 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "s.gz")
         with gz.open(src, "wb") as f:
-            f.write(b"x")
+            f.write(b"decoded payload")
         old = plan._mime
         plan._mime = lambda p: "application/gzip"
         old_iszip = plan.zipfile.is_zipfile
@@ -365,7 +365,9 @@ def main():
             plan._mime = old
             plan.zipfile.is_zipfile = old_iszip
         assert os.path.isfile(os.path.join(d, "st/nested/dir/tool"))
-        ok("gzip fallback stages declared nested source with parents")
+        with open(os.path.join(d, "st/nested/dir/tool"), "rb") as f:
+            assert f.read() == b"decoded payload"
+        ok("gzip fallback decodes bytes at the declared nested source")
 
     # 10. shortcut needs the EXACT /Applications target
     bad_shortcut = [

@@ -2,8 +2,8 @@
 """Generate pinned Formula support data without executing Homebrew recipes."""
 
 import argparse
-import hashlib
 import gzip
+import hashlib
 import json
 import os
 import pathlib
@@ -44,14 +44,28 @@ def candidates(formula):
     return values
 
 
+def metadata_batches(names):
+    offset = 0
+    while offset < len(names):
+        end = min(offset + 4096, len(names))
+        while True:
+            batch = json.dumps(json.dumps(names[offset:end])).replace("${", "\\${")
+            if len(batch.encode()) <= 64 * 1024:
+                break
+            if end == offset + 1:
+                raise ValueError("Formula candidate name exceeds the evaluation argument limit")
+            end = offset + (end - offset) // 2
+        yield end, batch
+        offset = end
+
+
 def native_metadata(formulae, system, nix, cache):
     destination = cache / f"nixpkgs-{REVISION}-{system}.json"
     if destination.exists():
         return json.loads(destination.read_text())
     names = sorted({name for formula in formulae for name in candidates(formula)})
     metadata = {}
-    for offset in range(0, len(names), 128):
-        batch = json.dumps(json.dumps(names[offset:offset + 128])).replace("${", "\\${")
+    for checked, batch in metadata_batches(names):
         apply = f'''pkgs: let
           inspect = name: let p = pkgs.${{name}} or null;
             row = if p != null && (p.type or null) == "derivation"
@@ -67,8 +81,7 @@ def native_metadata(formulae, system, nix, cache):
         result = subprocess.run(command, text=True, capture_output=True, check=True, timeout=120,
                                 env={**os.environ, "GC_INITIAL_HEAP_SIZE": "8388608", "GC_FREE_SPACE_DIVISOR": "20"})
         metadata.update({row["name"]: row for row in json.loads(result.stdout) if row is not None})
-        if offset % 1024 == 0:
-            print(f"{system}: checked {min(offset + 128, len(names))} of {len(names)} names", flush=True)
+        print(f"{system}: checked {checked} of {len(names)} names", flush=True)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(metadata, sort_keys=True) + "\n")
     return metadata

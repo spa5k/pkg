@@ -58,6 +58,7 @@ esac
 need() { command -v "$1" >/dev/null 2>&1 || { echo "error: missing tool: $1" >&2; exit 1; }; }
 need curl
 need tar
+need gzip
 need install
 need awk
 need grep
@@ -125,7 +126,10 @@ if [ -z "$want" ]; then
   echo "error: no checksum entry for ${archive} in SHA256SUMS." >&2
   exit 1
 fi
-if command -v shasum >/dev/null 2>&1; then
+# Apple silicon measured faster with GNU sha256sum; Intel keeps the measured
+# portable default until it has its own balanced host evidence.
+if command -v shasum >/dev/null 2>&1 \
+  && { [ "$system" != "aarch64-darwin" ] || ! command -v sha256sum >/dev/null 2>&1; }; then
   got="$(shasum -a 256 "$tmp/$archive" | awk '{print $1}')"
 else
   got="$(sha256sum "$tmp/$archive" | awk '{print $1}')"
@@ -143,11 +147,17 @@ if [ "$got" != "$want" ]; then
   exit 1
 fi
 
+# Reuse the verified tar bytes for the listing and each member read.
+if ! gzip -dc "$tmp/$archive" > "$tmp/archive.tar"; then
+  echo "error: cannot decompress ${archive}." >&2
+  exit 1
+fi
+
 # Read only the exact members this downloader installs. Every member's
 # bytes go to stdout (`tar -xO`) and into a temporary file named below.
 # The archive's directory tree is never extracted to disk, so archive
 # paths (absolute, `..`, deep) and links cannot write outside these files.
-tar -tvf "$tmp/$archive" > "$tmp/listing" || {
+tar -tvf "$tmp/archive.tar" > "$tmp/listing" || {
   echo "error: cannot list members of ${archive}." >&2
   exit 1
 }
@@ -177,7 +187,7 @@ exact_regular() {
 
 # read_member MEMBER DEST: write MEMBER's bytes to DEST, or fail clearly.
 read_member() {
-  tar -xOzf "$tmp/$archive" -- "$1" > "$2" || {
+  tar -xOf "$tmp/archive.tar" -- "$1" > "$2" || {
     echo "error: tar failed while reading ${1} from ${archive}." >&2
     exit 1
   }

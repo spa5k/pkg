@@ -102,8 +102,15 @@ fn render_history(text: &str, active: Option<u64>) -> String {
 ///
 /// A fresh install has no profile on disk; that state is empty, not an error.
 pub fn installed_entries(session: &Session) -> Result<BTreeMap<String, ProfileEntry>, NixError> {
+    Ok(installed_state(session)?
+        .map_or_else(BTreeMap::new, crate::nix::CheckedProfile::into_entries))
+}
+
+pub(super) fn installed_state(
+    session: &Session,
+) -> Result<Option<crate::nix::CheckedProfile<'_>>, NixError> {
     match std::fs::symlink_metadata(&session.paths.profile) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(NixError::Io {
                 what: "profile state",
@@ -112,7 +119,10 @@ pub fn installed_entries(session: &Session) -> Result<BTreeMap<String, ProfileEn
         }
         Ok(_) => {}
     }
-    entries(&session.nix, &session.paths.profile)
+    session
+        .nix
+        .checked_profile(&session.paths.profile)
+        .map(Some)
 }
 
 /// Read native state even when no local profile path is present.

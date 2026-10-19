@@ -36,6 +36,8 @@ pub(super) fn prepare_parent(destination: &Path) -> Result<&Path, AppError> {
 }
 
 pub(super) fn refresh_staged(
+    nix: &crate::nix::Nix,
+    paths: &crate::config::Paths,
     helper: &Path,
     source_view: &Path,
     destination: &Path,
@@ -45,7 +47,7 @@ pub(super) fn refresh_staged(
     let staging = tempfile::tempdir_in(parent)
         .map_err(|error| format!("could not create launcher staging directory: {error}"))?;
     let staged = staging.path().join("launchers");
-    run_sync_trampolines(helper, source_view, &staged)?;
+    run_sync_trampolines(nix, paths, helper, source_view, &staged)?;
     let publish = || {
         let metadata = fs::symlink_metadata(&staged)
             .map_err(|error| format!("could not inspect staged launchers: {error}"))?;

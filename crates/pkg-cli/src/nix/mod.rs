@@ -51,9 +51,36 @@ pub const TESTED_BASELINE: &str = "2.35.2";
 #[derive(Debug, Clone)]
 pub struct Nix {
     executable: PathBuf,
-    version: String,
+    configured: Option<String>,
     verbose: bool,
     no_color: bool,
+}
+
+/// A decoded profile bound to the runtime and path used for its preflight.
+#[derive(Debug)]
+pub(crate) struct CheckedProfile<'a> {
+    nix: &'a Nix,
+    profile: &'a Path,
+    entries: BTreeMap<String, ProfileEntry>,
+}
+
+impl CheckedProfile<'_> {
+    pub(crate) const fn entries(&self) -> &BTreeMap<String, ProfileEntry> {
+        &self.entries
+    }
+
+    pub(crate) fn into_entries(self) -> BTreeMap<String, ProfileEntry> {
+        self.entries
+    }
+
+    pub(crate) fn add(&self, installables: &[String]) -> Result<(), NixError> {
+        self.nix
+            .add_to_checked_profile(self.profile, installables, &[])
+    }
+
+    pub(crate) fn rollback(&self, generation: Option<u64>) -> Result<(), NixError> {
+        self.nix.rollback_checked_profile(self.profile, generation)
+    }
 }
 
 impl Nix {
@@ -63,10 +90,48 @@ impl Nix {
         &self.executable
     }
 
-    /// The probed version string.
-    #[must_use]
-    pub fn version(&self) -> &str {
-        &self.version
+    /// Probe the version for runtime diagnostics.
+    /// # Errors
+    ///
+    /// Returns an error if the version command cannot start, complete, or be reaped.
+    pub fn version(&self) -> Result<String, NixError> {
+        self.probe().map_err(|error| self.configured_failure(error))
+    }
+
+    fn probe(&self) -> Result<String, NixError> {
+        let args = ["--version"];
+        let reaped = run_child(self.command(&args), IoMode::Capture, None, None)
+            .map_err(NixError::Process)?;
+        Self::classify(&args, &reaped)?;
+        Ok(String::from_utf8_lossy(&reaped.output.stdout)
+            .trim()
+            .to_string())
+    }
+
+    /// A configured runtime that cannot answer `--version` is unusable;
+    /// report it against the configured value, not as an anonymous failure.
+    fn configured_failure(&self, error: NixError) -> NixError {
+        match &self.configured {
+            Some(requested) if error.signal().is_none() => NixError::ConfiguredProbe {
+                requested: requested.clone(),
+                source: Box::new(error),
+            },
+            _ => error,
+        }
+    }
+
+    /// Probe a configured runtime only after a failed operation, so
+    /// successful commands start no extra child.
+    fn diagnose(&self, error: NixError) -> NixError {
+        if self.configured.is_none()
+            || !matches!(error, NixError::Failed { .. } | NixError::Process(_))
+        {
+            return error;
+        }
+        match self.probe() {
+            Ok(_) => error,
+            Err(probe) => self.configured_failure(probe),
+        }
     }
 
     /// Trace every native command line to stderr before it runs.
@@ -111,7 +176,7 @@ impl Nix {
     /// vector pkg ran so failures repeat the exact native command.
     /// Streamed children report no captured stderr (their streams went to
     /// the user's terminal); captured children keep theirs.
-    fn finish(args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
+    fn classify(args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
         if reaped.cancelled.is_none()
             && let Some(limit) = reaped.resource_limit
         {
@@ -135,7 +200,7 @@ impl Nix {
         // Captured children get the same forwarding and reaping as streamed
         // ones; a signal sent only to pkg still cancels the child.
         let reaped = self.execute(args, IoMode::Capture)?;
-        Self::finish(args, &reaped)?;
+        self.finish(args, &reaped)?;
         Ok(String::from_utf8_lossy(&reaped.output.stdout).into_owned())
     }
 
@@ -150,7 +215,7 @@ impl Nix {
         let reaped = self.execute(args, IoMode::Filtered(&mut reporter))?;
         // Keep raw stderr for the command's compact cause selection. It is
         // never replayed as a block in normal output.
-        Self::finish(args, &reaped)
+        self.finish(args, &reaped)
     }
 
     /// Run a native command with streamed stdio, reaping the child.
@@ -162,7 +227,7 @@ impl Nix {
     /// native state after every failed mutation.
     fn run_streamed(&self, args: &[&str]) -> Result<(), NixError> {
         let reaped = self.execute(args, IoMode::Stream)?;
-        Self::finish(args, &reaped)
+        self.finish(args, &reaped)
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -184,7 +249,12 @@ impl Nix {
 
     /// Run one native child with its selected stdio and reporting mode.
     fn execute(&self, args: &[&str], mode: IoMode<'_>) -> Result<Reaped, NixError> {
-        run_child(self.command(args), mode, None, None).map_err(NixError::Process)
+        run_child(self.command(args), mode, None, None)
+            .map_err(|error| self.diagnose(NixError::Process(error)))
+    }
+
+    fn finish(&self, args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
+        Self::classify(args, reaped).map_err(|error| self.diagnose(error))
     }
 
     fn json<T: serde::de::DeserializeOwned>(
@@ -213,6 +283,18 @@ impl Nix {
             &["profile", "list", "--profile", &profile, "--json"],
         )?;
         manifest::decode_profile_manifest(&raw)
+    }
+
+    pub(crate) fn checked_profile<'a>(
+        &'a self,
+        profile: &'a Path,
+    ) -> Result<CheckedProfile<'a>, NixError> {
+        let entries = self.profile_list(profile)?;
+        Ok(CheckedProfile {
+            nix: self,
+            profile,
+            entries,
+        })
     }
 
     /// Check the profile manifest shape read-only before a mutation.
@@ -253,6 +335,15 @@ impl Nix {
         inputs: &[(&str, &str)],
     ) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
+        self.add_to_checked_profile(profile, installables, inputs)
+    }
+
+    fn add_to_checked_profile(
+        &self,
+        profile: &Path,
+        installables: &[String],
+        inputs: &[(&str, &str)],
+    ) -> Result<(), NixError> {
         let profile = profile.to_string_lossy();
         let mut args: Vec<&str> = vec!["profile", "add", "--profile", &profile];
         for &(input, reference) in inputs {
@@ -343,6 +434,14 @@ impl Nix {
         generation: Option<u64>,
     ) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
+        self.rollback_checked_profile(profile, generation)
+    }
+
+    fn rollback_checked_profile(
+        &self,
+        profile: &Path,
+        generation: Option<u64>,
+    ) -> Result<(), NixError> {
         let profile = profile.to_string_lossy();
         let generation = generation.map(|n| n.to_string());
         let mut args: Vec<&str> = vec!["profile", "rollback", "--profile", &profile];

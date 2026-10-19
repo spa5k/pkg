@@ -52,11 +52,15 @@ pub(crate) fn sync(nix: &Nix, paths: &Paths) -> Result<(), AppError> {
         ));
     }
     let profile = crate::profile::LockedProfile::acquire(nix, paths)?;
-    sync_locked(&profile)
+    let entries = list_profile(nix, &paths.profile)?;
+    sync_locked(&profile, &entries)
 }
 
-/// Refresh launchers while the caller holds the profile lock.
-pub(crate) fn sync_locked(profile: &crate::profile::LockedProfile<'_>) -> Result<(), AppError> {
+/// Refresh launchers from the active entries read under this profile lock.
+pub(crate) fn sync_locked(
+    profile: &crate::profile::LockedProfile<'_>,
+    entries: &BTreeMap<String, crate::nix::ProfileEntry>,
+) -> Result<(), AppError> {
     let nix = profile.nix();
     let paths = profile.paths();
     if !cfg!(target_os = "macos") {
@@ -68,11 +72,10 @@ pub(crate) fn sync_locked(profile: &crate::profile::LockedProfile<'_>) -> Result
         );
     }
     let _lock = crate::profile_lock::ProfileLock::acquire(&paths.state_home.join("apps"))?;
-    let entries = list_profile(nix, &paths.profile)?;
     let apps = scan_apps(entries.iter())?;
     // Assess vendor bundles under the sync lock before any launcher writes.
     // A private cache copy does not run vendor code or change the profile.
-    assess_public_tap_apps(&paths.state_home, &entries)?;
+    assess_public_tap_apps(&paths.state_home, entries)?;
     let dest = destination_path()?;
     let state = inspect_destination(&dest)?;
 
@@ -112,7 +115,7 @@ pub(crate) fn sync_locked(profile: &crate::profile::LockedProfile<'_>) -> Result
     let source_view = view.path().join("source-view");
     symlink(&source_dir, &source_view)
         .map_err(|error| format!("could not create the helper source-view link: {error}"))?;
-    refresh_staged(&helper, &source_view, &dest, &apps)?;
+    refresh_staged(nix, paths, &helper, &source_view, &dest, &apps)?;
     Ok(())
 }
 

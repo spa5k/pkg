@@ -185,6 +185,50 @@ impl Fixture {
     fn launchers(&self) -> PathBuf {
         self.home.join("Applications/pkg")
     }
+
+    fn repair_helper_at(&self, stage: &str) {
+        write_executable(
+            &self.helper_root.join("bin/mac-app-util"),
+            "#!/bin/sh\necho 'failed to allocate 1048576 bytes at 0x300100000' >&2\nexit 1\n",
+        );
+        let repaired = self.root.path().join("repaired-helper");
+        fs::create_dir_all(repaired.join("bin")).expect("repaired helper directory");
+        write_executable(
+            &repaired.join("bin/mac-app-util"),
+            &format!(
+                "#!/bin/sh\ntouch {}.retry\nexec /bin/sleep 60\n",
+                quote(&self.ready.display().to_string())
+            ),
+        );
+        let manifest = serde_json::json!({
+            "version": 3,
+            "elements": {"helper": {
+                "active": true,
+                "attrPath": "packages.aarch64-darwin.default",
+                "originalUrl": "github:hraban/mac-app-util/039f33deef21782d4db97087f426504951239887",
+                "url": "github:hraban/mac-app-util/039f33deef21782d4db97087f426504951239887",
+                "storePaths": [repaired.display().to_string()]
+            }}
+        });
+        let original = self.root.path().join("nix-original");
+        fs::rename(&self.nix, &original).expect("save original runtime");
+        write_executable(
+            &self.nix,
+            &format!(
+                "#!/bin/sh\ncase \"$*\" in\n\
+                 *'profile add'*) touch {ready}.build; \
+                   if [ '{stage}' = build ]; then exec /bin/sleep 60; fi; \
+                   while [ \"$1\" != --profile ]; do shift; done; mkdir -p \"$2\";;\n\
+                 *'profile list'*'pkg-app-tools'*) exec {original} \"$@\";;\n\
+                 *'profile list'*'/helper'*) printf '%s\\n' {manifest};;\n\
+                 *'build --no-link'*) touch {ready}.promoted;;\n\
+                 *) exec {original} \"$@\";;\nesac\n",
+                ready = quote(&self.ready.display().to_string()),
+                original = quote(&original.display().to_string()),
+                manifest = quote(&manifest.to_string()),
+            ),
+        );
+    }
 }
 
 fn quote(value: &str) -> String {
@@ -221,9 +265,6 @@ fn wait_for_child_stage(mut child: Child, path: &Path) -> Child {
 #[test]
 fn compiled_cli_preserves_signal_status_and_launcher_state_at_each_child_stage() {
     for (stage, signal) in [
-        ("probe", libc::SIGINT),
-        ("probe", libc::SIGTERM),
-        ("probe", libc::SIGHUP),
         ("prepare", libc::SIGINT),
         ("prepare", libc::SIGTERM),
         ("prepare", libc::SIGHUP),
@@ -233,10 +274,7 @@ fn compiled_cli_preserves_signal_status_and_launcher_state_at_each_child_stage()
     ] {
         let fixture = Fixture::new(
             stage == "prepare",
-            &format!(
-                "#!/bin/sh\nif [ \"$1\" = '--help' ]; then touch {ready}.probe; if [ '{stage}' = 'probe' ]; then exec /bin/sleep 60; else exit 0; fi; fi\n[ -L \"$2\" ] && [ -d \"$2\" ] || exit 17\ntouch {ready}.sync\nexec /bin/sleep 60\n",
-                ready = "{ready}"
-            ),
+            "#!/bin/sh\n[ \"$1\" = 'sync-trampolines' ] || exit 18\n[ -L \"$2\" ] && [ -d \"$2\" ] || exit 17\ntouch {ready}.sync\nexec /bin/sleep 60\n",
             "#!/bin/sh\ntouch {ready}.prepare\nexec /bin/sleep 60\n",
         );
         let mut command = fixture.command();
@@ -268,8 +306,45 @@ fn compiled_cli_preserves_signal_status_and_launcher_state_at_each_child_stage()
             fs::read_to_string(fixture.launchers().join("Old.app")).unwrap(),
             "old launcher"
         );
-        if stage == "sync" {
-            assert!(PathBuf::from(format!("{}.probe", fixture.ready.display())).exists());
+    }
+}
+
+#[test]
+fn canceled_helper_repair_keeps_the_selected_profile_and_launchers() {
+    for stage in ["build", "retry"] {
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            let fixture = Fixture::new(false, "#!/bin/sh\nexit 0\n", "");
+            fixture.repair_helper_at(stage);
+            let mut command = fixture.command();
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
+            let child = command.spawn().expect("spawn repair");
+            let child = wait_for_child_stage(
+                child,
+                &PathBuf::from(format!("{}.{stage}", fixture.ready.display())),
+            );
+            assert_eq!(unsafe { libc::kill(child.id().cast_signed(), signal) }, 0);
+            let output = child.wait_with_output().expect("collect repair");
+            assert_eq!(output.status.code(), Some(128 + signal));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let dock = if stage == "retry" {
+                "may have changed"
+            } else {
+                "did not change"
+            };
+            assert!(stderr.contains(&format!("Dock state {dock}")), "{stderr}");
+            assert!(!PathBuf::from(format!("{}.promoted", fixture.ready.display())).exists());
+            assert_eq!(
+                fs::read_to_string(fixture.launchers().join(".pkg-owned")).unwrap(),
+                MARKER
+            );
+            assert_eq!(
+                fs::read_to_string(fixture.launchers().join(".pkg-launcher-sources")).unwrap(),
+                SOURCE_MAP
+            );
+            assert_eq!(
+                fs::read_to_string(fixture.launchers().join("Old.app")).unwrap(),
+                "old launcher"
+            );
         }
     }
 }

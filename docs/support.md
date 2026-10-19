@@ -49,9 +49,10 @@ not change.
 
 ## Supported runtime range
 
-The tested baseline is Determinate 3.22.1 with Nix 2.35.2. Record any other
-verified runtime here when it is tested. Report unsupported runtimes with
-`pkg doctor` output.
+The macOS baseline is Determinate 3.22.1 with Nix 2.35.2.
+Linux also passes the native lifecycle with Determinate 3.22.5 and Nix 2.35.2.
+See the [consolidated speed record](verification/2026-10-19-speedup-summary.json).
+Report unsupported runtimes with `pkg doctor` output.
 
 ## App limits
 

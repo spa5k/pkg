@@ -144,10 +144,18 @@ fn failure_state_cancellation_keeps_its_signal_and_skips_conflict_diagnostics() 
                 .iter()
                 .map(|call| call["call"].as_str().expect("native call name"))
                 .collect::<Vec<_>>(),
-            ["list", "list", "add", "list"],
+            ["list", "add", "list"],
             "{signal}: {calls:?}"
         );
         assert!(calls.iter().all(|call| call["locked"] == true), "{calls:?}");
+        assert_eq!(
+            calls
+                .iter()
+                .map(|call| call["changed"].as_bool().expect("native change flag"))
+                .collect::<Vec<_>>(),
+            [false, false, true],
+            "{signal}: {calls:?}"
+        );
         let all_calls = fs::read_to_string(fixture.home.path().join("all-calls.jsonl"))
             .expect("all native calls");
         assert!(
@@ -480,6 +488,14 @@ fn success_holds_one_profile_lock_through_ordered_native_reads() {
             );
         } else {
             assert_eq!(calls[mutation + 1]["call"], "list", "{calls:?}");
+            assert_eq!(
+                calls[mutation + 1..]
+                    .iter()
+                    .filter(|call| call["call"] == "list")
+                    .count(),
+                1,
+                "launcher refresh must reuse the locked postflight read: {calls:?}"
+            );
         }
     }
 }

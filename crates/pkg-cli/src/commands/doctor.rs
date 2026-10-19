@@ -54,12 +54,15 @@ fn doctor_rows(cli: &Cli) -> Result<Vec<DoctorRow>, CommandError> {
     // Doctor shares the session's runtime setup: `--verbose` and
     // `--no-color` apply to its native probes like every other command,
     // while the observations stay read-only.
-    match discover_runtime(cli, &config) {
-        Ok(runtime) => {
+    match discover_runtime(cli, &config).and_then(|runtime| {
+        let version = runtime.version()?;
+        Ok((runtime, version))
+    }) {
+        Ok((runtime, version)) => {
             rows.push(observed(
                 "nix runtime",
                 "ok",
-                format!("{} ({})", runtime.executable().display(), runtime.version()),
+                format!("{} ({version})", runtime.executable().display()),
             ));
             // Daemon reachability through the supported store command;
             // `nix store ping` is a deprecated alias and is not used.

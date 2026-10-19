@@ -17,14 +17,23 @@ impl SearchSpool {
     pub(super) fn new(limit: Option<u32>, grouped: bool) -> Result<Self, CommandError> {
         let file = tempfile::NamedTempFile::new()?;
         let connection = rusqlite::Connection::open(file.path())?;
-        connection.execute_batch(
+        let order_index = if grouped {
+            "CREATE INDEX section_order ON results(section, rank, id);"
+        } else {
+            "CREATE INDEX result_order ON results(rank, id);"
+        };
+        let bucket_index = if limit.is_some() {
+            "CREATE INDEX bucket_order ON results(bucket, rank, id);"
+        } else {
+            ""
+        };
+        connection.execute_batch(&format!(
             "PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA journal_mode=OFF;
             CREATE TABLE results(rank INTEGER, id TEXT, body TEXT, section TEXT, bucket TEXT);
-            CREATE INDEX result_order ON results(rank, id);
-            CREATE INDEX section_order ON results(section, rank, id);
-            CREATE INDEX bucket_order ON results(bucket, rank, id);
-            BEGIN;",
-        )?;
+            {order_index}
+            {bucket_index}
+            BEGIN;"
+        ))?;
         Ok(Self {
             _file: file,
             connection,
@@ -88,10 +97,9 @@ impl SearchSpool {
             return Ok(());
         }
         let body = serde_json::to_string(row).map_err(catalog::CatalogError::cache_write)?;
-        self.connection.execute(
-            "INSERT INTO results VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![rank, row.id, body, section, key],
-        )?;
+        self.connection
+            .prepare_cached("INSERT INTO results VALUES (?1, ?2, ?3, ?4, ?5)")?
+            .execute(rusqlite::params![rank, row.id, body, section, key])?;
         if let Some(limit) = self.limit
             && retained_count >= limit as usize
         {

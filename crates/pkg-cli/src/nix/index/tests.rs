@@ -548,3 +548,25 @@ fn catalog_tokens_follow_the_generated_identifier_rule() {
         assert!(!valid_catalog_token(token), "{token}");
     }
 }
+
+#[test]
+fn unknown_system_metadata_does_not_change_catalog_records() {
+    let manifest = include_str!("../../../tests/fixtures/catalog-index.json");
+    let raw: serde_json::Value = serde_json::from_str(manifest).unwrap();
+    let expected = decode_catalog_index(&raw).unwrap();
+    for value in [
+        serde_json::Value::Null,
+        serde_json::json!(true),
+        serde_json::json!(42),
+        serde_json::json!("future metadata"),
+        serde_json::json!([false, {"nested": [1, 2, 3]}]),
+    ] {
+        let mut extended = raw.clone();
+        extended["systems"]["x86_64-linux"]["futureMetadata"] = value;
+        assert_eq!(decode_catalog_index(&extended).unwrap(), expected);
+        assert_eq!(
+            serde_json::from_value::<CatalogIndex>(extended).unwrap(),
+            expected
+        );
+    }
+}

@@ -5,8 +5,10 @@ import copy
 import gzip
 import importlib.util
 import io
+import json
 import os
 import pathlib
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -38,6 +40,34 @@ def formula():
 
 
 class FormulaTests(unittest.TestCase):
+    def test_long_candidate_names_stay_within_native_argument_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            calls = root / "calls.jsonl"
+            nix = root / "nix"
+            nix.write_text(f'''#!{sys.executable}
+import json, pathlib, re, sys
+expression = sys.argv[-1]
+assert len(expression.encode()) < 66 * 1024, "evaluation argument too large"
+literal = re.search(r'builtins.fromJSON (".*")\\)', expression)[1]
+names = json.loads(json.loads(literal))
+with pathlib.Path({str(calls)!r}).open("a") as stream:
+    stream.write(json.dumps(names) + "\\n")
+print(json.dumps([{{"name": name, "version": "1", "homepage": None}} for name in names]))
+''')
+            nix.chmod(0o700)
+            names = [f"probe{index:04d}" + "x" * 1024 for index in range(200)]
+            metadata = generator.native_metadata(
+                [{"name": name} for name in names], "x86_64-linux", str(nix), root / "cache")
+            self.assertEqual(set(metadata), set(names))
+            visited = [name for line in calls.read_text().splitlines() for name in json.loads(line)]
+            self.assertEqual(visited, sorted(names))
+            calls.unlink()
+            with self.assertRaisesRegex(ValueError, "argument limit"):
+                generator.native_metadata(
+                    [{"name": "x" * (66 * 1024)}], "x86_64-linux", str(nix), root / "oversize-cache")
+            self.assertFalse(calls.exists())
+
     def test_equivalent_requires_project_and_version_family(self):
         package = formula()
         metadata = {"probe": {"homepage": "https://github.com/example/probe/", "version": "2.1"}}
