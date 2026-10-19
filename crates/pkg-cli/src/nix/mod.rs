@@ -95,16 +95,43 @@ impl Nix {
     ///
     /// Returns an error if the version command cannot start, complete, or be reaped.
     pub fn version(&self) -> Result<String, NixError> {
-        self.capture(&["--version"])
-            .map(|text| text.trim().to_string())
-            .map_err(|error| match (&self.configured, error) {
-                (_, error) if error.signal().is_some() => error,
-                (None, error) => error,
-                (Some(requested), source) => NixError::ConfiguredProbe {
-                    requested: requested.clone(),
-                    source: Box::new(source),
-                },
-            })
+        self.probe().map_err(|error| self.configured_failure(error))
+    }
+
+    fn probe(&self) -> Result<String, NixError> {
+        let args = ["--version"];
+        let reaped = run_child(self.command(&args), IoMode::Capture, None, None)
+            .map_err(NixError::Process)?;
+        Self::classify(&args, &reaped)?;
+        Ok(String::from_utf8_lossy(&reaped.output.stdout)
+            .trim()
+            .to_string())
+    }
+
+    /// A configured runtime that cannot answer `--version` is unusable;
+    /// report it against the configured value, not as an anonymous failure.
+    fn configured_failure(&self, error: NixError) -> NixError {
+        match &self.configured {
+            Some(requested) if error.signal().is_none() => NixError::ConfiguredProbe {
+                requested: requested.clone(),
+                source: Box::new(error),
+            },
+            _ => error,
+        }
+    }
+
+    /// Probe a configured runtime only after a failed operation, so
+    /// successful commands start no extra child.
+    fn diagnose(&self, error: NixError) -> NixError {
+        if self.configured.is_none()
+            || !matches!(error, NixError::Failed { .. } | NixError::Process(_))
+        {
+            return error;
+        }
+        match self.probe() {
+            Ok(_) => error,
+            Err(probe) => self.configured_failure(probe),
+        }
     }
 
     /// Trace every native command line to stderr before it runs.
@@ -149,7 +176,7 @@ impl Nix {
     /// vector pkg ran so failures repeat the exact native command.
     /// Streamed children report no captured stderr (their streams went to
     /// the user's terminal); captured children keep theirs.
-    fn finish(args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
+    fn classify(args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
         if reaped.cancelled.is_none()
             && let Some(limit) = reaped.resource_limit
         {
@@ -173,7 +200,7 @@ impl Nix {
         // Captured children get the same forwarding and reaping as streamed
         // ones; a signal sent only to pkg still cancels the child.
         let reaped = self.execute(args, IoMode::Capture)?;
-        Self::finish(args, &reaped)?;
+        self.finish(args, &reaped)?;
         Ok(String::from_utf8_lossy(&reaped.output.stdout).into_owned())
     }
 
@@ -188,7 +215,7 @@ impl Nix {
         let reaped = self.execute(args, IoMode::Filtered(&mut reporter))?;
         // Keep raw stderr for the command's compact cause selection. It is
         // never replayed as a block in normal output.
-        Self::finish(args, &reaped)
+        self.finish(args, &reaped)
     }
 
     /// Run a native command with streamed stdio, reaping the child.
@@ -200,7 +227,7 @@ impl Nix {
     /// native state after every failed mutation.
     fn run_streamed(&self, args: &[&str]) -> Result<(), NixError> {
         let reaped = self.execute(args, IoMode::Stream)?;
-        Self::finish(args, &reaped)
+        self.finish(args, &reaped)
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -222,7 +249,12 @@ impl Nix {
 
     /// Run one native child with its selected stdio and reporting mode.
     fn execute(&self, args: &[&str], mode: IoMode<'_>) -> Result<Reaped, NixError> {
-        run_child(self.command(args), mode, None, None).map_err(NixError::Process)
+        run_child(self.command(args), mode, None, None)
+            .map_err(|error| self.diagnose(NixError::Process(error)))
+    }
+
+    fn finish(&self, args: &[&str], reaped: &Reaped) -> Result<(), NixError> {
+        Self::classify(args, reaped).map_err(|error| self.diagnose(error))
     }
 
     fn json<T: serde::de::DeserializeOwned>(

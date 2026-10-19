@@ -170,18 +170,6 @@ impl<'de> serde::de::Visitor<'de> for CatalogSystemVisitor {
     }
 }
 
-impl TryFrom<BTreeMap<String, serde_json::Value>> for CatalogSystem {
-    type Error = serde_json::Error;
-
-    fn try_from(mut fields: BTreeMap<String, serde_json::Value>) -> Result<Self, Self::Error> {
-        let entries = fields.remove("entries").unwrap_or_default();
-        Ok(Self {
-            entries: serde_path_to_error::deserialize(entries)
-                .map_err(<Self::Error as serde::de::Error>::custom)?,
-        })
-    }
-}
-
 /// The decoded `catalogIndex` envelope of a casks flake.
 ///
 /// Serialization preserves the schema-4 format, including `schema` and

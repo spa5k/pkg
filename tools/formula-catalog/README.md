@@ -24,7 +24,7 @@ Cold evaluation uses batches of at most 4,096 candidate names.
 Each encoded name list stays below 64 KiB to leave room in the native
 command argument. A batch shrinks when names are long.
 An oversized single name fails before Nix starts.
-Use `tools/formula-metadata-speed-check.py` with a new `--cache` path
+Use `python3 tools/speed-check formula-metadata` with a new `--cache` path
 to measure a cold run and check the exact committed catalog bytes.
 
 To update Core data, fetch `https://formulae.brew.sh/api/formula.json`.

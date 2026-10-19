@@ -40,7 +40,6 @@ let
       single = builtins.length existing == 1;
       selected = builtins.head existing;
       p = selected.result.value;
-      parsed = builtins.parseDrvName p.name;
       outputs = p.meta.outputsToInstall or [ (p.outputName or "out") ];
     in
     if !single || !builtins.isAttrs p || (p.type or null) != "derivation" then
@@ -49,11 +48,6 @@ let
       {
         attribute = builtins.concatStringsSep "." selected.path;
         paths = map (name: p.${name}.outPath) outputs;
-        meta = {
-          pname = parsed.name;
-          version = parsed.version;
-          description = builtins.replaceStrings [ "\n" ] [ " " ] (p.meta.description or "");
-        };
       };
 in
 map inspect requests

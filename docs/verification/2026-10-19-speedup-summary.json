@@ -3,7 +3,7 @@
   "complete": true,
   "base": "c4c9f66c262f41b2e9034d5d1045d9967623d59e",
   "branch": "feat/pkg-speedup",
-  "scope": "Consolidated end-to-end pkg speed record. Raw per-sample files were intentionally removed; benchmark tools remain reproducible.",
+  "scope": "Consolidated end-to-end pkg speed record. Raw per-sample files were intentionally removed; tools/speed-check reproduces each result.",
   "method": {
     "medians": true,
     "balanced_pairs": {
@@ -1331,7 +1331,7 @@
     "App sync with30 apps remains mixed."
   ],
   "limits": [
-    "Raw per-sample evidence files were intentionally removed from Git. Use the retained benchmark tools to reproduce samples.",
+    "Raw per-sample evidence files were intentionally removed from Git. Use tools/speed-check to reproduce samples.",
     "Installer transport uses local HTTP; public CDN latency and external Nix provisioning are excluded.",
     "Repeated package tests use a warm shared Nix store; first fetches are excluded observations.",
     "The10M comparison uses the selected ID-buffer client as baseline, not origin/main.",

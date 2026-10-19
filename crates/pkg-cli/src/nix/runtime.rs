@@ -117,7 +117,8 @@ fn resolve(
 /// state profile, legacy per-user profile). A configured value stays the
 /// only candidate and never falls back. Nothing is installed or repaired
 /// here. Discovery starts no child process. Each operation checks the
-/// runtime's output format. Doctor requests a separate version probe.
+/// runtime's output format. Doctor requests a separate version probe, and a
+/// failed operation on a configured runtime probes it to name that value.
 /// # Errors
 ///
 /// Returns an error if no executable is found, a configured path is not an executable file, or the current directory cannot be read for a relative path.
@@ -342,6 +343,32 @@ mod tests {
         assert!(calls.contains("profile history"));
     }
 
+    /// A configured runtime is probed only after a failed operation.
+    #[test]
+    fn failed_configured_operations_name_an_unusable_runtime() {
+        let (path, _keep) = fake_runtime("echo history-failed >&2; exit 3");
+        let runtime = discover(Some(path.to_str().expect("utf8 path"))).expect("discovers");
+        let error = runtime
+            .profile_history(Path::new("/nonexistent/profile"))
+            .expect_err("history failed");
+        assert!(
+            matches!(&error, NixError::ConfiguredProbe { requested, .. } if requested == path.to_str().unwrap()),
+            "{error:?}"
+        );
+
+        let (path, _keep) = fake_runtime(
+            "case \"$*\" in *--version*) echo 'nix (Nix) 2.35.2'; exit 0;; esac\necho history-failed >&2; exit 3",
+        );
+        let runtime = discover(Some(path.to_str().expect("utf8 path"))).expect("discovers");
+        let error = runtime
+            .profile_history(Path::new("/nonexistent/profile"))
+            .expect_err("history failed");
+        assert!(
+            matches!(&error, NixError::Failed { stderr, .. } if stderr.contains("history-failed")),
+            "{error:?}"
+        );
+    }
+
     /// Check discovery's exit-status classification with a real child process.
     #[test]
     fn explicit_version_probe_captures_output_and_preserves_failures() {
@@ -355,8 +382,11 @@ mod tests {
         );
         std::fs::remove_file(&path).unwrap();
         let error = runtime.system().expect_err("the runtime was removed");
+        let NixError::ConfiguredProbe { source, .. } = error else {
+            panic!("a removed configured runtime names its value: {error:?}");
+        };
         assert_eq!(
-            error
+            source
                 .source()
                 .unwrap()
                 .downcast_ref::<pkg_process::RunError>()

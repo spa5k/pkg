@@ -3,7 +3,7 @@
 Compares `feat/pkg-speedup` with `origin/main` at `c4c9f66`.
 All times are median end-to-end milliseconds unless stated. Startup and output are included.
 The machine-readable companion contains every retained median, identity, verdict, and limit.
-Raw per-sample scratch files were intentionally removed; the benchmark tools remain in `tools/`.
+Raw per-sample scratch files were intentionally removed. `tools/speed-check` reproduces each result; see [Reproduce](#reproduce).
 
 ## Principal gains
 
@@ -87,11 +87,11 @@ The complete Linux public lifecycle already covers revocation and expected refus
 - Mac passes 780 exact search comparisons and 20 repeated-install behavior checks. Linux passes the retained 260-output exact matrix and 20 behavior checks.
 - Installer syntax, ShellCheck, dependency policy, Formula/Cask checks, native discovery boundaries, docs links, and benchmark lint/format pass.
 - The final 100 source and test hashes match across hosts.
-- PR #120 required CI passed on Linux and macOS.
+- PR #120 required CI passed on Linux and macOS for the speed changes. The review follow-up and `tools/speed-check` were verified locally on macOS.
 
 ## Limits
 
-- Raw per-sample evidence files were intentionally removed from Git. Use the retained benchmark tools to reproduce samples.
+- Raw per-sample evidence files were intentionally removed from Git. Use `tools/speed-check` to reproduce samples.
 - Installer transport uses local HTTP; public CDN latency and external Nix provisioning are excluded.
 - Repeated package tests use a warm shared Nix store; first fetches are excluded observations.
 - The 10M comparison uses the selected ID-buffer client as baseline, not origin/main.
@@ -101,5 +101,23 @@ The complete Linux public lifecycle already covers revocation and expected refus
 - Formula batches increase peak memory from 244 to 353 MiB on Mac and 303 to 419 MiB on Linux; Nix daemon memory is excluded.
 - Synthetic catalogs can exceed page cache; no fully resident-memory claim is made.
 - Vendor GUIs, fresh privileged Mac app storage, and public CDN latency are not timed.
+
+## Reproduce
+
+Run `python3 tools/speed-check <check> --baseline OLD --pkg NEW --output REPORT.json`.
+Build the two binaries in separate target directories. `--help` lists the options of each check.
+
+| Result | Check |
+| --- | --- |
+| Final command matrix | `commands` (`--public-tap` for registered taps) |
+| Installer modes and full preparation | `installer` (`--full-setup` for preparation) |
+| Final full preparation and catalog update | `setup` |
+| Cold Formula metadata | `formula-metadata` |
+| Maintainer catalog generation | `catalog` |
+| Repeat 100 and 1,000 installed packages | `batch` |
+| Repeated-install behavior checks | `repeat-behavior` |
+| Real native, Formula, Cask, and tap installs | `real-packages` |
+| App launcher sync | `apps` |
+| Search and scale tables | `search` (`--rows`, `--full-output`, `--resources`) |
 
 [Machine-readable complete medians, identities, controls, and verdicts](2026-10-19-speedup-summary.json).

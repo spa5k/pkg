@@ -66,8 +66,7 @@ fn fixture(count: usize) -> tempfile::TempDir {
             let name = format!("probe-{index:03}");
             serde_json::json!({
                 "attribute": format!("packages.x86_64-linux.{name}"),
-                "paths": [format!("/nix/store/old-{name}")],
-                "meta": {"pname": name, "version": "1", "description": "Probe"}
+                "paths": [format!("/nix/store/old-{name}")]
             })
         })
         .collect();
@@ -80,6 +79,7 @@ fn fixture(count: usize) -> tempfile::TempDir {
             r#"#!/bin/sh
 printf '%s\n' "$*" >> '{}'
 case "$*" in
+  *--version*) echo 'nix (Nix) 2.35.2';;
   *'config show system'*) echo x86_64-linux;;
   *'profile list'*) cat '{}';;
   *'flake metadata'*) echo '{{"url":"github:example/packages/1111111111111111111111111111111111111111"}}';;
@@ -177,5 +177,13 @@ fn repeated_install(count: usize, mode: &str, code: i32, fallback: bool) {
             .count(),
         if fallback { count } else { 0 },
         "{mode}: {calls}"
+    );
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|line| line.contains("--version"))
+            .count(),
+        usize::from(mode == "failed"),
+        "only a failed native child probes the configured runtime: {calls}"
     );
 }

@@ -34,15 +34,13 @@ pub enum MetadataValue {
     Error,
 }
 
-/// A unique derivation whose metadata and output paths were evaluated.
+/// A unique derivation whose output paths were evaluated.
 #[derive(Clone, serde::Deserialize)]
 pub struct OutputMatch {
     /// The full matched native attribute.
     pub(crate) attribute: String,
     /// Store paths selected by the request.
     pub(crate) paths: Vec<String>,
-    #[serde(rename = "meta")]
-    _metadata: SearchMeta,
 }
 
 pub(super) fn nix_json(value: &impl serde::Serialize) -> Result<String, NixError> {
@@ -330,8 +328,8 @@ else map (inspect selected) paths"#
             }),
             None,
         )
-        .map_err(NixError::Process)?;
-        Self::finish(args, &reaped)?;
+        .map_err(|error| self.diagnose(NixError::Process(error)))?;
+        self.finish(args, &reaped)?;
         serde_json::from_slice(&reaped.output.stdout).map_err(|error| NixError::Json {
             what,
             source: error,
