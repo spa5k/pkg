@@ -14,7 +14,9 @@ One rule picks the package for a bare name:
    taps. Two matches in the same source stay ambiguous.
 4. When no exact name matches, match the main command of a package
    (`meta.mainProgram` for Nixpkgs, `executables` for Formulae), with
-   the same order.
+   the same order. The search data reads `meta.mainProgram` only for
+   top-level Nixpkgs packages. In some nested sets, such as NixOS tests,
+   reading it evaluates a whole system and exceeds the memory budget.
 
 The install result names the choice. The next line names the other
 choices, for example `Also available: cask:firefox`.
