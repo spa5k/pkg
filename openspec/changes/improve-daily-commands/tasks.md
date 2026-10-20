@@ -40,4 +40,4 @@
 
 - [x] V1. Run the Rust checks and the tests.
 - [x] V2. Run the daily commands in a test home on macOS.
-- [ ] V3. Run the daily commands on Linux in an E2B sandbox.
+- [x] V3. Run the daily commands on Linux in an E2B sandbox.
