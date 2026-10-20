@@ -73,6 +73,13 @@ pub(crate) fn finish(outcome: Result<(), CommandError>) -> ExitCode {
 
 fn dispatch(cli: &Cli) -> Result<(), CommandError> {
     crate::output::plain(cli.verbose);
+    crate::output::disable_color(
+        cli.no_color
+            || config::paths()
+                .ok()
+                .and_then(|paths| Config::load(&paths.config_file).ok())
+                .is_some_and(|config| config.color_disabled(false)),
+    );
     // `--json` is a query option only; mutating commands must reject it
     // before touching the profile.
     if cli.json

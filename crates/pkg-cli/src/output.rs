@@ -131,6 +131,231 @@ pub fn log(text: &str) {
     }
 }
 
+/// One output stream of the process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stream {
+    /// Standard output: results.
+    Out,
+    /// Standard error: progress, notes, and diagnostics.
+    Err,
+}
+
+impl Stream {
+    fn is_terminal(self) -> bool {
+        use std::io::IsTerminal as _;
+        match self {
+            Self::Out => std::io::stdout().is_terminal(),
+            Self::Err => std::io::stderr().is_terminal(),
+        }
+    }
+
+    const fn fd(self) -> i32 {
+        match self {
+            Self::Out => 1,
+            Self::Err => 2,
+        }
+    }
+}
+
+/// The meaning of a piece of text. Terminals show it as a color or weight;
+/// pipes, logs, and `--no-color` get the plain text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// Names and headings.
+    Strong,
+    /// A completed change.
+    Success,
+    /// A warning or partial result.
+    Warning,
+    /// A failure.
+    Error,
+    /// Secondary detail, such as descriptions and column headings.
+    Muted,
+    /// A command for the user to run.
+    Accent,
+}
+
+impl Tone {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::Strong => "1",
+            Self::Success => "32",
+            Self::Warning => "33",
+            Self::Error => "1;31",
+            Self::Muted => "2",
+            Self::Accent => "36",
+        }
+    }
+}
+
+/// Set by `--no-color` or `display.color = "never"`.
+static COLOR_DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Turn off color for this process.
+pub fn disable_color(disabled: bool) {
+    COLOR_DISABLED.store(disabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether text written to `stream` can use color.
+///
+/// Color needs a terminal. `--no-color`, the configuration, a nonempty
+/// `NO_COLOR`, and `TERM=dumb` turn it off.
+#[must_use]
+pub fn color(stream: Stream) -> bool {
+    !COLOR_DISABLED.load(std::sync::atomic::Ordering::Relaxed)
+        && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+        && std::env::var_os("TERM").is_none_or(|term| term != "dumb")
+        && stream.is_terminal()
+}
+
+/// Show `text` in `tone` when `stream` can use color.
+#[must_use]
+pub fn paint(stream: Stream, tone: Tone, text: &str) -> String {
+    if text.is_empty() || !color(stream) {
+        return text.to_string();
+    }
+    format!("\x1b[{}m{text}\x1b[0m", tone.code())
+}
+
+/// The column count of the terminal behind `stream`.
+///
+/// A numeric `COLUMNS` value wins. Pipes and logs have no width, so their
+/// lines are never cut.
+#[must_use]
+pub fn width(stream: Stream) -> Option<usize> {
+    if let Some(columns) = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|columns| *columns > 0)
+    {
+        return Some(columns);
+    }
+    if !stream.is_terminal() {
+        return None;
+    }
+    let mut size = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // SAFETY: TIOCGWINSZ writes one `winsize` into the valid pointer and
+    // reads nothing else; the descriptor is a standard stream.
+    let status = unsafe { libc::ioctl(stream.fd(), libc::TIOCGWINSZ, &raw mut size) };
+    (status == 0 && size.ws_col > 0).then_some(usize::from(size.ws_col))
+}
+
+/// The visible width of `text`, without ANSI escape sequences.
+#[must_use]
+pub fn visible_width(text: &str) -> usize {
+    strip_ansi(text).chars().count()
+}
+
+/// Rows of text columns for a terminal.
+///
+/// Columns are padded to the widest visible cell. On a terminal, the last
+/// column is cut to fit the line width. Pipes and logs get full lines.
+#[derive(Debug, Default)]
+pub struct Table {
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+}
+
+impl Table {
+    /// Start a table with these column headings. Empty headings print no
+    /// heading line.
+    #[must_use]
+    pub fn new(headers: &[&str]) -> Self {
+        Self {
+            headers: headers.iter().map(ToString::to_string).collect(),
+            rows: Vec::new(),
+        }
+    }
+
+    /// Add one row. Cells may hold ANSI color.
+    pub fn row(&mut self, cells: Vec<String>) {
+        self.rows.push(cells);
+    }
+
+    /// Whether the table has no rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Render the table for `stream`.
+    #[must_use]
+    pub fn render(&self, stream: Stream) -> String {
+        let columns = self
+            .rows
+            .iter()
+            .map(Vec::len)
+            .chain([self.headers.len()])
+            .max()
+            .unwrap_or(0);
+        let mut widths = vec![0; columns];
+        let show_headers = self.headers.iter().any(|header| !header.is_empty());
+        let header_cells = show_headers.then_some(&self.headers);
+        for cells in header_cells.into_iter().chain(&self.rows) {
+            for (index, cell) in cells.iter().enumerate() {
+                widths[index] = widths[index].max(visible_width(cell));
+            }
+        }
+        // Drop columns that are empty in every row and heading.
+        let keep: Vec<bool> = widths.iter().map(|width| *width > 0).collect();
+        let limit = width(stream);
+        let mut out = String::new();
+        let mut line = |cells: &[String], muted: bool| {
+            let mut text = String::new();
+            let mut used = 0;
+            let last = (0..cells.len()).rev().find(|index| keep[*index]);
+            for (index, cell) in cells.iter().enumerate() {
+                if !keep[index] {
+                    continue;
+                }
+                if !text.is_empty() {
+                    text.push_str("  ");
+                    used += 2;
+                }
+                if Some(index) == last {
+                    let room = limit.map(|limit| limit.saturating_sub(used));
+                    let cell = match room {
+                        Some(room) if visible_width(cell) > room => {
+                            fit(&strip_ansi(cell), room.max(1))
+                        }
+                        _ => cell.clone(),
+                    };
+                    text.push_str(&cell);
+                } else {
+                    text.push_str(cell);
+                    let pad = widths[index].saturating_sub(visible_width(cell));
+                    text.push_str(&" ".repeat(pad));
+                    used += widths[index];
+                }
+            }
+            let text = text.trim_end();
+            if muted {
+                let _ = writeln!(out, "{}", paint(stream, Tone::Muted, text));
+            } else {
+                let _ = writeln!(out, "{text}");
+            }
+        };
+        if let Some(headers) = header_cells {
+            line(headers, true);
+        }
+        for cells in &self.rows {
+            line(cells, false);
+        }
+        out
+    }
+}
+
+/// Cut `text` to at most `max` characters, ending with `…` when cut.
+#[must_use]
+pub fn fit(text: &str, max: usize) -> String {
+    truncate(text, max)
+}
+
 /// Format a count with thousands separators, for example `45,231`.
 #[must_use]
 pub fn count(value: u64) -> String {
@@ -327,4 +552,42 @@ static CSI: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
 #[must_use]
 pub fn strip_ansi(text: &str) -> String {
     CSI.replace_all(text, "").into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tables_pad_columns_and_skip_empty_ones() {
+        let mut table = Table::new(&["NAME", "", "VERSION"]);
+        table.row(vec![
+            String::from("ripgrep"),
+            String::new(),
+            String::from("15.2.0"),
+        ]);
+        table.row(vec![
+            String::from("jq"),
+            String::new(),
+            String::from("1.8.2"),
+        ]);
+        // Tests write to a pipe, so no width applies and no color is added.
+        assert_eq!(
+            table.render(Stream::Out),
+            "NAME     VERSION\nripgrep  15.2.0\njq       1.8.2\n"
+        );
+    }
+
+    #[test]
+    fn tables_without_headings_print_rows_only() {
+        let mut table = Table::new(&[]);
+        table.row(vec![String::from("a"), String::from("b")]);
+        assert_eq!(table.render(Stream::Out), "a  b\n");
+    }
+
+    #[test]
+    fn visible_width_ignores_color() {
+        assert_eq!(visible_width("\x1b[1;31mfailed\x1b[0m"), 6);
+        assert_eq!(fit("abcdef", 4), "abc…");
+    }
 }
