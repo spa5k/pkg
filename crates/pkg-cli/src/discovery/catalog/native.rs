@@ -375,6 +375,19 @@ fn evaluate(
             evaluate(nix, connection, reference, system, root, left)?;
             evaluate(nix, connection, reference, system, root, right)
         }
+        // One entry alone needs more memory than the budget allows. Record
+        // it as failed, so the rest of the data stays usable on a small
+        // computer. Install and info check such a name through Nix.
+        Err(NixError::ResourceLimit(limit)) => {
+            if nix.is_verbose() {
+                eprintln!("Skipping {} in search data: {limit}.", paths[0].join("."));
+            }
+            let nodes = vec![MetadataNode {
+                path: paths[0].clone(),
+                value: MetadataValue::Error,
+            }];
+            store_nodes(connection, paths, nodes, root, system)
+        }
         Err(error) => Err(CatalogError::Native(error)),
     }
 }

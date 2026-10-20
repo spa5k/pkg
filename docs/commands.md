@@ -5,12 +5,18 @@
 rollback, and roots.
 
 Global options: `--help`, `--version`, `--no-color`, `--verbose`.
+`pkg` without a command prints the help.
+
+On a terminal, results use color. Pipes, logs, `--no-color`,
+`display.color = "never"` in the configuration, and a nonempty `NO_COLOR`
+get plain text. Tables fit the terminal width. Pipes get full lines.
 
 Human output shows work stages and a verified result. Install first shows
 `Resolving`, then the package name in `Installing`. When a command name
 selects the package, install shows a note such as
-``nixpkgs:ripgrep provides the `rg` command.`` When other sources have a
-package with the same name, install shows them after `Also available:`.
+``ripgrep provides the `rg` command.`` When a Homebrew Cask has the same
+name, install names it after `Also available:`. `pkg info` names all
+other sources.
 Terminal progress shows elapsed seconds during native work. A mutation reports
 its result only after the native profile operation and macOS launcher refresh
 finish. The result has one line for each changed package, with its name and
@@ -67,11 +73,11 @@ select a package or change its priority.
 | `pkg info ID` | Show the package, its commands, its source, and other sources with the same name. |
 | `pkg install ID…` or `pkg add ID…` | Resolve all names, then run one native profile add. |
 | `pkg list` | Read the dedicated profile. Shows name, version, and source, sorted by name. The source is empty for Nixpkgs. Entry IDs show only for duplicate packages or with `--verbose`. |
-| `pkg remove ID… [--entry]` or `pkg uninstall ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. Several entries of one package from one source are removed together. |
-| `pkg update` | Update the installed client to the newest release, then refresh official catalogs and saved tap catalogs under their recorded consent. Does not change installed packages. |
+| `pkg remove ID… [--entry]` or `pkg uninstall ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. A command name selects the one installed package that provides it: `pkg remove rg` removes ripgrep. Several entries of one package from one source are removed together. |
+| `pkg update` | Update the installed client to the newest release, then refresh official catalogs and saved tap catalogs under their recorded consent. After a client update, the new client refreshes the search data. Does not change installed packages. |
 | `pkg upgrade [ID…] [--entry]` | Without IDs, upgrade all packages (`--all` does the same). Follow each entry's original reference. Reports fixed references. When nothing changes, prints `Everything is up to date.` After `tap remove`, upgrade of all packages skips removed-source references and forwards the remaining entries by explicit native entry IDs (not native `--all`); upgrading a removed-source entry refuses. |
 | `pkg history` | Show retained generations, newest first, with the date and the package changes of each. `*` marks the current generation. A new profile prints `No changes yet.` Reads local files only. `--verbose` prints the native history. |
-| `pkg rollback [N]` | Use Nix's native previous or selected generation. Prints the destination and the package changes. Refreshes launchers. |
+| `pkg rollback [N]` | Without a number, go back to the newest older generation with other packages. A generation in which only the source revision moved is skipped. When every older generation has the same packages, prints `Nothing to undo.` With a number, select that generation. Prints the destination and the package changes. Refreshes launchers. |
 | `pkg prune --older-than Nd` | Remove only eligible non-current generations. Requires an explicit positive age. |
 | `pkg doctor` | Read-only runtime, profile, launcher, daily job, and `PATH` status. Repairs nothing. |
 | `pkg self uninstall [--yes]` | Remove the client, completions, shell setup, daily job, settings, and search data. Nix and installed packages stay. Without a terminal, `--yes` is required. |
@@ -292,8 +298,10 @@ Core input with [the Formula generator](../tools/formula-catalog/README.md).
 Preparation evaluates metadata in batches of up to 512 attributes.
 Encoded path lists stay within 64 KiB. Each evaluator
 has a 512 MiB RSS budget. The memory guard stops at 480 MiB. A stopped
-batch is split and retried. An entry that still exceeds the budget fails
-the refresh. Catalog publication is atomic for each source. A source can
+batch is split and retried. An entry that still exceeds the budget is
+left out of search and recorded as failed, so the rest of the data stays
+usable. Install and info check such a name through Nix. `--verbose` names
+the skipped entry. Catalog publication is atomic for each source. A source can
 finish when another source fails.
 
 SQLite holds native catalog metadata with its source and revision. Search
@@ -513,8 +521,10 @@ sync. Direct Nix commands do not use this lock. Repeating an install skips
 an active entry with the same source and attribute. With an explicit output
 selection, the output set must also match.
 
-Default rollback selects Nix's previous retained generation. After a
-branched history, that generation can contain an older package set.
+Default rollback selects the newest older generation whose packages differ
+from the current ones. Generation numbers only grow, so after a rollback
+and a new change, history compares each generation with the one before it
+by number, not with the generation it came from.
 The command prints the destination generation and the package changes, for
 example `Added hello 2.12.1`. Use `pkg history` and `pkg rollback N` to
 choose a specific retained generation.
