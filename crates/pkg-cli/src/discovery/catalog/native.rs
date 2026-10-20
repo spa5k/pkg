@@ -37,12 +37,42 @@ pub(super) struct Package<'a> {
     pub name: &'a str,
     pub version: &'a str,
     pub description: &'a str,
+    /// The main command, from `meta.mainProgram`.
+    pub command: Option<&'a str>,
 }
 
+/// One owned snapshot row, for direct lookups.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeRow {
+    /// The full native attribute.
+    pub attribute: String,
+    /// The installable ID suffix after `nixpkgs:`.
+    pub exposed: String,
+    /// The package name.
+    pub name: String,
+    /// The package version.
+    pub version: String,
+    /// The package description.
+    pub description: String,
+    /// The main command, when declared.
+    pub command: Option<String>,
+}
+
+/// The snapshot schema. Version 3 adds the main command column and the
+/// attributes whose evaluation failed.
+const SCHEMA: u32 = 3;
+
+/// The file keys of older schemas. A new snapshot removes their files.
+const OLD_KEYS: [&str; 2] = ["native-sqlite-1", "native-sqlite-2"];
+
 fn path(cache_dir: &Path, source: &str, system: &str) -> PathBuf {
+    keyed_path(cache_dir, "native-sqlite-3", source, system)
+}
+
+fn keyed_path(cache_dir: &Path, key: &str, source: &str, system: &str) -> PathBuf {
     cache_dir.join(format!(
         "catalog-{}.sqlite",
-        cache::cache_key("native-sqlite-1", source, system)
+        cache::cache_key(key, source, system)
     ))
 }
 
@@ -72,7 +102,7 @@ impl Snapshot {
             .query_row("SELECT value FROM metadata", [], |row| row.get(0))
             .ok()?;
         let header: Header = serde_json::from_str(&value).ok()?;
-        if header.schema != 1
+        if header.schema != SCHEMA
             || !header.complete
             || header.source != source
             || header.system != system
@@ -133,9 +163,10 @@ impl Snapshot {
         connection.execute_batch(&format!("{SETTINGS}
             PRAGMA journal_mode=DELETE;
             CREATE TABLE metadata(value TEXT NOT NULL);
-            CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL) WITHOUT ROWID;
+            CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL, command TEXT, leaf TEXT NOT NULL) WITHOUT ROWID;
             CREATE TABLE pending(path TEXT PRIMARY KEY, root TEXT NOT NULL) WITHOUT ROWID;
-            CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;"))?;
+            CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;
+            CREATE TABLE failures(attribute TEXT PRIMARY KEY) WITHOUT ROWID;"))?;
         let label = crate::output::short_source(source);
         crate::output::status(&format!("Preparing search data… {label}"));
         for root in ["packages", "legacyPackages"] {
@@ -177,7 +208,7 @@ impl Snapshot {
             }
         }
         let header = Header {
-            schema: 1,
+            schema: SCHEMA,
             source: source.to_string(),
             system: system.to_string(),
             reference: reference.to_string(),
@@ -196,7 +227,7 @@ impl Snapshot {
         cache_dir: &Path,
     ) -> Result<Self, CatalogError> {
         let transaction = connection.transaction()?;
-        transaction.execute_batch("INSERT INTO claims SELECT exposed, count(*) FROM packages GROUP BY exposed; DROP TABLE pending;")?;
+        transaction.execute_batch("INSERT INTO claims SELECT exposed, count(*) FROM packages GROUP BY exposed; DROP TABLE pending; CREATE INDEX package_commands ON packages(command) WHERE command IS NOT NULL; CREATE INDEX package_names ON packages(pname); CREATE INDEX package_leaves ON packages(leaf);")?;
         header.unique_exposed = transaction.query_row(
             "SELECT NOT EXISTS(SELECT 1 FROM claims WHERE n > 1)",
             [],
@@ -218,6 +249,11 @@ impl Snapshot {
         std::fs::File::open(cache_dir)
             .and_then(|file| file.sync_all())
             .map_err(CatalogError::cache_write)?;
+        for key in OLD_KEYS {
+            // A missing old file is the normal case.
+            let _ =
+                std::fs::remove_file(keyed_path(cache_dir, key, &header.source, &header.system));
+        }
         Self::read(cache_dir, &header.source, &header.system)
             .ok_or_else(|| CatalogError::cache_write("published snapshot could not be read"))
     }
@@ -226,23 +262,80 @@ impl Snapshot {
         &self,
         mut visitor: impl FnMut(Package<'_>) -> Result<(), CatalogError>,
     ) -> Result<(), CatalogError> {
-        let query = if self.header.unique_exposed {
-            "SELECT attribute, exposed, pname, version, description FROM packages ORDER BY attribute"
-        } else {
-            "SELECT p.attribute, CASE WHEN c.n>1 THEN p.attribute ELSE p.exposed END, p.pname, p.version, p.description FROM packages p JOIN claims c ON c.exposed=p.exposed ORDER BY p.attribute"
-        };
-        let mut statement = self.connection.prepare(query)?;
+        let query = format!("{} ORDER BY p.attribute", self.select());
+        let mut statement = self.connection.prepare(&query)?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
+            let command = row.get_ref(5)?;
             visitor(Package {
                 attribute: text(row, 0)?,
                 exposed: text(row, 1)?,
                 name: text(row, 2)?,
                 version: text(row, 3)?,
                 description: text(row, 4)?,
+                command: command.as_str_or_null().map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        5,
+                        command.data_type(),
+                        Box::new(error),
+                    )
+                })?,
             })?;
         }
         Ok(())
+    }
+
+    /// The row selection with the shared exposed-name rule: a short name
+    /// that more than one attribute claims shows the full attribute.
+    const fn select(&self) -> &'static str {
+        if self.header.unique_exposed {
+            "SELECT p.attribute, p.exposed, p.pname, p.version, p.description, p.command FROM packages p"
+        } else {
+            "SELECT p.attribute, CASE WHEN c.n>1 THEN p.attribute ELSE p.exposed END, p.pname, p.version, p.description, p.command FROM packages p JOIN claims c ON c.exposed=p.exposed"
+        }
+    }
+
+    fn rows(&self, filter: &str, value: &str) -> Result<Vec<NativeRow>, CatalogError> {
+        let mut statement = self.connection.prepare_cached(&format!(
+            "{} WHERE {filter} ORDER BY p.attribute",
+            self.select()
+        ))?;
+        let rows = statement.query_map([value], |row| {
+            Ok(NativeRow {
+                attribute: row.get(0)?,
+                exposed: row.get(1)?,
+                name: row.get(2)?,
+                version: row.get(3)?,
+                description: row.get(4)?,
+                command: row.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The row for one full native attribute.
+    pub(super) fn attribute(&self, attribute: &str) -> Result<Option<NativeRow>, CatalogError> {
+        Ok(self.rows("p.attribute = ?1", attribute)?.into_iter().next())
+    }
+
+    /// Rows whose package name or last attribute segment is `name`.
+    pub(super) fn named(&self, name: &str) -> Result<Vec<NativeRow>, CatalogError> {
+        self.rows("(p.pname = ?1 OR p.leaf = ?1)", name)
+    }
+
+    /// Rows whose main command is `command`.
+    pub(super) fn commands(&self, command: &str) -> Result<Vec<NativeRow>, CatalogError> {
+        self.rows("p.command = ?1", command)
+    }
+
+    /// Whether this full attribute failed to evaluate during preparation,
+    /// for example a removed alias that throws.
+    pub(super) fn failed(&self, attribute: &str) -> Result<bool, CatalogError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM failures WHERE attribute = ?1)",
+            [attribute],
+            |row| row.get(0),
+        )?)
     }
 }
 
@@ -307,16 +400,18 @@ fn store_nodes(
             [serde_json::to_string(&node.path).map_err(CatalogError::cache_write)?],
         )?;
         match node.value {
-            MetadataValue::Package { meta } => {
+            MetadataValue::Package { meta, command } => {
                 let attr = node.path.join(".");
                 transaction.execute(
-                    "INSERT OR REPLACE INTO packages VALUES (?1,?2,?3,?4,?5)",
+                    "INSERT OR REPLACE INTO packages VALUES (?1,?2,?3,?4,?5,?6,?7)",
                     params![
                         attr,
                         exposed_attribute(&attr, system),
                         meta.pname,
                         meta.version,
-                        meta.description
+                        meta.description,
+                        command,
+                        node.path.last().map_or("", String::as_str)
                     ],
                 )?;
             }
@@ -333,7 +428,13 @@ fn store_nodes(
                     )?;
                 }
             }
-            MetadataValue::Skip | MetadataValue::Error => {}
+            MetadataValue::Error => {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO failures VALUES (?1)",
+                    [node.path.join(".")],
+                )?;
+            }
+            MetadataValue::Skip => {}
             MetadataValue::Absent => {
                 return Err(CatalogError::Source(String::from(
                     "absent output returned for a requested metadata path",
@@ -355,17 +456,17 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(
-                "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT);
+                "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT, command TEXT);
                  CREATE TABLE claims(exposed TEXT, n INTEGER);
-                 INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', '');
-                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', '別名', '2.0', 'Unicode description');
+                 INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', '', 'editor');
+                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', '別名', '2.0', 'Unicode description', NULL);
                  INSERT INTO claims VALUES ('editor', 2);",
             )
             .unwrap();
         let snapshot = Snapshot {
             connection,
             header: Header {
-                schema: 1,
+                schema: SCHEMA,
                 source: String::from("fixture"),
                 system: String::from(SYSTEM),
                 reference: String::from("fixture-reference"),
@@ -408,7 +509,7 @@ mod tests {
 
     fn header() -> Header {
         Header {
-            schema: 1,
+            schema: SCHEMA,
             source: String::from("fixture"),
             system: String::from(SYSTEM),
             reference: String::from("fixture-reference"),
@@ -432,20 +533,35 @@ mod tests {
         for ambiguous in [false, true] {
             let directory = tempfile::tempdir().unwrap();
             let staging = directory.path().join("staging.sqlite");
+            let old = keyed_path(directory.path(), OLD_KEYS[0], "fixture", SYSTEM);
+            std::fs::write(&old, "old schema").unwrap();
             let connection = Connection::open(&staging).unwrap();
             connection.execute_batch(
                 "CREATE TABLE metadata(value TEXT NOT NULL);
-                 CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL) WITHOUT ROWID;
+                 CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL, command TEXT, leaf TEXT NOT NULL) WITHOUT ROWID;
                  CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;
                  CREATE TABLE pending(path TEXT PRIMARY KEY, root TEXT NOT NULL) WITHOUT ROWID;
-                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', 'Unicode description');"
+                 CREATE TABLE failures(attribute TEXT PRIMARY KEY) WITHOUT ROWID;
+                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', 'Unicode description', NULL, 'editor');
+                 INSERT INTO failures VALUES ('legacyPackages.x86_64-linux.removed');"
             ).unwrap();
             if ambiguous {
-                connection.execute_batch("INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', '別名', '2.0', '');").unwrap();
+                connection.execute_batch("INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', '別名', '2.0', '', 'editor', 'editor');").unwrap();
             }
             let snapshot =
                 Snapshot::publish(connection, &staging, header(), directory.path()).unwrap();
             assert_eq!(snapshot.header.unique_exposed, !ambiguous);
+            assert!(!old.exists(), "the old schema file is removed");
+            assert!(
+                snapshot
+                    .failed("legacyPackages.x86_64-linux.removed")
+                    .unwrap()
+            );
+            assert!(
+                !snapshot
+                    .failed("legacyPackages.x86_64-linux.editor")
+                    .unwrap()
+            );
             let mut rows = Vec::new();
             snapshot
                 .visit(|package| {
@@ -490,8 +606,8 @@ mod tests {
     fn unique_snapshot_visits_still_reject_invalid_utf8() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(
-            "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT);
-             INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', CAST(X'ff' AS TEXT), '1.2', '');"
+            "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT, command TEXT);
+             INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', CAST(X'ff' AS TEXT), '1.2', '', NULL);"
         ).unwrap();
         let snapshot = Snapshot {
             connection,

@@ -7,10 +7,14 @@ rollback, and roots.
 Global options: `--help`, `--version`, `--no-color`, `--verbose`.
 
 Human output shows work stages and a verified result. Install first shows
-`Resolving`, then the package name in `Installing`. Terminal progress shows
-elapsed seconds during native work. A mutation reports its result only after
-the native profile operation and macOS launcher refresh finish. The result
-has one line for each changed package, with its name and version:
+`Resolving`, then the package name in `Installing`. When a command name
+selects the package, install shows a note such as
+``nixpkgs:ripgrep provides the `rg` command.`` When other sources have a
+package with the same name, install shows them after `Also available:`.
+Terminal progress shows elapsed seconds during native work. A mutation reports
+its result only after the native profile operation and macOS launcher refresh
+finish. The result has one line for each changed package, with its name and
+version:
 
 ```text
 Installed ripgrep 15.2.0
@@ -59,8 +63,8 @@ select a package or change its priority.
 
 | Command | Behavior |
 | --- | --- |
-| `pkg search QUERY` | Search local catalogs. Shows ranked package IDs and availability. |
-| `pkg info ID` | Show source, attribute, metadata revision, and known limits. |
+| `pkg search QUERY` | Search local catalogs. Shows one ranked list with the name that installs each package. |
+| `pkg info ID` | Show the package, its commands, its source, and other sources with the same name. |
 | `pkg install ID…` or `pkg add ID…` | Resolve all names, then run one native profile add. |
 | `pkg list` | Read the dedicated profile. Shows name, version, and source, sorted by name. The source is empty for Nixpkgs. Entry IDs show only for duplicate packages or with `--verbose`. |
 | `pkg remove ID… [--entry]` or `pkg uninstall ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. Several entries of one package from one source are removed together. |
@@ -188,23 +192,42 @@ for longer names. An adjacent transposition is one edit. Three-character
 terms such as `aws` do not use fuzzy matching. Fuzzy matching never searches
 descriptions. `approximate` is true only for that fallback. Human output
 labels the similar names. Use `--no-fuzzy` to disable it. Install still requires
-an exact name. A failed short name shows up to five local suggestions and
-never starts a full catalog scan.
-A short alias that only refers to a hidden library or variant requires an
-exact package ID. Hidden aliases still count for source ambiguity. `pkg install
-aws` will suggest a tool such as `nixpkgs:awscli2` instead of selecting a library
-through its internal name.
+an exact name or a main command. A failed name shows
+``pkg: no package named `NAME` ``, up to five local suggestions, and an install
+hint. It never starts a full catalog scan. A name that refers only to a
+hidden library or variant does not select it.
 
 Use `--regex` for a Rust
 regular expression. Invalid regex input is a usage error before any file
 or runtime lookup. Regex searches include development packages and variants.
 `^$ --regex` can match an empty description.
 
-Human output has separate Nixpkgs, Homebrew Formulae, Homebrew Casks, and
-saved tap sections. Each section shows its match count. Results stay ranked
-within each section. The global limit is shared across nonempty sections,
-so a large source does not hide the others. A small limit can show a section
-with zero displayed rows and its full count.
+Human output is one ranked list with one row for each package name. The
+columns are NAME, VERSION, SOURCE, and DESCRIPTION. SOURCE is empty for
+Nixpkgs. For other rows it shows `brew`, `cask`, or the tap source. When
+several sources have the same name, the list shows the row that the bare
+name selects (see [Package IDs](#package-ids)).
+
+NAME is the shortest ID that installs the row. It is the bare name when the
+bare name selects this row. Otherwise it is a short ID such as
+`brew:ripgrep-all` or `cask:acme/tools/aws-console`. Search uses only local
+data for this decision. When local data is missing, NAME shows the short ID.
+
+A check mark (✓) shows a package that is in the profile. Search reads the
+profile manifest file for this mark. It runs no Nix command. A row that
+cannot install on this system shows `Not available here:` and the reason in
+plain words, for example `needs other Homebrew packages`. JSON and
+`pkg info` keep the reason code. Such a row comes after the exact names
+that can install. A row with unknown support shows `Availability unknown:`
+and the reason.
+Top-level packages come before packages in nested sets, such as
+`python3Packages`. A match through a Formula alias comes after every exact
+name. On a terminal, the description is cut to fit the width. Versions longer
+than 16 characters are cut.
+
+When the limit hides rows, the list ends with `Showing N of M matches`. The
+last line shows the install command for the first row that can install, for
+example `Install: pkg install ripgrep`.
 
 Human output shows 20 results by default. Use
 `--limit N` or `--all` to change the count. JSON includes all matches unless
@@ -222,7 +245,8 @@ Use `--source brew` or `--source homebrew/core` for formulae. Use
 `--source homebrew` for formulae and all cask sources. `brew:aws` and
 `homebrew:aws` select the same groups. Formula aliases return the canonical
 `brew:homebrew/core/NAME` ID. JSON stays a flat list with global relevance
-order and a global limit.
+order and a global limit. JSON keeps the row from each source, also when
+names repeat. Nixpkgs rows can include `command`, the main command.
 
 Formulae install through Nix into the pkg profile. Use `pkg install brew:NAME`
 or the full `brew:homebrew/core/NAME` ID. Search aliases return this canonical ID.
@@ -302,8 +326,16 @@ Row fields:
 | `stale` | boolean | Local catalog is older than three days, or its age is unknown. |
 | `support` | object, nullable | `{"status":"eligible"}`, `{"status":"excluded","reason":…,"detail":…}`, or `{"status":"unknown","reason":…}` for Casks and Formulae. Nixpkgs rows have `null`. Eligible is a metadata status, not an installation promise. |
 | `install_command` | array of strings, optional | Suggested pkg install command for eligible Formulae. Absent for unsupported Formulae and other rows. |
+| `command` | string, optional | The main command from Nixpkgs `meta.mainProgram`. Absent when the package declares none. |
 
 ### `info`
+
+Human output shows the name, version, description, and ID. Then it shows
+`Commands:`, the installed state, the status, the source, and
+`Also available:`. Info reads local search data for Nixpkgs, Casks, and
+Formulae. It runs Nix only when local data does not have the package. An
+installed package keeps the same installed check as before: info reads the
+profile through Nix.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -322,6 +354,8 @@ Row fields:
 | `availability` | object, nullable | Cask host decision: `available`, `unavailable`, or `unknown`, with a reason when needed. |
 | `installed` | object, nullable | `{"entry_id":…,"original_url":…,"locked_url":…}` when an installed entry matches the full attribute and the canonical source; else `null`. |
 | `cask` | object, nullable | Cask classification, below; `null` for non-cask IDs. |
+| `commands` | array of strings | Main commands from local data: Nixpkgs `meta.mainProgram` or Formula executables. Empty when unknown. |
+| `alternatives` | array of strings | Other installable packages with the requested bare name, as short IDs. Empty for qualified IDs. |
 
 `cask` is one of:
 
@@ -378,15 +412,37 @@ exit status. It never repairs anything.
 
 - `nixpkgs:<attribute>` selects a Nixpkgs attribute.
 - `cask:<token>` selects a Cask package by bare token. Tokens may use
-  lowercase letters, digits, `+`, `.`, `_`, `-`, and `@`. A bare token
-  resolves only when it is unique across the official catalog and every
-  saved tap catalog. Excluded entries count as matches.
+  lowercase letters, digits, `+`, `.`, `_`, `-`, and `@`. The official
+  catalog comes before saved taps. An entry that cannot install on this
+  system does not count. Two saved taps with the same token are ambiguous.
 - `cask:owner/tap/token` selects a Cask package from one saved tap. It
   resolves only inside its named source.
-- A bare name is valid only when it has one supported exact match. A cask
-  bare name must equal one token exactly; a display name never resolves.
-  An ambiguous token lists the qualified choices instead of picking a
-  source by ordering.
+- A bare name such as `ripgrep` selects one package. pkg checks the
+  sources in this order: Nixpkgs, Homebrew Casks, Homebrew Formulae, then
+  saved taps. The first source with a match wins. Install and info show the
+  other sources with the same name after `Also available:`.
+- An entry that cannot install on this system does not count. Hidden
+  Nixpkgs sets, libraries, and variants do not count. When nothing else
+  matches, pkg selects an entry that cannot install, and the command shows
+  why.
+- Two matches in one source are ambiguous. The error lists the IDs to
+  choose from.
+- A Nixpkgs package matches by its attribute, its package name, or the last
+  part of its attribute path. Top-level attributes come before nested sets.
+  When one match is the start of all other matches, it wins: `nodejs`
+  comes before `nodejs_22`.
+- When no package has the name, a main command can select the package.
+  Nixpkgs `meta.mainProgram` and Formula executables supply the commands.
+  `rg` selects `nixpkgs:ripgrep`, and `node` selects `nixpkgs:nodejs`.
+- A Nixpkgs attribute that fails to evaluate, such as a removed alias, stops
+  the choice. The error shows the last cause from Nix, without the
+  expression or the trace:
+  ``pkg: `python` cannot be installed: python previously pointed to Python 2; use python3 instead``.
+- A cask bare name must equal one token exactly; a display name never
+  resolves.
+- Local search data answers the choice. pkg runs one Nix check only when
+  local data is missing or has no match. This check finds packages that are
+  newer than the local data.
 - A saved catalog that is unreadable or malformed fails bare-token
   resolution and names the failed source. It is never silently ignored.
 - An unknown `cask:owner/tap/token` source fails with an explicit

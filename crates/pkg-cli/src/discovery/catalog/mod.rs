@@ -17,6 +17,7 @@ mod availability;
 pub mod brew;
 mod cache;
 mod cask;
+mod choice;
 mod id;
 mod local;
 mod matching;
@@ -27,18 +28,23 @@ mod search;
 use crate::nix::NixError;
 
 pub use availability::{Availability, CaskHost};
-pub use cask::{CatalogOnce, CatalogView, native_package_attribute, package_attribute};
+pub use cask::{
+    CatalogOnce, CatalogView, native_package_attribute, package_attribute, source_display,
+};
+pub use choice::{Choice, Kept, Names, Scope, short_id};
 pub use id::{CatalogId, CatalogIdKind, ParsedId, canonical_source, parse_id};
 pub use local::{
-    NOT_READY, missing_report, not_ready_report, prepare_catalog, record_search_system,
-    search_local_casks, search_local_native, search_local_saved, search_system,
+    NOT_READY, missing_report, not_ready_report, prepare_catalog, prepared_system,
+    record_search_system, search_local_casks, search_local_native, search_local_saved,
+    search_system,
 };
 pub(crate) use matching::FUZZY_RANK;
 pub use matching::SearchQuery;
+pub use native::NativeRow;
 pub use routing::Routing;
 pub use search::{
     ExactMatch, SearchResult, SourceKind, SourceReport, SourceStatus, SupportBadge, catalog_meta,
-    exact_lookup, exposed_attribute, prepare_source, report_for, resolve_bare,
+    exact_lookup, exposed_attribute, prepare_source, report_for,
 };
 
 /// A catalog routing error.
@@ -61,13 +67,14 @@ pub enum CatalogError {
         /// The source-qualified or attribute-path choices.
         choices: Vec<String>,
     },
-    /// A short alias only resolves to a hidden development package or variant.
-    #[error("{}", choice_message(name, choices, "needs an exact package ID"))]
-    RequiresId {
-        /// The requested short name.
+    /// The package exists, but Nix cannot evaluate it, for example a
+    /// removed Nixpkgs alias.
+    #[error("`{name}` cannot be installed: {cause}")]
+    Unusable {
+        /// The requested name.
         name: String,
-        /// Exact source-qualified choices that remain directly installable.
-        choices: Vec<String>,
+        /// The innermost native evaluation message.
+        cause: String,
     },
     /// A source query failed. Native diagnostics are preserved.
     #[error("{0}")]

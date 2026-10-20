@@ -8,6 +8,7 @@
 //! Read `targets` before per-system data. Skip systems outside that list.
 //! Report evaluation failures as errors.
 
+use std::path::Path;
 use std::rc::Rc;
 
 use crate::nix::{CatalogIndex, Nix, SourceIdentity};
@@ -85,6 +86,25 @@ impl CatalogView {
         }
     }
 
+    /// Read the index that search prepared for `moving_source`.
+    ///
+    /// The local copy can be one day old. It answers names and install
+    /// checks without a Nix evaluation.
+    #[must_use]
+    pub fn local(cache_dir: &Path, moving_source: &str, system: &str) -> Option<Self> {
+        let snapshot = super::cache::read_index_snapshot(cache_dir, moving_source, system, None)?;
+        let display = source_display(
+            snapshot
+                .locked_reference
+                .as_deref()
+                .unwrap_or(moving_source),
+        );
+        Some(Self::from_parts(
+            snapshot.identity(&display),
+            snapshot.payload,
+        ))
+    }
+
     /// Load the index from `moving_source` through its locked reference.
     /// # Errors
     ///
@@ -109,6 +129,7 @@ impl CatalogView {
 pub struct CatalogOnce<'a> {
     nix: &'a Nix,
     moving: &'a str,
+    local: Option<(std::path::PathBuf, String)>,
     view: Option<CatalogView>,
 }
 
@@ -119,7 +140,18 @@ impl<'a> CatalogOnce<'a> {
         Self {
             nix,
             moving,
+            local: None,
             view: None,
+        }
+    }
+
+    /// Start a handle that reads the local search data first and
+    /// evaluates the index only when that data is missing.
+    #[must_use]
+    pub fn local_first(nix: &'a Nix, moving: &'a str, cache_dir: &Path, system: &str) -> Self {
+        Self {
+            local: Some((cache_dir.to_path_buf(), system.to_string())),
+            ..Self::new(nix, moving)
         }
     }
 
@@ -130,9 +162,31 @@ impl<'a> CatalogOnce<'a> {
     pub fn load(&mut self) -> Result<&CatalogView, CatalogError> {
         match &mut self.view {
             Some(view) => Ok(view),
-            empty @ None => Ok(empty.insert(CatalogView::load(self.nix, self.moving)?)),
+            empty @ None => {
+                let local = self.local.as_ref().and_then(|(cache_dir, system)| {
+                    CatalogView::local(cache_dir, self.moving, system)
+                });
+                let view = match local {
+                    Some(view) => view,
+                    None => CatalogView::load(self.nix, self.moving)?,
+                };
+                Ok(empty.insert(view))
+            }
         }
     }
+}
+
+/// A short source name such as `github:NixOS:nixpkgs`, the same shape as
+/// the display name from flake metadata.
+#[must_use]
+pub fn source_display(reference: &str) -> String {
+    if let Some(path) = reference.strip_prefix("github:") {
+        let mut parts = path.split(['/', '?']);
+        if let (Some(owner), Some(repo)) = (parts.next(), parts.next()) {
+            return format!("github:{owner}:{repo}");
+        }
+    }
+    reference.to_string()
 }
 
 #[cfg(test)]

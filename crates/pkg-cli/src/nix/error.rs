@@ -47,7 +47,7 @@ pub enum NixError {
     #[error("discovery evaluation stopped: {0}")]
     ResourceLimit(String),
     /// A native command failed. Upstream diagnostics are preserved.
-    #[error("native command `nix {}` failed ({status}){}", args.join(" "), if stderr.trim().is_empty() { String::new() } else { format!("\n{}", stderr.trim()) })]
+    #[error("native command `nix {}` failed ({status}){}", command_line(args), if stderr.trim().is_empty() { String::new() } else { format!("\n{}", stderr.trim()) })]
     Failed {
         /// The argument vector pkg ran.
         args: Vec<String>,
@@ -60,7 +60,10 @@ pub enum NixError {
     ///
     /// The child was reaped by pkg; the profile may be in an intermediate
     /// state, so callers must re-read native state before reporting.
-    #[error("native command `nix {}` was terminated by signal {signal}; the operation may have partially applied", args.join(" "))]
+    #[error(
+        "native command `nix {}` was terminated by signal {signal}; the operation may have partially applied",
+        command_line(args)
+    )]
     Interrupted {
         /// The argument vector pkg ran.
         args: Vec<String>,
@@ -97,6 +100,23 @@ impl NixError {
         }
     }
 
+    /// The innermost evaluation message of a failed native command.
+    ///
+    /// Nix prints a trace of nested `error:` frames. The last nonempty
+    /// frame names the actual cause, for example a removed Nixpkgs alias.
+    #[must_use]
+    pub fn evaluation_cause(&self) -> Option<&str> {
+        let Self::Failed { stderr, .. } = self else {
+            return None;
+        };
+        stderr
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| line.strip_prefix("error:"))
+            .map(str::trim)
+            .rfind(|cause| !cause.is_empty())
+    }
+
     /// Decode a native profile conflict without losing the raw diagnostics.
     #[must_use]
     pub fn profile_conflict(&self) -> Option<super::ProfileConflict> {
@@ -105,6 +125,24 @@ impl NixError {
             _ => None,
         }
     }
+}
+
+/// One readable line for a native argument vector.
+///
+/// Generated expressions and other long arguments become `…`, so an error
+/// names the command without printing a Nix program. `--verbose` traces
+/// show the full arguments.
+fn command_line(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| {
+            if arg.contains('\n') || arg.chars().count() > 120 {
+                "…"
+            } else {
+                arg.as_str()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn not_found_diagnostic(path_entries: usize, standard: &[String]) -> String {
@@ -161,6 +199,34 @@ mod tests {
         assert!(
             text.contains("https://install.determinate.systems/nix"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn failed_evaluations_name_the_command_and_the_innermost_cause() {
+        let error = NixError::Failed {
+            args: vec![
+                String::from("eval"),
+                String::from("--json"),
+                String::from("--expr"),
+                String::from("let\n  flake = 1;\nin flake"),
+            ],
+            status: String::from("exit code 1"),
+            stderr: String::from(
+                "error (ignored): opening file \"/etc/nix/sentry-endpoint\": Permission denied\n\
+                 error:\n       … while evaluating list element at index 1\n\n       \
+                 error: `python` previously pointed to Python 2; use `python3` instead\n",
+            ),
+        };
+        let text = error.to_string();
+        assert!(
+            text.starts_with("native command `nix eval --json --expr …` failed"),
+            "{text}"
+        );
+        assert!(!text.contains("flake = 1"), "{text}");
+        assert_eq!(
+            error.evaluation_cause(),
+            Some("`python` previously pointed to Python 2; use `python3` instead")
         );
     }
 }

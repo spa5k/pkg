@@ -529,41 +529,6 @@ pub struct ListRow {
     pub revision: Option<String>,
 }
 
-/// Render one search row at the shared column width.
-#[must_use]
-pub fn render_search_row(
-    row: &crate::catalog::SearchResult,
-    width: usize,
-    version_width: usize,
-) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::new();
-    let stale = if row.stale { " [cached]" } else { "" };
-    let support = match &row.support {
-        Some(crate::catalog::SupportBadge::Eligible) | None => "",
-        Some(crate::catalog::SupportBadge::Unknown { reason }) => {
-            &format!(" [availability unknown: {reason}]")
-        }
-        Some(crate::catalog::SupportBadge::Excluded { reason, .. }) => {
-            &format!(" [excluded: {reason}]")
-        }
-    };
-    let _ = writeln!(
-        out,
-        "{:<width$}  {:<version_width$}  {}{}{}",
-        row.id,
-        if row.version.is_empty() {
-            "-"
-        } else {
-            &row.version
-        },
-        truncate(&row.description, 80),
-        stale,
-        support
-    );
-    out
-}
-
 /// Render per-source provenance headers for humans.
 #[must_use]
 pub fn render_source_reports(reports: &[crate::catalog::SourceReport], verbose: bool) -> String {

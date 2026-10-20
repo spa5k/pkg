@@ -1,11 +1,13 @@
 //! Local discovery without runtime probes or implicit source refresh.
 
 use std::path::Path;
+use std::rc::Rc;
 
 use crate::nix::{CatalogIndex, SourceIdentity};
 
 use super::{
-    CaskHost, CatalogError, SearchQuery, SearchResult, SourceReport, SourceStatus, cache, native,
+    CaskHost, CatalogError, Kept, SearchQuery, SearchResult, SourceReport, SourceStatus, cache,
+    native,
 };
 
 pub(super) fn report(
@@ -74,6 +76,7 @@ pub fn search_local_native(
     source: &str,
     system: &str,
     query: &SearchQuery,
+    kept: &mut Kept,
     mut sink: impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
 ) -> Result<SourceReport, CatalogError> {
     let Some(snapshot) = native::Snapshot::read(cache_dir, source, system) else {
@@ -107,6 +110,7 @@ pub fn search_local_native(
             description: package.description,
             source: "nixpkgs",
             system,
+            command: package.command,
         };
         if let Some(rank) = query.rank_fields(&fields) {
             sink(
@@ -123,12 +127,14 @@ pub fn search_local_native(
                     stale: report.status == SourceStatus::Stale,
                     support: None,
                     install_command: None,
+                    command: package.command.map(str::to_string),
                 },
                 rank,
             )?;
         }
         Ok(())
     })?;
+    kept.native = Some(snapshot);
     Ok(report)
 }
 
@@ -142,6 +148,7 @@ pub fn search_local_casks(
     system: &str,
     query: &SearchQuery,
     host: &CaskHost,
+    kept: &mut Kept,
     sink: impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
 ) -> Result<SourceReport, CatalogError> {
     let Some(snapshot) = cache::read_index_snapshot(cache_dir, source, system, None) else {
@@ -156,6 +163,7 @@ pub fn search_local_casks(
     );
     report = platform_report(report, snapshot.payload.targets(), system);
     visit_casks(&snapshot.payload, system, query, host, &report, sink)?;
+    kept.casks = Some(Rc::new(snapshot.payload));
     Ok(report)
 }
 
@@ -316,19 +324,26 @@ pub fn record_search_system(cache_dir: &Path, system: &str) -> Result<(), Catalo
     )
 }
 
-/// Read the prepared system, or use the platform name for a first search.
+/// The system that Nix selected when search data was last prepared on this
+/// platform.
 #[must_use]
-pub fn search_system(cache_dir: &Path) -> String {
-    if let Ok(text) = std::fs::read_to_string(cache_dir.join("search-host.json"))
-        && let Ok(host) = serde_json::from_str::<PreparedHost>(&text)
-        && host.platform == platform()
+pub fn prepared_system(cache_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(cache_dir.join("search-host.json")).ok()?;
+    let host = serde_json::from_str::<PreparedHost>(&text).ok()?;
+    (host.platform == platform()
         && !host.system.is_empty()
         && host
             .system
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
-        return host.system;
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
+    .then_some(host.system)
+}
+
+/// Read the prepared system, or use the platform name for a first search.
+#[must_use]
+pub fn search_system(cache_dir: &Path) -> String {
+    if let Some(system) = prepared_system(cache_dir) {
+        return system;
     }
     let os = if cfg!(target_os = "macos") {
         "darwin"
@@ -368,6 +383,7 @@ mod tests {
             &snapshot.system,
             &query,
             &CaskHost::default(),
+            &mut Kept::default(),
             |row, _rank| {
                 rows.push(row);
                 Ok(())
@@ -387,6 +403,7 @@ mod tests {
             &snapshot.system,
             &query,
             &CaskHost::default(),
+            &mut Kept::default(),
             |_, _| panic!("untargeted platform has no rows"),
         )
         .unwrap();
@@ -400,6 +417,7 @@ mod tests {
             &snapshot.system,
             &query,
             &CaskHost::default(),
+            &mut Kept::default(),
             |_, _| panic!("untargeted platform has no rows"),
         )
         .unwrap();

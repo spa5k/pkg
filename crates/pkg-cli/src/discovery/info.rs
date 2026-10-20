@@ -13,18 +13,20 @@ pub fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
     // refused identically with or without Nix present.
     let parsed = catalog::parse_id(id)?;
     let session = session(cli)?;
+    let package = Resolution::local(&session)?.inspect(parsed)?;
     let ResolvedPackage {
         resolved,
         data,
         reference,
-        installable,
         system,
-    } = Resolution::new(&session)?.inspect(parsed)?;
+        alternatives,
+        ..
+    } = &package;
     // A cask identity is compared against the normalized
     // native form: `nix profile` records the attribute without quotes.
     let identity_attribute = match resolved.kind() {
         catalog::CatalogIdKind::Cask { source, token } => {
-            catalog::native_package_attribute(&system, &nix::full_entry_id(source, token))
+            catalog::native_package_attribute(system, &nix::full_entry_id(source, token))
         }
         _ => data
             .matched_attribute
@@ -41,11 +43,11 @@ pub fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
             entry.active
                 && entry.attr_path == identity_attribute
                 && catalog::canonical_source(&entry.original_url)
-                    == catalog::canonical_source(&reference)
+                    == catalog::canonical_source(reference)
         })
     });
     if cli.json {
-        let mut result = info_json(&resolved, &data, &reference, &system, installed.as_ref());
+        let mut result = info_json(resolved, data, reference, system, installed.as_ref());
         result["installed_state"] = serde_json::json!(if installed_error.is_some() {
             "unknown"
         } else if installed.is_some() {
@@ -54,16 +56,15 @@ pub fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
             "absent"
         });
         result["installed_error"] = serde_json::json!(installed_error);
+        result["commands"] = serde_json::json!(data.commands);
+        result["alternatives"] = serde_json::json!(alternatives);
         print_json(&output::envelope("info", &result))?;
     } else {
         print!(
             "{}",
             info_text(
-                &resolved,
-                &data,
-                &reference,
+                &package,
                 installed.as_ref(),
-                &installable,
                 cli.verbose,
                 installed_error.as_deref(),
             )
@@ -119,24 +120,38 @@ fn info_json(
 
 /// Build the human rendering for one collected info outcome.
 fn info_text(
-    resolved: &catalog::CatalogId,
-    data: &PackageMetadata,
-    reference: &str,
+    package: &ResolvedPackage,
     installed: Option<&(String, ProfileEntry)>,
-    installable: &str,
     verbose: bool,
     installed_error: Option<&str>,
 ) -> String {
+    use crate::output::{Stream, Tone, paint};
     use std::fmt::Write as _;
+    let ResolvedPackage {
+        resolved,
+        data,
+        reference,
+        installable,
+        alternatives,
+        ..
+    } = package;
     let mut out = String::new();
     let (name, version) = metadata_name(resolved, data);
-    let _ = writeln!(out, "{name}  {}", version.unwrap_or("version unknown"));
+    let _ = writeln!(
+        out,
+        "{}  {}",
+        paint(Stream::Out, Tone::Strong, name),
+        version.unwrap_or("version unknown")
+    );
     if let Some(meta) = &data.meta
         && !meta.description.is_empty()
     {
         let _ = writeln!(out, "{}", meta.description);
     }
     let _ = writeln!(out, "ID: {}", resolved.qualified());
+    if !data.commands.is_empty() {
+        let _ = writeln!(out, "Commands: {}", data.commands.join(", "));
+    }
     if let Some(kind) = &data.formula_kind {
         let _ = writeln!(
             out,
@@ -179,6 +194,9 @@ fn info_text(
         "Source: {}",
         crate::output::short_source(data.report.display.as_deref().unwrap_or(reference))
     );
+    if !alternatives.is_empty() {
+        let _ = writeln!(out, "Also available: {}", alternatives.join(", "));
+    }
     if verbose {
         let _ = writeln!(out, "Source reference: {reference}");
         let _ = writeln!(out, "Attribute: {}", data.attribute);

@@ -232,21 +232,15 @@ fn cask_search_respects_eligibility_and_unavailable_option() {
     let (code, stdout, _) =
         fixture.run(&["search", "iterm|1password", "--regex", "--source", "cask"]);
     assert_eq!(code, 0, "{stdout}");
-    assert!(
-        stdout.contains("cask:homebrew/cask/1password-cli"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("cask:homebrew/cask/iterm2"), "{stdout}");
+    assert!(stdout.contains("cask:1password-cli"), "{stdout}");
+    assert!(!stdout.contains("iterm2"), "{stdout}");
     assert!(stdout.contains("2.39.0"), "{stdout}");
     let (code, stdout, _) = fixture.run(&["search", "iterm2", "--source", "cask"]);
     assert_eq!(code, 0);
-    assert!(
-        stdout.contains("excluded: unsupported-platform"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("Not available here:"), "{stdout}");
     let (code, stdout, _) = fixture.run(&["search", "iterm", "--source", "cask", "--unavailable"]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("cask:homebrew/cask/iterm2"), "{stdout}");
+    assert!(stdout.contains("cask:iterm2"), "{stdout}");
 }
 
 #[test]
@@ -307,7 +301,7 @@ fn cask_discovery_cancellation_stops_info_and_install() {
 }
 
 #[test]
-fn bare_cask_stays_ambiguous_when_one_source_excludes_it() {
+fn bare_cask_skips_a_source_that_excludes_it() {
     use pkg_cli::tap::{
         Registry, registry,
         store::{Provenance, SourceStore},
@@ -348,14 +342,9 @@ fn bare_cask_stays_ambiguous_when_one_source_excludes_it() {
     let mut registry = Registry::empty();
     registry.approve(source, origin, 1);
     registry.save(&registry::registry_path(&state)).unwrap();
-    let (code, _, error) = fixture.run(&["install", "cask:iterm2"]);
-    assert_eq!(code, 1, "{error}");
-    assert!(error.contains("ambiguous"), "{error}");
-    assert!(error.contains("cask:homebrew/cask/iterm2"), "{error}");
-    assert!(error.contains("cask:example/tools/iterm2"), "{error}");
-    assert!(!fixture.profile().exists());
-    let (code, output, error) = fixture.run(&["info", "cask:example/tools/iterm2"]);
+    let (code, output, error) = fixture.run(&["info", "cask:iterm2"]);
     assert_eq!(code, 0, "{error}");
     assert!(output.contains("Tap terminal"), "{output}");
+    assert!(output.contains("ID: cask:example/tools/iterm2"), "{output}");
     assert!(output.contains("Status: Available"), "{output}");
 }
