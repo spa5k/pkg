@@ -193,6 +193,37 @@ pub fn update() -> Result<Update, Error> {
     })
 }
 
+/// Run the installed client with `args` on the user's terminal.
+///
+/// Returns the exit code of the client.
+/// # Errors
+///
+/// Returns an error when the client cannot start or a signal stops it.
+pub fn run_installed(args: &[&str]) -> Result<u8, Error> {
+    let layout = Layout::for_user().ok_or("the installed client has no home directory")?;
+    run_client(&layout.binary(), args)
+}
+
+fn run_client(binary: &Path, args: &[&str]) -> Result<u8, Error> {
+    let mut command = std::process::Command::new(binary);
+    command.args(args);
+    let reaped = pkg_process::run_child(command, pkg_process::IoMode::Stream, None, None)?;
+    match reaped.classify() {
+        Outcome::Success => Ok(0),
+        Outcome::Interrupted { signal } => Err(Error::Interrupted {
+            program: String::from("pkg"),
+            signal,
+        }),
+        Outcome::Failed { .. } => Ok(reaped
+            .output
+            .status
+            .code()
+            .and_then(|code| u8::try_from(code).ok())
+            .filter(|code| *code != 0)
+            .unwrap_or(1)),
+    }
+}
+
 fn download(url: &str, destination: &Path) -> Result<(), Error> {
     let destination = destination
         .to_str()
@@ -329,6 +360,26 @@ mod tests {
         assert!(!newer("0.2.0-alpha.12", "0.2.0-alpha.16").unwrap());
         assert!(!newer("0.2.0-alpha.16", "0.2.0-alpha.16").unwrap());
         assert!(newer("not a version", "0.2.0").is_err());
+    }
+
+    #[test]
+    fn the_new_client_runs_with_the_given_arguments_and_its_exit_code() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let client = dir.path().join("pkg");
+        let log = dir.path().join("args");
+        std::fs::write(
+            &client,
+            format!("#!/bin/sh\necho \"$@\" > '{}'\nexit 3\n", log.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let code = run_client(&client, &["update", "--skip-client"]).unwrap();
+        assert_eq!(code, 3);
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "update --skip-client\n"
+        );
     }
 
     #[test]

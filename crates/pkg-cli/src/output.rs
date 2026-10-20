@@ -59,14 +59,27 @@ pub fn render_doctor(rows: &[DoctorRow], verbose: bool) -> String {
             })
             .collect();
         if issues.is_empty() {
-            let _ = writeln!(out, "Everything is working.");
+            let _ = writeln!(
+                out,
+                "{}",
+                paint(Stream::Out, Tone::Success, "Everything is working.")
+            );
         } else {
-            let _ = writeln!(out, "Needs attention:");
+            let _ = writeln!(
+                out,
+                "{}",
+                paint(Stream::Out, Tone::Strong, "Needs attention:")
+            );
             for row in issues {
+                let tone = if UNHEALTHY_STATUSES.contains(&row.status.as_str()) {
+                    Tone::Error
+                } else {
+                    Tone::Warning
+                };
                 let _ = writeln!(
                     out,
                     "  {}: {}",
-                    row.component,
+                    paint(Stream::Out, tone, &row.component),
                     concise_detail(row.detail.as_deref().unwrap_or(&row.status))
                 );
             }

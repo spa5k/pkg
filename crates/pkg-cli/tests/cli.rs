@@ -68,7 +68,6 @@ fn invalid_command_combinations_fail_before_loading_config() {
         &["add"],
         &["remove"],
         &["uninstall"],
-        &["upgrade"],
         &["upgrade", "--all", "ripgrep"],
         &["upgrade", "--all", "--entry"],
     ] {

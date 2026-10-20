@@ -63,7 +63,14 @@ pub(crate) fn finish(outcome: Result<(), CommandError>) -> ExitCode {
             error::signal_exit(signal)
         }
         Err(error) => {
-            eprintln!("pkg: {error}");
+            eprintln!(
+                "{} {error}",
+                crate::output::paint(
+                    crate::output::Stream::Err,
+                    crate::output::Tone::Error,
+                    "pkg:"
+                )
+            );
             error
                 .signal()
                 .map_or_else(|| ExitCode::from(FAILURE), error::signal_exit)
@@ -104,7 +111,10 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
         Command::Install { ids } => profile::install(cli, ids),
         Command::List => profile::list(cli),
         Command::Remove { entries, entry } => profile::remove(cli, entries, *entry),
-        Command::Update { scheduled } => maintenance::update(cli, *scheduled),
+        Command::Update {
+            scheduled,
+            skip_client,
+        } => maintenance::update(cli, *scheduled, *skip_client),
         Command::Background(command) => maintenance::background(command),
         Command::Upgrade {
             entries,

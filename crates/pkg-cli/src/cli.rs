@@ -8,19 +8,20 @@ use clap::{Parser, Subcommand, ValueEnum};
     name = "pkg",
     version,
     about = "Find and manage packages.",
-    help_template = "{about}\n\nFind:     search, info, list\nChange:   install/add, remove/uninstall, upgrade, rollback\nMaintain: update, history, prune, doctor, apps, self uninstall\nSources:  tap add, tap list, tap update, tap remove\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
-    disable_help_subcommand = true
+    help_template = "{about}\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
+    disable_help_subcommand = true,
+    arg_required_else_help = true
 )]
 pub struct Cli {
-    /// Emit JSON for search, info, list, doctor, and tap list.
+    /// Print JSON. Works with search, info, list, doctor, and tap list.
     #[arg(long, global = true)]
     pub json: bool,
 
-    /// Disable colored output.
+    /// Print no color.
     #[arg(long, global = true)]
     pub no_color: bool,
 
-    /// Show native commands and detailed output.
+    /// Show the Nix commands and their full output.
     #[arg(long, global = true)]
     pub verbose: bool,
 
@@ -32,67 +33,73 @@ pub struct Cli {
 /// Supported commands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Search local package catalogs.
+    /// Find packages.
     Search(SearchOptions),
-    /// Show source, attribute, revision, and limits for one ID.
+    /// Show details about one package.
     Info {
-        /// Catalog ID such as nixpkgs:ripgrep, cask:raycast, or a bare name.
+        /// Package name or ID, such as ripgrep or cask:raycast.
+        #[arg(value_name = "PACKAGE")]
         id: String,
     },
-    /// Resolve all IDs, then add them in one native profile operation.
+    /// Install packages.
     #[command(visible_alias = "add")]
     Install {
-        /// Catalog IDs or supported public GitHub flake installables.
-        #[arg(required = true)]
+        /// Package names or IDs, such as ripgrep or cask:raycast.
+        #[arg(required = true, value_name = "PACKAGES")]
         ids: Vec<String>,
     },
-    /// List installed entries from the dedicated native profile.
+    /// List installed packages.
     List,
-    /// Remove installed packages in one native operation.
+    /// Remove packages.
     #[command(visible_alias = "uninstall")]
     Remove {
-        /// Package IDs, unique names, or native entry IDs from `pkg list`.
-        #[arg(required = true)]
+        /// Installed package names or IDs.
+        #[arg(required = true, value_name = "NAMES")]
         entries: Vec<String>,
-        /// Select exact native entry IDs instead of package names.
+        /// Treat the names as entry IDs from `pkg list --verbose`.
         #[arg(long)]
         entry: bool,
     },
-    /// Update pkg and its search data. Does not change installed packages.
+    /// Upgrade installed packages.
+    ///
+    /// Without names, upgrades all packages.
+    Upgrade {
+        /// Installed package names or IDs. Leave empty to upgrade all packages.
+        #[arg(value_name = "NAMES")]
+        entries: Vec<String>,
+        /// Treat the names as entry IDs from `pkg list --verbose`.
+        #[arg(long, requires = "entries", conflicts_with = "all")]
+        entry: bool,
+        /// Upgrade all packages. This is the default.
+        #[arg(long, conflicts_with = "entries", hide = true)]
+        all: bool,
+    },
+    /// Update pkg and its search data.
+    ///
+    /// Installed packages do not change. To upgrade them, run `pkg upgrade`.
     Update {
         /// Skip saved taps. Used by the scheduled user job.
         #[arg(long, hide = true)]
         scheduled: bool,
+        /// Skip the client check. Used by a client that just replaced itself.
+        #[arg(long, hide = true)]
+        skip_client: bool,
     },
     /// Control the daily user job for updates and search data.
     #[command(subcommand, hide = true)]
     Background(BackgroundCommand),
-    /// Upgrade installed entries following their original references.
-    Upgrade {
-        /// Package IDs, unique names, or native entry IDs to upgrade.
-        #[arg(required_unless_present = "all")]
-        entries: Vec<String>,
-        /// Select exact native entry IDs instead of package names.
-        #[arg(long, conflicts_with = "all")]
-        entry: bool,
-        /// Upgrade every installed entry, reporting fixed ones explicitly.
-        #[arg(long, conflicts_with = "entries")]
-        all: bool,
-    },
-    /// Display native profile generations.
+    /// Show past changes to your packages.
     History,
-    /// Switch to the previous or a selected native generation.
+    /// Undo the last change.
+    ///
+    /// With a generation number from `pkg history`, go back to that change.
     Rollback {
-        /// Generation number to select. Defaults to the previous generation.
+        /// Generation number from `pkg history`. Defaults to the one before the current one.
         generation: Option<u64>,
     },
-    /// Delete non-current profile generations older than an explicit age.
-    Prune {
-        /// Retention age such as `30d`. Required and strictly positive.
-        #[arg(long, value_name = "AGE")]
-        older_than: String,
-    },
-    /// Read runtime, profile, and launcher status. Never repairs.
+    /// Check your setup.
+    ///
+    /// Reports problems and how to fix them. Changes nothing.
     Doctor,
     /// Print idempotent Bash/Zsh path settings for this profile.
     #[command(hide = true)]
@@ -103,12 +110,18 @@ pub enum Command {
         /// Target shell.
         shell: Shell,
     },
-    /// Derived macOS app launcher operations.
+    /// Manage macOS app launchers.
     #[command(subcommand)]
     Apps(AppsCommand),
-    /// Manage local public Homebrew Cask taps.
+    /// Manage third-party Homebrew Cask taps.
     #[command(subcommand)]
     Tap(TapCommand),
+    /// Delete history older than an age.
+    Prune {
+        /// Age such as `30d`.
+        #[arg(long, value_name = "AGE")]
+        older_than: String,
+    },
     /// Manage pkg itself.
     #[command(name = "self", subcommand)]
     Client(ClientCommand),
@@ -128,7 +141,7 @@ pub enum ClientCommand {
 /// Local search inputs and output controls.
 #[derive(Debug, clap::Args)]
 pub struct SearchOptions {
-    /// Package names or search words. Also accepts nixpkgs:, brew:, or cask: queries.
+    /// Package names or words. Also accepts nixpkgs:, brew:, or cask: queries.
     pub query: String,
     /// Search matching controls.
     #[command(flatten)]
@@ -183,9 +196,9 @@ pub enum BackgroundCommand {
 /// Launcher subcommands. Execution is supplied by the apps module.
 #[derive(Debug, Subcommand)]
 pub enum AppsCommand {
-    /// Set up private app storage that shares file data with the Nix store.
+    /// Prepare storage for apps that need their original signatures.
     Setup,
-    /// Rebuild pkg-owned launchers from the active profile.
+    /// Rebuild the app launchers in ~/Applications/pkg.
     Sync,
 }
 

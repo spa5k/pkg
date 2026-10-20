@@ -164,8 +164,9 @@ fn shell_row(paths: &crate::config::Paths) -> DoctorRow {
             "shell",
             "not on path",
             format!(
-                "{} is not on PATH. Open a new terminal window. If that does not help, run the pkg installer again.",
-                missing.join(" and ")
+                "{} {} not on PATH. Open a new terminal window. If that does not help, run the pkg installer again.",
+                missing.join(" and "),
+                if missing.len() == 1 { "is" } else { "are" }
             ),
         )
     }
