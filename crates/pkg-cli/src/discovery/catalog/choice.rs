@@ -409,7 +409,11 @@ impl Names {
                         .into_iter()
                         .filter(|row| visible(query, row, &self.system))
                         .collect();
-                    for row in prefer(rows, |row| row.exposed.as_str()) {
+                    for row in prefer(
+                        rows,
+                        |row| row.exposed.as_str(),
+                        |row| Some(row.version.as_str()),
+                    ) {
                         found.push(Candidate {
                             tier,
                             id: CatalogId::nixpkgs(&row.exposed).map_err(CatalogError::Source)?,
@@ -426,7 +430,7 @@ impl Names {
                             names.push(formula);
                         }
                     }
-                    for formula in prefer(names, String::as_str) {
+                    for formula in prefer(names, String::as_str, |_| None) {
                         found.push(Candidate {
                             tier,
                             id: CatalogId::formula(&formula).map_err(CatalogError::Source)?,
@@ -511,7 +515,11 @@ fn native_exact(
             .into_iter()
             .filter(|row| visible(query, row, system))
             .collect();
-        rows = prefer(named, |row| row.exposed.as_str());
+        rows = prefer(
+            named,
+            |row| row.exposed.as_str(),
+            |row| Some(row.version.as_str()),
+        );
     }
     rows.iter()
         .map(|row| {
@@ -526,7 +534,13 @@ fn native_exact(
 
 /// Keep top-level names before nested ones. When one name is the start of
 /// every other name, keep only that name: `nodejs` before `nodejs_22`.
-fn prefer<T>(items: Vec<T>, name: impl Fn(&T) -> &str) -> Vec<T> {
+/// A name that adds only a number to it and has a newer major version
+/// wins instead: `awscli2` (2.x) before `awscli` (1.x).
+fn prefer<T>(
+    items: Vec<T>,
+    name: impl Fn(&T) -> &str,
+    version: impl Fn(&T) -> Option<&str>,
+) -> Vec<T> {
     let (top, nested): (Vec<T>, Vec<T>) = items
         .into_iter()
         .partition(|item| !name(item).contains('.'));
@@ -535,10 +549,33 @@ fn prefer<T>(items: Vec<T>, name: impl Fn(&T) -> &str) -> Vec<T> {
         let prefix = name(candidate);
         pool.iter().all(|other| name(other).starts_with(prefix))
     });
-    match base {
-        Some(index) if pool.len() > 1 => vec![pool.swap_remove(index)],
-        _ => pool,
-    }
+    let Some(base) = base.filter(|_| pool.len() > 1) else {
+        return pool;
+    };
+    let base_name = name(&pool[base]);
+    let newest = pool
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            name(candidate)
+                .strip_prefix(base_name)
+                .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .filter_map(|(index, candidate)| Some((index, major(version(candidate)?)?)))
+        .filter(|(_, candidate)| {
+            version(&pool[base])
+                .and_then(major)
+                .is_some_and(|base| candidate > &base)
+        })
+        .max_by_key(|(_, major)| *major)
+        .map(|(index, _)| index);
+    vec![pool.swap_remove(newest.unwrap_or(base))]
+}
+
+/// The major version number: `2` for `2.31.4`.
+fn major(version: &str) -> Option<u64> {
+    let digits: String = version.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// Walk the sources in order. In each source, an installable exact name
@@ -736,10 +773,25 @@ mod tests {
     #[test]
     fn preferred_names_are_top_level_and_shortest_common_starts() {
         let names = vec!["nodejs_22", "nodejs", "nodejs-slim"];
-        assert_eq!(prefer(names, |name| name), ["nodejs"]);
+        assert_eq!(prefer(names, |name| name, |_| None), ["nodejs"]);
         let names = vec!["vscode", "vscodium"];
-        assert_eq!(prefer(names, |name| name), ["vscode", "vscodium"]);
+        assert_eq!(prefer(names, |name| name, |_| None), ["vscode", "vscodium"]);
         let names = vec!["haskellPackages.rg", "ripgrep"];
-        assert_eq!(prefer(names, |name| name), ["ripgrep"]);
+        assert_eq!(prefer(names, |name| name, |_| None), ["ripgrep"]);
+        let versioned = vec![("awscli", "1.44.21"), ("awscli2", "2.31.4")];
+        assert_eq!(
+            prefer(versioned, |row| row.0, |row| Some(row.1)),
+            [("awscli2", "2.31.4")]
+        );
+        let versioned = vec![("python3", "3.14.8"), ("python313", "3.13.9")];
+        assert_eq!(
+            prefer(versioned, |row| row.0, |row| Some(row.1)),
+            [("python3", "3.14.8")]
+        );
+        let versioned = vec![("gnupg", "2.4.9"), ("gnupg1", "1.4.23")];
+        assert_eq!(
+            prefer(versioned, |row| row.0, |row| Some(row.1)),
+            [("gnupg", "2.4.9")]
+        );
     }
 }

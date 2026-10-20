@@ -224,18 +224,6 @@ impl Nix {
         self.finish(args, &reaped)
     }
 
-    /// Run a native command with streamed stdio, reaping the child.
-    ///
-    /// Termination signals sent to pkg are forwarded to the child, so the
-    /// child is cancelled and pkg survives to reap it. A cancelled child is
-    /// reported as [`NixError::Interrupted`] even when Nix handles the
-    /// signal and exits with a plain nonzero code; callers must re-read
-    /// native state after every failed mutation.
-    fn run_streamed(&self, args: &[&str]) -> Result<(), NixError> {
-        let reaped = self.execute(args, IoMode::Stream)?;
-        self.finish(args, &reaped)
-    }
-
     fn command(&self, args: &[&str]) -> Command {
         // `--verbose` describes every native call here, captures included,
         // with the exact argument vector that will run.
@@ -454,7 +442,7 @@ impl Nix {
         if let Some(number) = generation.as_deref() {
             args.extend(["--to", number]);
         }
-        self.run_streamed(&args)
+        self.run_filtered(&profile, &args)
     }
 
     /// Delete non-current generations older than an explicit age.
@@ -468,14 +456,17 @@ impl Nix {
     pub fn profile_wipe_history(&self, profile: &Path, age: &str) -> Result<(), NixError> {
         self.require_decodable_profile(profile)?;
         let profile = profile.to_string_lossy();
-        self.run_streamed(&[
-            "profile",
-            "wipe-history",
-            "--profile",
+        self.run_filtered(
             &profile,
-            "--older-than",
-            age,
-        ])
+            &[
+                "profile",
+                "wipe-history",
+                "--profile",
+                &profile,
+                "--older-than",
+                age,
+            ],
+        )
     }
 
     /// Print native profile generation history.

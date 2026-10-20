@@ -258,11 +258,7 @@ fn failed_mutation_reports_observed_profile_state_and_original_cause() {
         assert!(output.stdout.is_empty(), "no completion: {output:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains(evidence), "{state}: {stderr}");
-        let cause = if args[0] == "prune" {
-            "Cause: native command `nix profile wipe-history"
-        } else {
-            "Cause: fixture mutation failed"
-        };
+        let cause = "Cause: fixture mutation failed";
         assert!(
             stderr.contains(cause) && stderr.contains("fixture mutation failed"),
             "original mutation cause: {stderr}"

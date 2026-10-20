@@ -25,9 +25,10 @@ pub(super) struct SearchFields<'a> {
 const NESTED_RANK: u32 = 450_000;
 
 /// The best rank for a match through a Formula alias. It comes after every
-/// exact name, so `postgresql` lists Nixpkgs `postgresql` before
-/// `postgresql@17`.
-pub(super) const ALIAS_RANK: u32 = 500_000;
+/// exact name and every name that starts with the query, so `postgresql`
+/// lists Nixpkgs `postgresql` before `postgresql@17`, and `python` lists
+/// `python3` before `python@3.15`.
+pub(super) const ALIAS_RANK: u32 = 1_400_000;
 
 /// A validated discovery query with conservative name matching.
 pub struct SearchQuery {
