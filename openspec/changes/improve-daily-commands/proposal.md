@@ -47,6 +47,11 @@ A test of the daily commands on macOS found defects and friction:
 - `pkg info` and the install name check read the local search data
   when it is ready. They fall back to Nix when it is not.
 - Help text uses package words instead of Nix words.
+- `remove` and `upgrade` accept the command name of an installed package.
+- `pkg rollback` without a number skips generations in which only the
+  source revision moved.
+- Search data preparation leaves out an entry that alone exceeds the
+  memory budget, instead of failing the whole source.
 
 ## Capabilities
 
