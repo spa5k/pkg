@@ -272,9 +272,10 @@ fn render(
         let name = display_name(row, display.names);
         let installed = display.installed.contains(&row.attribute.replace('"', ""));
         let note = match &row.support {
-            Some(catalog::SupportBadge::Excluded { reason, .. }) => {
-                Some(format!("Not available here: {}", plain_reason(reason)))
-            }
+            Some(catalog::SupportBadge::Excluded { reason, .. }) => Some(format!(
+                "Not available here: {}",
+                catalog::plain_reason(reason)
+            )),
             Some(catalog::SupportBadge::Unknown { reason }) => {
                 Some(format!("Availability unknown: {reason}"))
             }
@@ -302,28 +303,6 @@ fn render(
         ]);
     }
     (table.render(stream), first)
-}
-
-/// Plain words for an exclusion code such as `formula-dependency:
-/// dependencies`. JSON and `pkg info` keep the code.
-fn plain_reason(reason: &str) -> &str {
-    let code = reason.split_once(':').map_or(reason, |(code, _)| code);
-    match code {
-        "unsupported-platform"
-        | "no-compatible-bottle"
-        | "unsupported-bottle-platform"
-        | "unsupported-bottle-origin" => "no build for this system",
-        "formula-dependency" | "cask-dependency-integration" => "needs other Homebrew packages",
-        "deprecated" => "deprecated by Homebrew",
-        "disabled" => "disabled by Homebrew",
-        "homebrew-relocation" => "needs the Homebrew install path",
-        "install-hook" | "installer-script" => "needs an install script",
-        "missing-checksum" => "the download has no checksum",
-        "unsupported-download-spec" => "the download needs special steps",
-        "unsupported-artifact" => "pkg cannot install this type of item",
-        "malformed-record" => "the package data is not valid",
-        _ => reason,
-    }
 }
 
 /// The short source label: empty for Nixpkgs.

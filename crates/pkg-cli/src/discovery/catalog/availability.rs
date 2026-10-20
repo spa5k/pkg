@@ -139,6 +139,29 @@ fn macos_range(host: &str, min: Option<&str>, max: Option<&str>) -> Availability
     }
 }
 
+/// Plain words for an exclusion code such as `formula-dependency:
+/// dependencies`. JSON and `pkg info --verbose` keep the code.
+#[must_use]
+pub fn plain_reason(reason: &str) -> &str {
+    let code = reason.split_once(':').map_or(reason, |(code, _)| code);
+    match code {
+        "unsupported-platform"
+        | "no-compatible-bottle"
+        | "unsupported-bottle-platform"
+        | "unsupported-bottle-origin" => "no build for this system",
+        "formula-dependency" | "cask-dependency-integration" => "needs other Homebrew packages",
+        "deprecated" => "deprecated by Homebrew",
+        "disabled" => "disabled by Homebrew",
+        "homebrew-relocation" => "needs the Homebrew install path",
+        "install-hook" | "installer-script" => "needs an install script",
+        "missing-checksum" => "the download has no checksum",
+        "unsupported-download-spec" => "the download needs special steps",
+        "unsupported-artifact" => "pkg cannot install this type of item",
+        "malformed-record" => "the package data is not valid",
+        _ => reason,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -175,19 +175,7 @@ fn info_text(
         }
     );
     if let Some(availability) = &data.availability {
-        match availability {
-            catalog::Availability::Available => {
-                let _ = writeln!(out, "Status: Available on this system");
-            }
-            catalog::Availability::Unavailable { reason } => {
-                let _ = writeln!(out, "Status: Cannot install on this system");
-                let _ = writeln!(out, "Reason: {reason}");
-            }
-            catalog::Availability::Unknown { reason } => {
-                let _ = writeln!(out, "Status: Unknown");
-                let _ = writeln!(out, "Reason: {reason}");
-            }
-        }
+        write_availability(&mut out, availability, verbose);
     }
     let _ = writeln!(
         out,
@@ -219,6 +207,32 @@ fn info_text(
         }
     }
     out
+}
+
+/// Write whether the package can install on this computer, and why not.
+fn write_availability(out: &mut String, availability: &catalog::Availability, verbose: bool) {
+    use std::fmt::Write as _;
+    match availability {
+        catalog::Availability::Available => {
+            let _ = writeln!(out, "Status: Can install on this computer");
+        }
+        catalog::Availability::Unavailable { reason } => {
+            let _ = writeln!(out, "Status: Cannot install on this computer");
+            let _ = writeln!(
+                out,
+                "Reason: {}",
+                if verbose {
+                    reason.as_str()
+                } else {
+                    catalog::plain_reason(reason)
+                }
+            );
+        }
+        catalog::Availability::Unknown { reason } => {
+            let _ = writeln!(out, "Status: Unknown");
+            let _ = writeln!(out, "Reason: {reason}");
+        }
+    }
 }
 
 fn metadata_name<'a>(

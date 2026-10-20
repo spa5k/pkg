@@ -135,6 +135,51 @@ fn generations(profile: &std::path::Path) -> Vec<Generation> {
     generations
 }
 
+/// The generation that `pkg rollback` without a number selects.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum UndoTarget {
+    /// The newest older generation with other packages.
+    Generation(u64),
+    /// Every older generation has the same packages.
+    Nothing,
+    /// The generations cannot be read; Nix selects the previous one.
+    Unknown,
+}
+
+/// Find the newest generation before the active one whose packages differ.
+///
+/// A generation in which only the source revision moved has the same
+/// packages, so undoing it would change nothing.
+pub(super) fn undo_target(profile: &std::path::Path) -> UndoTarget {
+    let Some(active) = active_generation(profile) else {
+        return UndoTarget::Unknown;
+    };
+    undo_from(&generations(profile), active)
+}
+
+fn undo_from(generations: &[Generation], active: u64) -> UndoTarget {
+    let Some(current) = generations
+        .iter()
+        .find(|generation| generation.number == active)
+        .and_then(|generation| generation.entries.as_ref())
+    else {
+        return UndoTarget::Unknown;
+    };
+    for generation in generations
+        .iter()
+        .rev()
+        .filter(|generation| generation.number < active)
+    {
+        let Some(entries) = &generation.entries else {
+            return UndoTarget::Generation(generation.number);
+        };
+        if !super::summary::diff(current, entries, ProfileEntry::name).is_empty() {
+            return UndoTarget::Generation(generation.number);
+        }
+    }
+    UndoTarget::Nothing
+}
+
 /// Read the active generation from the native profile link when available.
 pub(super) fn active_generation(profile: &std::path::Path) -> Option<u64> {
     let link = std::fs::read_link(profile).ok()?;
@@ -387,6 +432,33 @@ mod tests {
             text.contains("stats    3.0.13   cask                       nix/casks-1\n"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn undo_skips_generations_with_the_same_packages() {
+        let source = crate::config::Config::default().sources.nixpkgs;
+        let hello = entry("legacyPackages.x86_64-linux.hello", &source, "hello-2.12.1");
+        let mut moved = hello.clone();
+        moved.locked_url = format!("{source}/2222222222222222222222222222222222222222");
+        let generation = |number, entries: &[(&str, &ProfileEntry)]| Generation {
+            number,
+            created: None,
+            entries: Some(
+                entries
+                    .iter()
+                    .map(|(key, entry)| ((*key).to_string(), (*entry).clone()))
+                    .collect(),
+            ),
+        };
+        let generations = [
+            generation(1, &[]),
+            generation(2, &[("hello", &hello)]),
+            generation(3, &[("hello", &moved)]),
+        ];
+        assert_eq!(undo_from(&generations, 3), UndoTarget::Generation(1));
+        assert_eq!(undo_from(&generations, 2), UndoTarget::Generation(1));
+        assert_eq!(undo_from(&generations[1..], 3), UndoTarget::Nothing);
+        assert_eq!(undo_from(&generations, 9), UndoTarget::Unknown);
     }
 
     #[test]

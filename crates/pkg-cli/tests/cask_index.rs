@@ -196,7 +196,10 @@ fn cask_info_reports_recorded_exclusion() {
     let (code, stdout, _) = fixture.run(&["info", "cask:iterm2"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("Cannot install"), "{stdout}");
-    assert!(stdout.contains("unsupported-platform"), "{stdout}");
+    assert!(
+        stdout.contains("Reason: no build for this system"),
+        "{stdout}"
+    );
     let (code, stdout, _) = fixture.run(&["info", "cask:iterm2", "--verbose"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("URL: https://iterm2.com/"), "{stdout}");
@@ -346,5 +349,5 @@ fn bare_cask_skips_a_source_that_excludes_it() {
     assert_eq!(code, 0, "{error}");
     assert!(output.contains("Tap terminal"), "{output}");
     assert!(output.contains("ID: cask:example/tools/iterm2"), "{output}");
-    assert!(output.contains("Status: Available"), "{output}");
+    assert!(output.contains("Status: Can install"), "{output}");
 }

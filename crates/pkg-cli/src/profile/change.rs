@@ -102,6 +102,17 @@ fn prepare(
             exact_entry,
         } => prepare_upgrade(session, before, entries, all, exact_entry),
         ProfileChange::Rollback(generation) => {
+            let generation = match generation {
+                Some(number) => Some(number),
+                None => match super::query::undo_target(&session.paths.profile) {
+                    super::query::UndoTarget::Generation(number) => Some(number),
+                    super::query::UndoTarget::Nothing => {
+                        println!("Nothing to undo. Older generations have the same packages.");
+                        return Ok(None);
+                    }
+                    super::query::UndoTarget::Unknown => None,
+                },
+            };
             let previous = active_generation(&session.paths.profile);
             report_rollback_target(session, generation, previous)?;
             Ok(Some(Prepared::Rollback {

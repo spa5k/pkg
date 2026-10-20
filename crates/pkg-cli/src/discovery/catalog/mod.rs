@@ -27,7 +27,7 @@ mod search;
 
 use crate::nix::NixError;
 
-pub use availability::{Availability, CaskHost};
+pub use availability::{Availability, CaskHost, plain_reason};
 pub use cask::{
     CatalogOnce, CatalogView, native_package_attribute, package_attribute, source_display,
 };

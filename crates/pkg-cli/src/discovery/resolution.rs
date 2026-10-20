@@ -390,18 +390,25 @@ fn cask_info(
 }
 
 /// Tell the user how a bare name was chosen.
+///
+/// Install names other sources only when they are Casks: a Formula with
+/// the same name is usually the same package. `pkg info` names them all.
 fn note_choice(name: &str, choice: &catalog::Choice) {
     if choice.by_command {
+        let id = catalog::short_id(&choice.id);
         crate::output::note(&format!(
             "{} provides the `{name}` command.",
-            catalog::short_id(&choice.id)
+            id.strip_prefix("nixpkgs:").unwrap_or(&id)
         ));
     }
-    if !choice.alternatives.is_empty() {
-        crate::output::note(&format!(
-            "Also available: {}",
-            choice.alternatives.join(", ")
-        ));
+    let casks: Vec<&str> = choice
+        .alternatives
+        .iter()
+        .map(String::as_str)
+        .filter(|alternative| alternative.starts_with("cask:"))
+        .collect();
+    if !casks.is_empty() {
+        crate::output::note(&format!("Also available: {}", casks.join(", ")));
     }
 }
 
