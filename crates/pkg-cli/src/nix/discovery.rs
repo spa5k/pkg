@@ -20,7 +20,9 @@ pub enum MetadataValue {
     Package {
         /// The package name, version, and description.
         meta: SearchMeta,
-        /// The main command, from `meta.mainProgram`, when declared.
+        /// The main command, from `meta.mainProgram`, when declared. Search
+        /// data reads it only for top-level packages: in some nested sets,
+        /// such as NixOS tests, it evaluates a whole system.
         #[serde(default, rename = "mainProgram")]
         command: Option<String>,
     },
@@ -278,7 +280,7 @@ let
     throw "package type must be a string"
   else if builtins.isAttrs value && (value.type or null) == "derivation" then
     let name = builtins.parseDrvName value.name;
-    in {{ inherit path; kind = "package"; meta = {{ pname = name.name; version = name.version; description = builtins.replaceStrings [ "\n" ] [ " " ] (value.meta.description or ""); }}; mainProgram = let main = builtins.tryEval (value.meta.mainProgram or null); in if main.success && builtins.isString main.value then main.value else null; }}
+    in {{ inherit path; kind = "package"; meta = {{ pname = name.name; version = name.version; description = builtins.replaceStrings [ "\n" ] [ " " ] (value.meta.description or ""); }}; mainProgram = if builtins.length path != 3 then null else let main = builtins.tryEval (value.meta.mainProgram or null); in if main.success && builtins.isString main.value then main.value else null; }}
   else if builtins.length path == 2 || (builtins.isAttrs value && legacy && (value.recurseForDerivations or false)) then
     {{ inherit path; kind = "children"; children = builtins.attrNames value; }}
   else {{ inherit path; kind = "skip"; }};

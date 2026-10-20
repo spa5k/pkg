@@ -334,7 +334,7 @@ Row fields:
 | `stale` | boolean | Local catalog is older than three days, or its age is unknown. |
 | `support` | object, nullable | `{"status":"eligible"}`, `{"status":"excluded","reason":…,"detail":…}`, or `{"status":"unknown","reason":…}` for Casks and Formulae. Nixpkgs rows have `null`. Eligible is a metadata status, not an installation promise. |
 | `install_command` | array of strings, optional | Suggested pkg install command for eligible Formulae. Absent for unsupported Formulae and other rows. |
-| `command` | string, optional | The main command from Nixpkgs `meta.mainProgram`. Absent when the package declares none. |
+| `command` | string, optional | The main command from Nixpkgs `meta.mainProgram`, for top-level Nixpkgs packages. Absent when the package declares none or is in a nested package set. |
 
 ### `info`
 
