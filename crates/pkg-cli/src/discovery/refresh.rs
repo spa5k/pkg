@@ -3,33 +3,41 @@
 use crate::{
     catalog,
     commands::{CommandError, Session},
+    output,
 };
 
 /// Return whether any source failed. Cancellation stops the operation.
+///
+/// An interactive terminal sees one status line that updates in place.
+/// Logs and pipes get one line per source result.
 pub fn refresh(session: &Session) -> Result<bool, CommandError> {
     let system = session.nix.system()?;
     catalog::record_search_system(&session.paths.cache_dir, &system)?;
-    eprintln!("Preparing local package search. The first run can take several minutes.");
     let mut failed = false;
-    eprintln!("Checking Homebrew Formulae…");
+    output::status("Preparing search data… Homebrew Formulae");
     match catalog::brew::prepare(
         &session.nix,
         &session.paths.cache_dir,
         &session.config.sources.formulae,
         &system,
     ) {
-        Ok(count) => eprintln!("Ready: Homebrew Formulae search data ({count} formulae)."),
-        Err(error) if error.signal().is_some() => return Err(error.into()),
+        Ok(count) => output::log(&format!(
+            "Ready: Homebrew Formulae search data ({count} formulae)."
+        )),
+        Err(error) if error.signal().is_some() => {
+            output::clear_status();
+            return Err(error.into());
+        }
         Err(error) => {
             failed = true;
-            eprintln!(
+            output::note(&format!(
                 "Failed: Homebrew Formulae: {}. Previous complete data was kept.",
                 crate::commands::concise_cause(&error.to_string())
-            );
+            ));
         }
     }
     for (kind, source) in super::configured_sources(&session.config).into_iter().rev() {
-        eprintln!("Checking {}…", kind.label());
+        output::status(&format!("Preparing search data… {}", kind.label()));
         let result = session
             .nix
             .refresh_source_identity(source)
@@ -51,17 +59,21 @@ pub fn refresh(session: &Session) -> Result<bool, CommandError> {
                 ),
             });
         match result {
-            Ok(()) => eprintln!("Ready: {} search data.", kind.label()),
-            Err(error) if error.signal().is_some() => return Err(error.into()),
+            Ok(()) => output::log(&format!("Ready: {} search data.", kind.label())),
+            Err(error) if error.signal().is_some() => {
+                output::clear_status();
+                return Err(error.into());
+            }
             Err(error) => {
                 failed = true;
-                eprintln!(
+                output::note(&format!(
                     "Failed: {}: {}. Previous complete data was kept.",
                     kind.label(),
                     crate::commands::concise_cause(&error.to_string())
-                );
+                ));
             }
         }
     }
+    output::clear_status();
     Ok(failed)
 }

@@ -43,7 +43,7 @@ and no package channel.
 ## Operating Context
 
 Daily terminal tasks: search, info, install, list, remove, update,
-upgrade, history, rollback, prune, doctor, shellenv, and macOS app sync.
+upgrade, history, rollback, prune, doctor, and macOS app sync.
 
 ## Current Alpha Capabilities and Constraints
 

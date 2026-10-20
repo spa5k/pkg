@@ -1,4 +1,4 @@
-"""Catalog checks: full pkg setup, maintainer catalog generation, Formula metadata."""
+"""Catalog checks: full search preparation, maintainer catalog generation, Formula metadata."""
 
 import gzip
 import hashlib
@@ -132,7 +132,7 @@ def setup(args):
                             "stderr": result.stderr,
                         }
                     )
-                command = [str(bench.binaries[label]), "setup", "--no-background"]
+                command = [str(bench.binaries[label]), "update", "--scheduled"]
                 resources = folder / "time-resources.txt"
                 measured = command
                 if args.measure_memory:

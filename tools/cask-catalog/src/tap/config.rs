@@ -36,7 +36,7 @@ fn config_setup_error(detail: &str, mac: bool) -> String {
         ""
     };
     format!(
-        "effective local nix config refuses the raw tap import: {detail}.\
+        "effective local nix config refuses the raw tap import: {detail}. \
          Concrete setup: configure the nix daemon with sandbox = true and \
          sandbox-fallback = false, and remove extra unsafe host paths \
          (sandbox-paths, extra-sandbox-paths, allowed-impure-host-deps).{mac_note} \

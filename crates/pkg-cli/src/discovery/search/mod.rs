@@ -27,7 +27,25 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
     } else {
         Some(options.limit.unwrap_or(20))
     };
-    let (system, reports, rows) = local_search(&paths, &config, &query, &source, limit, !cli.json)?;
+    let (mut system, mut reports, mut rows) =
+        local_search(&paths, &config, &query, &source, limit, !cli.json)?;
+    if reports.iter().any(catalog::SourceReport::is_not_ready) {
+        // First use: prepare the missing official data, then search again.
+        // The background job can hold the lock while it prepares the same
+        // data, so search again before preparing anything here.
+        let session = crate::commands::session(cli)?;
+        let _lock = crate::profile_lock::ProfileLock::acquire_waiting(
+            &session.paths.cache_dir.join("refresh"),
+            "Waiting for search data that pkg prepares in the background…",
+        )?;
+        (system, reports, rows) = local_search(&paths, &config, &query, &source, limit, !cli.json)?;
+        if reports.iter().any(catalog::SourceReport::is_not_ready) {
+            output::note("Preparing search for first use. This takes a few minutes.");
+            crate::discovery::refresh(&session)?;
+            (system, reports, rows) =
+                local_search(&paths, &config, &query, &source, limit, !cli.json)?;
+        }
+    }
     let failed = reports
         .iter()
         .any(|report| report.status == catalog::SourceStatus::Failed);
@@ -56,7 +74,7 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
         if rows.count == 0 {
             return Err(CommandError::Reported(ExitCode::from(FAILURE)));
         }
-        eprintln!("Results are incomplete. Run `pkg setup` or repair the source shown above.");
+        eprintln!("Results are incomplete. Run `pkg update` to retry.");
     }
     Ok(())
 }

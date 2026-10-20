@@ -219,7 +219,7 @@ fn cask_install_gates_excluded_and_unknown_tokens() {
 #[test]
 fn cask_preparation_retains_healthy_source_after_native_failure() {
     let fixture = CaskFixture::new();
-    let (code, _, stderr) = fixture.run(&["update", "--catalogs-only"]);
+    let (code, _, stderr) = fixture.run(&["update", "--scheduled"]);
     assert_eq!(code, 1, "native fixture has no package outputs: {stderr}");
     assert!(stderr.contains("Ready: cask"), "{stderr}");
 }
@@ -227,7 +227,7 @@ fn cask_preparation_retains_healthy_source_after_native_failure() {
 #[test]
 fn cask_search_respects_eligibility_and_unavailable_option() {
     let fixture = CaskFixture::new();
-    let (update_code, _, update_stderr) = fixture.run(&["update", "--catalogs-only"]);
+    let (update_code, _, update_stderr) = fixture.run(&["update", "--scheduled"]);
     assert_eq!(update_code, 1, "{update_stderr}");
     let (code, stdout, _) =
         fixture.run(&["search", "iterm|1password", "--regex", "--source", "cask"]);

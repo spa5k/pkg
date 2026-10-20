@@ -82,8 +82,9 @@ third-party license texts under licenses/.
 
 - License: Apache-2.0. The full text is in LICENSE next to this file.
 - Third-party Rust dependency licenses and notices are under licenses/.
-- pkg requires an external Nix installation. pkg does not install,
-  update, repair, or remove Nix.
+- pkg requires Nix. The pkg installer can start the Determinate Nix
+  installer when Nix is missing. pkg does not update, repair, or remove
+  Nix.
 - Supported systems: x86_64 Linux and Apple silicon macOS.
 - Project: https://github.com/spa5k/pkg
 EOF

@@ -15,7 +15,9 @@ pub(super) fn report(
     saved_unix: u64,
 ) -> SourceReport {
     let age = cache::now_unix().saturating_sub(saved_unix);
-    let stale = saved_unix == 0 || age >= 86_400;
+    // The daily job keeps data younger than one day. Warn only when it has
+    // missed several runs, not when one run is a few minutes late.
+    let stale = saved_unix == 0 || age >= STALE_AFTER;
     SourceReport {
         source: source.to_string(),
         display: None,
@@ -36,6 +38,18 @@ pub(super) fn report(
             )
         }),
     }
+}
+
+/// Data age in seconds after which search marks a source as stale.
+const STALE_AFTER: u64 = 3 * 86_400;
+
+/// The detail of an official source that has no complete local data yet.
+pub const NOT_READY: &str = "search data is not ready";
+
+/// Report an official source that has no complete local data yet.
+#[must_use]
+pub fn not_ready_report(source: &str) -> SourceReport {
+    missing_report(source, NOT_READY)
 }
 
 /// Report a missing or unreadable source without launching a scan.
@@ -63,10 +77,7 @@ pub fn search_local_native(
     mut sink: impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
 ) -> Result<SourceReport, CatalogError> {
     let Some(snapshot) = native::Snapshot::read(cache_dir, source, system) else {
-        return Ok(missing_report(
-            source,
-            "search data is not ready. Run `pkg setup` to prepare it.",
-        ));
+        return Ok(not_ready_report(source));
     };
     let saved = checked_at(
         cache_dir,
@@ -134,10 +145,7 @@ pub fn search_local_casks(
     sink: impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
 ) -> Result<SourceReport, CatalogError> {
     let Some(snapshot) = cache::read_index_snapshot(cache_dir, source, system, None) else {
-        return Ok(missing_report(
-            source,
-            "search data is not ready. Run `pkg setup` to prepare it.",
-        ));
+        return Ok(not_ready_report(source));
     };
     let reference = snapshot.locked_reference.as_deref().unwrap_or(source);
     let mut report = report(

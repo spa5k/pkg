@@ -289,6 +289,9 @@ impl Prepared {
                 } else {
                     let _ = writeln!(text, "Commands: {shown} (+{remaining} more)");
                 }
+                if !crate::output::on_path(&session.paths.profile.join("bin")) {
+                    let _ = writeln!(text, "Open a new terminal window to use these commands.");
+                }
             }
         }
         Report { names, text }

@@ -1,52 +1,37 @@
-//! Catalog preparation and scheduled refresh commands.
+//! Client update, search data refresh, and the scheduled user job.
 
 use crate::cli::{BackgroundCommand, Cli};
+use crate::client::Update;
 
-use super::{CommandError, session};
+use super::{CommandError, concise_cause, session};
 
-pub(super) fn update(cli: &Cli, catalogs_only: bool) -> Result<(), CommandError> {
+/// Update the installed client, then official catalogs and, unless the
+/// scheduled job runs, saved taps. A failed client check does not stop
+/// the catalog refresh.
+pub(super) fn update(cli: &Cli, scheduled: bool) -> Result<(), CommandError> {
     let session = session(cli)?;
-    let _lock =
-        crate::profile_lock::ProfileLock::acquire(&session.paths.cache_dir.join("refresh"))?;
+    let _lock = crate::profile_lock::ProfileLock::acquire_waiting(
+        &session.paths.cache_dir.join("refresh"),
+        "Waiting for another pkg update to finish…",
+    )?;
+    match crate::client::update() {
+        Ok(Update::Updated { from, to }) => println!("Updated: pkg {from} to {to}."),
+        Ok(Update::Current | Update::NotInstalled) => {}
+        Err(error) if error.signal().is_some() => return Err(error.into()),
+        Err(error) => eprintln!(
+            "Could not update pkg: {}",
+            concise_cause(&error.to_string())
+        ),
+    }
     let mut failed = crate::discovery::refresh(&session)?;
-    if !catalogs_only {
+    if !scheduled {
         failed |= crate::tap::refresh_registered(cli, &session.paths.state_home)?;
     }
     if failed {
-        return Err(
-            String::from("search preparation is incomplete. Run `pkg update` to retry.").into(),
-        );
+        return Err(String::from("search data is incomplete. Run `pkg update` to retry.").into());
     }
-    println!("Ready: local package search. Installed packages did not change.");
+    println!("Search data is up to date. Installed packages did not change.");
     Ok(())
-}
-
-pub(super) fn setup(cli: &Cli, no_background: bool) -> Result<(), CommandError> {
-    let preparation = update(cli, true);
-    if no_background
-        || preparation.as_ref().is_err_and(|error| {
-            error.is_interrupted() || matches!(error, CommandError::Reported(_))
-        })
-    {
-        return preparation;
-    }
-    match background(&BackgroundCommand::Enable) {
-        Ok(()) => preparation,
-        Err(error) if error.is_interrupted() || matches!(error, CommandError::Reported(_)) => {
-            Err(error)
-        }
-        Err(error) => {
-            if preparation.is_ok() {
-                Err(format!("search is ready, but background setup failed: {error}. Run `pkg background enable` to retry.").into())
-            } else {
-                eprintln!(
-                    "Background refresh could not be enabled: {}",
-                    super::concise_cause(&error.to_string())
-                );
-                preparation
-            }
-        }
-    }
 }
 
 pub(super) fn background(command: &BackgroundCommand) -> Result<(), CommandError> {
@@ -56,11 +41,11 @@ pub(super) fn background(command: &BackgroundCommand) -> Result<(), CommandError
             let config = crate::config::Config::load(&paths.config_file)?;
             let nix = crate::nix::discover(config.runtime.nix.as_deref())?;
             crate::background::enable(&paths, nix.executable())?;
-            println!("Enabled: daily catalog refresh. Control it with `pkg background disable`.");
+            println!("On: pkg and its search data update daily.");
         }
         BackgroundCommand::Disable => {
             crate::background::disable(&paths)?;
-            println!("Disabled: daily catalog refresh.");
+            println!("Off: pkg and its search data do not update.");
         }
         BackgroundCommand::Status => {
             println!("{}", crate::background::status(&paths)?);

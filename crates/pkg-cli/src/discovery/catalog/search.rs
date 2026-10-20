@@ -48,6 +48,12 @@ pub struct SourceReport {
 }
 
 impl SourceReport {
+    /// Whether this official source has no complete local data yet.
+    #[must_use]
+    pub fn is_not_ready(&self) -> bool {
+        self.status == SourceStatus::Failed && self.detail.as_deref() == Some(super::NOT_READY)
+    }
+
     /// The report for a source this system cannot query at all.
     ///
     /// Skip a system only when the catalog index's target list excludes it.

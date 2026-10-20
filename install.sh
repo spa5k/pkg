@@ -1,170 +1,166 @@
 #!/bin/sh
-# pkg client downloader for one exact release.
+# Install pkg for the current user:
 #
-# Downloads and verifies the standalone pkg client archive for this system,
-# reads bin/pkg (plus completions) out of the archive, and installs those
-# files under ~/.local (or PKG_INSTALL_BIN / PKG_INSTALL_COMPLETIONS).
+#   curl -fsSL https://github.com/spa5k/pkg/releases/latest/download/install.sh | sh
 #
-# The downloader also sets up PATH for subsequent shells. It writes one
-# small managed block into Bash and Zsh startup files. The block covers
-# the pkg client bin, the detected Nix bin, and the pkg package profile
-# bin. Set PKG_INSTALL_SHELL_SETUP=0 to skip all startup file changes.
-# With Nix present, prepare local search and enable daily user refresh.
-# Set PKG_INSTALL_PREPARE=0 to skip both steps.
-# Set PKG_INSTALL_BACKGROUND=0 to prepare without a scheduled user job.
+# The installer takes no options. It:
+#   - downloads the pkg client of one exact release and verifies its checksum;
+#   - installs ~/.local/bin/pkg and shell completions under ~/.local/share/pkg;
+#   - adds pkg, Nix, and installed packages to PATH in Bash, Zsh, and Fish,
+#     and turns on tab completion;
+#   - turns on a daily user job that updates pkg and its search data, and
+#     starts it once now.
 #
-# The downloader detects an existing Nix runtime without trusting the
-# inherited PATH. The detected Nix bin directory is always written into
-# the managed block, because a PATH entry can be a one-time export.
+# pkg needs Nix. When Nix is missing and a terminal is attached, the
+# installer asks once, then runs the Determinate Nix installer, which asks
+# for your password. pkg does not update, repair, or remove Nix. Without a
+# terminal, the installer prints the Nix command and installs only pkg.
 #
-# This script NEVER:
-#   - installs, updates, configures, or removes Nix or any other runtime;
-#   - uses sudo or installs privileged helpers or services;
-#   - changes Nix trust settings or accepts new substituters or keys;
-#   - removes or migrates old pkg installations;
-# Catalog setup writes the user's pkg cache and a user job file.
+# The installer itself never uses sudo, never changes Nix settings, and
+# never removes old installations.
 #
-# Nix must be installed separately, by you, from the vendor:
-#   https://docs.determinate.systems/determinate-nix/
+# pkg updates itself later: `pkg update` and the daily job download and
+# verify newer releases. Tests and benchmarks set PKG_INSTALL_MODE=test to
+# skip the user job, because the job is one per user and a test home must
+# not replace the real one.
 #
-# The managed block and the printed one-time command must contain literal
-# $PATH text on purpose.
+# The managed shell blocks contain literal $PATH text on purpose.
 # shellcheck disable=SC2016
 set -eu
 
-# The version, tag, archive name, and checksum file must all agree with the
-# release built by tools/release/package_client.sh. package_client.sh takes
-# the version from pkg-cli Cargo metadata, and the client-release workflow
-# rejects a tag that disagrees with that version.
+# The version must agree with the release built by
+# tools/release/package_client.sh, which refuses a mismatch.
 repo="spa5k/pkg"
 version="0.2.0-alpha.16"
 tag="v${version}"
+nix_installer_url="https://install.determinate.systems/nix"
+nix_command="curl -fsSL ${nix_installer_url} | sh -s -- install"
 
-if [ "$#" -ne 0 ]; then
-  echo "Usage: sh pkg-install.sh" >&2
-  echo "  This downloader takes no arguments. It installs release ${tag}." >&2
-  exit 2
-fi
+begin_marker="# >>> pkg paths >>>"
+end_marker="# <<< pkg paths <<<"
+fish_marker="# Managed by the pkg installer."
 
-case "$(uname -s):$(uname -m)" in
-  Linux:x86_64) system="x86_64-linux" ;;
-  Darwin:arm64) system="aarch64-darwin" ;;
-  *)
-    echo "error: unsupported system. Supported: x86_64 Linux, Apple silicon macOS." >&2
-    exit 1
-    ;;
-esac
-
-need() { command -v "$1" >/dev/null 2>&1 || { echo "error: missing tool: $1" >&2; exit 1; }; }
-need curl
-need tar
-need gzip
-need install
-need awk
-need grep
-need sed
-need cmp
-need tail
-need mktemp
-
-if [ -z "${HOME:-}" ]; then
-  echo "error: HOME is not set; the downloader installs under HOME." >&2
-  exit 1
-fi
-case "$HOME" in
-  /*) ;;
-  *)
-    echo "error: HOME is not an absolute path: $HOME" >&2
-    echo "  Start the downloader from a normal login shell." >&2
-    exit 1
-    ;;
-esac
-
-# Every base directory the setup uses must be absolute. A relative value
-# cannot give working paths in later shells, and the pkg client rejects a
-# relative XDG_STATE_HOME itself, so refuse it here instead of pretending.
-require_absolute() {
-  if [ "$2" = "" ]; then
-    return 0
-  fi
-  case "$2" in
-    /*) ;;
-    *)
-      echo "error: $1 is not an absolute path: $2" >&2
-      echo "  Set $1 to an absolute path, or unset it." >&2
-      exit 1
-      ;;
-  esac
-}
-require_absolute PKG_INSTALL_BIN "${PKG_INSTALL_BIN:-}"
-require_absolute PKG_INSTALL_COMPLETIONS "${PKG_INSTALL_COMPLETIONS:-}"
-require_absolute XDG_STATE_HOME "${XDG_STATE_HOME:-}"
-
-# One checksum tool is enough. Check both before use: "need shasum ||
-# need sha256sum" cannot express this, because need exits the script when
-# the first tool is missing.
-if ! command -v shasum >/dev/null 2>&1 && ! command -v sha256sum >/dev/null 2>&1; then
-  echo "error: missing tool: shasum or sha256sum" >&2
-  exit 1
-fi
-
-archive="pkg-${version}-${system}.tar.gz"
-root="pkg-${version}-${system}"
-base="https://github.com/${repo}/releases/download/${tag}"
-
-tmp="$(mktemp -d)"
+start_job=1
+tmp=""
 pending_new=""
-trap 'rm -rf "$tmp"; if [ -n "$pending_new" ]; then rm -f -- "$pending_new"; fi' EXIT
 
-echo "Downloading ${archive} from release ${tag}..."
-curl -fsSL -o "$tmp/$archive" "${base}/${archive}"
-curl -fsSL -o "$tmp/SHA256SUMS" "${base}/SHA256SUMS"
+# ---------------------------------------------------------------------------
+# Output: a few short lines, and errors as one sentence plus one action.
+# ---------------------------------------------------------------------------
+say() {
+  printf '%s\n' "$*"
+}
 
-# Verify the archive against its published checksum.
-want="$(grep " ${archive}\$" "$tmp/SHA256SUMS" | awk '{print $1}')"
-if [ -z "$want" ]; then
-  echo "error: no checksum entry for ${archive} in SHA256SUMS." >&2
-  exit 1
-fi
-# Apple silicon measured faster with GNU sha256sum; Intel keeps the measured
-# portable default until it has its own balanced host evidence.
-if command -v shasum >/dev/null 2>&1 \
-  && { [ "$system" != "aarch64-darwin" ] || ! command -v sha256sum >/dev/null 2>&1; }; then
-  got="$(shasum -a 256 "$tmp/$archive" | awk '{print $1}')"
-else
-  got="$(sha256sum "$tmp/$archive" | awk '{print $1}')"
-fi
-# Both tools mark an escaped filename with a leading backslash on the
-# whole line. The temporary path may contain literal backslashes, so
-# strip that one marker before the digest comparison.
-case "$got" in
-  \\*) got="${got#\\}" ;;
-esac
-if [ "$got" != "$want" ]; then
-  echo "error: checksum mismatch for ${archive}." >&2
-  echo "  expected $want" >&2
-  echo "  got      $got" >&2
-  exit 1
-fi
+done_step() {
+  say "✓ $*"
+}
 
-# Reuse the verified tar bytes for the listing and each member read.
-if ! gzip -dc "$tmp/$archive" > "$tmp/archive.tar"; then
-  echo "error: cannot decompress ${archive}." >&2
-  exit 1
-fi
-
-# Read only the exact members this downloader installs. Every member's
-# bytes go to stdout (`tar -xO`) and into a temporary file named below.
-# The archive's directory tree is never extracted to disk, so archive
-# paths (absolute, `..`, deep) and links cannot write outside these files.
-tar -tvf "$tmp/archive.tar" > "$tmp/listing" || {
-  echo "error: cannot list members of ${archive}." >&2
+fail() {
+  printf 'error: %s\n' "$1" >&2
+  shift
+  for line do
+    if [ -n "$line" ]; then
+      printf '  %s\n' "$line" >&2
+    fi
+  done
   exit 1
 }
 
-# exact_regular MEMBER: succeed only when MEMBER is stored exactly once,
-# as one regular file, with nothing below MEMBER. Duplicate names, mixed
-# member types, links, and directories are refused.
+cleanup() {
+  if [ -n "$pending_new" ]; then
+    rm -f -- "$pending_new"
+  fi
+  if [ -n "$tmp" ]; then
+    rm -rf -- "$tmp"
+  fi
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || fail "pkg needs the $1 command. Install $1, then run this installer again."
+}
+
+# sq VALUE: VALUE single-quoted for POSIX shells. Spaces, quotes, dollars,
+# backticks, and glob characters stay literal.
+sq() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# fq VALUE: VALUE single-quoted for Fish, which treats \\ and \' as escapes
+# inside single quotes.
+fq() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/[\\\\']/\\\\&/g")"
+}
+
+# ---------------------------------------------------------------------------
+# Nix detection. The inherited PATH is not trusted alone: the stable
+# profile paths that pkg itself searches are checked next, in the same
+# order. A candidate counts only when it runs and answers `nix --version`.
+# ---------------------------------------------------------------------------
+find_nix() {
+  nix_bin=""
+  nix_rejected=""
+  for candidate in \
+    "$(command -v nix 2>/dev/null || true)" \
+    "/nix/var/nix/profiles/default/bin/nix" \
+    "$state_home/nix/profile/bin/nix" \
+    "$HOME/.nix-profile/bin/nix"
+  do
+    [ -n "$candidate" ] || continue
+    # dash reports a match in a relative PATH entry as a relative path.
+    # Pin it to the current directory, as pkg itself does.
+    case "$candidate" in
+      /*) ;;
+      *) candidate="$(pwd)/$candidate" ;;
+    esac
+    if [ -f "$candidate" ] && [ -x "$candidate" ] \
+      && "$candidate" --version >/dev/null 2>&1; then
+      nix_bin="$candidate"
+      return 0
+    fi
+    if [ -e "$candidate" ] && [ -z "$nix_rejected" ]; then
+      nix_rejected="$candidate"
+    fi
+  done
+}
+
+# has_terminal: succeed when the user can answer a question.
+has_terminal() {
+  (exec </dev/tty >/dev/tty) 2>/dev/null
+}
+
+# offer_nix: ask once, then run the vendor installer. Succeed only when the
+# user agreed and the vendor installer succeeded.
+offer_nix() {
+  if ! has_terminal; then
+    return 1
+  fi
+  printf 'pkg needs Nix. Install Nix now? [Y/n] ' >/dev/tty
+  answer=""
+  read -r answer </dev/tty || answer="n"
+  case "$answer" in
+    "" | y | Y | yes | Yes | YES) ;;
+    *) return 1 ;;
+  esac
+  say "Installing Nix with the Determinate Nix installer. It asks for your password."
+  if ! curl --proto '=https' --tlsv1.2 -fsSL -o "$tmp/nix-installer.sh" "$nix_installer_url"; then
+    printf 'Nix was not installed: the Nix installer could not be downloaded.\n' >&2
+    return 1
+  fi
+  if ! sh "$tmp/nix-installer.sh" install --no-confirm </dev/tty; then
+    printf 'Nix was not installed. The Nix installer stopped with an error.\n' >&2
+    return 1
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Archive members. Only exact members are read, through `tar -xO`, into
+# files named here. The archive tree is never extracted, so absolute
+# paths, `..`, and links in the archive cannot write anywhere.
+# ---------------------------------------------------------------------------
+
+# exact_regular MEMBER: succeed only when MEMBER is stored exactly once, as
+# one regular file, with nothing below it.
 exact_regular() {
   awk -v m="$1" '
     {
@@ -185,107 +181,101 @@ exact_regular() {
   ' "$tmp/listing"
 }
 
-# read_member MEMBER DEST: write MEMBER's bytes to DEST, or fail clearly.
+# read_member MEMBER DEST: write MEMBER's bytes to DEST, or fail.
 read_member() {
-  tar -xOf "$tmp/archive.tar" -- "$1" > "$2" || {
-    echo "error: tar failed while reading ${1} from ${archive}." >&2
-    exit 1
-  }
+  tar -xOf "$tmp/archive.tar" -- "$1" > "$2" \
+    || fail "the pkg download is damaged: tar cannot read $1." "Run this installer again."
 }
 
-client="${root}/bin/pkg"
-if ! exact_regular "$client"; then
-  echo "error: ${archive} stores no single regular file ${client}." >&2
-  exit 1
-fi
-read_member "$client" "$tmp/pkg"
-if [ ! -s "$tmp/pkg" ]; then
-  echo "error: ${client} from ${archive} is empty." >&2
-  exit 1
-fi
-
-for shell in bash zsh fish; do
-  member="${root}/completions/${shell}.txt"
-  if exact_regular "$member"; then
-    read_member "$member" "$tmp/${shell}.completion"
+download_client() {
+  archive="pkg-${version}-${system}.tar.gz"
+  root="pkg-${version}-${system}"
+  base="https://github.com/${repo}/releases/download/${tag}"
+  if ! curl -fsSL -o "$tmp/$archive" "${base}/${archive}" \
+    || ! curl -fsSL -o "$tmp/SHA256SUMS" "${base}/SHA256SUMS"; then
+    fail "pkg ${version} could not be downloaded." "Check your internet connection, then run this installer again."
   fi
-done
 
-bindir="${PKG_INSTALL_BIN:-$HOME/.local/bin}"
-compldir="${PKG_INSTALL_COMPLETIONS:-$HOME/.local/share/pkg/completions}"
-mkdir -p "$bindir" "$compldir"
-install -m 0755 "$tmp/pkg" "$bindir/pkg"
-for shell in bash zsh fish; do
-  if [ -f "$tmp/${shell}.completion" ]; then
-    cp "$tmp/${shell}.completion" "$compldir/${shell}.txt"
+  want="$(grep " ${archive}\$" "$tmp/SHA256SUMS" | awk '{print $1}')"
+  [ -n "$want" ] || fail "the release has no checksum for ${archive}."
+  if command -v sha256sum >/dev/null 2>&1; then
+    got="$(sha256sum "$tmp/$archive" | awk '{print $1}')"
+  else
+    got="$(shasum -a 256 "$tmp/$archive" | awk '{print $1}')"
   fi
-done
+  # Both tools mark an escaped file name with a leading backslash.
+  got="${got#\\}"
+  [ "$got" = "$want" ] \
+    || fail "the pkg download does not match its published checksum. Nothing was installed." "Run this installer again."
 
-echo "Installed $bindir/pkg and completions under $compldir."
+  gzip -dc "$tmp/$archive" > "$tmp/archive.tar" \
+    || fail "the pkg download is damaged. Nothing was installed." "Run this installer again."
+  tar -tvf "$tmp/archive.tar" > "$tmp/listing" \
+    || fail "the pkg download is damaged. Nothing was installed." "Run this installer again."
 
-# ---------------------------------------------------------------------------
-# Detect an existing Nix runtime. The inherited PATH is not trusted alone:
-# the same stable profile paths the pkg client searches are checked next,
-# in the same order. A candidate counts only when it is an executable
-# file for this user AND answers `nix --version`. Nothing here installs,
-# configures, or repairs Nix.
-# ---------------------------------------------------------------------------
-state_home="$HOME/.local/state"
-if [ -n "${XDG_STATE_HOME:-}" ]; then
-  state_home="$XDG_STATE_HOME"
-fi
-profile_bin="$state_home/nix/profiles/pkg/bin"
-
-nix_bin=""
-nix_rejected=""
-nix_from_path_candidate="$(command -v nix 2>/dev/null || true)"
-for candidate in \
-  "$nix_from_path_candidate" \
-  "/nix/var/nix/profiles/default/bin/nix" \
-  "$state_home/nix/profile/bin/nix" \
-  "$HOME/.nix-profile/bin/nix"
-do
-  [ -n "$candidate" ] || continue
-  if [ -f "$candidate" ] && [ -x "$candidate" ] \
-    && "$candidate" --version >/dev/null 2>&1; then
-    nix_bin="$candidate"
-    break
-  fi
-  if [ -e "$candidate" ] && [ -z "$nix_rejected" ]; then
-    nix_rejected="$candidate"
-  fi
-done
-
-# The Nix bin directory always enters the shell setup, also when Nix was
-# found through PATH. A PATH entry can be a one-time export; new shells
-# must keep a working Nix without it.
-nix_dir=""
-if [ -n "$nix_bin" ]; then
-  nix_dir="${nix_bin%/*}"
-fi
-
-# ---------------------------------------------------------------------------
-# Managed shell setup. One block between two version-independent marker
-# lines per startup file. Each directory is added to PATH once, guarded,
-# single-quoted, and never executed as anything but a PATH assignment.
-# Directories travel as positional parameters only, so spaces and shell
-# metacharacters stay intact.
-# ---------------------------------------------------------------------------
-begin_marker="# >>> pkg paths >>>"
-end_marker="# <<< pkg paths <<<"
-block="$tmp/pkg-paths-block"
-
-# sq VALUE: print VALUE single-quoted for shell text. Spaces, quotes,
-# dollars, backticks, and glob characters stay literal; no path becomes
-# executed shell text.
-sq() {
-  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+  client="${root}/bin/pkg"
+  exact_regular "$client" || fail "the pkg download has no single client file. Nothing was installed."
+  read_member "$client" "$tmp/pkg"
+  [ -s "$tmp/pkg" ] || fail "the pkg download has an empty client file. Nothing was installed."
+  for shell in bash zsh fish; do
+    if exact_regular "${root}/completions/${shell}.txt"; then
+      read_member "${root}/completions/${shell}.txt" "$tmp/${shell}.completion"
+    fi
+  done
 }
 
-# write_block DIR...: print the managed block for the directories given.
-write_block() {
-  printf '%s\n' "$begin_marker"
-  printf '%s\n' "# Managed by the pkg downloader. Run the downloader again to update this block."
+# install_client: start the new client from its final directory, then
+# replace the old client with one rename. A running pkg keeps its file.
+install_client() {
+  mkdir -p "$bindir" "$compldir"
+  previous=""
+  if [ -x "$bindir/pkg" ]; then
+    previous="$("$bindir/pkg" --version 2>/dev/null | awk '{print $2}' || true)"
+  fi
+  pending_new="$(mktemp "$bindir/.pkg-new.XXXXXX")"
+  cat "$tmp/pkg" > "$pending_new"
+  chmod 0755 "$pending_new"
+  if ! "$pending_new" --version > "$tmp/version.out" 2>&1; then
+    detail="$(head -n 1 "$tmp/version.out")"
+    if [ "$system" = "x86_64-linux" ]; then
+      fail "pkg cannot run on this computer. pkg needs glibc 2.35 or newer." "$detail"
+    fi
+    fail "pkg cannot run on this computer." "$detail"
+  fi
+  mv -f "$pending_new" "$bindir/pkg"
+  pending_new=""
+
+  # Completions go where each shell loads them through the managed setup.
+  rm -f "$compldir/bash.txt" "$compldir/zsh.txt" "$compldir/fish.txt"
+  for pair in bash:pkg.bash zsh:_pkg fish:pkg.fish; do
+    shell="${pair%%:*}"
+    if [ -f "$tmp/${shell}.completion" ]; then
+      cp "$tmp/${shell}.completion" "$compldir/${pair#*:}"
+    fi
+  done
+
+  if [ -n "$previous" ] && [ "$previous" != "$version" ]; then
+    done_step "Updated pkg ${previous} to ${version}"
+  else
+    done_step "Installed pkg ${version}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Shell setup. Bash and Zsh get one managed block between two marker lines.
+# Fish gets one pkg-owned file. PATH entries are guarded, so repeated shell
+# starts never duplicate them. The final order is: pkg client, Nix,
+# installed packages, then the rest of PATH.
+# ---------------------------------------------------------------------------
+
+# path_lines DIR...: guarded PATH lines. Each line prepends, so the
+# directories are written in reverse to keep the given order.
+path_lines() {
+  reversed=""
+  for dir do
+    reversed="$(sq "$dir")${reversed:+ $reversed}"
+  done
+  eval "set -- $reversed"
   for dir do
     qdir="$(sq "$dir")"
     printf 'case ":$PATH:" in\n'
@@ -293,76 +283,69 @@ write_block() {
     printf '  *) export PATH=%s"${PATH:+:$PATH}" ;;\n' "$qdir"
     printf 'esac\n'
   done
+}
+
+write_bash_block() {
+  printf '%s\n' "$begin_marker"
+  printf '%s\n' "# Managed by the pkg installer. Run the installer again to update this block."
+  path_lines "$@"
+  qfile="$(sq "$compldir/pkg.bash")"
+  printf 'if [ -n "${BASH_VERSION:-}" ] && [ -r %s ]; then\n' "$qfile"
+  printf '  case $- in *i*) . %s ;; esac\n' "$qfile"
+  printf 'fi\n'
   printf '%s\n' "$end_marker"
 }
 
-# Collect the final directory list as positional parameters.
-set --
-for candidate in "$bindir" "$nix_dir" "$profile_bin"; do
-  [ -n "$candidate" ] || continue
-  set -- "$@" "$candidate"
-done
+write_zsh_block() {
+  printf '%s\n' "$begin_marker"
+  printf '%s\n' "# Managed by the pkg installer. Run the installer again to update this block."
+  path_lines "$@"
+  qdir="$(sq "$compldir")"
+  printf 'fpath=(%s ${fpath:#%s})\n' "$qdir" "$qdir"
+  printf 'if (( $+functions[compdef] )); then\n'
+  printf '  autoload -Uz _pkg && compdef _pkg pkg\n'
+  printf 'else\n'
+  printf '  autoload -Uz compinit && compinit -i\n'
+  printf 'fi\n'
+  printf '%s\n' "$end_marker"
+}
 
-# A PATH directory cannot contain a colon or a newline: PATH itself
-# cannot represent them. Refuse shell setup before any startup file is
-# changed; the client stays installed.
-nl_char="$(printf '\nx')"
-nl_char="${nl_char%x}"
-setup_dirs_ok=1
-for dir do
-  case "$dir" in
-    /*) ;;
-    *)
-      echo "error: directory for the PATH setup is not an absolute path: $dir" >&2
-      setup_dirs_ok=0
-      ;;
-  esac
-  case "$dir" in
-    *:*)
-      echo "error: PATH directory contains a colon and cannot be set up: $dir" >&2
-      setup_dirs_ok=0
-      ;;
-  esac
-  case "$dir" in
-    *"$nl_char"*)
-      echo "error: PATH directory contains a newline and cannot be set up: $dir" >&2
-      setup_dirs_ok=0
-      ;;
-  esac
-done
+write_fish_file() {
+  printf '%s\n' "$fish_marker"
+  printf '%s\n' "# Run the installer again to update this file. pkg self uninstall removes it."
+  reversed=""
+  for dir do
+    reversed="$(fq "$dir")${reversed:+ $reversed}"
+  done
+  printf 'for dir in %s\n' "$reversed"
+  printf '    contains -- $dir $PATH; or set -gx PATH $dir $PATH\n'
+  printf 'end\n'
+  qdir="$(fq "$compldir")"
+  printf 'contains -- %s $fish_complete_path; or set -g fish_complete_path %s $fish_complete_path\n' "$qdir" "$qdir"
+}
 
-write_block "$@" > "$block"
-
-setup_state="not-run"
-file_failed=0
-setup_hard_error=0
-
-# upsert_block FILE: make FILE hold exactly one current managed block.
-# Unrelated lines, a missing final newline, the file's mode, and its
-# directory entry stay intact (sibling copy plus rename, never a
-# truncate-in-place). Symlinks, non-regular files, and marker lines in
-# an unexpected form are reported and skipped, never rewritten.
+# upsert_block FILE BLOCK ACTION: make FILE hold exactly one current copy
+# of BLOCK. ACTION "add" appends a block when none exists; "refresh" only
+# replaces an existing block. Unrelated lines, a missing final newline, and
+# the file mode stay intact (sibling copy plus rename). Links, special
+# files, and broken marker lines are reported and never rewritten.
 upsert_block() {
   up_file="$1"
-  if [ -L "$up_file" ]; then
-    echo "Shell setup: $up_file is a symlink. The downloader did not change it." >&2
-    echo "  Add the pkg PATH block to the file the link points to, or remove the link and run again." >&2
-    file_failed=1
-    return 0
-  fi
-  if [ -e "$up_file" ] && [ ! -f "$up_file" ]; then
-    echo "Shell setup: $up_file is not a regular file. The downloader did not change it." >&2
-    file_failed=1
-    return 0
-  fi
-  if [ ! -e "$up_file" ]; then
-    if install -m 0644 "$block" "$up_file"; then
-      echo "Shell setup: created $up_file."
+  up_block="$2"
+  up_action="$3"
+  if [ ! -e "$up_file" ] && [ ! -L "$up_file" ]; then
+    [ "$up_action" = "add" ] || return 0
+    if install -m 0644 "$up_block" "$up_file"; then
       return 0
     fi
-    echo "Shell setup: cannot create $up_file." >&2
-    file_failed=1
-    setup_hard_error=1
+    printf 'Shell setup: cannot create %s.\n' "$up_file" >&2
+    shell_failed=1
+    return 0
+  fi
+  if [ -L "$up_file" ] || [ ! -f "$up_file" ]; then
+    [ "$up_action" = "add" ] || return 0
+    say "Shell setup skipped $up_file: it is a link or a special file."
+    shell_manual=1
     return 0
   fi
   up_verdict="$(awk -v b="$begin_marker" -v e="$end_marker" '
@@ -376,6 +359,7 @@ upsert_block() {
   ' "$up_file" || echo MALFORMED)"
   case "$up_verdict" in
     APPEND)
+      [ "$up_action" = "add" ] || return 0
       {
         cat "$up_file"
         if [ -s "$up_file" ] && [ -n "$(tail -c 1 "$up_file")" ]; then
@@ -384,28 +368,22 @@ upsert_block() {
         if [ -s "$up_file" ]; then
           printf '\n'
         fi
-        cat "$block"
+        cat "$up_block"
       } > "$tmp/pkg-new-content"
       ;;
     REPLACE)
-      # With an identical current block, change nothing at all.
       awk -v b="$begin_marker" -v e="$end_marker" '
         $0 == b { on = 1 }
         on { print }
         $0 == e && on { exit }
       ' "$up_file" > "$tmp/pkg-current-block"
-      if cmp -s "$tmp/pkg-current-block" "$block"; then
-        echo "Shell setup: $up_file already holds the current pkg PATH block."
+      if cmp -s "$tmp/pkg-current-block" "$up_block"; then
         return 0
       fi
-      # The block file is passed as a file argument and read through
-      # ARGV in BEGIN: awk applies backslash escape processing to -v
-      # values only, never to file arguments, so a TMPDIR with a literal
-      # backslash (for example "tmp\n...") keeps the block path intact.
-      # Clear ARGV[2] so awk does not read the block again as input.
-      # Lines after the block are buffered and reprinted without a final
-      # ORS when the file itself ends without one, so a trailing partial
-      # line keeps its exact bytes.
+      # The block path is read through ARGV in BEGIN: awk applies escape
+      # processing to -v values only, so a TMPDIR with a backslash keeps
+      # its path. Lines after the block keep their exact bytes, also a
+      # last line without a final newline.
       up_lastnl=1
       if [ -n "$(tail -c 1 "$up_file")" ]; then
         up_lastnl=0
@@ -432,56 +410,84 @@ upsert_block() {
             out = substr(out, 1, length(out) - 1)
           printf "%s", out
         }
-      ' "$up_file" "$block" > "$tmp/pkg-new-content"
+      ' "$up_file" "$up_block" > "$tmp/pkg-new-content"
       ;;
     *)
-      echo "Shell setup: $up_file holds pkg marker lines in an unexpected form." >&2
-      echo "  The downloader did not change the file and removed nothing from it." >&2
-      echo "  Fix or remove the marker lines yourself, then run the downloader again." >&2
-      echo "  Marker lines: $begin_marker / $end_marker" >&2
-      file_failed=1
+      say "Shell setup skipped $up_file: its pkg marker lines are broken."
+      say "  Remove the lines from $begin_marker to $end_marker, then run this installer again."
+      shell_manual=1
       return 0
       ;;
   esac
-  # One last guard before writing: the new content must hold exactly one
-  # well-formed marker pair, even if something above went wrong.
+  # The new content must hold exactly one marker pair.
   if [ "$(grep -c -x -F "$begin_marker" "$tmp/pkg-new-content" || true)" != 1 ] \
     || [ "$(grep -c -x -F "$end_marker" "$tmp/pkg-new-content" || true)" != 1 ]; then
-    echo "Shell setup: refusing an unsafe update of $up_file." >&2
-    file_failed=1
-    setup_hard_error=1
+    printf 'Shell setup: refusing an unsafe update of %s.\n' "$up_file" >&2
+    shell_failed=1
     return 0
   fi
-  # Create the pending file with mktemp in the same directory: the
-  # name is not predictable, so an unrelated file with a guessed name
-  # cannot be overwritten or followed, and the final rename is atomic
-  # within one directory. mktemp succeeds before pending_new is set, so
-  # the EXIT trap can clean the file up.
+  # A random sibling name cannot follow or replace an unrelated file, and
+  # the rename within one directory is atomic.
   pending_new="$(mktemp "${up_file%/*}/pkg-new.XXXXXX")" || {
     pending_new=""
-    echo "Shell setup: cannot update $up_file safely." >&2
-    file_failed=1
-    setup_hard_error=1
+    printf 'Shell setup: cannot update %s safely.\n' "$up_file" >&2
+    shell_failed=1
     return 0
   }
   if cp -p "$up_file" "$pending_new" 2>/dev/null \
     && cat "$tmp/pkg-new-content" > "$pending_new" \
     && mv -f "$pending_new" "$up_file"; then
     pending_new=""
-    echo "Shell setup: updated $up_file."
     return 0
   fi
   rm -f -- "$pending_new"
   pending_new=""
-  echo "Shell setup: cannot update $up_file safely." >&2
-  file_failed=1
-  setup_hard_error=1
+  printf 'Shell setup: cannot update %s safely.\n' "$up_file" >&2
+  shell_failed=1
   return 0
 }
 
-# bash_login_file: the first existing Bash login file, or .profile when
-# none exists. A new .bash_profile or .bash_login would hide an existing
-# .profile, so those two are never created.
+# upsert_fish FILE ACTION: write the pkg-owned Fish file. A file without
+# the pkg marker belongs to the user and stays unchanged.
+upsert_fish() {
+  up_file="$1"
+  if [ -L "$up_file" ] || { [ -e "$up_file" ] && [ ! -f "$up_file" ]; }; then
+    [ "$2" = "add" ] || return 0
+    say "Shell setup skipped $up_file: it is a link or a special file."
+    shell_manual=1
+    return 0
+  fi
+  if [ -f "$up_file" ]; then
+    if [ "$(head -n 1 "$up_file")" != "$fish_marker" ]; then
+      [ "$2" = "add" ] || return 0
+      say "Shell setup skipped $up_file: the file is not managed by pkg."
+      shell_manual=1
+      return 0
+    fi
+    if cmp -s "$up_file" "$tmp/pkg.fish"; then
+      return 0
+    fi
+  elif [ "$2" != "add" ]; then
+    return 0
+  fi
+  if mkdir -p "${up_file%/*}" \
+    && pending_new="$(mktemp "${up_file%/*}/pkg-new.XXXXXX")" \
+    && cat "$tmp/pkg.fish" > "$pending_new" \
+    && chmod 0644 "$pending_new" \
+    && mv -f "$pending_new" "$up_file"; then
+    pending_new=""
+    return 0
+  fi
+  if [ -n "$pending_new" ]; then
+    rm -f -- "$pending_new"
+  fi
+  pending_new=""
+  printf 'Shell setup: cannot write %s.\n' "$up_file" >&2
+  shell_failed=1
+}
+
+# bash_login_file: the first existing Bash login file, or .profile. A new
+# .bash_profile or .bash_login would hide an existing .profile.
 bash_login_file() {
   for name in .bash_profile .bash_login .profile; do
     if [ -e "$HOME/$name" ] || [ -L "$HOME/$name" ]; then
@@ -492,176 +498,174 @@ bash_login_file() {
   printf '%s\n' "$HOME/.profile"
 }
 
-# print_dirs DIR...: the manual instruction line for unsupported cases.
-print_dirs() {
-  echo "Add these directories to your PATH, in your shell's own syntax:"
-  for dir do
-    printf '  %s\n' "$dir"
+setup_shells() {
+  shell_failed=0
+  shell_manual=0
+  set --
+  for dir in "$bindir" "$nix_dir" "$profile_bin"; do
+    [ -n "$dir" ] || continue
+    case "$dir" in
+      /*) ;;
+      *) fail "the directory $dir is not an absolute path." ;;
+    esac
+    case "$dir" in
+      *:* | *"$newline"*)
+        say "Shell setup skipped: PATH cannot hold the directory $dir."
+        shell_manual=1
+        return 0
+        ;;
+    esac
+    set -- "$@" "$dir"
   done
+  write_bash_block "$@" > "$tmp/pkg-bash-block"
+  write_zsh_block "$@" > "$tmp/pkg-zsh-block"
+  write_fish_file "$@" > "$tmp/pkg.fish"
+
+  zsh_file="${zdotdir:-$HOME}/.zshrc"
+  fish_file="$config_home/fish/conf.d/pkg.fish"
+  bash_add="refresh"
+  zsh_add="refresh"
+  fish_add="refresh"
+  case "${SHELL:-}" in
+    */bash | bash) bash_add="add" ;;
+    */zsh | zsh) zsh_add="add" ;;
+    */fish | fish) fish_add="add" ;;
+    *) shell_manual=1 ;;
+  esac
+  if [ "$zsh_add" = "add" ] && [ -n "$zdotdir" ] && [ ! -d "$zdotdir" ]; then
+    # A failure here is reported when the startup file cannot be created.
+    mkdir -p "$zdotdir" 2>/dev/null || true
+  fi
+
+  # Existing managed setups are refreshed in every shell, so a user who
+  # changes shells keeps one current setup everywhere.
+  upsert_block "$HOME/.bashrc" "$tmp/pkg-bash-block" "$bash_add"
+  login_file="$(bash_login_file)"
+  upsert_block "$login_file" "$tmp/pkg-bash-block" "$bash_add"
+  for name in .bash_profile .bash_login .profile; do
+    if [ "$HOME/$name" != "$login_file" ]; then
+      upsert_block "$HOME/$name" "$tmp/pkg-bash-block" refresh
+    fi
+  done
+  upsert_block "$zsh_file" "$tmp/pkg-zsh-block" "$zsh_add"
+  upsert_fish "$fish_file" "$fish_add"
 }
 
-shell_name="${SHELL:-}"
-shell_name="${shell_name##*/}"
-
-if [ "${PKG_INSTALL_SHELL_SETUP:-1}" = "0" ]; then
-  setup_state="skipped"
-  echo "Shell setup skipped: PKG_INSTALL_SHELL_SETUP=0 is set."
-  echo "No shell startup file was changed."
-elif [ "$setup_dirs_ok" -eq 0 ]; then
-  setup_state="failed"
-  setup_hard_error=1
-  echo "Shell setup was not performed. Fix the errors above and run again."
-else
-  case "$shell_name" in
-    bash)
-      # Interactive Bash reads .bashrc; login Bash reads the first login
-      # file. Both shells must work, so the block goes into both files.
-      upsert_block "$HOME/.bashrc"
-      upsert_block "$(bash_login_file)"
-      if [ "$file_failed" -eq 0 ]; then
-        setup_state="done"
-      fi
-      ;;
-    zsh)
-      zdotdir="${ZDOTDIR:-}"
-      if [ -n "$zdotdir" ]; then
-        case "$zdotdir" in
-          /*) ;;
-          *)
-            echo "error: ZDOTDIR is not an absolute path: $zdotdir" >&2
-            echo "  Set ZDOTDIR to an absolute path, or unset it." >&2
-            setup_state="failed"
-            setup_hard_error=1
-            ;;
-        esac
-        if [ "$setup_state" != "failed" ] && [ ! -d "$zdotdir" ]; then
-          if mkdir -p "$zdotdir"; then
-            echo "Shell setup: created ZDOTDIR $zdotdir."
-          else
-            echo "Shell setup: cannot create ZDOTDIR $zdotdir." >&2
-            setup_state="failed"
-            setup_hard_error=1
-          fi
-        fi
-        if [ "$setup_state" != "failed" ]; then
-          upsert_block "$zdotdir/.zshrc"
-          if [ "$file_failed" -eq 0 ]; then
-            setup_state="done"
-          fi
-        fi
-      else
-        upsert_block "$HOME/.zshrc"
-        if [ "$file_failed" -eq 0 ]; then
-          setup_state="done"
-        fi
-      fi
-      ;;
-    "")
-      setup_state="manual"
-      echo "SHELL is empty or not set, so the downloader does not know your shell."
-      echo "No shell startup file was changed."
-      print_dirs "$@"
-      echo "Or run the downloader again from your normal login shell."
-      ;;
-    *)
-      setup_state="manual"
-      echo "Automatic shell setup is not available for the shell: $shell_name"
-      echo "No shell startup file was changed."
-      print_dirs "$@"
-      ;;
+# ---------------------------------------------------------------------------
+# Main.
+# ---------------------------------------------------------------------------
+main() {
+  if [ "$#" -ne 0 ]; then
+    printf 'Usage: curl -fsSL https://github.com/%s/releases/latest/download/install.sh | sh\n' "$repo" >&2
+    printf '  The installer takes no options.\n' >&2
+    exit 2
+  fi
+  case "${PKG_INSTALL_MODE:-}" in
+    "") ;;
+    test) start_job=0 ;;
+    *) fail "PKG_INSTALL_MODE must be test or unset." ;;
   esac
-fi
 
-# ---------------------------------------------------------------------------
-# Report. The downloader cannot change the shell that ran it. Say plainly
-# what worked, what did not, and what remains.
-# ---------------------------------------------------------------------------
-if [ "${PKG_INSTALL_PREPARE:-1}" = "0" ]; then
-  echo "Search setup skipped: PKG_INSTALL_PREPARE=0 is set."
-  echo "Prepare it later with: pkg setup"
-elif [ -n "$nix_bin" ]; then
-  echo "Preparing local search. The first run can take several minutes."
-  if [ "${PKG_INSTALL_BACKGROUND:-1}" = "0" ]; then
-    if PATH="$nix_dir:$PATH" "$bindir/pkg" setup --no-background; then
-      echo "Search setup: complete. Background refresh is disabled."
-    else
-      echo "Search setup: incomplete. The client is installed. Retry with: pkg setup --no-background" >&2
-      setup_hard_error=1
-    fi
-  elif PATH="$nix_dir:$PATH" "$bindir/pkg" setup; then
-    echo "Search setup: complete. Daily background refresh is enabled."
-  else
-    echo "Search setup: incomplete. The client is installed. Retry with: pkg setup" >&2
-    setup_hard_error=1
+  case "$(uname -s):$(uname -m)" in
+    Linux:x86_64) system="x86_64-linux" ;;
+    Darwin:arm64) system="aarch64-darwin" ;;
+    *) fail "pkg runs on x86_64 Linux and Apple silicon macOS only." ;;
+  esac
+
+  for tool in curl tar gzip awk grep sed cmp tail head mktemp install; do
+    need "$tool"
+  done
+  if ! command -v shasum >/dev/null 2>&1 && ! command -v sha256sum >/dev/null 2>&1; then
+    fail "pkg needs the sha256sum or shasum command. Install one of them, then run this installer again."
   fi
-else
-  echo "Search setup needs Nix. After you install Nix, run: pkg setup"
-fi
 
-echo ""
-echo "Client: $bindir/pkg"
-if [ -n "$nix_bin" ]; then
-  echo "Detected Nix: $nix_bin"
-else
-  echo "No usable Nix installation was found."
-  if [ -n "$nix_rejected" ]; then
-    echo "Found $nix_rejected, but it did not answer 'nix --version'."
-    echo "Repair Nix, or fix PATH, then run this downloader again."
-  fi
-  echo "pkg needs an external Nix runtime. pkg does not install Nix."
-  echo "Install Determinate Nix from https://docs.determinate.systems/determinate-nix/"
-  echo "Then open a new terminal and run: pkg doctor"
-  echo "Until then, use the client by its full path: $bindir/pkg doctor"
-fi
+  case "${HOME:-}" in
+    /*) ;;
+    *) fail "HOME must be an absolute path. Start the installer from a normal terminal." ;;
+  esac
+  for variable in XDG_STATE_HOME XDG_CONFIG_HOME ZDOTDIR; do
+    value=""
+    eval "value=\${$variable:-}"
+    case "$value" in
+      "" | /*) ;;
+      *) fail "$variable must be an absolute path. Fix or unset it, then run this installer again." ;;
+    esac
+  done
 
-echo ""
-case "$setup_state" in
-  done)
-    if [ -n "$nix_dir" ]; then
-      echo "Shell setup: complete. New terminals get pkg, nix, and pkg packages on PATH."
-    else
-      echo "Shell setup: complete. New terminals get pkg and pkg packages on PATH."
+  newline="$(printf '\nx')"
+  newline="${newline%x}"
+  bindir="$HOME/.local/bin"
+  compldir="$HOME/.local/share/pkg/completions"
+  state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
+  config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  zdotdir="${ZDOTDIR:-}"
+  profile_bin="$state_home/nix/profiles/pkg/bin"
+
+  tmp="$(mktemp -d)"
+  trap cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  say "Installing pkg ${version}…"
+
+  find_nix
+  nix_offered=0
+  if [ -z "$nix_bin" ] && [ -z "$nix_rejected" ]; then
+    if offer_nix; then
+      nix_offered=1
+      find_nix
     fi
-    ;;
-  skipped)
-    echo "Shell setup: skipped (PKG_INSTALL_SHELL_SETUP=0). New terminals do NOT get pkg on PATH."
-    print_dirs "$@"
-    ;;
-  manual)
-    echo "Shell setup: not complete. Add the paths shown above to your shell yourself."
-    ;;
-  failed | not-run | *)
-    echo "Shell setup: not complete. Fix the errors above and run the downloader again."
-    ;;
-esac
+  fi
+  nix_dir=""
+  if [ -n "$nix_bin" ]; then
+    nix_dir="${nix_bin%/*}"
+    if [ "$nix_offered" -eq 1 ]; then
+      done_step "Installed Nix"
+    fi
+  fi
 
-echo ""
-echo "This downloader cannot change the shell that ran it."
-case "$shell_name" in
-  bash | zsh)
-    echo "For this terminal only, run:"
-    printf 'export PATH='
-    first=1
-    for dir do
-      if [ "$first" -eq 1 ]; then
-        printf '%s' "$(sq "$dir")"
-        first=0
-      else
-        printf ':%s' "$(sq "$dir")"
+  download_client
+  install_client
+
+  setup_shells
+  if [ "$shell_failed" -eq 0 ] && [ "$shell_manual" -eq 0 ]; then
+    done_step "Set up your shell"
+  fi
+
+  if [ -n "$nix_bin" ] && [ "$start_job" -eq 1 ]; then
+    if PATH="$nix_dir:$PATH" "$bindir/pkg" background enable > "$tmp/background.out" 2>&1; then
+      done_step "Search is getting ready in the background"
+    else
+      say "Search data will be prepared the first time you search."
+    fi
+  fi
+
+  if [ "$shell_manual" -eq 1 ] || [ "$shell_failed" -eq 1 ]; then
+    say ""
+    say "Add these directories to PATH in your shell's startup file:"
+    for dir in "$bindir" "$nix_dir" "$profile_bin"; do
+      if [ -n "$dir" ]; then
+        say "  $dir"
       fi
     done
-    printf ':"$PATH"\n'
-    ;;
-  *)
-    echo "For this terminal only, use the directories above in your shell's own PATH syntax."
-    ;;
-esac
-if [ "$setup_state" = "done" ]; then
-  echo "New terminals pick the setup up automatically."
-fi
-echo "Docs: https://github.com/${repo}/blob/${tag}/docs/install.md"
+  fi
 
-if [ "$setup_hard_error" -eq 1 ]; then
-  exit 1
-fi
-exit 0
+  say ""
+  if [ -z "$nix_bin" ]; then
+    if [ -n "$nix_rejected" ]; then
+      say "pkg found $nix_rejected, but it does not work. Repair Nix, then run this installer again."
+    elif [ "$nix_offered" -eq 1 ]; then
+      say "Nix was installed, but pkg cannot find it yet."
+      say "Open a new terminal window, then run this installer again."
+    else
+      say "pkg needs Nix to install packages. Install Nix:"
+      say "  $nix_command"
+      say "Then open a new terminal window and run: pkg doctor"
+    fi
+  else
+    say "Open a new terminal window to start using pkg."
+  fi
+  [ "$shell_failed" -eq 0 ] || exit 1
+}
+
+main "$@"

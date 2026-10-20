@@ -1,4 +1,4 @@
-//! Per-user periodic jobs for official discovery metadata.
+//! Per-user periodic job that updates pkg and official discovery metadata.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -130,7 +130,7 @@ fn job(
             let _ = write!(env, "<key>{key}</key><string>{}</string>", xml(value));
         }
         let content = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<!-- {MARKER} -->\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>{LABEL}</string>\n<key>ProgramArguments</key><array><string>{}</string><string>update</string><string>--catalogs-only</string></array>\n<key>EnvironmentVariables</key><dict>{env}</dict>\n<key>StartInterval</key><integer>86400</integer>\n<key>ProcessType</key><string>Background</string>\n<key>Nice</key><integer>10</integer>\n<key>LowPriorityIO</key><true/>\n<key>StandardInPath</key><string>/dev/null</string>\n<key>StandardOutPath</key><string>{}</string>\n<key>StandardErrorPath</key><string>{}</string>\n</dict></plist>\n",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<!-- {MARKER} -->\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>{LABEL}</string>\n<key>ProgramArguments</key><array><string>{}</string><string>update</string><string>--scheduled</string></array>\n<key>EnvironmentVariables</key><dict>{env}</dict>\n<key>StartInterval</key><integer>86400</integer>\n<key>ProcessType</key><string>Background</string>\n<key>Nice</key><integer>10</integer>\n<key>LowPriorityIO</key><true/>\n<key>StandardInPath</key><string>/dev/null</string>\n<key>StandardOutPath</key><string>{}</string>\n<key>StandardErrorPath</key><string>{}</string>\n</dict></plist>\n",
             xml(executable),
             xml(log_text),
             xml(log_text)
@@ -149,11 +149,11 @@ fn job(
             );
         }
         let service = format!(
-            "# {MARKER}\n[Unit]\nDescription=Refresh pkg package catalogs\n[Service]\nType=oneshot\nExecStart={} update --catalogs-only\n{env}StandardInput=null\nNice=10\nTimeoutStartSec=30min\n",
+            "# {MARKER}\n[Unit]\nDescription=Update pkg and its package catalogs\n[Service]\nType=oneshot\nExecStart={} update --scheduled\n{env}StandardInput=null\nNice=10\nTimeoutStartSec=30min\n",
             unit(executable, true)
         );
         let timer = format!(
-            "# {MARKER}\n[Unit]\nDescription=Daily pkg catalog refresh\n[Timer]\nOnStartupSec=10min\nOnUnitInactiveSec=1d\nRandomizedDelaySec=10min\n[Install]\nWantedBy=timers.target\n"
+            "# {MARKER}\n[Unit]\nDescription=Daily pkg update\n[Timer]\nOnStartupSec=10min\nOnUnitInactiveSec=1d\nRandomizedDelaySec=10min\n[Install]\nWantedBy=timers.target\n"
         );
         let directory = config_base.join("systemd/user");
         vec![
@@ -246,14 +246,23 @@ pub fn enable(paths: &Paths, nix: &Path) -> Result<(), Error> {
             "/bin/launchctl",
             &["bootstrap", &domain(), text(&job.files[0].0)?],
         )?;
-        println!("Refresh log: {}", job.log.display());
+        // Run once now, so search data is ready soon after installation.
+        optional_control("/bin/launchctl", &["kickstart", &target])?;
     } else {
         control("systemctl", &["--user", "daemon-reload"])?;
         control(
             "systemctl",
             &["--user", "enable", "--now", "pkg-catalog-refresh.timer"],
         )?;
-        println!("Refresh log: journalctl --user -u pkg-catalog-refresh.service");
+        optional_control(
+            "systemctl",
+            &[
+                "--user",
+                "start",
+                "--no-block",
+                "pkg-catalog-refresh.service",
+            ],
+        )?;
     }
     Ok(())
 }
@@ -299,7 +308,17 @@ pub fn disable(paths: &Paths) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn status(paths: &Paths) -> Result<String, Error> {
+/// Whether the scheduled user job is enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    /// Job files exist and the schedule is active.
+    On,
+    /// No pkg-owned job files exist.
+    Off,
+}
+
+/// Read the job state without changing it.
+pub fn state(paths: &Paths) -> Result<State, Error> {
     let job = configured_job(paths)?;
     if !job
         .files
@@ -309,9 +328,7 @@ pub fn status(paths: &Paths) -> Result<String, Error> {
         .iter()
         .all(|present| *present)
     {
-        return Ok(String::from(
-            "Disabled: daily catalog refresh. Enable it with `pkg background enable`.",
-        ));
+        return Ok(State::Off);
     }
     let result = if cfg!(target_os = "macos") {
         control(
@@ -325,8 +342,20 @@ pub fn status(paths: &Paths) -> Result<String, Error> {
         )
     };
     result
-        .map(|()| String::from("Enabled: daily official catalog refresh."))
+        .map(|()| State::On)
         .map_err(|error| Error::Schedule(Box::new(error)))
+}
+
+pub fn status(paths: &Paths) -> Result<String, Error> {
+    let log = if cfg!(target_os = "macos") {
+        configured_job(paths)?.log.display().to_string()
+    } else {
+        String::from("journalctl --user -u pkg-catalog-refresh.service")
+    };
+    Ok(match state(paths)? {
+        State::On => format!("On: pkg and its search data update daily.\nLog: {log}"),
+        State::Off => String::from("Off: pkg and its search data do not update."),
+    })
 }
 
 #[cfg(test)]
@@ -334,7 +363,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn job_preserves_paths_and_runs_only_catalog_refresh() {
+    fn job_preserves_paths_and_runs_only_the_scheduled_update() {
         let root = Path::new("/tmp/pkg spaces % $ & ' \\");
         let paths = Paths::from_bases(
             &root.join("state"),
@@ -350,7 +379,7 @@ mod tests {
                 macos,
             )
             .expect("job");
-            assert!(job.files[0].1.contains("--catalogs-only"));
+            assert!(job.files[0].1.contains("--scheduled"));
             if macos {
                 #[cfg(target_os = "macos")]
                 {

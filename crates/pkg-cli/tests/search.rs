@@ -121,7 +121,7 @@ else: sys.exit(9)
             formulae,
             original_runtime: String::new(),
         };
-        let (code, _, stderr) = context.run(&["setup", "--no-background"]);
+        let (code, _, stderr) = context.run(&["update", "--scheduled"]);
         assert_eq!(code, 0, "{stderr}");
         publish_search_tap(&context.home.path().join("state"));
         context.original_runtime = std::fs::read_to_string(&context.nix).unwrap();
@@ -256,7 +256,7 @@ fn literal_search_treats_regex_characters_as_text() {
 #[test]
 fn failed_update_retains_complete_snapshot() {
     let context = SearchContext::ready();
-    let (code, _, stderr) = context.run(&["update", "--catalogs-only"]);
+    let (code, _, stderr) = context.run(&["update", "--scheduled"]);
     assert_eq!(code, 1, "refresh must fail: {stderr}");
     let (code, stdout, stderr) = context.run(&["search", "ripgrep"]);
     assert_eq!(code, 0, "old complete catalog survives: {stderr}");
@@ -413,7 +413,7 @@ fn invalid_formula_refresh_retains_previous_snapshot() {
         context.original_runtime.replace("\"b\"*40", "\"c\"*40"),
     )
     .unwrap();
-    let (code, _, stderr) = context.run(&["update", "--catalogs-only"]);
+    let (code, _, stderr) = context.run(&["update", "--scheduled"]);
     assert_eq!(code, 1, "{stderr}");
     assert!(stderr.contains("formula catalog index"), "{stderr}");
     assert_eq!(std::fs::read(&formula_snapshot).unwrap(), complete);

@@ -109,16 +109,13 @@ impl NixError {
 
 fn not_found_diagnostic(path_entries: usize, standard: &[String]) -> String {
     format!(
-        "no usable Nix executable was found\npkg searched {path_entries} PATH directories and these standard Nix locations:\n  {}\n{}",
+        "pkg needs Nix, but no working Nix was found\n\
+         pkg searched {path_entries} PATH directories and these standard Nix locations:\n  {}\n\
+         If Nix is installed, open a new terminal window. If Nix is still not found,\n\
+         add its bin directory to PATH.\n\
+         If Nix is not installed, install Determinate Nix:\n  \
+         curl -fsSL https://install.determinate.systems/nix | sh -s -- install",
         standard.join("\n  "),
-        "Next steps:\n\
-                     - If Nix is installed, add its bin directory to PATH, for example:\n\
-                       export PATH=\"/nix/var/nix/profiles/default/bin:$PATH\"\n\
-                     - Or set `runtime.nix` in the pkg config file \
-                     (default ~/.config/pkg/config.toml) to the nix executable.\n\
-                     - If Nix is not installed, install Determinate Nix from\n\
-                       https://docs.determinate.systems/determinate-nix/\n\
-                     pkg does not install, update, or repair the Nix runtime."
     )
 }
 
@@ -161,11 +158,9 @@ mod tests {
         );
         assert!(text.contains("/home/u/.nix-profile/bin/nix"), "{text}");
         assert!(text.contains("add its bin directory to PATH"), "{text}");
-        assert!(text.contains("runtime.nix"), "{text}");
         assert!(
-            text.contains("https://docs.determinate.systems/determinate-nix/"),
+            text.contains("https://install.determinate.systems/nix"),
             "{text}"
         );
-        assert!(text.contains("does not install"), "{text}");
     }
 }

@@ -136,10 +136,8 @@ impl Snapshot {
             CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL) WITHOUT ROWID;
             CREATE TABLE pending(path TEXT PRIMARY KEY, root TEXT NOT NULL) WITHOUT ROWID;
             CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;"))?;
-        eprintln!(
-            "Preparing search data for {} ({system})…",
-            crate::output::short_source(source)
-        );
+        let label = crate::output::short_source(source);
+        crate::output::status(&format!("Preparing search data… {label}"));
         for root in ["packages", "legacyPackages"] {
             let initial = vec![vec![root.to_string(), system.to_string()]];
             match nix.metadata_batch(reference, system, root, &initial) {
@@ -171,7 +169,10 @@ impl Snapshot {
             if last_progress.elapsed() >= Duration::from_secs(1) {
                 let count: i64 =
                     connection.query_row("SELECT count(*) FROM packages", [], |row| row.get(0))?;
-                eprintln!("Search data: {count} packages.");
+                crate::output::status(&format!(
+                    "Preparing search data… {label}: {} packages",
+                    crate::output::count(u64::try_from(count).unwrap_or_default())
+                ));
                 last_progress = Instant::now();
             }
         }
@@ -274,7 +275,7 @@ fn evaluate(
         Ok(nodes) => store_nodes(connection, paths, nodes, root, system),
         Err(NixError::Interrupted { signal, .. }) => Err(CatalogError::Interrupted(signal)),
         Err(error @ (NixError::ResourceLimit(_) | NixError::Failed { .. })) if paths.len() > 1 => {
-            if matches!(error, NixError::ResourceLimit(_)) {
+            if matches!(error, NixError::ResourceLimit(_)) && nix.is_verbose() {
                 eprintln!("Splitting a search batch of {} entries.", paths.len());
             }
             let (left, right) = paths.split_at(paths.len() / 2);

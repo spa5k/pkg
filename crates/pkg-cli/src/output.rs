@@ -40,6 +40,12 @@ pub struct DoctorRow {
     pub detail: Option<String>,
 }
 
+/// Doctor statuses that fail the check with a nonzero exit.
+pub const UNHEALTHY_STATUSES: [&str; 4] = ["missing", "unreachable", "unreadable", "unhealthy"];
+
+/// Doctor statuses that need the user's attention but do not fail the check.
+pub const ATTENTION_STATUSES: [&str; 2] = ["off", "not on path"];
+
 /// Render doctor rows for humans.
 #[must_use]
 pub fn render_doctor(rows: &[DoctorRow], verbose: bool) -> String {
@@ -48,16 +54,14 @@ pub fn render_doctor(rows: &[DoctorRow], verbose: bool) -> String {
         let issues: Vec<&DoctorRow> = rows
             .iter()
             .filter(|row| {
-                matches!(
-                    row.status.as_str(),
-                    "missing" | "unreachable" | "unreadable" | "unhealthy"
-                )
+                let status = row.status.as_str();
+                UNHEALTHY_STATUSES.contains(&status) || ATTENTION_STATUSES.contains(&status)
             })
             .collect();
         if issues.is_empty() {
-            let _ = writeln!(out, "Healthy: no problems found.");
+            let _ = writeln!(out, "Everything is working.");
         } else {
-            let _ = writeln!(out, "Needs attention: {} issue(s).", issues.len());
+            let _ = writeln!(out, "Needs attention:");
             for row in issues {
                 let _ = writeln!(
                     out,
@@ -76,6 +80,83 @@ pub fn render_doctor(rows: &[DoctorRow], verbose: bool) -> String {
         }
     }
     out
+}
+
+/// Set when `--verbose` traces native commands, which a status line would hide.
+static PLAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Print permanent lines instead of transient status lines.
+pub fn plain(plain: bool) {
+    PLAIN.store(plain, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether transient status lines can replace each other on stderr.
+fn status_line_terminal() -> bool {
+    use std::io::IsTerminal as _;
+    !PLAIN.load(std::sync::atomic::Ordering::Relaxed)
+        && std::io::stderr().is_terminal()
+        && std::env::var_os("TERM").is_none_or(|term| term != "dumb")
+}
+
+/// Show one transient status line on an interactive terminal.
+///
+/// The line replaces the previous status line. Logs and pipes receive
+/// nothing, so a scheduled job does not write one line per update.
+pub fn status(text: &str) {
+    use std::io::Write as _;
+    if status_line_terminal() {
+        let mut stderr = std::io::stderr().lock();
+        let _ = write!(stderr, "\r\x1b[2K{text}");
+        let _ = stderr.flush();
+    }
+}
+
+/// Remove the transient status line, if one is shown.
+pub fn clear_status() {
+    status("");
+}
+
+/// Print one permanent stderr line below any transient status line.
+pub fn note(text: &str) {
+    clear_status();
+    eprintln!("{text}");
+}
+
+/// Print one stderr line for logs and pipes only.
+///
+/// An interactive terminal shows the transient status line instead.
+pub fn log(text: &str) {
+    if !status_line_terminal() {
+        eprintln!("{text}");
+    }
+}
+
+/// Format a count with thousands separators, for example `45,231`.
+#[must_use]
+pub fn count(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// Whether `directory` is an entry of the inherited `PATH`.
+#[must_use]
+pub fn on_path(directory: &std::path::Path) -> bool {
+    let wanted = std::fs::canonicalize(directory).ok();
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|entry| {
+            entry == directory
+                || wanted.as_ref().is_some_and(|wanted| {
+                    std::fs::canonicalize(&entry).ok().as_ref() == Some(wanted)
+                })
+        })
+    })
 }
 
 /// Keep one useful line from a native diagnostic in compact output.

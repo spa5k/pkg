@@ -127,11 +127,22 @@ jobs:
           rm dist/SHA256SUMS-*
           cd dist && sha256sum --check SHA256SUMS
 
+      # The stable install URL is releases/latest/download/install.sh.
+      # It serves the installer of the newest release that is published
+      # and not marked as a pre-release. The installer pins the tag's
+      # version, which package_client.sh checks against Cargo metadata.
+      - name: Add installer
+        run: |
+          set -eu
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${GH_REPO}/contents/install.sh?ref=${GITHUB_REF_NAME}" > dist/install.sh
+          grep -qx "version=\"${GITHUB_REF_NAME#v}\"" dist/install.sh
+
       - name: Create draft release
         run: |
           set -eu
           tag="${GITHUB_REF_NAME}"
           gh release create "$tag" --draft --verify-tag \
             --title "pkg ${tag#v}" \
-            --notes "Standalone client archives for x86_64 Linux and Apple silicon macOS. Requires an external Nix installation; see https://github.com/spa5k/pkg/blob/main/docs/install.md" \
+            --notes "Install or update: curl -fsSL https://github.com/spa5k/pkg/releases/latest/download/install.sh | sh. Client archives for x86_64 Linux and Apple silicon macOS. See https://github.com/spa5k/pkg/blob/main/docs/install.md" \
             dist/*

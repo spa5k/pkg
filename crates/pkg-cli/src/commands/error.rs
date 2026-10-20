@@ -25,6 +25,8 @@ pub enum CommandError {
     #[error("{0}")]
     Background(#[from] crate::background::Error),
     #[error("{0}")]
+    Client(#[from] crate::client::Error),
+    #[error("{0}")]
     Catalog(#[from] CatalogError),
     #[error("{0}")]
     Config(#[from] ConfigError),
@@ -64,6 +66,7 @@ impl CommandError {
             Self::Catalog(error) => error.signal(),
             Self::Apps(error) => error.signal(),
             Self::Background(error) => error.signal(),
+            Self::Client(error) => error.signal(),
             Self::TapImport { error, .. } => error.signal(),
             Self::TapSetup(error) => error.signal(),
             Self::Message(_)

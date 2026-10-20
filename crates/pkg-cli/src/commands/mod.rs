@@ -11,6 +11,7 @@ mod doctor;
 pub(crate) mod error;
 mod maintenance;
 mod support;
+mod uninstall;
 
 use std::process::ExitCode;
 
@@ -71,6 +72,7 @@ pub(crate) fn finish(outcome: Result<(), CommandError>) -> ExitCode {
 }
 
 fn dispatch(cli: &Cli) -> Result<(), CommandError> {
+    crate::output::plain(cli.verbose);
     // `--json` is a query option only; mutating commands must reject it
     // before touching the profile.
     if cli.json
@@ -95,8 +97,7 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
         Command::Install { ids } => profile::install(cli, ids),
         Command::List => profile::list(cli),
         Command::Remove { entries, entry } => profile::remove(cli, entries, *entry),
-        Command::Update { catalogs_only } => maintenance::update(cli, *catalogs_only),
-        Command::Setup { no_background } => maintenance::setup(cli, *no_background),
+        Command::Update { scheduled } => maintenance::update(cli, *scheduled),
         Command::Background(command) => maintenance::background(command),
         Command::Upgrade {
             entries,
@@ -111,6 +112,7 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
         Command::Completion { shell } => support::completion(*shell),
         Command::Apps(command) => apps::command(cli, command),
         Command::Tap(command) => tap::dispatch(cli, command),
+        Command::Client(crate::cli::ClientCommand::Uninstall { yes }) => uninstall::run(*yes),
     }
 }
 

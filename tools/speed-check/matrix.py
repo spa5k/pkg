@@ -63,13 +63,12 @@ def startup(bench):
 def catalogs(bench):
     # First refresh includes source resolution, native enumeration, serialization and fsync.
     for label in bench.binaries:
-        bench.observe(label, "setup_empty_cache", ["setup", "--no-background"])
+        bench.observe(label, "prepare_empty_cache", ["update", "--scheduled"])
         found = bench.query(label, ["search", "probe-000", "--source", "nixpkgs"])
         assert found["total"] >= 1
     for name, command in [
-        ("setup_warm", ["setup", "--no-background"]),
         ("update_warm", ["update"]),
-        ("update_catalogs_only", ["update", "--catalogs-only"]),
+        ("update_scheduled", ["update", "--scheduled"]),
         (
             "search_nixpkgs_128",
             ["search", "probe-000", "--source", "nixpkgs", "--json"],
@@ -190,7 +189,7 @@ def trace_nix(bench):
             ("info", ["info", "nixpkgs:probe-000", "--json"]),
             ("list_empty", ["list", "--json"]),
             ("doctor_empty", ["doctor", "--json"]),
-            ("update", ["update", "--catalogs-only"]),
+            ("update", ["update", "--scheduled"]),
         ]:
             trace.write_text("")
             bench.invoke("candidate", command)
