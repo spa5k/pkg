@@ -9,6 +9,7 @@ mod installed;
 mod lock;
 pub use lock::LockedProfile;
 mod query;
+mod summary;
 
 pub use query::{entries, history, installed_entries, list, status};
 

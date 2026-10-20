@@ -7,12 +7,22 @@ rollback, and roots.
 Global options: `--help`, `--version`, `--no-color`, `--verbose`.
 
 Human output shows work stages and a verified result. Install first shows
-`Resolving`, then the qualified package ID in `Installing` and `Installed`.
-Terminal progress shows elapsed seconds during native work. A mutation reports
-`Installed`, `Removed`, `Upgraded`, or `Restored` only after the native profile
-operation and macOS launcher refresh finish. If the profile changes but
-launcher refresh fails, it reports `Partial`, the cause, and `pkg apps sync` as
-the next step. Use `--verbose` to see native commands and detailed output.
+`Resolving`, then the package name in `Installing`. Terminal progress shows
+elapsed seconds during native work. A mutation reports its result only after
+the native profile operation and macOS launcher refresh finish. The result
+has one line for each changed package, with its name and version:
+
+```text
+Installed ripgrep 15.2.0
+Removed hello 2.12.1
+Upgraded ripgrep 15.1.0 → 15.2.0
+```
+
+The version comes from the store path name. A package without a version in
+its store path shows its name only. A package with new outputs but the same
+version shows `(new build)`. If the profile changes but launcher refresh
+fails, the command reports `Partial`, the cause, and `pkg apps sync` as the
+next step. Use `--verbose` to see native commands and detailed output.
 On a terminal, long operations show one status line that changes in place.
 Logs and pipes get plain lines.
 Query commands keep JSON output and shell commands keep script-only stdout.
@@ -24,10 +34,13 @@ After installation, `Commands` lists up to ten visible executable names that the
 package exposes in the profile. It reads local files and adds no network work.
 For example, `nixpkgs:fff` provides the `fff` command. It does not provide `ff`.
 
-Removal uses the same output filter as installation. Native messages marked
-`error (ignored)` are omitted from normal output. They are nonfatal native
-diagnostics. Warnings, trust prompts, and actual failure causes remain visible.
-Use `--verbose` to see all native output.
+Install, remove, and upgrade use the same output filter. Normal output
+omits native progress chatter and native summaries, for example
+`this path will be fetched`, `removed 1 packages, kept 3 packages`, and
+`upgrading '…' from flake '…'`. Native messages marked `error (ignored)` are
+also omitted. They are nonfatal native diagnostics. Warnings, trust prompts,
+and actual failure causes remain visible. Use `--verbose` to see all native
+output.
 
 If two packages provide the same file, installation fails. Normal output
 names both sources and the file, for example:
@@ -37,21 +50,24 @@ Cause: nixpkgs:bat (Nixpkgs) is already installed and provides bin/bat.
 Requested: brew:homebrew/core/bat (Homebrew Formula).
 ```
 
-An identical installed package reports `Already installed` without a failure.
-The result states whether installed entries changed. Use `--verbose` for the
-native diagnostic. `pkg` does not select a package or change its priority.
+An installed package reports `Already installed` with its version, without a
+failure. An active entry from the same source and attribute counts as
+installed, even when the source moved since the install. `pkg` does not add a
+second entry for it. When a newer build exists, the output names
+`pkg upgrade NAME`. Use `--verbose` for the native diagnostic. `pkg` does not
+select a package or change its priority.
 
 | Command | Behavior |
 | --- | --- |
 | `pkg search QUERY` | Search local catalogs. Shows ranked package IDs and availability. |
 | `pkg info ID` | Show source, attribute, metadata revision, and known limits. |
 | `pkg install ID…` or `pkg add ID…` | Resolve all names, then run one native profile add. |
-| `pkg list` | Read the dedicated profile. Shows package IDs and native entry IDs. |
-| `pkg remove ID… [--entry]` or `pkg uninstall ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. |
+| `pkg list` | Read the dedicated profile. Shows name, version, and source, sorted by name. The source is empty for Nixpkgs. Entry IDs show only for duplicate packages or with `--verbose`. |
+| `pkg remove ID… [--entry]` or `pkg uninstall ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. Several entries of one package from one source are removed together. |
 | `pkg update` | Update the installed client to the newest release, then refresh official catalogs and saved tap catalogs under their recorded consent. Does not change installed packages. |
-| `pkg upgrade ID… [--entry]` / `--all` | Follow each entry's original reference. Reports fixed references. After `tap remove`, `--all` filters removed-source references and forwards the remaining entries by explicit native entry IDs (not native `--all`); upgrading a removed-source entry refuses. |
-| `pkg history` | Show native profile generations. |
-| `pkg rollback [N]` | Use Nix's native previous or selected generation. Refreshes launchers. |
+| `pkg upgrade [ID…] [--entry]` | Without IDs, upgrade all packages (`--all` does the same). Follow each entry's original reference. Reports fixed references. When nothing changes, prints `Everything is up to date.` After `tap remove`, upgrade of all packages skips removed-source references and forwards the remaining entries by explicit native entry IDs (not native `--all`); upgrading a removed-source entry refuses. |
+| `pkg history` | Show retained generations, newest first, with the date and the package changes of each. `*` marks the current generation. A new profile prints `No changes yet.` Reads local files only. `--verbose` prints the native history. |
+| `pkg rollback [N]` | Use Nix's native previous or selected generation. Prints the destination and the package changes. Refreshes launchers. |
 | `pkg prune --older-than Nd` | Remove only eligible non-current generations. Requires an explicit positive age. |
 | `pkg doctor` | Read-only runtime, profile, launcher, daily job, and `PATH` status. Repairs nothing. |
 | `pkg self uninstall [--yes]` | Remove the client, completions, shell setup, daily job, settings, and search data. Nix and installed packages stay. Without a terminal, `--yes` is required. |
@@ -325,9 +341,10 @@ The result is an array with one row per **active** profile entry:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `package_id` | string | Package ID accepted by remove and upgrade. Duplicate entries require an explicit entry choice. |
+| `package_id` | string | Package ID accepted by remove and upgrade. Duplicate entries of one package from one source select together; other duplicates require an explicit entry choice. |
 | `entry_id` | string | Exact native entry ID. Pass it with `--entry` to select one duplicate. |
 | `name` | string | Final attribute segment. |
+| `version` | string, nullable | Version from the store path name; `null` when the name has no version. |
 | `source` | string | The original moving reference installed from. |
 | `locked_source` | string | The locked reference Nix resolved. |
 | `revision` | string, nullable | Locked revision of the locked source. |
@@ -437,9 +454,11 @@ Update apps through `pkg upgrade`. If a copy is missing or damaged,
 Profile mutations and explicit app sync hold one process lock per pkg
 profile. The lock covers inventory checks, mutation, verification, and app
 sync. Direct Nix commands do not use this lock. Repeating an install skips
-an active entry with the same source, attribute, and output set.
+an active entry with the same source and attribute. With an explicit output
+selection, the output set must also match.
 
 Default rollback selects Nix's previous retained generation. After a
 branched history, that generation can contain an older package set.
-The command prints the destination generation. Use `pkg history` and
-`pkg rollback N` to choose a specific retained generation.
+The command prints the destination generation and the package changes, for
+example `Added hello 2.12.1`. Use `pkg history` and `pkg rollback N` to
+choose a specific retained generation.

@@ -45,6 +45,12 @@ pub fn commands(entry: &ProfileEntry, profile: &std::path::Path) -> Vec<String> 
     names.into_iter().collect()
 }
 
+/// The short name that the user types for this entry, such as `ripgrep`
+/// or `stats`.
+pub fn display_name(entry: &ProfileEntry, config: &Config, state_home: &std::path::Path) -> String {
+    crate::output::short_package_name(&package_id(entry, config, state_home))
+}
+
 pub fn package_id(entry: &ProfileEntry, config: &Config, state_home: &std::path::Path) -> String {
     let mut parts = entry.attr_path.splitn(3, '.');
     let root = parts.next().unwrap_or_default();
@@ -119,11 +125,20 @@ pub fn select(
         match matches.as_slice() {
             [] => {
                 return Err(format!(
-                    "`{request}` is not installed. Run `pkg list` for package IDs."
+                    "`{request}` is not installed. Run `pkg list` to see installed packages."
                 ));
             }
             [(key, _)] => {
                 selected.insert((*key).clone());
+            }
+            // Several entries of the same package from the same source are
+            // one package for the user. Select all of them.
+            [(_, first), rest @ ..]
+                if rest.iter().all(|(_, entry)| {
+                    entry.original_url == first.original_url && entry.attr_path == first.attr_path
+                }) =>
+            {
+                selected.extend(matches.iter().map(|(key, _)| (*key).clone()));
             }
             many => {
                 let choices = many
@@ -242,39 +257,6 @@ mod tests {
             .unwrap(),
             ["python"]
         );
-        entries.insert(String::from("nix/casks-1"), entries["nix/casks"].clone());
-        let error = select(
-            &entries,
-            &config,
-            state,
-            &[String::from("rectangle")],
-            false,
-        )
-        .unwrap_err();
-        assert!(error.contains("--entry nix/casks-1"), "{error}");
-        assert_eq!(
-            select(
-                &entries,
-                &config,
-                state,
-                &[String::from("nix/casks-1")],
-                true
-            )
-            .unwrap(),
-            ["nix/casks-1"]
-        );
-        entries.get_mut("nix/casks-1").unwrap().active = false;
-        assert_eq!(
-            select(
-                &entries,
-                &config,
-                state,
-                &[String::from("rectangle")],
-                false
-            )
-            .unwrap(),
-            ["nix/casks"]
-        );
         let foreign = entry(
             "packages.aarch64-darwin.homebrew/cask/rectangle",
             "github:other/project",
@@ -299,5 +281,68 @@ mod tests {
         }
         let foreign = entry(&attribute, "github:other/project");
         assert!(package_id(&foreign, &config, state).starts_with("github:other/project#"));
+    }
+
+    #[test]
+    fn duplicate_entries_of_one_package_select_together() {
+        let config = Config::default();
+        let state = Path::new("/tmp/pkg-selector-test-state");
+        let rectangle = entry(
+            "packages.aarch64-darwin.homebrew/cask/rectangle",
+            &config.sources.casks,
+        );
+        let mut entries = BTreeMap::from([(String::from("nix/casks"), rectangle)]);
+        // Two entries of one package from one source are one package.
+        entries.insert(String::from("nix/casks-1"), entries["nix/casks"].clone());
+        assert_eq!(
+            select(
+                &entries,
+                &config,
+                state,
+                &[String::from("rectangle")],
+                false
+            )
+            .unwrap(),
+            ["nix/casks", "nix/casks-1"]
+        );
+        // The same name from another source needs an exact entry.
+        entries.insert(
+            String::from("rectangle"),
+            entry("packages.aarch64-darwin.rectangle", "github:other/project"),
+        );
+        let error = select(
+            &entries,
+            &config,
+            state,
+            &[String::from("rectangle")],
+            false,
+        )
+        .unwrap_err();
+        assert!(error.contains("--entry nix/casks-1"), "{error}");
+        assert!(error.contains("--entry rectangle"), "{error}");
+        entries.remove("rectangle");
+        assert_eq!(
+            select(
+                &entries,
+                &config,
+                state,
+                &[String::from("nix/casks-1")],
+                true
+            )
+            .unwrap(),
+            ["nix/casks-1"]
+        );
+        entries.get_mut("nix/casks-1").unwrap().active = false;
+        assert_eq!(
+            select(
+                &entries,
+                &config,
+                state,
+                &[String::from("rectangle")],
+                false
+            )
+            .unwrap(),
+            ["nix/casks"]
+        );
     }
 }

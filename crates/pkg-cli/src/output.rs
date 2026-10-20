@@ -421,25 +421,92 @@ pub fn short_source(source: &str) -> String {
     }
     normalized
 }
-/// Render list rows for humans.
+/// The short name that the user types for a package ID.
+///
+/// `nixpkgs:ripgrep` gives `ripgrep`. `cask:homebrew/cask/stats` and
+/// `brew:homebrew/core/jq` give the token. Other IDs stay complete.
 #[must_use]
-pub fn render_list(rows: &[ListRow]) -> String {
+pub fn short_package_name(id: &str) -> String {
+    if let Some(attribute) = id.strip_prefix("nixpkgs:") {
+        return attribute.to_string();
+    }
+    if let Some(full) = id
+        .strip_prefix("cask:")
+        .or_else(|| id.strip_prefix("brew:"))
+    {
+        return full.rsplit('/').next().unwrap_or(full).to_string();
+    }
+    id.to_string()
+}
+
+/// The source label of a package ID: empty for Nixpkgs, `cask` for
+/// official Casks, `brew` for Formulae, `owner/tap` for a saved tap, and
+/// `source` for other IDs.
+fn source_label(id: &str, source: &str) -> String {
+    if id.starts_with("nixpkgs:") {
+        return String::new();
+    }
+    if id.starts_with("brew:") {
+        return String::from("brew");
+    }
+    if let Some(full) = id.strip_prefix("cask:") {
+        return match full.rsplit_once('/') {
+            Some(("homebrew/cask", _)) | None => String::from("cask"),
+            Some((tap, _)) => tap.to_string(),
+        };
+    }
+    source.to_string()
+}
+
+/// The name column of one list row. A flake entry shows its entry name,
+/// because the source column names the flake.
+fn list_name(row: &ListRow) -> String {
+    if row.package_id.contains('#') {
+        row.name.clone()
+    } else {
+        short_package_name(&row.package_id)
+    }
+}
+
+/// Render list rows for humans, sorted by name.
+///
+/// The entry ID column shows only for duplicate packages or with
+/// `--verbose`.
+#[must_use]
+pub fn render_list(rows: &[ListRow], verbose: bool) -> String {
     let mut out = String::new();
     if rows.is_empty() {
         let _ = writeln!(out, "No packages installed.");
-        let _ = writeln!(out, "Next: pkg search QUERY");
+        let _ = writeln!(
+            out,
+            "Next: {}",
+            paint(Stream::Out, Tone::Accent, "pkg search QUERY")
+        );
         return out;
     }
-    let width = rows
-        .iter()
-        .map(|row| row.package_id.len())
-        .max()
-        .unwrap_or(7)
-        .max(7);
-    let _ = writeln!(out, "{:<width$}  ENTRY ID", "PACKAGE");
-    for row in rows {
-        let _ = writeln!(out, "{:<width$}  {}", row.package_id, row.entry_id);
+    let mut ids: Vec<&str> = rows.iter().map(|row| row.package_id.as_str()).collect();
+    ids.sort_unstable();
+    let duplicates = ids.windows(2).any(|pair| pair[0] == pair[1]);
+    let entries = verbose || duplicates;
+    let mut sorted: Vec<&ListRow> = rows.iter().collect();
+    sorted.sort_by_cached_key(|row| (list_name(row), row.entry_id.clone()));
+    let mut table = Table::new(if entries {
+        &["NAME", "VERSION", "SOURCE", "ENTRY ID"]
+    } else {
+        &["NAME", "VERSION", "SOURCE"]
+    });
+    for row in sorted {
+        let mut cells = vec![
+            paint(Stream::Out, Tone::Strong, &list_name(row)),
+            row.version.clone().unwrap_or_default(),
+            source_label(&row.package_id, &row.source),
+        ];
+        if entries {
+            cells.push(row.entry_id.clone());
+        }
+        table.row(cells);
     }
+    out.push_str(&table.render(Stream::Out));
     out
 }
 
@@ -452,6 +519,8 @@ pub struct ListRow {
     pub package_id: String,
     /// The final attribute name.
     pub name: String,
+    /// The version from the store path name, when known.
+    pub version: Option<String>,
     /// The original moving reference the entry was installed from.
     pub source: String,
     /// The locked source reference that Nix resolved.

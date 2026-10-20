@@ -291,12 +291,9 @@ fn fixed_only_upgrades_keep_the_profile_without_native_mutation() {
     for (args, message) in [
         (
             &["upgrade", "opaque", "--entry"][..],
-            "Unchanged: selected entries use fixed source references.",
+            "Nothing to upgrade. The selected packages use a fixed source revision.",
         ),
-        (
-            &["upgrade", "--all"][..],
-            "Unchanged: no movable entries to upgrade.",
-        ),
+        (&["upgrade", "--all"][..], "Nothing to upgrade."),
     ] {
         let fixture = Fixture::new();
         let pinned = RUNTIME.replace(
@@ -311,7 +308,10 @@ fn fixed_only_upgrades_keep_the_profile_without_native_mutation() {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("Skipped: opaque (fixed source reference)."));
+        assert!(
+            stdout.contains("Skipped: probe (fixed source revision)."),
+            "{stdout}"
+        );
         assert!(stdout.contains(message), "{stdout}");
         assert!(!fixture.home.path().join("changed").exists());
         let calls = fixture.calls();

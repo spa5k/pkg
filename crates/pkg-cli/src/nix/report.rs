@@ -45,8 +45,19 @@ const HIDDEN_PREFIXES: &[&str] = &[
     "warning: redirecting to ",
     "evaluating derivation ",
     "these ",
+    "this path ",
+    "this derivation ",
     "/nix/store/",
+    "switching profile from version ",
 ];
+
+/// Whether `line` is a native summary that pkg reports itself, such as
+/// `removed 1 packages, kept 3 packages` or `upgrading 'hello' from flake
+/// '…' to '…'`.
+fn native_summary(line: &str) -> bool {
+    line.starts_with("removed ") && line.contains(" packages, kept ")
+        || line.starts_with("upgrading '") && line.contains("' from flake '")
+}
 
 /// The compact name of one repository URL or store path: its final path
 /// segment, without a ".git" suffix.
@@ -73,6 +84,7 @@ fn classify(line: &str) -> Kind {
         || HIDDEN_PREFIXES
             .iter()
             .any(|prefix| line.starts_with(prefix))
+        || native_summary(line)
         || line.starts_with("removing '") && line.ends_with('\'')
         || line.starts_with("Last ") && line.contains(" log lines:")
         || line.starts_with("unpacking '") && line.ends_with(" into the Git cache...")
@@ -331,6 +343,13 @@ mod tests {
             "unpacking 'github:numtide/flake-utils/11707dc2' into the Git cache...",
             "error (ignored): opening file \"/etc/nix/sentry-endpoint\": Permission denied",
             "removing 'github:NixOS/nixpkgs#legacyPackages.aarch64-darwin.fff'",
+            "this path will be fetched (1.8 MiB download, 5.8 MiB unpacked):",
+            "this derivation will be built:",
+            "removed 1 packages, kept 3 packages",
+            "switching profile from version 4 to 3",
+            "upgrading 'legacyPackages.aarch64-darwin.jq' from flake \
+             'github:NixOS/nixpkgs/682ba80136e2c8dacd6b8900f578a72329458901' to \
+             'github:NixOS/nixpkgs/682ba80136e2c8dacd6b8900f578a72329458901'",
         ] {
             assert_eq!(classify(line), Kind::Hide, "{line}");
         }

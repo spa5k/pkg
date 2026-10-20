@@ -234,7 +234,14 @@ fn profile_queries_preserve_native_state_without_creating_a_lock() {
 
     let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["history"], &path);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("3  2026-10-18  current"), "{stdout}");
+    // History reads the local generation manifest; no native call is needed.
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("*  3 ") && line.ends_with("+hello")),
+        "{stdout}"
+    );
+    assert!(stdout.contains("* current generation"), "{stdout}");
     assert_eq!(
         std::fs::read_link(&profile).expect("profile link"),
         std::path::Path::new("pkg-3-link")
@@ -790,8 +797,10 @@ fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     // remaining entry IDs explicitly without `--all`.
     let (code, stdout, stderr) = run(&["upgrade", "--all"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
-    assert!(stdout.contains("tap-entry"), "skip note: {stdout}");
-    assert!(stdout.contains("keeping locked outputs"), "{stdout}");
+    assert!(
+        stdout.contains("(tap somebody/apps was removed; the installed version stays)."),
+        "skip note: {stdout}"
+    );
     let recorded = std::fs::read_to_string(&args_file).expect("upgrade args recorded");
     assert!(recorded.contains("github-entry"), "{recorded}");
     assert!(!recorded.contains("tap-entry"), "{recorded}");
@@ -854,7 +863,7 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
     let (code, stdout, stderr) = run(&["install", "github:helix-editor/helix#helix"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(
-        stdout.contains("Unchanged: profile did not change."),
+        stdout.contains("Nothing changed."),
         "the fake runtime leaves the profile unchanged: {stdout}"
     );
     for hidden in [
@@ -960,8 +969,8 @@ esac
     };
     let (code, stdout, stderr) = run(&["uninstall", "fff"]);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(stdout.trim(), "Removed: nixpkgs:fff");
-    assert!(stderr.contains("Removing: nixpkgs:fff"), "{stderr}");
+    assert_eq!(stdout.trim(), "Removed fff");
+    assert!(stderr.contains("Removing: fff"), "{stderr}");
     assert!(
         stderr.contains("fixture warning") && stderr.contains("do you want to continue"),
         "{stderr}"
@@ -1313,11 +1322,8 @@ esac",
     let config = home.path().join("config/pkg");
     std::fs::create_dir_all(&config).unwrap();
     for (color, flags, expected) in [
-        (
-            "auto",
-            &[][..],
-            "\x1b[31mVersion 3 (2026-10-17)\x1b[0m\n\x1b[1;32mgen 3\x1b[m plain\x1bb\x1b[",
-        ),
+        // Pipes get plain text even when the configuration allows color.
+        ("auto", &[][..], "Version 3 (2026-10-17)\ngen 3 plain\x1bb"),
         (
             "auto",
             &["--no-color"][..],
