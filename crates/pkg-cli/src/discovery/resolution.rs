@@ -238,9 +238,19 @@ impl<'a> Resolution<'a> {
         {
             return Ok(None);
         }
-        let names = self.take_names()?;
-        let row = names.native_row(reference, attribute);
-        self.names = Some(names);
+        let row = match &self.names {
+            Some(names) => names.native_row(reference, attribute),
+            // A Nixpkgs ID needs no tap data, so a broken tap does not
+            // block it. Bare names still load every tap.
+            None => catalog::Names::local(
+                &self.session.paths.cache_dir,
+                &self.session.config.sources,
+                &self.system,
+                crate::tap::SavedCatalogs::default(),
+                catalog::Kept::default(),
+            )
+            .native_row(reference, attribute),
+        };
         let Some((row, report)) = row? else {
             return Ok(None);
         };

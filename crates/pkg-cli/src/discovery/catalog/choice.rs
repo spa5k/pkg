@@ -194,9 +194,6 @@ impl Names {
         scope: Scope,
     ) -> Result<Choice, CatalogError> {
         let query = query(name)?;
-        if self.casks().is_none() {
-            self.casks = OnceCell::from(Some(casks.load()?.index.clone()));
-        }
         let local_native = self.native.is_some();
         if scope == Scope::All && local_native && self.native_failed(name)? {
             // Nixpkgs comes first, and it keeps this name as an attribute
@@ -209,6 +206,10 @@ impl Names {
         let mut exact = Vec::new();
         if scope == Scope::All && !local_native {
             exact.extend(nix_exact(nix, &sources.nixpkgs, name, &self.system)?);
+        }
+        // After Nixpkgs, so that a Nixpkgs evaluation error comes first.
+        if self.casks().is_none() {
+            self.casks = OnceCell::from(Some(casks.load()?.index.clone()));
         }
         exact.extend(self.exact(name, scope, &query)?);
         if scope == Scope::All

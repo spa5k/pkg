@@ -168,7 +168,7 @@ def main():
         assert doctor["background refresh"]["status"] == "off", doctor
         assert doctor["shell"]["status"] == "not on path", doctor
         human = run(pkg, "doctor")
-        assert human.startswith("Needs attention:\n"), human
+        assert human.startswith("Suggestions:\n"), human
         assert "background refresh:" in human and "shell:" in human, human
         assert "config: defaults" in run(pkg, "doctor", "--verbose")
         assert not (config_base / "pkg/config.toml").exists()
@@ -211,9 +211,9 @@ def main():
                       f"casks = {json.dumps(reference)}\n")
     flake_file.write_text(valid_flake)
     installed = run(pkg, "add", "nixpkgs:probe")
-    assert "Installed: nixpkgs:probe" in installed, installed
+    assert "Installed probe 1" in installed, installed
     assert "Commands: probe" in installed, installed
-    assert "Installing: nixpkgs:probe" in results[-1]["stderr"], results[-1]
+    assert "Installing: probe" in results[-1]["stderr"], results[-1]
     assert run(str(profile / "bin/probe")).strip() == "1"
     installed_entry = entries()[0]
     assert installed_entry["package_id"] == "nixpkgs:probe", installed_entry
@@ -266,28 +266,30 @@ def main():
     first_number = first_generation.removeprefix("pkg-").removesuffix("-link")
     second_number = second_generation.removeprefix("pkg-").removesuffix("-link")
     restored = run(pkg, "rollback", first_number)
-    assert f"Restored: generation {first_number}." in restored, restored
+    assert f"Rolled back to generation {first_number}." in restored, restored
     assert os.readlink(profile) == first_generation
     assert (profile / "manifest.json").read_bytes() == first_manifest
     assert run(str(profile / "bin/probe")).strip() == "1"
     before = snapshot()
-    assert run(pkg, "rollback", first_number) == f"Unchanged: generation {first_number} is still active.\n"
+    assert run(pkg, "rollback", first_number) == f"Generation {first_number} is already active. Nothing changed.\n"
     run(pkg, "rollback", "999999", code=1)
     assert snapshot() == before
     run(pkg, "rollback", second_number)
     assert run(str(profile / "bin/probe")).strip() == "2"
     history = run(pkg, "history")
-    rows = [line.split() for line in history.splitlines()[1:] if line and line[0].isdigit()]
-    assert {int(row[0]) for row in rows} == {
+    # A `*` before the number marks the current generation.
+    rows = [(line.startswith("*"), line.lstrip("* ").split())
+            for line in history.splitlines()[1:] if line.lstrip("* ")[:1].isdigit()]
+    assert {int(row[0]) for _, row in rows} == {
         int(name.removeprefix("pkg-").removesuffix("-link")) for name in snapshot()[2]
     }, history
-    assert [row[0] for row in rows if row[-1] == "current"] == [second_number], history
+    assert [row[0] for current, row in rows if current] == [second_number], history
     run(pkg, "rollback")
     assert run(str(profile / "bin/probe")).strip() == "1"
     print("PASS: failed batch and upgrade preserve generations; selected and previous rollback restore commands")
     removed = run(pkg, "uninstall", "--entry", "--", entries()[0]["entry_id"])
-    assert "Removed: nixpkgs:probe" in removed, removed
-    assert "Removing: nixpkgs:probe" in results[-1]["stderr"], results[-1]
+    assert "Removed probe" in removed, removed
+    assert "Removing: probe" in results[-1]["stderr"], results[-1]
     assert "error (ignored)" not in results[-1]["stderr"], results[-1]
     assert entries() == []
 
@@ -316,7 +318,7 @@ def main():
     assert doctor["tap fixture/broken"]["status"] == "unhealthy", doctor
     assert "pkg tap update fixture/broken" in doctor["tap fixture/broken"]["detail"], doctor
     human = run(pkg, "doctor", code=1)
-    assert "Needs attention:" in human and "pkg tap update fixture/broken" in human, human
+    assert "Problems:" in human and "pkg tap update fixture/broken" in human, human
     assert registry.read_bytes() == registry_bytes
     assert not (registry.parent / "fixture").exists()
     registry.write_text("{ not json")
@@ -380,7 +382,7 @@ def main():
                 time.sleep(0.05)
             waiter = subprocess.Popen([pkg, "install", "nixpkgs:slow"],
                                       env=env, stdout=waiter_log, stderr=waiter_log)
-            while "Waiting for another pkg command:" not in Path(waiter_log.name).read_text():
+            while "Waiting for another pkg command" not in Path(waiter_log.name).read_text():
                 assert waiter.poll() is None, Path(waiter_log.name).read_text()
                 assert holder.poll() is None, Path(holder_log.name).read_text()
                 assert time.monotonic() < deadline, "second command did not wait for the profile lock"
@@ -508,7 +510,8 @@ def main():
     for name in aged:
         os.utime(profile.parent / name, (old_time, old_time), follow_symlinks=False)
     pruned = run(pkg, "prune", "--older-than", "30d")
-    assert pruned == f"Pruned: {len(expired)} old generation(s). Current generation kept.\n", pruned
+    count = "1 old generation" if len(expired) == 1 else f"{len(expired)} old generations"
+    assert pruned == f"Pruned {count}. The current generation stays.\n", pruned
     after = snapshot()
     assert after[:2] == before[:2]
     assert after[2] == {name: before[2][name]
@@ -527,7 +530,7 @@ def main():
     assert snapshot() == before
     for name in before[2]:
         os.utime(profile.parent / name, (old_time, old_time), follow_symlinks=False)
-    assert run(pkg, "prune", "--older-than", "30d") == "Pruned: 2 old generation(s). Current generation kept.\n"
+    assert run(pkg, "prune", "--older-than", "30d") == "Pruned 2 old generations. The current generation stays.\n"
     after = snapshot()
     assert after[:2] == before[:2]
     assert after[2] == {current_generation: before[2][current_generation]}

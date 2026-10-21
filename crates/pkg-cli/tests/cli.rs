@@ -1357,10 +1357,12 @@ os.kill(os.getpid(),sig)
                 1,
                 "no later control command: {output:?}"
             );
+            // `enable` checks the user manager before it writes job files.
             for unit in ["pkg-catalog-refresh.service", "pkg-catalog-refresh.timer"] {
-                assert!(
+                assert_eq!(
                     units.join(unit).exists(),
-                    "job files remain after cancelled control"
+                    action != "enable",
+                    "{action}: cancelled control changes no job files"
                 );
             }
         }

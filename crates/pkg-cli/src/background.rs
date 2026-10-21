@@ -349,9 +349,6 @@ pub enum State {
 
 /// Read the job state without changing it.
 pub fn state(paths: &Paths) -> Result<State, Error> {
-    if !scheduler_ready()? {
-        return Ok(State::Unavailable);
-    }
     let job = configured_job(paths)?;
     if !job
         .files
@@ -361,7 +358,11 @@ pub fn state(paths: &Paths) -> Result<State, Error> {
         .iter()
         .all(|present| *present)
     {
-        return Ok(State::Off);
+        return Ok(if scheduler_ready()? {
+            State::Off
+        } else {
+            State::Unavailable
+        });
     }
     let result = if cfg!(target_os = "macos") {
         control(
