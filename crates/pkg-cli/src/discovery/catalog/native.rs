@@ -12,7 +12,7 @@ use super::{CatalogError, cache, exposed_attribute};
 
 const SETTINGS: &str = "PRAGMA cache_size=-8192; PRAGMA mmap_size=0; PRAGMA temp_store=FILE;";
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct Header {
     schema: u32,
     source: String,
@@ -24,6 +24,19 @@ pub(super) struct Header {
     pub(super) saved_unix: u64,
     #[serde(default)]
     unique_exposed: bool,
+    #[serde(default)]
+    pub(super) origin: Origin,
+}
+
+/// Where the rows of a snapshot come from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    /// An evaluation on this computer.
+    #[default]
+    Local,
+    /// The package list that a NixOS channel publishes.
+    Published,
 }
 
 pub(super) struct Snapshot {
@@ -39,6 +52,8 @@ pub(super) struct Package<'a> {
     pub description: &'a str,
     /// The main command, from `meta.mainProgram`.
     pub command: Option<&'a str>,
+    /// Why Nixpkgs cannot install the package on this system.
+    pub unavailable: Option<&'a str>,
 }
 
 /// One owned snapshot row, for direct lookups.
@@ -56,17 +71,104 @@ pub struct NativeRow {
     pub description: String,
     /// The main command, when declared.
     pub command: Option<String>,
+    /// Why Nixpkgs cannot install the package on this system.
+    pub unavailable: Option<String>,
 }
 
 /// The snapshot schema. Version 3 adds the main command column and the
-/// attributes whose evaluation failed.
-const SCHEMA: u32 = 3;
+/// attributes whose evaluation failed. Version 4 adds the reason that a
+/// package cannot install on this system.
+const SCHEMA: u32 = 4;
 
 /// The file keys of older schemas. A new snapshot removes their files.
-const OLD_KEYS: [&str; 2] = ["native-sqlite-1", "native-sqlite-2"];
+const OLD_KEYS: [&str; 3] = ["native-sqlite-1", "native-sqlite-2", "native-sqlite-3"];
 
 fn path(cache_dir: &Path, source: &str, system: &str) -> PathBuf {
-    keyed_path(cache_dir, "native-sqlite-3", source, system)
+    keyed_path(cache_dir, "native-sqlite-4", source, system)
+}
+
+/// The data of a stopped local preparation. The next preparation for the
+/// same source revision continues it.
+fn partial_path(destination: &Path) -> PathBuf {
+    let mut name = destination.as_os_str().to_owned();
+    name.push(".partial");
+    PathBuf::from(name)
+}
+
+/// Paths in one evaluation.
+const BATCH: usize = 512;
+
+fn create_tables(connection: &Connection) -> Result<(), CatalogError> {
+    Ok(connection.execute_batch(&format!("{SETTINGS}
+        PRAGMA journal_mode=DELETE;
+        CREATE TABLE metadata(value TEXT NOT NULL);
+        CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL, command TEXT, leaf TEXT NOT NULL, unavailable TEXT) WITHOUT ROWID;
+        CREATE TABLE pending(path TEXT PRIMARY KEY, root TEXT NOT NULL) WITHOUT ROWID;
+        CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;
+        CREATE TABLE failures(attribute TEXT PRIMARY KEY) WITHOUT ROWID;"))?)
+}
+
+/// Open the partial data of a stopped preparation for the same source
+/// revision. Otherwise, start new partial data. Return whether the data
+/// continues.
+fn open_partial(staging: &Path, header: &Header) -> Result<(Connection, bool), CatalogError> {
+    // The file may not follow a link, but the cache folder may be one.
+    let real = staging
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .zip(staging.file_name())
+        .map(|(parent, name)| parent.join(name));
+    let earlier = real
+        .and_then(|real| {
+            Connection::open_with_flags(
+                real,
+                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+            )
+            .ok()
+        })
+        .filter(|connection| {
+            connection
+                .query_row("PRAGMA quick_check(1)", [], |row| row.get::<_, String>(0))
+                .is_ok_and(|check| check == "ok")
+                && connection
+                    .query_row("SELECT value FROM metadata", [], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .ok()
+                    .and_then(|value| serde_json::from_str::<Header>(&value).ok())
+                    .is_some_and(|earlier| earlier == *header)
+                && connection.execute_batch(SETTINGS).is_ok()
+        });
+    if let Some(connection) = earlier {
+        return Ok((connection, true));
+    }
+    let mut journal = staging.as_os_str().to_owned();
+    journal.push("-journal");
+    for file in [staging, Path::new(&journal)] {
+        match std::fs::remove_file(file) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(CatalogError::cache_write(error));
+            }
+            _ => {}
+        }
+    }
+    let connection = Connection::open(staging)?;
+    create_tables(&connection)?;
+    connection.execute(
+        "INSERT INTO metadata VALUES (?1)",
+        [serde_json::to_string(header).map_err(CatalogError::cache_write)?],
+    )?;
+    Ok((connection, false))
+}
+
+/// Evaluations that run at the same time: at most four, at most one for
+/// each processor, and one for each 640 MiB of available memory.
+fn parallel_evaluations() -> usize {
+    let processors = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let memory = pkg_process::available_memory().map_or(1, |bytes| {
+        usize::try_from(bytes / (640 * 1024 * 1024)).unwrap_or(usize::MAX)
+    });
+    processors.min(memory).clamp(1, 4)
 }
 
 fn keyed_path(cache_dir: &Path, key: &str, source: &str, system: &str) -> PathBuf {
@@ -154,38 +256,46 @@ impl Snapshot {
         if let Some(snapshot) = Self::prepared(cache_dir, source, system, identity) {
             return Ok(snapshot);
         }
-        let temporary = tempfile::Builder::new()
-            .prefix(".pkg-discovery-")
-            .tempdir_in(cache_dir)
-            .map_err(CatalogError::cache_write)?;
-        let staging = temporary.path().join("snapshot.sqlite");
-        let mut connection = Connection::open(&staging)?;
-        connection.execute_batch(&format!("{SETTINGS}
-            PRAGMA journal_mode=DELETE;
-            CREATE TABLE metadata(value TEXT NOT NULL);
-            CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL, command TEXT, leaf TEXT NOT NULL) WITHOUT ROWID;
-            CREATE TABLE pending(path TEXT PRIMARY KEY, root TEXT NOT NULL) WITHOUT ROWID;
-            CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;
-            CREATE TABLE failures(attribute TEXT PRIMARY KEY) WITHOUT ROWID;"))?;
+        let mut header = Header {
+            schema: SCHEMA,
+            source: source.to_string(),
+            system: system.to_string(),
+            reference: reference.to_string(),
+            revision: Some(revision.to_string()),
+            complete: false,
+            saved_unix: 0,
+            unique_exposed: false,
+            origin: Origin::Local,
+        };
+        let staging = partial_path(&destination);
+        let (mut connection, resumed) = open_partial(&staging, &header)?;
         let label = crate::output::short_source(source);
-        crate::output::status(&format!("Preparing search data… {label}"));
-        for root in ["packages", "legacyPackages"] {
-            let initial = vec![vec![root.to_string(), system.to_string()]];
-            match nix.metadata_batch(reference, system, root, &initial) {
-                Ok(nodes) if is_absent_at(&nodes, &initial[0]) => {}
-                Ok(nodes) => {
-                    store_nodes(&mut connection, &initial, nodes, root, system)?;
+        if resumed {
+            crate::output::status(&format!("Preparing search data… {label}: continuing"));
+        } else {
+            crate::output::status(&format!("Preparing search data… {label}"));
+            for root in ["packages", "legacyPackages"] {
+                let initial = vec![vec![root.to_string(), system.to_string()]];
+                match nix.metadata_batch(reference, system, root, &initial) {
+                    Ok(nodes) if is_absent_at(&nodes, &initial[0]) => {}
+                    Ok(nodes) => {
+                        store_nodes(&mut connection, &initial, nodes, root, system)?;
+                    }
+                    Err(error) => return Err(error.into()),
                 }
-                Err(error) => return Err(error.into()),
             }
         }
+        let workers = parallel_evaluations();
         let mut last_progress = Instant::now();
         loop {
             let jobs: Vec<(String, String)> = {
                 let mut statement = connection
-                    .prepare("SELECT path, root FROM pending ORDER BY root, path LIMIT 512")?;
+                    .prepare("SELECT path, root FROM pending ORDER BY root, path LIMIT ?1")?;
                 statement
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .query_map(
+                        [i64::try_from(BATCH * workers).unwrap_or(i64::MAX)],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )?
                     .collect::<Result<_, _>>()?
             };
             let Some((_, root)) = jobs.first() else {
@@ -196,7 +306,12 @@ impl Snapshot {
                 .take_while(|(_, candidate)| candidate == root)
                 .map(|(path, _)| serde_json::from_str(path).map_err(CatalogError::cache_write))
                 .collect::<Result<_, _>>()?;
-            evaluate(nix, &mut connection, reference, system, root, &paths)?;
+            let batches: Vec<&[Vec<String>]> = paths.chunks(BATCH).collect();
+            if let [batch] = batches.as_slice() {
+                evaluate(nix, &mut connection, reference, system, root, batch)?;
+            } else {
+                evaluate_parallel(nix, &mut connection, reference, system, root, &batches)?;
+            }
             if last_progress.elapsed() >= Duration::from_secs(1) {
                 let count: i64 =
                     connection.query_row("SELECT count(*) FROM packages", [], |row| row.get(0))?;
@@ -207,6 +322,41 @@ impl Snapshot {
                 last_progress = Instant::now();
             }
         }
+        header.complete = true;
+        header.saved_unix = cache::now_unix();
+        Self::publish(connection, &staging, header, cache_dir)
+    }
+
+    /// Build a snapshot from a package list that `read` writes into the
+    /// new database.
+    pub(super) fn from_list(
+        cache_dir: &Path,
+        source: &str,
+        system: &str,
+        identity: &SourceIdentity,
+        read: impl FnOnce(&mut Connection) -> Result<(), CatalogError>,
+    ) -> Result<Self, CatalogError> {
+        let (reference, revision) = identity
+            .locked_url
+            .as_deref()
+            .zip(identity.revision.as_deref())
+            .ok_or_else(|| {
+                CatalogError::Source(String::from("a package list needs a source revision"))
+            })?;
+        std::fs::create_dir_all(cache_dir).map_err(CatalogError::cache_write)?;
+        let destination = path(cache_dir, source, system);
+        let _lock = ProfileLock::acquire(&destination).map_err(CatalogError::cache_write)?;
+        if let Some(snapshot) = Self::prepared(cache_dir, source, system, identity) {
+            return Ok(snapshot);
+        }
+        let temporary = tempfile::Builder::new()
+            .prefix(".pkg-discovery-")
+            .tempdir_in(cache_dir)
+            .map_err(CatalogError::cache_write)?;
+        let staging = temporary.path().join("snapshot.sqlite");
+        let mut connection = Connection::open(&staging)?;
+        create_tables(&connection)?;
+        read(&mut connection)?;
         let header = Header {
             schema: SCHEMA,
             source: source.to_string(),
@@ -216,8 +366,17 @@ impl Snapshot {
             complete: true,
             saved_unix: cache::now_unix(),
             unique_exposed: false,
+            origin: Origin::Published,
         };
         Self::publish(connection, &staging, header, cache_dir)
+    }
+
+    /// The row count and origin of this snapshot.
+    pub(super) fn summary(&self) -> Result<(u64, Origin), CatalogError> {
+        let count: i64 = self
+            .connection
+            .query_row("SELECT count(*) FROM packages", [], |row| row.get(0))?;
+        Ok((u64::try_from(count).unwrap_or_default(), self.header.origin))
     }
 
     fn publish(
@@ -227,6 +386,7 @@ impl Snapshot {
         cache_dir: &Path,
     ) -> Result<Self, CatalogError> {
         let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM metadata", [])?;
         transaction.execute_batch("INSERT INTO claims SELECT exposed, count(*) FROM packages GROUP BY exposed; DROP TABLE pending; CREATE INDEX package_commands ON packages(command) WHERE command IS NOT NULL; CREATE INDEX package_names ON packages(pname); CREATE INDEX package_leaves ON packages(leaf);")?;
         header.unique_exposed = transaction.query_row(
             "SELECT NOT EXISTS(SELECT 1 FROM claims WHERE n > 1)",
@@ -266,20 +426,14 @@ impl Snapshot {
         let mut statement = self.connection.prepare(&query)?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
-            let command = row.get_ref(5)?;
             visitor(Package {
                 attribute: text(row, 0)?,
                 exposed: text(row, 1)?,
                 name: text(row, 2)?,
                 version: text(row, 3)?,
                 description: text(row, 4)?,
-                command: command.as_str_or_null().map_err(|error| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        5,
-                        command.data_type(),
-                        Box::new(error),
-                    )
-                })?,
+                command: optional_text(row, 5)?,
+                unavailable: optional_text(row, 6)?,
             })?;
         }
         Ok(())
@@ -289,9 +443,9 @@ impl Snapshot {
     /// that more than one attribute claims shows the full attribute.
     const fn select(&self) -> &'static str {
         if self.header.unique_exposed {
-            "SELECT p.attribute, p.exposed, p.pname, p.version, p.description, p.command FROM packages p"
+            "SELECT p.attribute, p.exposed, p.pname, p.version, p.description, p.command, p.unavailable FROM packages p"
         } else {
-            "SELECT p.attribute, CASE WHEN c.n>1 THEN p.attribute ELSE p.exposed END, p.pname, p.version, p.description, p.command FROM packages p JOIN claims c ON c.exposed=p.exposed"
+            "SELECT p.attribute, CASE WHEN c.n>1 THEN p.attribute ELSE p.exposed END, p.pname, p.version, p.description, p.command, p.unavailable FROM packages p JOIN claims c ON c.exposed=p.exposed"
         }
     }
 
@@ -308,6 +462,7 @@ impl Snapshot {
                 version: row.get(3)?,
                 description: row.get(4)?,
                 command: row.get(5)?,
+                unavailable: row.get(6)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -337,6 +492,16 @@ impl Snapshot {
             |row| row.get(0),
         )?)
     }
+}
+
+fn optional_text<'a>(
+    row: &'a rusqlite::Row<'_>,
+    column: usize,
+) -> rusqlite::Result<Option<&'a str>> {
+    let value = row.get_ref(column)?;
+    value.as_str_or_null().map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(column, value.data_type(), Box::new(error))
+    })
 }
 
 fn text<'a>(row: &'a rusqlite::Row<'_>, column: usize) -> rusqlite::Result<&'a str> {
@@ -392,6 +557,37 @@ fn evaluate(
     }
 }
 
+/// Evaluate several batches of one root at the same time.
+///
+/// Successful batches are stored first, so a stop keeps their rows. A
+/// failed batch runs again alone and splits when it must.
+fn evaluate_parallel(
+    nix: &Nix,
+    connection: &mut Connection,
+    reference: &str,
+    system: &str,
+    root: &str,
+    batches: &[&[Vec<String>]],
+) -> Result<(), CatalogError> {
+    let results = nix.metadata_batches(reference, system, root, batches)?;
+    let mut failed = Vec::new();
+    let mut interrupted = None;
+    for (batch, result) in batches.iter().zip(results) {
+        match result {
+            Ok(nodes) => store_nodes(connection, batch, nodes, root, system)?,
+            Err(NixError::Interrupted { signal, .. }) => interrupted = Some(signal),
+            Err(_) => failed.push(*batch),
+        }
+    }
+    if let Some(signal) = interrupted {
+        return Err(CatalogError::Interrupted(signal));
+    }
+    for batch in failed {
+        evaluate(nix, connection, reference, system, root, batch)?;
+    }
+    Ok(())
+}
+
 fn store_nodes(
     connection: &mut Connection,
     paths: &[Vec<String>],
@@ -413,10 +609,14 @@ fn store_nodes(
             [serde_json::to_string(&node.path).map_err(CatalogError::cache_write)?],
         )?;
         match node.value {
-            MetadataValue::Package { meta, command } => {
+            MetadataValue::Package {
+                meta,
+                command,
+                unavailable,
+            } => {
                 let attr = node.path.join(".");
                 transaction.execute(
-                    "INSERT OR REPLACE INTO packages VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                    "INSERT OR REPLACE INTO packages VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
                     params![
                         attr,
                         exposed_attribute(&attr, system),
@@ -424,7 +624,8 @@ fn store_nodes(
                         meta.version,
                         meta.description,
                         command,
-                        node.path.last().map_or("", String::as_str)
+                        node.path.last().map_or("", String::as_str),
+                        unavailable
                     ],
                 )?;
             }
@@ -469,10 +670,10 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(
-                "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT, command TEXT);
+                "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT, command TEXT, unavailable TEXT);
                  CREATE TABLE claims(exposed TEXT, n INTEGER);
-                 INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', '', 'editor');
-                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', '別名', '2.0', 'Unicode description', NULL);
+                 INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', '', 'editor', NULL);
+                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', '別名', '2.0', 'Unicode description', NULL, 'unfree');
                  INSERT INTO claims VALUES ('editor', 2);",
             )
             .unwrap();
@@ -487,6 +688,7 @@ mod tests {
                 complete: true,
                 saved_unix: 1,
                 unique_exposed: false,
+                origin: Origin::Local,
             },
         };
         let mut visited = Vec::new();
@@ -495,6 +697,7 @@ mod tests {
                 visited.push((
                     package.attribute.to_string(),
                     package.exposed.to_string(),
+                    package.unavailable.map(str::to_string),
                     crate::nix::SearchMeta {
                         pname: package.name.to_string(),
                         version: package.version.to_string(),
@@ -507,11 +710,13 @@ mod tests {
         assert_eq!(visited.len(), 2);
         assert_eq!(visited[0].0, "legacyPackages.x86_64-linux.editor");
         assert_eq!(visited[0].1, visited[0].0);
-        assert_eq!(visited[0].2.pname, "別名");
+        assert_eq!(visited[0].2.as_deref(), Some("unfree"));
+        assert_eq!(visited[0].3.pname, "別名");
         assert_eq!(visited[1].1, visited[1].0);
-        assert_eq!(visited[1].2.pname, "Éditeur");
-        assert_eq!(visited[1].2.version, "1.2");
-        assert_eq!(visited[1].2.description, "");
+        assert_eq!(visited[1].2, None);
+        assert_eq!(visited[1].3.pname, "Éditeur");
+        assert_eq!(visited[1].3.version, "1.2");
+        assert_eq!(visited[1].3.description, "");
 
         snapshot
             .connection
@@ -530,6 +735,7 @@ mod tests {
             complete: true,
             saved_unix: 1,
             unique_exposed: false,
+            origin: Origin::Local,
         }
     }
 
@@ -551,15 +757,15 @@ mod tests {
             let connection = Connection::open(&staging).unwrap();
             connection.execute_batch(
                 "CREATE TABLE metadata(value TEXT NOT NULL);
-                 CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL, command TEXT, leaf TEXT NOT NULL) WITHOUT ROWID;
+                 CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT NOT NULL, pname TEXT NOT NULL, version TEXT NOT NULL, description TEXT NOT NULL, command TEXT, leaf TEXT NOT NULL, unavailable TEXT) WITHOUT ROWID;
                  CREATE TABLE claims(exposed TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;
                  CREATE TABLE pending(path TEXT PRIMARY KEY, root TEXT NOT NULL) WITHOUT ROWID;
                  CREATE TABLE failures(attribute TEXT PRIMARY KEY) WITHOUT ROWID;
-                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', 'Unicode description', NULL, 'editor');
+                 INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', 'Éditeur', '1.2', 'Unicode description', NULL, 'editor', NULL);
                  INSERT INTO failures VALUES ('legacyPackages.x86_64-linux.removed');"
             ).unwrap();
             if ambiguous {
-                connection.execute_batch("INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', '別名', '2.0', '', 'editor', 'editor');").unwrap();
+                connection.execute_batch("INSERT INTO packages VALUES ('packages.x86_64-linux.editor', 'editor', '別名', '2.0', '', 'editor', 'editor', NULL);").unwrap();
             }
             let snapshot =
                 Snapshot::publish(connection, &staging, header(), directory.path()).unwrap();
@@ -619,8 +825,8 @@ mod tests {
     fn unique_snapshot_visits_still_reject_invalid_utf8() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(
-            "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT, command TEXT);
-             INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', CAST(X'ff' AS TEXT), '1.2', '', NULL);"
+            "CREATE TABLE packages(attribute TEXT, exposed TEXT, pname TEXT, version TEXT, description TEXT, command TEXT, unavailable TEXT);
+             INSERT INTO packages VALUES ('legacyPackages.x86_64-linux.editor', 'editor', CAST(X'ff' AS TEXT), '1.2', '', NULL, NULL);"
         ).unwrap();
         let snapshot = Snapshot {
             connection,
@@ -789,6 +995,87 @@ mod tests {
             malformed_system,
             Err(NixError::Failed { stderr, .. }) if stderr.contains("must be an attribute set")
         ));
+    }
+
+    #[test]
+    fn partial_data_continues_only_for_the_same_source_revision() {
+        let directory = tempfile::tempdir().unwrap();
+        let staging = directory.path().join("snapshot.sqlite.partial");
+        let partial = Header {
+            complete: false,
+            ..header()
+        };
+        let (connection, resumed) = open_partial(&staging, &partial).unwrap();
+        assert!(!resumed);
+        connection
+            .execute(
+                "INSERT INTO pending VALUES ('[\"legacyPackages\"]', 'legacyPackages')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let (connection, resumed) = open_partial(&staging, &partial).unwrap();
+        assert!(resumed);
+        let pending: i64 = connection
+            .query_row("SELECT count(*) FROM pending", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(pending, 1);
+        drop(connection);
+        let moved = Header {
+            revision: Some(String::from("newer-revision")),
+            ..partial
+        };
+        let (connection, resumed) = open_partial(&staging, &moved).unwrap();
+        assert!(!resumed);
+        let pending: i64 = connection
+            .query_row("SELECT count(*) FROM pending", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(pending, 0);
+        drop(connection);
+        std::fs::write(&staging, "not a database").unwrap();
+        assert!(!open_partial(&staging, &moved).unwrap().1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires a native Nix runtime"]
+    fn stopped_preparations_continue_and_large_sets_finish_in_parallel() {
+        let nix = crate::nix::discover(None).unwrap();
+        let (_fixture, reference) = fixture(
+            &nix,
+            "{ legacyPackages.x86_64-linux = builtins.listToAttrs (builtins.genList (i: { name = \"p${toString i}\"; value = { type = \"derivation\"; name = \"p${toString i}-1.0\"; meta.description = \"package\"; }; }) 1300); }",
+        );
+        let cache_dir = tempfile::tempdir().unwrap();
+        // A stopped preparation left one finished row and one pending path.
+        let destination = path(cache_dir.path(), "fixture", SYSTEM);
+        let partial = Header {
+            reference: reference.clone(),
+            complete: false,
+            saved_unix: 0,
+            ..header()
+        };
+        let (connection, _) = open_partial(&partial_path(&destination), &partial).unwrap();
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO packages VALUES ('legacyPackages.{SYSTEM}.earlier', 'earlier', 'earlier', '1', '', NULL, 'earlier', NULL);
+                 INSERT INTO pending VALUES ('[\"legacyPackages\",\"{SYSTEM}\",\"p7\"]', 'legacyPackages');"
+            ))
+            .unwrap();
+        drop(connection);
+        let resumed = snapshot(&nix, cache_dir.path(), &reference).unwrap();
+        let mut names = Vec::new();
+        resumed
+            .visit(|package| {
+                names.push(package.exposed.to_string());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(names, ["earlier", "p7"], "the roots do not run again");
+        assert!(!partial_path(&destination).exists());
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let fresh = snapshot(&nix, cache_dir.path(), &reference).unwrap();
+        assert_eq!(fresh.summary().unwrap().0, 1300);
     }
 
     #[cfg(unix)]

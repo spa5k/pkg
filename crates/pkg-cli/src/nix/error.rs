@@ -46,8 +46,18 @@ pub enum NixError {
     /// A discovery evaluator was stopped before exceeding its resource budget.
     #[error("discovery evaluation stopped: {0}")]
     ResourceLimit(String),
+    /// A refresh could not download a source, and Nix used its saved copy.
+    #[error("could not download the newest data: {cause}")]
+    Offline {
+        /// The native download warning.
+        cause: String,
+    },
     /// A native command failed. Upstream diagnostics are preserved.
-    #[error("native command `nix {}` failed ({status}){}", command_line(args), if stderr.trim().is_empty() { String::new() } else { format!("\n{}", stderr.trim()) })]
+    #[error(
+        "native command `nix {}` failed ({status}){}",
+        command_line(args),
+        shown_stderr(stderr)
+    )]
     Failed {
         /// The argument vector pkg ran.
         args: Vec<String>,
@@ -124,6 +134,21 @@ impl NixError {
             Self::Failed { stderr, .. } => super::conflict::decode(stderr),
             _ => None,
         }
+    }
+}
+
+/// Native stderr without lines that Nix itself ignores, such as Determinate
+/// Nix's `error (ignored): opening file "/etc/nix/sentry-endpoint"`.
+fn shown_stderr(stderr: &str) -> String {
+    let lines: Vec<&str> = stderr
+        .trim()
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("error (ignored):"))
+        .collect();
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", lines.join("\n"))
     }
 }
 

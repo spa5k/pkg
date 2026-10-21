@@ -4,7 +4,7 @@ use crate::cli::{BackgroundCommand, Cli};
 use crate::client::Update;
 use crate::output::{self, Stream, Tone};
 
-use super::{CommandError, concise_cause, session};
+use super::{CommandError, session};
 
 /// Update the installed client, then official catalogs and, unless the
 /// scheduled job runs, saved taps. A failed client check does not stop
@@ -18,6 +18,7 @@ pub(super) fn update(cli: &Cli, scheduled: bool, skip_client: bool) -> Result<()
         &session.paths.cache_dir.join("refresh"),
         "Waiting for another pkg update to finish…",
     )?;
+    let mut client_updates = true;
     if !skip_client {
         match crate::client::update() {
             Ok(Update::Updated { from, to }) => {
@@ -28,12 +29,13 @@ pub(super) fn update(cli: &Cli, scheduled: bool, skip_client: bool) -> Result<()
                 drop(lock);
                 return refresh_with_new_client(cli, scheduled);
             }
-            Ok(Update::Current | Update::NotInstalled) => {}
+            Ok(Update::Current) => {}
+            Ok(Update::NotInstalled) => client_updates = false,
             Err(error) if error.signal().is_some() => return Err(error.into()),
             Err(error) => eprintln!(
                 "{} {}",
                 output::paint(Stream::Err, Tone::Warning, "Could not update pkg:"),
-                concise_cause(&error.to_string())
+                super::sentence(super::plain_detail(&error.to_string()))
             ),
         }
     }
@@ -44,7 +46,12 @@ pub(super) fn update(cli: &Cli, scheduled: bool, skip_client: bool) -> Result<()
     if failed {
         return Err(String::from("search data is incomplete. Run `pkg update` to retry.").into());
     }
-    println!("pkg and its search data are up to date. Installed packages did not change.");
+    if client_updates {
+        println!("pkg and its search data are up to date. Installed packages did not change.");
+    } else {
+        println!("Search data is up to date. Installed packages did not change.");
+        println!("This pkg is not the installed client, so `pkg update` does not replace it.");
+    }
     Ok(())
 }
 

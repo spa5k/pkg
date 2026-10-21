@@ -25,6 +25,7 @@ impl CaskFixture {
         let home = tempfile::tempdir().expect("tempdir");
         let nix = bin.path().join("nix");
         let formula = formula_index_fixture(bin.path()).display().to_string();
+        support::fake_curl(bin.path(), None);
         let script = format!(
                 "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"2403040105060708090a0b0c0d0e0f1011121314\"}}}}';;\n  *'#formulaIndex'*) cat '{formula}';;\n  *'eval --json'*) cat <<'JSON'\n__CATALOG__\nJSON\n;;\n  *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n",
             )
@@ -92,6 +93,11 @@ fn upgrade_gates_the_installed_cask_source_after_configuration_changes() {
     .unwrap();
     let profile = fixture.profile();
     std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(
+        profile.parent().unwrap(),
+        profile.with_file_name("pkg-1-link"),
+    )
+    .unwrap();
     std::os::unix::fs::symlink("pkg-1-link", &profile).unwrap();
     let installed = serde_json::json!({"version": 3, "elements": {"opaque": {
         "active": true,
@@ -149,6 +155,11 @@ fn upgrade_checks_each_formula_branch_before_mutating_the_profile() {
     }});
     let profile = fixture.profile();
     std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(
+        profile.parent().unwrap(),
+        profile.with_file_name("pkg-1-link"),
+    )
+    .unwrap();
     std::os::unix::fs::symlink("pkg-1-link", &profile).unwrap();
     let calls = fixture.home.path().join("calls");
     fixture.set_nix_script(&format!(
@@ -224,7 +235,11 @@ fn cask_preparation_retains_healthy_source_after_native_failure() {
     let fixture = CaskFixture::new();
     let (code, _, stderr) = fixture.run(&["update", "--scheduled"]);
     assert_eq!(code, 1, "native fixture has no package outputs: {stderr}");
-    assert!(stderr.contains("Ready: cask"), "{stderr}");
+    assert!(
+        stderr.contains("Preparing search data: Homebrew Casks…"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Failed: Homebrew Casks"), "{stderr}");
 }
 
 #[test]
@@ -261,11 +276,12 @@ fn unreadable_profile_reports_unknown_info_and_doctor_state() {
     assert_eq!(code, 1, "{stderr}");
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(value["result"]["installed_state"], "unknown");
+    // The link names a missing generation, so pkg does not read it as empty.
     assert!(
         value["result"]["installed_error"]
             .as_str()
             .unwrap()
-            .contains("unreadable profile")
+            .contains("the current generation is missing")
     );
     let (code, stdout, _) = fixture.run(&["doctor", "--json"]);
     assert_eq!(code, 1);

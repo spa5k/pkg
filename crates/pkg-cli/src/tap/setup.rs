@@ -512,17 +512,13 @@ fn apply(nix: &Nix, steps: &[Step]) -> Result<bool, SetupError> {
 }
 
 /// One doctor observation for the tap sandbox gate; read-only.
-pub(crate) fn doctor_status(nix: &Nix) -> Result<(String, String), SetupError> {
-    Ok(match readiness(nix) {
-        Ok(()) => (
-            String::from("ok"),
-            String::from(
-                "effective grants and live daemon environment pass; the fresh build probe remains required",
-            ),
-        ),
-        Err(error) if error.signal().is_some() => return Err(error),
-        Err(error) => (String::from("blocked"), error.to_string()),
-    })
+/// Why tap imports cannot run yet, or `None` when the setup is ready.
+pub(crate) fn doctor_status(nix: &Nix) -> Result<Option<String>, SetupError> {
+    match readiness(nix) {
+        Ok(()) => Ok(None),
+        Err(error) if error.signal().is_some() => Err(error),
+        Err(error) => Ok(Some(error.to_string())),
+    }
 }
 
 #[cfg(test)]
@@ -803,9 +799,10 @@ mod tests {
                 .to_string()
                 .contains("fixture settings query failed")
         );
-        let (status, detail) = doctor_status(&nix).expect("failed query is a doctor observation");
-        assert_eq!(status, "blocked");
-        assert!(detail.contains("fixture settings query failed"), "{detail}");
+        let cause = doctor_status(&nix)
+            .expect("failed query is a doctor observation")
+            .expect("blocked");
+        assert!(cause.contains("fixture settings query failed"), "{cause}");
     }
 
     #[cfg(unix)]

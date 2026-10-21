@@ -4,7 +4,7 @@ mod source;
 
 use crate::catalog;
 use crate::cli::Cli;
-use crate::commands::{CommandError, FAILURE, USAGE, concise_cause};
+use crate::commands::{CommandError, FAILURE, USAGE};
 use crate::output;
 use results::{Display, SearchSpool};
 use source::{SearchSource, search_input};
@@ -15,7 +15,18 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
     let query =
         catalog::SearchQuery::new(&text, options.matching.regex, options.results.unavailable)
             .map_err(|error| {
-                eprintln!("Invalid search pattern `{text}`: {error}");
+                if text.trim().is_empty() {
+                    eprintln!("pkg: {error}.");
+                } else {
+                    // A regex error has a caret drawing; keep its last line.
+                    let error = error.to_string();
+                    let reason = error
+                        .lines()
+                        .rev()
+                        .find_map(|line| line.strip_prefix("error: "))
+                        .unwrap_or(&error);
+                    eprintln!("pkg: invalid search pattern `{text}`: {reason}.");
+                }
                 CommandError::Reported(ExitCode::from(USAGE))
             })?
             .broad(options.matching.broad)
@@ -27,6 +38,7 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
     } else {
         Some(options.limit.unwrap_or(20))
     };
+    let mut refreshed = false;
     let (mut system, mut reports, mut rows, mut kept) =
         local_search(&paths, &config, &query, &source, limit, !cli.json)?;
     if reports.iter().any(catalog::SourceReport::is_not_ready) {
@@ -41,7 +53,23 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
         (system, reports, rows, kept) =
             local_search(&paths, &config, &query, &source, limit, !cli.json)?;
         if reports.iter().any(catalog::SourceReport::is_not_ready) {
-            output::note("Preparing search for first use. This takes a few minutes.");
+            let nixpkgs = &config.sources.nixpkgs;
+            if catalog::published_channel(nixpkgs).is_none()
+                && reports
+                    .iter()
+                    .any(|report| report.is_not_ready() && report.source == *nixpkgs)
+            {
+                exact_hint(&session, nixpkgs, &text)?;
+                output::note(
+                    "Preparing search data on this computer. This takes a few minutes one time.\n\
+                     To stop, press Ctrl-C. The next search continues the work.",
+                );
+            } else {
+                output::note("Downloading search data. This takes less than a minute.");
+            }
+            // The refresh prints each failure, so the warnings below skip
+            // the sources that are still not ready.
+            refreshed = true;
             crate::discovery::refresh(&session)?;
             (system, reports, rows, kept) =
                 local_search(&paths, &config, &query, &source, limit, !cli.json)?;
@@ -67,17 +95,19 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
         }
         eprint!("{}", output::render_source_reports(&reports, cli.verbose));
     }
-    for report in reports
-        .iter()
-        .filter(|report| report.status == catalog::SourceStatus::Failed)
-    {
+    for report in reports.iter().filter(|report| {
+        report.status == catalog::SourceStatus::Failed && !(refreshed && report.is_not_ready())
+    }) {
         eprintln!(
             "Warning: {}: {}",
-            report
-                .display
-                .clone()
-                .unwrap_or_else(|| output::short_source(&report.source)),
-            concise_cause(report.detail.as_deref().unwrap_or("unknown cause"))
+            output::source_title(&report.source).map_or_else(
+                || report
+                    .display
+                    .clone()
+                    .unwrap_or_else(|| output::short_source(&report.source)),
+                String::from
+            ),
+            crate::commands::plain_detail(report.detail.as_deref().unwrap_or("unknown cause"))
         );
     }
     if failed {
@@ -87,6 +117,46 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
         eprintln!("Results are incomplete. Run `pkg update` to retry.");
     }
     Ok(())
+}
+
+/// Before a local preparation starts, show the Nixpkgs package whose name
+/// is the query. One Nix check finds it.
+fn exact_hint(
+    session: &crate::commands::Session,
+    source: &str,
+    text: &str,
+) -> Result<(), CommandError> {
+    let name = text.trim();
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.+".contains(&byte))
+    {
+        return Ok(());
+    }
+    let system = session.nix.system()?;
+    let mut path = vec![String::from("legacyPackages"), system];
+    path.extend(name.split('.').map(str::to_string));
+    match session.nix.exact_metadata(source, &[path]) {
+        Ok(nodes) => {
+            if let [
+                crate::nix::MetadataNode {
+                    value: crate::nix::MetadataValue::Package { meta, .. },
+                    ..
+                },
+            ] = nodes.as_slice()
+            {
+                output::note(&format!(
+                    "Found by exact name: nixpkgs:{name} {}. To install it now, run `pkg install nixpkgs:{name}`.",
+                    meta.version
+                ));
+            }
+            Ok(())
+        }
+        Err(error) if error.signal().is_some() => Err(error.into()),
+        // The hint is optional. The full search follows.
+        Err(_) => Ok(()),
+    }
 }
 
 /// Local name data for display names. It reuses the data that search read.
@@ -270,8 +340,8 @@ pub(super) fn install_resolution_error(
         Err(_) => None,
     }
     .filter(|(rows, _)| rows.count > 0);
-    eprintln!("pkg: no package named `{name}`");
     if let Some((rows, kept)) = suggestions {
+        eprintln!("pkg: no package named `{name}`. Nothing was installed.");
         eprintln!(
             "{}",
             if rows.fuzzy {
@@ -292,7 +362,9 @@ pub(super) fn install_resolution_error(
         );
         eprintln!("Install one with `pkg install NAME`.");
     } else {
-        eprintln!("Search with `pkg search {name}`.");
+        eprintln!(
+            "pkg: no package named `{name}`. Nothing was installed. Search with `pkg search {name}`."
+        );
     }
     CommandError::Reported(ExitCode::from(FAILURE))
 }

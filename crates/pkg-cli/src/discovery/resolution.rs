@@ -137,17 +137,17 @@ impl<'a> Resolution<'a> {
                     scope,
                 );
                 self.names = Some(names);
-                let choice = choice.map_err(|error| {
-                    if installing {
-                        super::search::install_resolution_error(
-                            session,
-                            &name,
-                            cask_only.then_some("cask"),
-                            error,
-                        )
-                    } else {
-                        error.into()
-                    }
+                let choice = choice.map_err(|error| match error {
+                    _ if installing => super::search::install_resolution_error(
+                        session,
+                        &name,
+                        cask_only.then_some("cask"),
+                        error,
+                    ),
+                    catalog::CatalogError::NotFound(_) => CommandError::Message(format!(
+                        "no package named `{name}`. Search with `pkg search {name}`."
+                    )),
+                    error => error.into(),
                 })?;
                 if installing {
                     note_choice(&name, &choice);
@@ -254,7 +254,12 @@ impl<'a> Resolution<'a> {
             }),
             report,
             cask: None,
-            availability: None,
+            availability: Some(
+                row.unavailable
+                    .map_or(catalog::Availability::Available, |reason| {
+                        catalog::Availability::Unavailable { reason }
+                    }),
+            ),
             formula_kind: None,
             commands: row.command.into_iter().collect(),
         }))
@@ -269,11 +274,25 @@ impl<'a> Resolution<'a> {
         } else if let Some(data) = self.local_native(&resolved, &reference, &attribute)? {
             data
         } else {
-            let (exact, report) = catalog::exact_lookup(&self.session.nix, &reference, &attribute).map_err(|error| match error {
-                catalog::CatalogError::NotFound(_) => CommandError::Message(format!("`{}` has no exact match in `{reference}`; pkg does not report package identities it cannot evaluate", resolved.qualified())),
-                catalog::CatalogError::Ambiguous { name, choices } => CommandError::Message(format!("`{name}` is ambiguous in `{reference}`; choose one of: {}", choices.iter().map(|choice| request_qualified(&resolved, choice)).collect::<Vec<_>>().join(", "))),
-                error => error.into(),
-            })?;
+            let (exact, report) = catalog::exact_lookup(&self.session.nix, &reference, &attribute)
+                .map_err(|error| match error {
+                    catalog::CatalogError::NotFound(_) => CommandError::Message(format!(
+                        "no package named `{}`. Search with `pkg search {}`.",
+                        resolved.qualified(),
+                        crate::output::short_package_name(&resolved.qualified())
+                    )),
+                    catalog::CatalogError::Ambiguous { name, choices } => {
+                        CommandError::Message(format!(
+                            "`{name}` is ambiguous in `{reference}`; choose one of: {}",
+                            choices
+                                .iter()
+                                .map(|choice| request_qualified(&resolved, choice))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                    }
+                    error => error.into(),
+                })?;
             PackageMetadata {
                 attribute,
                 matched_attribute: Some(exact.attribute),
@@ -303,12 +322,14 @@ impl<'a> Resolution<'a> {
         for request in parsed {
             let (id, _) = self.resolve(request, true)?;
             let (reference, attribute) = id.source_and_attribute(&self.routing, &self.system)?;
-            if let Some(data) = self.catalog_data(&id, &reference, &attribute)?
-                && let Some(availability) = data.availability
-            {
-                availability
-                    .require()
-                    .map_err(|reason| format!("{}: {reason}", id.qualified()))?;
+            // Local data refuses a package that cannot install here before
+            // Nix runs, and names it.
+            let data = match self.catalog_data(&id, &reference, &attribute)? {
+                Some(data) => Some(data),
+                None => self.local_native(&id, &reference, &attribute)?,
+            };
+            if let Some(availability) = data.and_then(|data| data.availability) {
+                availability.require(&id.qualified(), "Nothing was installed.")?;
             }
             let installable = format!("{reference}#{attribute}");
             installables.insert(installable, id.qualified());
@@ -481,8 +502,7 @@ pub fn gate_upgrade(
         resolver
             .host
             .availability(&view.index, &system, &source, &token)?
-            .require()
-            .map_err(|reason| format!("{prefix}:{source}/{token}: {reason}"))?;
+            .require(&format!("{prefix}:{source}/{token}"), "Nothing changed.")?;
     }
     Ok(())
 }

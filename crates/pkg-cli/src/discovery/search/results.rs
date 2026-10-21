@@ -15,8 +15,10 @@ pub(super) struct SearchSpool {
     connection: rusqlite::Connection,
     pub(super) count: usize,
     limit: Option<u32>,
-    worst: Option<(u32, String)>,
+    worst: Option<(u32, u32, String)>,
     merged: bool,
+    /// Sources in arrival order. Equal ranks sort in this order.
+    sources: Vec<String>,
     /// Merged names and whether their stored row can install here.
     names: BTreeMap<String, bool>,
     pub(super) fuzzy: bool,
@@ -39,8 +41,8 @@ impl SearchSpool {
         let connection = rusqlite::Connection::open(file.path())?;
         connection.execute_batch(
             "PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA journal_mode=OFF;
-            CREATE TABLE results(rank INTEGER, id TEXT, body TEXT, name TEXT);
-            CREATE INDEX result_order ON results(rank, id);
+            CREATE TABLE results(rank INTEGER, source INTEGER, id TEXT, body TEXT, name TEXT);
+            CREATE INDEX result_order ON results(rank, source, id);
             CREATE INDEX result_names ON results(name);
             BEGIN;",
         )?;
@@ -51,6 +53,7 @@ impl SearchSpool {
             limit,
             worst: None,
             merged,
+            sources: Vec::new(),
             names: BTreeMap::new(),
             fuzzy: false,
         })
@@ -101,26 +104,51 @@ impl SearchSpool {
             }
         }
         self.count += 1;
-        if self.worst.as_ref().is_some_and(|(worst_rank, worst_id)| {
-            (rank, row.id.as_str()) > (*worst_rank, worst_id.as_str())
-        }) {
+        let source = self
+            .sources
+            .iter()
+            .position(|source| *source == row.source)
+            .unwrap_or_else(|| {
+                self.sources.push(row.source.clone());
+                self.sources.len() - 1
+            });
+        let source = u32::try_from(source).unwrap_or(u32::MAX);
+        if self
+            .worst
+            .as_ref()
+            .is_some_and(|(worst_rank, worst_source, worst_id)| {
+                (rank, source, row.id.as_str()) > (*worst_rank, *worst_source, worst_id.as_str())
+            })
+        {
             return Ok(());
         }
-        let body = serde_json::to_string(row).map_err(catalog::CatalogError::cache_write)?;
+        // Every row that can install names its install command.
+        let body = if available && row.install_command.is_none() {
+            let mut row = row.clone();
+            row.install_command = Some(vec![
+                String::from("pkg"),
+                String::from("install"),
+                row.id.clone(),
+            ]);
+            serde_json::to_string(&row)
+        } else {
+            serde_json::to_string(row)
+        }
+        .map_err(catalog::CatalogError::cache_write)?;
         self.connection
-            .prepare_cached("INSERT INTO results VALUES (?1, ?2, ?3, ?4)")?
-            .execute(rusqlite::params![rank, row.id, body, name])?;
+            .prepare_cached("INSERT INTO results VALUES (?1, ?2, ?3, ?4, ?5)")?
+            .execute(rusqlite::params![rank, source, row.id, body, name])?;
         if let Some(limit) = self.limit
             && self.count >= limit as usize
         {
             self.connection.execute(
-                "DELETE FROM results WHERE rowid NOT IN (SELECT rowid FROM results ORDER BY rank, id LIMIT ?1)",
+                "DELETE FROM results WHERE rowid NOT IN (SELECT rowid FROM results ORDER BY rank, source, id LIMIT ?1)",
                 [limit],
             )?;
             self.worst = Some(self.connection.query_row(
-                "SELECT rank, id FROM results ORDER BY rank DESC, id DESC LIMIT 1",
+                "SELECT rank, source, id FROM results ORDER BY rank DESC, source DESC, id DESC LIMIT 1",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?);
         }
         Ok(())
@@ -133,7 +161,7 @@ impl SearchSpool {
     ) -> Result<(), CommandError> {
         let mut statement = self
             .connection
-            .prepare("SELECT body FROM results ORDER BY rank, id LIMIT ?1")?;
+            .prepare("SELECT body FROM results ORDER BY rank, source, id LIMIT ?1")?;
         let mut rows = statement.query([limit.map_or(-1, i64::from)])?;
         while let Some(row) = rows.next()? {
             let body: String = row.get(0)?;
@@ -188,44 +216,44 @@ impl SearchSpool {
         display: &Display<'_>,
     ) -> Result<(), CommandError> {
         use std::io::Write as _;
-        let stdout = std::io::stdout();
-        let mut out = std::io::BufWriter::new(stdout.lock());
+        // Rows go to stdout. Notes and hints go to stderr, so a pipe gets
+        // only the table.
         if self.count == 0 {
-            writeln!(out, "No matches for \"{query}\".")?;
-            writeln!(out, "Try fewer words, or use --broad.")?;
-            out.flush()?;
+            eprintln!("No matches for \"{query}\".");
+            eprintln!("Try fewer words, or use --broad.");
             return Ok(());
         }
         if self.fuzzy {
-            writeln!(out, "No exact matches for \"{query}\". Similar names:")?;
+            eprintln!("No exact matches for \"{query}\". Similar names:");
         }
         let rows = self.rows(limit)?;
         let (table, first) = render(&rows, display, Stream::Out, true);
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
         out.write_all(table.as_bytes())?;
+        out.flush()?;
+        drop(out);
         if let Some(limit) = limit
             && self.count > limit as usize
         {
-            writeln!(
-                out,
+            eprintln!(
                 "{}",
                 output::paint(
-                    Stream::Out,
+                    Stream::Err,
                     Tone::Muted,
                     &format!(
                         "Showing {limit} of {} matches. Use --all or --limit N to show more.",
                         self.count
                     )
                 )
-            )?;
+            );
         }
         if let Some(first) = first {
-            writeln!(
-                out,
+            eprintln!(
                 "Install: {}",
-                output::paint(Stream::Out, Tone::Accent, &format!("pkg install {first}"))
-            )?;
+                output::paint(Stream::Err, Tone::Accent, &format!("pkg install {first}"))
+            );
         }
-        out.flush()?;
         Ok(())
     }
 
@@ -256,17 +284,19 @@ fn render(
     headings: bool,
 ) -> (String, Option<String>) {
     let sources = rows.iter().any(|row| row.source != "nixpkgs");
+    // NAME is always the first column, so `awk '{print $1}'` reads names.
     let mut table = if headings {
         Table::new(&[
-            "",
             "NAME",
+            "",
             "VERSION",
             if sources { "SOURCE" } else { "" },
             "DESCRIPTION",
         ])
     } else {
         Table::new(&[])
-    };
+    }
+    .optional_last();
     let mut first = None;
     for row in rows {
         let name = display_name(row, display.names);
@@ -281,7 +311,8 @@ fn render(
             }
             _ => None,
         };
-        if first.is_none() && note.is_none() {
+        // The hint names a package to add, so it skips installed rows.
+        if first.is_none() && note.is_none() && !installed {
             first = Some(name.clone());
         }
         // Descriptions stay plain: the table removes color from a cell
@@ -291,12 +322,12 @@ fn render(
             |note| output::paint(stream, Tone::Warning, &note),
         );
         table.row(vec![
+            output::paint(stream, Tone::Strong, &name),
             if installed {
                 output::paint(stream, Tone::Success, "✓")
             } else {
                 String::new()
             },
-            output::paint(stream, Tone::Strong, &name),
             output::fit(&row.version, VERSION_WIDTH),
             source_label(row),
             description,

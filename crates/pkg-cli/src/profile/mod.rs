@@ -11,6 +11,7 @@ pub use lock::LockedProfile;
 mod query;
 mod summary;
 
+pub use installed::package_id;
 pub use query::{entries, history, installed_entries, list, status};
 
 use crate::catalog;
@@ -26,11 +27,17 @@ pub fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
     if ids.is_empty() {
         return Err(String::from("install needs at least one ID").into());
     }
-    let parsed_ids = ids
+    let mut unique: Vec<&str> = Vec::new();
+    for id in ids {
+        if !unique.contains(&id.as_str()) {
+            unique.push(id);
+        }
+    }
+    let parsed_ids = unique
         .iter()
         .map(|id| catalog::parse_id(id))
         .collect::<Result<Vec<_>, _>>()?;
-    eprintln!("Resolving: {}", ids.join(", "));
+    eprintln!("Resolving: {}", unique.join(", "));
     let session = session(cli)?;
     let batch = crate::discovery::resolve_install(&session, parsed_ids)?;
     change::execute(

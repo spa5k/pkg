@@ -53,14 +53,21 @@ pub(crate) fn sync(nix: &Nix, paths: &Paths) -> Result<(), AppError> {
     }
     let profile = crate::profile::LockedProfile::acquire(nix, paths)?;
     let entries = list_profile(nix, &paths.profile)?;
-    sync_locked(&profile, &entries)
+    sync_locked(&profile, &entries).map(drop)
+}
+
+/// The launchers that one sync added and removed, by bundle name.
+#[derive(Default)]
+pub(crate) struct LauncherChanges {
+    pub(crate) added: Vec<String>,
+    pub(crate) removed: Vec<String>,
 }
 
 /// Refresh launchers from the active entries read under this profile lock.
 pub(crate) fn sync_locked(
     profile: &crate::profile::LockedProfile<'_>,
     entries: &BTreeMap<String, crate::nix::ProfileEntry>,
-) -> Result<(), AppError> {
+) -> Result<LauncherChanges, AppError> {
     let nix = profile.nix();
     let paths = profile.paths();
     if !cfg!(target_os = "macos") {
@@ -78,6 +85,22 @@ pub(crate) fn sync_locked(
     assess_public_tap_apps(&paths.state_home, entries)?;
     let dest = destination_path()?;
     let state = inspect_destination(&dest)?;
+    let before = match state {
+        DestinationState::Owned => read_source_map(&dest)?.unwrap_or_default(),
+        DestinationState::Missing | DestinationState::Unowned { .. } => BTreeMap::new(),
+    };
+    let changes = LauncherChanges {
+        added: apps
+            .keys()
+            .filter(|name| !before.contains_key(*name))
+            .cloned()
+            .collect(),
+        removed: before
+            .keys()
+            .filter(|name| !apps.contains_key(*name))
+            .cloned()
+            .collect(),
+    };
 
     if apps.is_empty() {
         return match state {
@@ -86,10 +109,10 @@ pub(crate) fn sync_locked(
                 clear_launchers(&dest)?;
                 write_marker(&dest)?;
                 write_source_map(&dest, &apps)?;
-                Ok(())
+                Ok(changes)
             }
             // No owned launchers need removal.
-            DestinationState::Missing | DestinationState::Unowned { .. } => Ok(()),
+            DestinationState::Missing | DestinationState::Unowned { .. } => Ok(changes),
         };
     }
 
@@ -116,7 +139,7 @@ pub(crate) fn sync_locked(
     symlink(&source_dir, &source_view)
         .map_err(|error| format!("could not create the helper source-view link: {error}"))?;
     refresh_staged(nix, paths, &helper, &source_view, &dest, &apps)?;
-    Ok(())
+    Ok(changes)
 }
 
 pub(crate) enum Health {
@@ -140,8 +163,10 @@ pub(crate) struct AppStatus {
 
 impl AppStatus {
     fn new(health: Health, detail: &str) -> Self {
-        let message = format!("{}: {detail}", health.as_str());
-        Self { health, message }
+        Self {
+            health,
+            message: detail.to_string(),
+        }
     }
 }
 
@@ -155,10 +180,7 @@ pub(crate) fn status(nix: &Nix, paths: &Paths) -> Result<AppStatus, AppError> {
     let dest = destination_path()?;
     let state = inspect_destination(&dest)?;
     if apps.is_empty() && !matches!(state, DestinationState::Owned) {
-        return Ok(AppStatus::new(
-            Health::Healthy,
-            "no active .app bundles; app launchers not needed",
-        ));
+        return Ok(AppStatus::new(Health::Healthy, "no apps installed"));
     }
     match state {
         DestinationState::Missing => {
@@ -216,11 +238,11 @@ pub(crate) fn status(nix: &Nix, paths: &Paths) -> Result<AppStatus, AppError> {
     if missing.is_empty() && stale_sources.is_empty() && changed.is_empty() {
         return Ok(AppStatus::new(
             Health::Healthy,
-            &format!(
-                "{} launcher(s) in sync (folder {})",
-                apps.len(),
-                dest.display()
-            ),
+            &match apps.len() {
+                0 => String::from("no apps installed"),
+                1 => format!("1 launcher in {}", dest.display()),
+                count => format!("{count} launchers in {}", dest.display()),
+            },
         ));
     }
     Ok(AppStatus::new(

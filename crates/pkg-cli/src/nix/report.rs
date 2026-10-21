@@ -49,6 +49,8 @@ const HIDDEN_PREFIXES: &[&str] = &[
     "this derivation ",
     "/nix/store/",
     "switching profile from version ",
+    "removing profile version ",
+    "shutting down",
 ];
 
 /// Whether `line` is a native summary that pkg reports itself, such as
@@ -141,6 +143,38 @@ struct DisplayState {
 struct FilterState {
     lock_diff: bool,
     file_conflict: bool,
+    hidden: Hidden,
+}
+
+/// Native text that the filter hides until it ends.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Hidden {
+    #[default]
+    Nothing,
+    /// A download warning continues with its response body.
+    DownloadBody,
+    /// An `error:` line started the native error trace. pkg reports the
+    /// cause after the profile check, so the trace stays hidden.
+    ErrorTrace,
+}
+
+/// One short line for `warning: unable to download 'URL': …`. Nix then
+/// uses its saved copy; the full warning can hold a JSON response body.
+fn download_note(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("warning: unable to download '")?;
+    let host = rest
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or("the network");
+    let host = if host.ends_with("github.com") {
+        "GitHub"
+    } else {
+        host
+    };
+    Some(format!(
+        "Note: could not download from {host}, so pkg used saved data."
+    ))
 }
 
 impl MutationReporter {
@@ -212,6 +246,30 @@ impl MutationReporter {
                 return;
             }
             self.filtering.file_conflict = false;
+        }
+        if self.filtering.hidden == Hidden::ErrorTrace {
+            return;
+        }
+        if line.starts_with("error:") {
+            self.filtering.hidden = Hidden::ErrorTrace;
+            return;
+        }
+        if self.filtering.hidden == Hidden::DownloadBody {
+            if line.contains("using cached version") {
+                self.filtering.hidden = Hidden::Nothing;
+                return;
+            }
+            if !line.starts_with("warning:") {
+                return;
+            }
+            self.filtering.hidden = Hidden::Nothing;
+        }
+        if let Some(note) = download_note(line) {
+            if !line.contains("using cached version") {
+                self.filtering.hidden = Hidden::DownloadBody;
+            }
+            self.show(&note);
+            return;
         }
         if let Some(scoped) = scoped_hint(line, &self.profile) {
             self.show(&scoped);

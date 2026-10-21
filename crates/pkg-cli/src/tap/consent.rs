@@ -14,6 +14,8 @@ pub enum Decision {
     Approved,
     /// The user refused; nothing may run.
     Refused,
+    /// No terminal can ask, and `--trust` is absent; nothing may run.
+    NoTerminal,
 }
 
 /// Ask for consent on the terminal.
@@ -26,11 +28,7 @@ pub fn ask(_source: &str, origin: &str, trusted: bool) -> Decision {
         return Decision::Approved;
     }
     if !stdin_is_terminal() {
-        eprintln!(
-            "pkg: tap add needs approval for {origin}; \
-             pass --trust in noninteractive runs"
-        );
-        return Decision::Refused;
+        return Decision::NoTerminal;
     }
     print!("pkg will run Ruby code from {origin} in a sandboxed Nix build; approve? [y/N] ");
     let _ = std::io::stdout().flush();
@@ -43,10 +41,7 @@ pub fn ask(_source: &str, origin: &str, trusted: bool) -> Decision {
         {
             Decision::Approved
         }
-        _ => {
-            println!("not approved");
-            Decision::Refused
-        }
+        _ => Decision::Refused,
     }
 }
 

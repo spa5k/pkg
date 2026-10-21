@@ -29,6 +29,10 @@ impl Fixture {
         .expect("runtime config");
         let profiles = home.path().join("state/nix/profiles");
         fs::create_dir_all(&profiles).expect("profile directory");
+        for number in [1, 2] {
+            symlink(home.path(), profiles.join(format!("pkg-{number}-link")))
+                .expect("generation link");
+        }
         symlink("pkg-1-link", profiles.join("pkg")).expect("native generation link");
         Self { home }
     }
@@ -93,6 +97,7 @@ elif action in ('add','remove','upgrade','rollback','wipe-history'):
   profile.symlink_to('pkg-2-link')
  if os.environ['PKG_ORDER_STOP']=='mutation': interrupt()
 elif 'flake metadata' in text: print(json.dumps({'url':'github:fixture/packages/1111111111111111111111111111111111111111'}))
+elif 'eval' in args and '--apply' in args and (home/'same-build').exists(): print('[]')
 else:
  print('unexpected native call: '+text,file=sys.stderr)
  sys.exit(9)
@@ -102,7 +107,7 @@ const ACTIONS: &[&[&str]] = &[
     &["install", "github:fixture/packages#probe"],
     &["remove", "opaque", "--entry"],
     &["upgrade", "opaque", "--entry"],
-    &["rollback", "1"],
+    &["rollback", "2"],
     &["prune", "--older-than", "30d"],
 ];
 
@@ -451,6 +456,23 @@ fn postflight_cancellation_reports_committed_change_and_stops_refresh() {
         );
         assert!(calls.iter().all(|call| call["locked"] == true), "{calls:?}");
     }
+}
+
+#[test]
+fn an_entry_with_the_same_build_counts_as_installed() {
+    let fixture = Fixture::new();
+    fs::write(fixture.home.path().join("same-build"), "").expect("flag");
+    let output = fixture.run(&["install", "github:fixture/packages#probe"], "none", "INT");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        stdout.contains("Already installed: probe") && stdout.contains("(the same build)"),
+        "{stdout}"
+    );
+    assert!(
+        fixture.calls().iter().all(|call| call["call"] != "add"),
+        "no second entry is added"
+    );
 }
 
 #[test]

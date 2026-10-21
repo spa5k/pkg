@@ -34,12 +34,22 @@ pub(super) fn report(
             String::from("catalog age is unknown; run `pkg update`")
         } else {
             format!(
-                "catalog checked {} hour(s) ago{}",
-                age / 3600,
+                "catalog checked {}{}",
+                age_text(age),
                 if stale { "; run `pkg update`" } else { "" }
             )
         }),
     }
+}
+
+/// A data age such as `3 hours ago` or `2 days ago`.
+fn age_text(age: u64) -> String {
+    let (count, unit) = match age {
+        0..3_600 => return String::from("less than 1 hour ago"),
+        3_600..172_800 => (age / 3_600, "hour"),
+        _ => (age / 86_400, "day"),
+    };
+    format!("{count} {unit}{} ago", if count == 1 { "" } else { "s" })
 }
 
 /// Data age in seconds after which search marks a source as stale.
@@ -113,6 +123,21 @@ pub fn search_local_native(
             command: package.command,
         };
         if let Some(rank) = query.rank_fields(&fields) {
+            // Like Formulae, a package that cannot install here shows only
+            // for its exact name or with `--unavailable`.
+            let support = match package.unavailable {
+                None => None,
+                Some(_)
+                    if !query.unavailable
+                        && !query.exact(&[package.exposed, package.name, &id]) =>
+                {
+                    return Ok(());
+                }
+                Some(reason) => Some(super::SupportBadge::Excluded {
+                    reason: reason.to_string(),
+                    detail: None,
+                }),
+            };
             sink(
                 SearchResult {
                     id: std::mem::take(&mut id),
@@ -125,7 +150,7 @@ pub fn search_local_native(
                     revision: snapshot.header.revision.clone(),
                     system: system.to_string(),
                     stale: report.status == SourceStatus::Stale,
-                    support: None,
+                    support,
                     install_command: None,
                     command: package.command.map(str::to_string),
                 },
@@ -235,6 +260,33 @@ fn visit_casks(
         sink(row, rank)?;
     }
     Ok(())
+}
+
+/// One line about the Nixpkgs search data, for `doctor`. Return `None`
+/// when the data is not ready.
+#[must_use]
+pub fn nixpkgs_summary(cache_dir: &Path, source: &str, system: &str) -> Option<String> {
+    let snapshot = native::Snapshot::read(cache_dir, source, system)?;
+    let (packages, origin) = snapshot.summary().ok()?;
+    let checked = checked_at(
+        cache_dir,
+        source,
+        system,
+        &snapshot.header.reference,
+        snapshot.header.revision.as_ref(),
+        snapshot.header.saved_unix,
+    );
+    let revision = snapshot.header.revision.as_deref().unwrap_or_default();
+    Some(format!(
+        "Nixpkgs: {} packages from {}, revision {}, checked {}",
+        crate::output::count(packages),
+        match origin {
+            native::Origin::Published => "the NixOS channel list",
+            native::Origin::Local => "an evaluation on this computer",
+        },
+        revision.get(..7).unwrap_or(revision),
+        age_text(cache::now_unix().saturating_sub(checked))
+    ))
 }
 
 pub(super) fn mark_checked(

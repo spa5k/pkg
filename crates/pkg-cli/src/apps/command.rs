@@ -5,6 +5,9 @@ use crate::commands::{CommandError, FAILURE, error, report_cause, session};
 use std::process::ExitCode;
 
 pub fn command(cli: &Cli, command: &AppsCommand) -> Result<(), CommandError> {
+    if !cfg!(target_os = "macos") {
+        return Err(String::from("app launchers work on macOS only.").into());
+    }
     match command {
         AppsCommand::Sync => sync(cli),
         AppsCommand::Setup => setup(),
@@ -13,10 +16,6 @@ pub fn command(cli: &Cli, command: &AppsCommand) -> Result<(), CommandError> {
 
 fn sync(cli: &Cli) -> Result<(), CommandError> {
     let session = session(cli)?;
-    if !cfg!(target_os = "macos") {
-        println!("App launchers are available on macOS only.");
-        return Ok(());
-    }
     eprintln!("Checking installed apps…");
     super::sync(&session.nix, &session.paths).map_err(|detail| {
         eprintln!("Failed: app launchers could not be updated.");
@@ -49,17 +48,29 @@ fn setup() -> Result<(), CommandError> {
 /// launcher sync fails, the failure is reported as partial completion with a
 /// nonzero exit and `pkg apps sync` named as the retry (design D4). On other
 /// systems app exposure does not apply and this is a no-op.
+///
+/// Returns one line for each launcher that the sync added or removed.
 pub fn refresh_after_profile_change(
     profile: &crate::profile::LockedProfile<'_>,
     entries: &std::collections::BTreeMap<String, crate::nix::ProfileEntry>,
     action: &str,
     names: &[String],
-) -> Result<(), CommandError> {
+) -> Result<String, CommandError> {
+    use std::fmt::Write as _;
     if !cfg!(target_os = "macos") {
-        return Ok(());
+        return Ok(String::new());
     }
     match super::sync_locked(profile, entries) {
-        Ok(()) => Ok(()),
+        Ok(changes) => {
+            let mut text = String::new();
+            for name in &changes.added {
+                let _ = writeln!(text, "App: ~/Applications/pkg/{name}");
+            }
+            for name in &changes.removed {
+                let _ = writeln!(text, "Removed app: {name}");
+            }
+            Ok(text)
+        }
         Err(detail) => {
             if names.is_empty() {
                 eprintln!(

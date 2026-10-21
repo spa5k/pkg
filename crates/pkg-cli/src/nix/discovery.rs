@@ -25,6 +25,11 @@ pub enum MetadataValue {
         /// such as NixOS tests, it evaluates a whole system.
         #[serde(default, rename = "mainProgram")]
         command: Option<String>,
+        /// Why Nixpkgs cannot install the package on this system:
+        /// `unsupported-platform`, `unfree`, `broken`, or `insecure`. Search
+        /// data reads it only for top-level packages, as for the command.
+        #[serde(default)]
+        unavailable: Option<String>,
     },
     /// A recursive set to visit.
     Children {
@@ -46,6 +51,60 @@ pub struct OutputMatch {
     pub(crate) attribute: String,
     /// Store paths selected by the request.
     pub(crate) paths: Vec<String>,
+}
+
+/// The expression that inspects one batch of attribute paths.
+fn metadata_expression(
+    reference: &str,
+    system: &str,
+    root: &str,
+    paths: &[Vec<String>],
+) -> Result<String, NixError> {
+    let legacy = if root == "legacyPackages" {
+        "true"
+    } else {
+        "false"
+    };
+    let reference = nix_json(&reference)?;
+    let system = nix_json(&system)?;
+    let root = nix_json(&root)?;
+    let paths = nix_json(&paths)?;
+    let expression = format!(
+        r#"let
+  flake = builtins.getFlake (builtins.fromJSON {reference});
+  system = builtins.fromJSON {system};
+  rootName = builtins.fromJSON {root};
+  paths = builtins.fromJSON {paths};
+  legacy = {legacy};
+  absent = path: {{ inherit path; kind = "absent"; }};
+  inspect = root: path:
+let
+  value = builtins.foldl' (v: name: builtins.getAttr name v) root (builtins.tail (builtins.tail path));
+  row = if builtins.isAttrs value && value ? type && !builtins.isString value.type then
+throw "package type must be a string"
+  else if builtins.isAttrs value && (value.type or null) == "derivation" then
+let name = builtins.parseDrvName value.name;
+in {{ inherit path; kind = "package"; meta = {{ pname = name.name; version = name.version; description = builtins.replaceStrings [ "\n" ] [ " " ] (value.meta.description or ""); }}; mainProgram = if builtins.length path != 3 then null else let main = builtins.tryEval (value.meta.mainProgram or null); in if main.success && builtins.isString main.value then main.value else null; unavailable = if builtins.length path != 3 then null else let flag = name: let checked = builtins.tryEval (value.meta.${{name}} or false); in checked.success && checked.value == true; in if flag "unsupported" then "unsupported-platform" else if flag "unfree" then "unfree" else if flag "broken" then "broken" else if flag "insecure" then "insecure" else null; }}
+  else if builtins.length path == 2 || (builtins.isAttrs value && legacy && (value.recurseForDerivations or false)) then
+{{ inherit path; kind = "children"; children = builtins.attrNames value; }}
+  else {{ inherit path; kind = "skip"; }};
+  attempt = builtins.tryEval (builtins.deepSeq row row);
+in if !legacy then row else if attempt.success then attempt.value else {{ inherit path; kind = "error"; }};
+in if !builtins.isAttrs flake || !builtins.hasAttr rootName flake then
+  [ (absent [ rootName system ]) ]
+else let
+  output = builtins.getAttr rootName flake;
+in if !builtins.isAttrs output then
+  throw ("Nix output root " + rootName + " must be an attribute set")
+else if !builtins.hasAttr system output then
+  [ (absent [ rootName system ]) ]
+else let
+  selected = builtins.getAttr system output;
+in if !builtins.isAttrs selected then
+  throw ("Nix output system " + rootName + "." + system + " must be an attribute set")
+else map (inspect selected) paths"#
+    );
+    Ok(expression)
 }
 
 pub(super) fn nix_json(value: &impl serde::Serialize) -> Result<String, NixError> {
@@ -248,6 +307,45 @@ in map inspect paths"#
         }
     }
 
+    /// Evaluate several metadata batches at the same time.
+    ///
+    /// Each batch is one `nix eval` with the memory budget of
+    /// [`Self::metadata_batch`]. Each result has its own error. A batch that
+    /// fails here does not split; the caller can retry it alone.
+    /// # Errors
+    ///
+    /// Returns an error if argument encoding or signal setup fails.
+    pub fn metadata_batches(
+        &self,
+        reference: &str,
+        system: &str,
+        root: &str,
+        batches: &[&[Vec<String>]],
+    ) -> Result<Vec<Result<Vec<MetadataNode>, NixError>>, NixError> {
+        let expressions = batches
+            .iter()
+            .map(|paths| metadata_expression(reference, system, root, paths))
+            .collect::<Result<Vec<_>, _>>()?;
+        let args: Vec<[&str; 4]> = expressions
+            .iter()
+            .map(|expression| ["eval", "--json", "--expr", expression])
+            .collect();
+        let commands = args
+            .iter()
+            .map(|args| self.discovery_command(args, "20"))
+            .collect();
+        let results = process::run_children(commands, Some(DISCOVERY_LIMITS))
+            .map_err(|error| self.diagnose(NixError::Process(error)))?;
+        Ok(results
+            .into_iter()
+            .zip(&args)
+            .map(|(result, args)| {
+                let reaped = result.map_err(|error| self.diagnose(NixError::Process(error)))?;
+                self.discovery_output("metadata batch", args, &reaped)
+            })
+            .collect())
+    }
+
     fn metadata_batch_with_gc(
         &self,
         reference: &str,
@@ -256,50 +354,7 @@ in map inspect paths"#
         paths: &[Vec<String>],
         divisor: &str,
     ) -> Result<Vec<MetadataNode>, NixError> {
-        let legacy = if root == "legacyPackages" {
-            "true"
-        } else {
-            "false"
-        };
-        let reference = nix_json(&reference)?;
-        let system = nix_json(&system)?;
-        let root = nix_json(&root)?;
-        let paths = nix_json(&paths)?;
-        let expression = format!(
-            r#"let
-  flake = builtins.getFlake (builtins.fromJSON {reference});
-  system = builtins.fromJSON {system};
-  rootName = builtins.fromJSON {root};
-  paths = builtins.fromJSON {paths};
-  legacy = {legacy};
-  absent = path: {{ inherit path; kind = "absent"; }};
-  inspect = root: path:
-let
-  value = builtins.foldl' (v: name: builtins.getAttr name v) root (builtins.tail (builtins.tail path));
-  row = if builtins.isAttrs value && value ? type && !builtins.isString value.type then
-    throw "package type must be a string"
-  else if builtins.isAttrs value && (value.type or null) == "derivation" then
-    let name = builtins.parseDrvName value.name;
-    in {{ inherit path; kind = "package"; meta = {{ pname = name.name; version = name.version; description = builtins.replaceStrings [ "\n" ] [ " " ] (value.meta.description or ""); }}; mainProgram = if builtins.length path != 3 then null else let main = builtins.tryEval (value.meta.mainProgram or null); in if main.success && builtins.isString main.value then main.value else null; }}
-  else if builtins.length path == 2 || (builtins.isAttrs value && legacy && (value.recurseForDerivations or false)) then
-    {{ inherit path; kind = "children"; children = builtins.attrNames value; }}
-  else {{ inherit path; kind = "skip"; }};
-  attempt = builtins.tryEval (builtins.deepSeq row row);
-in if !legacy then row else if attempt.success then attempt.value else {{ inherit path; kind = "error"; }};
-in if !builtins.isAttrs flake || !builtins.hasAttr rootName flake then
-  [ (absent [ rootName system ]) ]
-else let
-  output = builtins.getAttr rootName flake;
-in if !builtins.isAttrs output then
-  throw ("Nix output root " + rootName + " must be an attribute set")
-else if !builtins.hasAttr system output then
-  [ (absent [ rootName system ]) ]
-else let
-  selected = builtins.getAttr system output;
-in if !builtins.isAttrs selected then
-  throw ("Nix output system " + rootName + "." + system + " must be an attribute set")
-else map (inspect selected) paths"#
-        );
+        let expression = metadata_expression(reference, system, root, paths)?;
         self.discovery_json(
             "metadata batch",
             &["eval", "--json", "--expr", &expression],
@@ -313,6 +368,17 @@ else map (inspect selected) paths"#
         args: &[&str],
         divisor: &str,
     ) -> Result<T, NixError> {
+        let reaped = process::run_child(
+            self.discovery_command(args, divisor),
+            process::IoMode::Capture,
+            Some(DISCOVERY_LIMITS),
+            None,
+        )
+        .map_err(|error| self.diagnose(NixError::Process(error)))?;
+        self.discovery_output(what, args, &reaped)
+    }
+
+    fn discovery_command(&self, args: &[&str], divisor: &str) -> std::process::Command {
         let mut bounded_args = vec![
             "--option",
             "eval-attrset-update-layer-rhs-threshold",
@@ -323,24 +389,30 @@ else map (inspect selected) paths"#
         command.env("GC_INITIAL_HEAP_SIZE", "8388608");
         command.env("GC_FREE_SPACE_DIVISOR", divisor);
         command.env("MIMALLOC_PURGE_DELAY", "0");
-        let reaped = process::run_child(
-            command,
-            process::IoMode::Capture,
-            Some(process::ChildLimits {
-                resident_bytes: Some(512 * 1024 * 1024),
-                wall_time: std::time::Duration::from_mins(2),
-                output_bytes: 16 * 1024 * 1024,
-            }),
-            None,
-        )
-        .map_err(|error| self.diagnose(NixError::Process(error)))?;
-        self.finish(args, &reaped)?;
+        command
+    }
+
+    fn discovery_output<T: serde::de::DeserializeOwned>(
+        &self,
+        what: &'static str,
+        args: &[&str],
+        reaped: &process::Reaped,
+    ) -> Result<T, NixError> {
+        self.finish(args, reaped)?;
         serde_json::from_slice(&reaped.output.stdout).map_err(|error| NixError::Json {
             what,
             source: error,
         })
     }
 }
+
+/// The bounds of one discovery evaluation: 512 MiB RSS, two minutes, and
+/// 16 MiB of output.
+const DISCOVERY_LIMITS: process::ChildLimits = process::ChildLimits {
+    resident_bytes: Some(512 * 1024 * 1024),
+    wall_time: std::time::Duration::from_secs(120),
+    output_bytes: 16 * 1024 * 1024,
+};
 
 #[cfg(test)]
 mod tests {

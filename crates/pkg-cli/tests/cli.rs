@@ -132,13 +132,53 @@ fn relative_xdg_bases_are_rejected() {
 }
 
 #[test]
+fn a_mistyped_command_suggests_the_closest_command_first() {
+    let (code, _, stderr) = pkg(&["instal", "jq"], &[]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("similar subcommands exist: 'install'"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn file_bases_and_a_missing_home_are_rejected_with_their_path() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let file = directory.path().join("file");
+    std::fs::write(&file, "").expect("write");
+    let file = file.to_str().expect("utf-8 path");
+    for variable in ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"] {
+        let (code, _, stderr) = pkg(&["list"], &[(variable, file)]);
+        assert_eq!(code, 1, "{variable}: {stderr}");
+        assert!(
+            stderr.contains(file) && stderr.contains("not a folder") && stderr.contains(variable),
+            "{stderr}"
+        );
+    }
+    let missing = directory.path().join("missing");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+    for variable in ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"] {
+        command.env_remove(variable);
+    }
+    let output = command
+        .args(["list"])
+        .env("HOME", &missing)
+        .output()
+        .expect("spawn pkg");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("does not exist"), "{stderr}");
+    assert!(!missing.exists(), "a missing HOME is not created");
+}
+
+#[test]
 fn prune_requires_an_explicit_positive_age() {
     for (age, diagnostic) in [
-        ("0d", "positive"),
+        ("0d", "at least 1 day"),
         ("30", "end in `d`"),
         ("-1d", "number of days"),
         ("", "end in `d`"),
-        ("18446744073709551616d", "number of days"),
+        ("+30d", "number of days"),
     ] {
         let (code, stdout, stderr) = pkg(&["prune", &format!("--older-than={age}")], &[]);
         assert_eq!(code, 1, "{age:?}: {stderr}");
@@ -169,10 +209,14 @@ fn invalid_config_is_reported_without_replacing_the_file() {
         "[runtime]\nnix_path = '/usr/bin/nix'",
     ] {
         std::fs::write(&file, text).unwrap();
+        // Doctor still runs and reports the settings file as one problem.
         let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["doctor"], "/nonexistent");
         assert_eq!(code, 1, "{text}: {stderr}");
-        assert!(stdout.is_empty(), "{text}: {stdout}");
-        assert!(stderr.contains("invalid config"), "{text}: {stderr}");
+        assert!(stdout.contains("invalid config in"), "{text}: {stdout}");
+        assert!(stdout.contains("config.toml"), "{text}: {stdout}");
+        let (code, _, stderr) = run_pkg_under_home(home.path(), &["list"], "/nonexistent");
+        assert_eq!(code, 1, "{text}: {stderr}");
+        assert!(stderr.contains("invalid config in"), "{text}: {stderr}");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
     }
     assert!(!home.path().join("state").exists());
@@ -291,7 +335,7 @@ fn invalid_search_pattern_is_a_usage_error_before_runtime_discovery() {
     assert_eq!(code, 2, "stderr: {stderr}");
     assert!(stdout.is_empty(), "stdout: {stdout}");
     assert!(
-        stderr.contains("Invalid search pattern"),
+        stderr.contains("pkg: invalid search pattern"),
         "stderr: {stderr}"
     );
     assert!(!stderr.contains("Nix executable"), "stderr: {stderr}");
@@ -652,14 +696,11 @@ fn doctor_forwards_verbose_and_no_color_to_native_children() {
     // `--verbose` traces every native probe doctor runs.
     let (code, stdout, stderr) = run(&["doctor", "--verbose"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
-    assert!(stderr.contains("pkg: nix "), "verbose trace: {stderr}");
+    assert!(stderr.contains("$ nix "), "verbose trace: {stderr}");
     // Without the flag no trace appears.
     let (code, stdout, stderr) = run(&["doctor"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
-    assert!(
-        !stderr.contains("pkg: nix "),
-        "no trace by default: {stderr}"
-    );
+    assert!(!stderr.contains("$ nix "), "no trace by default: {stderr}");
     // `--no-color` forwards NO_COLOR=1 to the native children.
     let (code, stdout, stderr) = run(&["doctor", "--verbose", "--no-color"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
@@ -1198,11 +1239,11 @@ esac
         "stdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
-        stderr.contains("not proven sandboxed"),
+        stderr.contains("taps need a one-time Nix sandbox setup"),
         "the concise cause must lead: {stderr}"
     );
     assert!(
-        all.contains("one-time sandbox setup"),
+        all.contains("Run this command in a terminal"),
         "the setup offer must be named: {all}"
     );
     assert!(

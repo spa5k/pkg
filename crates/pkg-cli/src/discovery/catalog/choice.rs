@@ -417,7 +417,7 @@ impl Names {
                         found.push(Candidate {
                             tier,
                             id: CatalogId::nixpkgs(&row.exposed).map_err(CatalogError::Source)?,
-                            available: true,
+                            available: row.unavailable.is_none(),
                         });
                     }
                 }
@@ -526,7 +526,7 @@ fn native_exact(
             Ok(Candidate {
                 tier: Tier::Nixpkgs,
                 id: CatalogId::nixpkgs(&row.exposed).map_err(CatalogError::Source)?,
-                available: true,
+                available: row.unavailable.is_none(),
             })
         })
         .collect()

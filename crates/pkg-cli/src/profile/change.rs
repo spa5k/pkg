@@ -52,7 +52,15 @@ pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), Com
         Request::Prune { days } => return prune(session, days),
         Request::Profile(request) => request,
     };
-    let state = super::query::installed_state(session)?;
+    // A broken current generation blocks every change except the rollback
+    // that repairs it.
+    let state = if matches!(request, ProfileChange::Rollback(_))
+        && super::query::broken_profile(&session.paths.profile).is_some()
+    {
+        None
+    } else {
+        super::query::installed_state(session)?
+    };
     let empty = BTreeMap::new();
     let before = state.as_ref().map_or(&empty, nix::CheckedProfile::entries);
     let Some(prepared) = prepare(session, request, before)? else {
@@ -64,8 +72,13 @@ pub(super) fn execute(session: &Session, request: Request<'_>) -> Result<(), Com
     let after = installed_entries(session)
         .map_err(|error| report_postflight_failure(prepared.action(), &error))?;
     let report = prepared.completed(session, before, &after);
-    crate::apps::refresh_after_profile_change(&profile, &after, prepared.action(), &report.names)?;
-    print!("{}", report.text);
+    let apps = crate::apps::refresh_after_profile_change(
+        &profile,
+        &after,
+        prepared.action(),
+        &report.names,
+    )?;
+    print!("{}{apps}", report.text);
     Ok(())
 }
 
@@ -107,13 +120,37 @@ fn prepare(
                 None => match super::query::undo_target(&session.paths.profile) {
                     super::query::UndoTarget::Generation(number) => Some(number),
                     super::query::UndoTarget::Nothing => {
-                        println!("Nothing to undo. Older generations have the same packages.");
+                        if super::query::generation_numbers(&session.paths.profile).len() < 2 {
+                            println!("Nothing to undo yet.");
+                        } else {
+                            println!("Nothing to undo. Older generations have the same packages.");
+                        }
+                        return Ok(None);
+                    }
+                    super::query::UndoTarget::Unknown
+                        if super::query::generation_numbers(&session.paths.profile).len() < 2
+                            && super::query::broken_profile(&session.paths.profile).is_none() =>
+                    {
+                        println!("Nothing to undo yet.");
                         return Ok(None);
                     }
                     super::query::UndoTarget::Unknown => None,
                 },
             };
             let previous = active_generation(&session.paths.profile);
+            if let Some(number) = generation {
+                if previous == Some(number) {
+                    println!("Generation {number} is already active. Nothing changed.");
+                    return Ok(None);
+                }
+                let known = super::query::generation_numbers(&session.paths.profile);
+                if !known.is_empty() && !known.contains(&number) {
+                    return Err(format!(
+                        "generation {number} does not exist. Run `pkg history` to see the generations."
+                    )
+                    .into());
+                }
+            }
             report_rollback_target(session, generation, previous)?;
             Ok(Some(Prepared::Rollback {
                 generation,
@@ -161,7 +198,13 @@ fn prepare_install(
                     crate::output::short_package_name(&name)
                 );
             }
-            _ => targets.push((installable, name)),
+            _ => match same_build(&session.nix, before, &installable)? {
+                Some(entry) => {
+                    let package = super::summary::Package::of(entry, display_name(session, entry));
+                    println!("Already installed: {} (the same build)", package.label());
+                }
+                None => targets.push((installable, name)),
+            },
         }
     }
     if targets.is_empty() {
@@ -362,6 +405,12 @@ fn rolled_back(
     if changes.is_empty() {
         text.push_str("No package changes.\n");
     }
+    // A repair from a missing generation has no way back.
+    if let Some(number) = previous
+        && super::query::generation_numbers(&session.paths.profile).contains(&number)
+    {
+        let _ = writeln!(text, "To go back, run `pkg rollback {number}`.");
+    }
     Report {
         names: vec![destination],
         text,
@@ -377,6 +426,17 @@ fn commands_text(session: &Session, entries: &[&ProfileEntry]) -> String {
         .flat_map(|entry| super::installed::commands(entry, &session.paths.profile))
         .collect();
     if commands.is_empty() {
+        // Apps open from the Applications folder. Other packages without
+        // commands are often libraries that a profile cannot use.
+        let apps = entries.iter().any(|entry| {
+            entry
+                .store_paths
+                .iter()
+                .any(|path| std::path::Path::new(path).join("Applications").is_dir())
+        });
+        if !apps && !entries.is_empty() {
+            text.push_str("This package adds no commands.\n");
+        }
         return text;
     }
     let shown = commands
@@ -449,7 +509,10 @@ fn report_rollback_target(
 
 fn prune(session: &Session, days: u64) -> Result<(), CommandError> {
     let before = optional_history(session)?;
-    eprintln!("Pruning: generations older than {days} days");
+    eprintln!(
+        "Pruning: generations older than {days} {}",
+        if days == 1 { "day" } else { "days" }
+    );
     session
         .nix
         .profile_wipe_history(&session.paths.profile, &format!("{days}d"))
@@ -457,15 +520,14 @@ fn prune(session: &Session, days: u64) -> Result<(), CommandError> {
     let after =
         optional_history(session).map_err(|error| report_postflight_failure("prune", &error))?;
     match (before, after) {
-        (Some(before), Some(after)) if !before.is_empty() && !after.is_empty() => {
-            let removed = before.difference(&after).count();
-            if removed == 0 {
-                println!("No old generations to prune.");
-            } else {
-                println!("Pruned: {removed} old generation(s). Current generation kept.");
+        (Some(before), Some(after)) => match before.difference(&after).count() {
+            0 => println!("No old generations to prune."),
+            1 => println!("Pruned 1 old generation. The current generation stays."),
+            removed => {
+                println!("Pruned {removed} old generations. The current generation stays.");
             }
-        }
-        _ => println!("Prune complete: generations older than {days} days were checked."),
+        },
+        _ => println!("Prune complete. Run `pkg history` to see the generations."),
     }
     Ok(())
 }
@@ -666,6 +728,44 @@ fn already_installed(
     }))
 }
 
+/// The active entry with the same build as `installable`, for example the
+/// same package through another flake reference or output name.
+///
+/// The check costs one evaluation, so it runs only when an active entry
+/// has the name of an attribute segment.
+fn same_build<'a>(
+    nix: &nix::Nix,
+    installed: &'a BTreeMap<String, ProfileEntry>,
+    installable: &str,
+) -> Result<Option<&'a ProfileEntry>, NixError> {
+    let Some((_, attribute)) = installable.split_once('#') else {
+        return Ok(None);
+    };
+    let segments: Vec<&str> = attribute
+        .split(['.', '^'])
+        .map(|segment| segment.trim_matches('"'))
+        .collect();
+    let candidates: Vec<_> = installed
+        .values()
+        .filter(|entry| entry.active && segments.contains(&entry.name().as_str()))
+        .collect();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let mut paths = match nix.default_output_paths(installable) {
+        Ok(paths) => paths,
+        // The install reports the cause.
+        Err(NixError::Failed { .. } | NixError::ResourceLimit(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    paths.sort();
+    Ok(candidates.into_iter().find(|entry| {
+        let mut existing = entry.store_paths.clone();
+        existing.sort();
+        existing == paths
+    }))
+}
+
 fn package_id(session: &super::Session, entry: &ProfileEntry) -> String {
     super::installed::package_id(entry, &session.config, &session.paths.state_home)
 }
@@ -857,7 +957,7 @@ mod reporting_tests {
                         );
                         assert!(!stderr.contains("native command `nix fixture`"), "{stderr}");
                     } else {
-                        assert!(stderr.contains("Cause: could not supervise the Nix command: fixture supervisor pipe read failed\n"), "{signal}/{stage}: {stderr}");
+                        assert!(stderr.contains("Cause: could not supervise the Nix command: fixture supervisor pipe read failed.\n"), "{signal}/{stage}: {stderr}");
                     }
                 }
             }

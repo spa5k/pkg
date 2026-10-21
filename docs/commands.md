@@ -64,8 +64,13 @@ An installed package reports `Already installed` with its version, without a
 failure. An active entry from the same source and attribute counts as
 installed, even when the source moved since the install. `pkg` does not add a
 second entry for it. When a newer build exists, the output names
-`pkg upgrade NAME`. Use `--verbose` for the native diagnostic. `pkg` does not
-select a package or change its priority.
+`pkg upgrade NAME`. An installed entry with the same build also counts, for
+example `github:NixOS/nixpkgs#hello` or `nixpkgs:hello.out` when `hello` is
+installed. The output then ends with `(the same build)`. This check
+evaluates the request only when an installed entry has the name of one of its
+attribute parts. An install that adds no commands and no apps prints
+`This package adds no commands.` Use `--verbose` for the native diagnostic.
+`pkg` does not select a package or change its priority.
 
 | Command | Behavior |
 | --- | --- |
@@ -76,20 +81,22 @@ select a package or change its priority.
 | `pkg remove ID… [--entry]` or `pkg uninstall ID… [--entry]` | Resolve unique installed names or package IDs, then remove the selected entries in one native operation. A command name selects the one installed package that provides it: `pkg remove rg` removes ripgrep. Several entries of one package from one source are removed together. |
 | `pkg update` | Update the installed client to the newest release, then refresh official catalogs and saved tap catalogs under their recorded consent. After a client update, the new client refreshes the search data. Does not change installed packages. |
 | `pkg upgrade [ID…] [--entry]` | Without IDs, upgrade all packages (`--all` does the same). Follow each entry's original reference. Reports fixed references. When nothing changes, prints `Everything is up to date.` After `tap remove`, upgrade of all packages skips removed-source references and forwards the remaining entries by explicit native entry IDs (not native `--all`); upgrading a removed-source entry refuses. |
-| `pkg history` | Show retained generations, newest first, with the date and the package changes of each. `*` marks the current generation. A new profile prints `No changes yet.` Reads local files only. `--verbose` prints the native history. |
-| `pkg rollback [N]` | Without a number, go back to the newest older generation with other packages. A generation in which only the source revision moved is skipped. When every older generation has the same packages, prints `Nothing to undo.` With a number, select that generation. Prints the destination and the package changes. Refreshes launchers. |
-| `pkg prune --older-than Nd` | Remove only eligible non-current generations. Requires an explicit positive age. |
+| `pkg history` | Show retained generations, newest first, with the date and the package changes of each. `*` marks the current generation. A new profile prints `No changes yet.` Reads local files only. `--verbose` prints the native history. `--json` prints the generations. |
+| `pkg rollback [N]` | Without a number, go back to the newest older generation with other packages. A generation in which only the source revision moved is skipped. When every older generation has the same packages, prints `Nothing to undo.` With a number, select that generation; a number that does not exist or is already active changes nothing. Prints the destination, the package changes, and the command that goes back. Refreshes launchers. |
+| `pkg prune --older-than Nd` | Remove only eligible non-current generations. Requires an explicit positive age. An age above 24855 days uses 24855 days, the largest age that Nix handles safely. |
 | `pkg doctor` | Read-only runtime, profile, launcher, daily job, and `PATH` status. Repairs nothing. |
 | `pkg self uninstall [--yes]` | Remove the client, completions, shell setup, daily job, settings, and search data. Nix and installed packages stay. Without a terminal, `--yes` is required. |
 | `pkg apps sync` | Rebuild pkg-owned macOS launchers from the active profile. |
 | `pkg apps setup` | Create private app storage on the Nix volume. Requests administrator access once. |
-| `pkg tap add SOURCE [--revision SHA] [--trust]` | Save a public tap. Ask approval before any fetch, import, or Ruby runs. |
+| `pkg tap add OWNER/TAP [--revision SHA] [--trust]` | Save a public tap. Ask approval before any fetch, import, or Ruby runs. |
 | `pkg tap list [--json]` | List saved taps: source, origin, revision, and consent time. |
-| `pkg tap update [SOURCE] [--revision SHA]` | Re-import saved tap catalogs at a pinned revision. Runs tap Ruby under the same rules as `add`. |
-| `pkg tap remove SOURCE` | Block future use of a source. Installed packages stay. |
+| `pkg tap update [OWNER/TAP] [--revision SHA]` | Re-import saved tap catalogs at a pinned revision. Runs tap Ruby under the same rules as `add`. |
+| `pkg tap remove OWNER/TAP` | Block future use of a source. Installed packages stay. |
 
 Hidden commands: `pkg background enable/disable/status` controls the daily
-job. `pkg shellenv` prints Bash/Zsh `PATH` settings. `pkg completion SHELL`
+job. On Linux the job needs a systemd user session. Without one, `enable`
+refuses and writes nothing, `disable` removes old job files, and `status`
+and `doctor` say to run `pkg update` by hand. `pkg shellenv` prints Bash/Zsh `PATH` settings. `pkg completion SHELL`
 prints completions. The installer uses them. They do not show in help.
 
 Removed commands: `setup`, `pin`, `unpin`, `outdated`, `repair`, `gc`, and
@@ -149,8 +156,8 @@ the [plan](../openspec/changes/archive/2026-10-12-import-public-cask-taps/design
 
 ## JSON query output
 
-`--json` works only with the five query commands: `search`, `info`,
-`list`, `tap list`, and `doctor`. With any other command it is a usage
+`--json` works only with the six query commands: `search`, `info`,
+`list`, `history`, `tap list`, and `doctor`. With any other command it is a usage
 error (exit code 2). Every JSON result uses the same versioned envelope,
 with this shape:
 
@@ -219,7 +226,8 @@ bare name selects this row. Otherwise it is a short ID such as
 `brew:ripgrep-all` or `cask:acme/tools/aws-console`. Search uses only local
 data for this decision. When local data is missing, NAME shows the short ID.
 
-A check mark (✓) shows a package that is in the profile. Search reads the
+NAME is always the first column. A check mark (✓) after the name shows a
+package that is in the profile. Search reads the
 profile manifest file for this mark. It runs no Nix command. A row that
 cannot install on this system shows `Not available here:` and the reason in
 plain words, for example `needs other Homebrew packages`. JSON and
@@ -228,12 +236,14 @@ that can install. A row with unknown support shows `Availability unknown:`
 and the reason.
 Top-level packages come before packages in nested sets, such as
 `python3Packages`. A match through a Formula alias comes after every exact
-name. On a terminal, the description is cut to fit the width. Versions longer
-than 16 characters are cut.
+name. On a terminal, the description is cut to fit the width. When less than
+12 characters of room remain, the DESCRIPTION column is not shown. Versions
+longer than 16 characters are cut.
 
-When the limit hides rows, the list ends with `Showing N of M matches`. The
-last line shows the install command for the first row that can install, for
-example `Install: pkg install ripgrep`.
+Only the table goes to stdout. When the limit hides rows, stderr shows
+`Showing N of M matches`. Then stderr shows the install command for the first
+row that can install, for example `Install: pkg install ripgrep`. `No matches`
+and the similar-names note also go to stderr.
 
 Human output shows 20 results by default. Use
 `--limit N` or `--all` to change the count. JSON includes all matches unless
@@ -252,7 +262,7 @@ Use `--source brew` or `--source homebrew/core` for formulae. Use
 `homebrew:aws` select the same groups. Formula aliases return the canonical
 `brew:homebrew/core/NAME` ID. JSON stays a flat list with global relevance
 order and a global limit. JSON keeps the row from each source, also when
-names repeat. Nixpkgs rows can include `command`, the main command.
+names repeat. Every row has `install_command` and `command`.
 
 Formulae install through Nix into the pkg profile. Use `pkg install brew:NAME`
 or the full `brew:homebrew/core/NAME` ID. Search aliases return this canonical ID.
@@ -278,6 +288,24 @@ Nix profile for Formulae. Remove accepts the canonical ID or `brew:NAME`.
 Aliases are resolved by search, info, and install. A mixed install checks
 all requested Casks and Formulae before it changes the profile.
 
+Nixpkgs marks some packages as not available on this system: unfree
+packages, packages for other platforms, and broken or insecure packages.
+Normal search hides these packages. Exact names and `--unavailable` show
+them with `Not available here:` and the reason, for example
+`unfree license`. `pkg info` shows the same reason. Install refuses them
+before Nix runs, and names the package.
+
+The NixOS channel list comes from an evaluation on `x86_64-linux`. It
+records these reasons for every package. On `x86_64-linux` they are exact.
+On other systems, pkg reads the platform from the list's platform names. A
+package without this system shows `Nixpkgs lists builds for other systems
+only`, and `pkg info` says `Probably cannot install`. This reason does not
+refuse an install, because a package can have a separate build for this
+system. Nix makes the final check. A package that Nixpkgs marks broken on
+macOS only shows as available; Nix refuses it at install, and pkg shows
+the cause in plain words. A local evaluation records the reasons for
+top-level packages only, and they are exact.
+
 Normal Formula search hides unsupported packages and declared libraries.
 Exact names and `--unavailable` show unsupported packages with their reason.
 Exact names, `--broad`, and library or resource queries can show packages
@@ -287,7 +315,16 @@ and install.
 
 The daily job prepares local catalogs. The first search prepares missing
 catalogs itself. `pkg update` refreshes them manually. Normal search uses
-local files without Nix or network access. Data older than three days is
+local files without Nix or network access.
+
+For a NixOS channel source, such as the default
+`github:NixOS/nixpkgs/nixpkgs-unstable`, pkg downloads the package list
+that the channel publishes: `https://channels.nixos.org/<channel>/git-revision`,
+then `packages.json.br` from the same release. The list is about 10 MB and
+has about 150,000 packages. pkg reads it in a few seconds. It does not
+evaluate Nixpkgs. The list leaves out aliases and `tests`; install still
+accepts an alias, because one Nix check finds it. A channel with no list,
+and every other source, is evaluated on this computer. Data older than three days is
 marked stale. Verbose output includes catalog age and
 revision. A failed refresh keeps the previous complete snapshot.
 Formula preparation evaluates the generated `formulaIndex` at a locked Git
@@ -295,14 +332,23 @@ revision. It does not fetch the Homebrew API on the user's machine.
 The daily catalog job refreshes this source. Maintainers refresh the pinned
 Core input with [the Formula generator](../tools/formula-catalog/README.md).
 
-Preparation evaluates metadata in batches of up to 512 attributes.
-Encoded path lists stay within 64 KiB. Each evaluator
-has a 512 MiB RSS budget. The memory guard stops at 480 MiB. A stopped
-batch is split and retried. An entry that still exceeds the budget is
+A local evaluation evaluates metadata in batches of up to 512 attributes.
+Up to four batches run at the same time: not more than one for each
+processor, and one for each 640 MiB of available memory (half of the
+installed memory on macOS). Encoded path lists stay within 64 KiB. Each
+evaluator has a 512 MiB RSS budget. The memory guard stops at 480 MiB. A
+stopped batch is split and retried alone. An entry that still exceeds the budget is
 left out of search and recorded as failed, so the rest of the data stays
 usable. Install and info check such a name through Nix. `--verbose` names
 the skipped entry. Catalog publication is atomic for each source. A source can
 finish when another source fails.
+
+A local evaluation keeps its finished batches in
+`catalog-<key>.sqlite.partial` in the cache folder. When Ctrl-C or a failure
+stops it, the next preparation for the same source revision continues from
+there. A new revision starts again. While the first search waits for a local
+evaluation, it first shows the Nixpkgs package whose name is the query, from
+one Nix check.
 
 SQLite holds native catalog metadata with its source and revision. Search
 uses an 8 MiB page cache. A temporary SQLite spool orders matching rows
@@ -332,15 +378,18 @@ Row fields:
 | `revision` | string, nullable | Native source revision. |
 | `system` | string | Search target system. |
 | `stale` | boolean | Local catalog is older than three days, or its age is unknown. |
-| `support` | object, nullable | `{"status":"eligible"}`, `{"status":"excluded","reason":…,"detail":…}`, or `{"status":"unknown","reason":…}` for Casks and Formulae. Nixpkgs rows have `null`. Eligible is a metadata status, not an installation promise. |
-| `install_command` | array of strings, optional | Suggested pkg install command for eligible Formulae. Absent for unsupported Formulae and other rows. |
-| `command` | string, optional | The main command from Nixpkgs `meta.mainProgram`, for top-level Nixpkgs packages. Absent when the package declares none or is in a nested package set. |
+| `support` | object, nullable | `{"status":"eligible"}`, `{"status":"excluded","reason":…,"detail":…}`, or `{"status":"unknown","reason":…}` for Casks and Formulae. Nixpkgs rows have `null`, or `excluded` with `unsupported-platform`, `other-systems`, `unfree`, `broken`, or `insecure`. Eligible is a metadata status, not an installation promise. |
+| `install_command` | array of strings, nullable | The pkg command that installs the row, such as `["pkg", "install", "nixpkgs:ripgrep"]`. `null` when the row cannot install on this system. |
+| `command` | string, nullable | The main command from Nixpkgs `meta.mainProgram`, for top-level Nixpkgs packages. `null` when the package declares none, is in a nested package set, or is not from Nixpkgs. |
 
 ### `info`
 
 Human output shows the name, version, description, and ID. Then it shows
 `Commands:`, the installed state, the status, the source, and
-`Also available:`. Info reads local search data for Nixpkgs, Casks, and
+`Also available:`. When another source of the same name is installed, the
+installed state names it, for example `Installed: No (brew:figlet is
+installed)`. An installed package does not show `Status: Can install on this
+computer`. Info reads local search data for Nixpkgs, Casks, and
 Formulae. It runs Nix only when local data does not have the package. An
 installed package keeps the same installed check as before: info reads the
 profile through Nix.
@@ -359,7 +408,8 @@ profile through Nix.
 | `description` | string | Evaluated description; can be empty. |
 | `installed_state` | string | `installed`, `absent`, or `unknown`. A failed profile read produces unknown and exit code 1. |
 | `installed_error` | string, nullable | Profile read failure detail. |
-| `availability` | object, nullable | Cask host decision: `available`, `unavailable`, or `unknown`, with a reason when needed. |
+| `availability` | object, nullable | Host decision: `available`, `unavailable`, or `unknown`, with a reason when needed. Nixpkgs packages from local search data have one too. |
+| `installed_alternative` | string, nullable | The installed short ID from `alternatives`, such as `brew:figlet`, when the requested package itself is not installed. |
 | `installed` | object, nullable | `{"entry_id":…,"original_url":…,"locked_url":…}` when an installed entry matches the full attribute and the canonical source; else `null`. |
 | `cask` | object, nullable | Cask classification, below; `null` for non-cask IDs. |
 | `commands` | array of strings | Main commands from local data: Nixpkgs `meta.mainProgram` or Formula executables. Empty when unknown. |
@@ -391,6 +441,28 @@ The result is an array with one row per **active** profile entry:
 | `locked_source` | string | The locked reference Nix resolved. |
 | `revision` | string, nullable | Locked revision of the locked source. |
 
+### `history`
+
+The result is an array of generations, newest first: `generation`
+(number), `current` (boolean), `created` (Unix time, nullable), and
+`changes` (array of strings such as `+hello 2.12.1`, nullable when a
+manifest cannot be read).
+
+### Errors
+
+A query command that fails prints one error envelope on stdout and the
+same message on stderr. The command exits nonzero:
+
+```json
+{
+  "schema": 1,
+  "command": "info",
+  "error": "no package named `x`. Search with `pkg search x`."
+}
+```
+
+Usage errors and cancellations print no JSON.
+
 ### `tap list`
 
 The envelope `command` is `tap-list`; the envelope is the same versioned
@@ -408,13 +480,16 @@ tap. Each row carries, at a high level:
 The result is an array of rows: `component` (string), `status` (string),
 and `detail` (string, nullable). Statuses by component: `nix runtime`
 `ok`/`missing`; `nix daemon` `ok`/`unreachable`; `pkg profile`
-`ok`/`unreadable`/`fresh`; `app launchers`
-`healthy`/`unhealthy`/`skipped`/`unknown`/`unreadable`; `config` `present`/`defaults`;
-`discovery cache` `present`/`empty`; `background refresh` `on`/`off`;
-`shell` `ok`/`not on path`. `doctor` exits nonzero when any status is
-`missing`, `unreachable`, `unreadable`, or `unhealthy`. `off` and
-`not on path` are listed under `Needs attention:` and do not change the
-exit status. It never repairs anything.
+`ok`/`unreadable`/`fresh` (`unreadable` also when the profile lock file
+cannot be used); `tap sandbox` `ok`/`not set up`; `app launchers`
+`healthy`/`unhealthy`/`skipped`/`unknown`/`unreadable`; `config`
+`present`/`defaults`/`unreadable`; `discovery cache` `present`/`empty`;
+`search data` `ready`/`not ready` (the Nixpkgs package count, the origin,
+the revision, and the last check); `background refresh` `on`/`off`; `shell` `ok`/`not on path`. `doctor` lists
+`missing`, `unreachable`, `unreadable`, and `unhealthy` rows under
+`Problems:` and exits nonzero. It lists `off` and `not on path` rows under
+`Suggestions:`; they do not change the exit status. It never repairs
+anything.
 
 ## Package IDs
 
@@ -429,10 +504,13 @@ exit status. It never repairs anything.
   sources in this order: Nixpkgs, Homebrew Casks, Homebrew Formulae, then
   saved taps. The first source with a match wins. Install and info show the
   other sources with the same name after `Also available:`.
-- An entry that cannot install on this system does not count. Hidden
-  Nixpkgs sets, libraries, and variants do not count. When nothing else
-  matches, pkg selects an entry that cannot install, and the command shows
-  why.
+- An entry that cannot install on this system does not count. This
+  includes unfree and other-platform Nixpkgs packages: `slack` selects the
+  Slack Cask on macOS. Hidden Nixpkgs sets, libraries, and variants do not
+  count. When nothing else matches, pkg selects an entry that cannot
+  install. Install then refuses before Nix runs and names the package and
+  the reason, for example ``pkg: `nixpkgs:steam` cannot install on this
+  computer: unfree license (unfree). Nothing was installed.``
 - Two matches in one source are ambiguous. The error lists the IDs to
   choose from.
 - A Nixpkgs package matches by its attribute, its package name, or the last
@@ -526,5 +604,7 @@ from the current ones. Generation numbers only grow, so after a rollback
 and a new change, history compares each generation with the one before it
 by number, not with the generation it came from.
 The command prints the destination generation and the package changes, for
-example `Added hello 2.12.1`. Use `pkg history` and `pkg rollback N` to
-choose a specific retained generation.
+example `Added hello 2.12.1`, then the command that returns to the
+generation that was active before. A second `pkg rollback` goes further
+back; it does not undo the first one. Use `pkg history` and
+`pkg rollback N` to choose a specific retained generation.

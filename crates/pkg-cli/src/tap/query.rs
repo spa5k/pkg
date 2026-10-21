@@ -111,11 +111,7 @@ pub fn health(state_home: &Path) -> Vec<crate::output::DoctorRow> {
         Err(error) => return vec![observed("tap registry", "unreadable", error)],
     };
     if taps.registry().sources.is_empty() {
-        return vec![observed(
-            "taps",
-            "none",
-            String::from("no cask taps are registered"),
-        )];
+        return vec![observed("taps", "none", String::from("no saved taps"))];
     }
     taps.registry()
         .sources

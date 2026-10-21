@@ -54,3 +54,29 @@ pub fn search_fixture_index(source: &str, entries: &[(&str, &str, &str)]) -> ser
         "targets": ["x86_64-linux"], "macosBaseline": "15.7.7", "systems": {"x86_64-linux": {"entries": entries}},
     })
 }
+
+/// Write an offline `curl` into `bin`. Without `list`, every answer is
+/// HTTP 404: the NixOS channels publish no list, and pkg evaluates the
+/// source. With `list`, the channel names revision `c…c` and serves that
+/// compressed package list. Each requested URL goes to `curl.log`.
+pub fn fake_curl(bin: &std::path::Path, list: Option<&std::path::Path>) {
+    let curl = bin.join("curl");
+    let log = bin.join("curl.log");
+    let answers = match list {
+        Some(list) => format!(
+            "  */git-revision) printf '%s\\n' {revision} > \"$out\"; printf '200 https://releases.test/nixpkgs/r1/git-revision';;\n  https://releases.test/nixpkgs/r1/packages.json.br) cp '{}' \"$out\"; printf '200 %s' \"$url\";;\n",
+            list.display(),
+            revision = "c".repeat(40)
+        ),
+        None => String::new(),
+    };
+    std::fs::write(
+        &curl,
+        format!(
+            "#!/bin/sh\nout=; url=\nwhile [ $# -gt 0 ]; do\n  case \"$1\" in\n    -o) out=$2; shift;;\n    -w|--max-time|--proto|--proto-redir) shift;;\n    -*) ;;\n    *) url=$1;;\n  esac\n  shift\ndone\necho \"$url\" >> '{}'\ncase \"$url\" in\n{answers}  *) : > \"$out\"; printf '404 %s' \"$url\";;\nesac\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&curl, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+}

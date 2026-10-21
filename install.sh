@@ -636,7 +636,7 @@ main() {
     if PATH="$nix_dir:$PATH" "$bindir/pkg" background enable > "$tmp/background.out" 2>&1; then
       done_step "Search is getting ready in the background"
     else
-      say "Search data will be prepared the first time you search."
+      say "Daily updates are off. Search data will be prepared the first time you search."
     fi
   fi
 

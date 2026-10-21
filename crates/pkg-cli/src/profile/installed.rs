@@ -148,9 +148,14 @@ pub fn select(
             matches
         };
         match matches.as_slice() {
+            [] if exact_entry => {
+                return Err(format!(
+                    "`{request}` is not an entry ID. Nothing changed. Run `pkg list --verbose` to see the entry IDs."
+                ));
+            }
             [] => {
                 return Err(format!(
-                    "`{request}` is not installed. Run `pkg list` to see installed packages."
+                    "`{request}` is not installed. Nothing changed. Run `pkg list` to see installed packages."
                 ));
             }
             [(key, _)] => {

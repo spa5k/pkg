@@ -19,12 +19,15 @@ pub(super) fn stage_import_with_setup(
         }) => {}
         Err(error) => return Err(error),
     }
-    eprintln!("pkg: tap import refused: the Nix daemon is not proven sandboxed");
-    if !setup::offer_and_apply(&session.nix)? {
+    if !crate::tap::consent::stdin_is_terminal() {
         return Err(String::from(
-            "the tap import needs the one-time sandbox setup; nothing was imported",
+            "taps need a one-time Nix sandbox setup. Run this command in a terminal to set it up. Nothing was imported.",
         )
         .into());
+    }
+    eprintln!("Taps need a one-time Nix sandbox setup.");
+    if !setup::offer_and_apply(&session.nix)? {
+        return Err(String::from("the sandbox setup did not run. Nothing was imported.").into());
     }
     stage_import(session, source, origin, revision, now_unix).map_err(|error| match error {
         CommandError::TapImport {

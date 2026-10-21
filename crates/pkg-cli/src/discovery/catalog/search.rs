@@ -145,11 +145,12 @@ pub struct SearchResult {
     pub stale: bool,
     /// Generated catalog support classification.
     pub support: Option<SupportBadge>,
-    /// Suggested pkg command for an eligible Formula result.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The pkg command that installs this row. `None` when the row cannot
+    /// install on this system.
+    #[serde(default)]
     pub install_command: Option<Vec<String>>,
     /// The main command of a Nixpkgs package, from `meta.mainProgram`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub command: Option<String>,
 }
 
@@ -279,11 +280,32 @@ fn exact_attribute_matches(
         .collect()
 }
 
-/// Prepare a complete current snapshot before reporting update success.
+/// Prepare complete current Nixpkgs search data before reporting success.
+///
+/// A NixOS channel source reads the list that the channel publishes.
+/// Other sources, and a channel without a list, are evaluated on this
+/// computer.
 /// # Errors
 ///
-/// Returns an error when the source lacks immutable provenance, the native snapshot cannot be built, or the cache cannot be written.
-pub fn prepare_source(
+/// Returns an error when the download or evaluation fails or is stopped,
+/// the source lacks immutable provenance, or the cache cannot be written.
+pub fn prepare_nixpkgs(
+    nix: &Nix,
+    cache_dir: &Path,
+    source: &str,
+    system: &str,
+) -> Result<(), CatalogError> {
+    if let Some(channel) = super::published::channel(source)
+        && super::published::prepare(cache_dir, source, system, channel)?
+    {
+        return Ok(());
+    }
+    let identity = nix.refresh_source_identity(source)?;
+    prepare_source(nix, cache_dir, source, system, &identity)
+}
+
+/// Prepare a complete current snapshot with a local evaluation.
+fn prepare_source(
     nix: &Nix,
     cache_dir: &Path,
     source: &str,
@@ -357,9 +379,17 @@ pub fn exact_lookup(
         .clone()
         .unwrap_or_else(|| moving_source.to_string());
     let selected_output = format!("{search_ref}#{attribute}");
-    let results = nix
-        .search(&selected_output, ".")
-        .map_err(|error| super::choice::unusable(attribute, error))?;
+    let results = nix.search(&selected_output, ".").map_err(|error| {
+        match super::choice::unusable(attribute, error) {
+            // The source has no such attribute: that is a missing package.
+            CatalogError::Unusable { cause, .. }
+                if cause.contains("does not provide attribute") =>
+            {
+                CatalogError::NotFound(selected_output.clone())
+            }
+            error => error,
+        }
+    })?;
     let report = report_for(moving_source, &identity);
     let exact_matches = exact_attribute_matches(&results, attribute);
     if exact_matches.len() > 1 {

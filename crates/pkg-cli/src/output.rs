@@ -51,31 +51,31 @@ pub const ATTENTION_STATUSES: [&str; 2] = ["off", "not on path"];
 pub fn render_doctor(rows: &[DoctorRow], verbose: bool) -> String {
     let mut out = String::new();
     if !verbose {
-        let issues: Vec<&DoctorRow> = rows
+        let problems: Vec<&DoctorRow> = rows
             .iter()
-            .filter(|row| {
-                let status = row.status.as_str();
-                UNHEALTHY_STATUSES.contains(&status) || ATTENTION_STATUSES.contains(&status)
-            })
+            .filter(|row| UNHEALTHY_STATUSES.contains(&row.status.as_str()))
             .collect();
-        if issues.is_empty() {
+        let suggestions: Vec<&DoctorRow> = rows
+            .iter()
+            .filter(|row| ATTENTION_STATUSES.contains(&row.status.as_str()))
+            .collect();
+        if problems.is_empty() && suggestions.is_empty() {
             let _ = writeln!(
                 out,
                 "{}",
                 paint(Stream::Out, Tone::Success, "Everything is working.")
             );
-        } else {
-            let _ = writeln!(
-                out,
-                "{}",
-                paint(Stream::Out, Tone::Strong, "Needs attention:")
-            );
+        }
+        // Problems fail the check. Suggestions do not.
+        for (heading, tone, issues) in [
+            ("Problems:", Tone::Error, problems),
+            ("Suggestions:", Tone::Warning, suggestions),
+        ] {
+            if issues.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "{}", paint(Stream::Out, Tone::Strong, heading));
             for row in issues {
-                let tone = if UNHEALTHY_STATUSES.contains(&row.status.as_str()) {
-                    Tone::Error
-                } else {
-                    Tone::Warning
-                };
                 let _ = writeln!(
                     out,
                     "  {}: {}",
@@ -101,6 +101,11 @@ static PLAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 /// Print permanent lines instead of transient status lines.
 pub fn plain(plain: bool) {
     PLAIN.store(plain, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether `--verbose` is on, so errors keep the full native output.
+pub fn verbose() -> bool {
+    PLAIN.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether transient status lines can replace each other on stderr.
@@ -272,7 +277,11 @@ pub fn visible_width(text: &str) -> usize {
 pub struct Table {
     headers: Vec<String>,
     rows: Vec<Vec<String>>,
+    optional_last: bool,
 }
+
+/// The smallest room that an optional last column keeps.
+const OPTIONAL_LAST_WIDTH: usize = 12;
 
 impl Table {
     /// Start a table with these column headings. Empty headings print no
@@ -282,7 +291,16 @@ impl Table {
         Self {
             headers: headers.iter().map(ToString::to_string).collect(),
             rows: Vec::new(),
+            optional_last: false,
         }
+    }
+
+    /// Drop the last column on a terminal that is too narrow to show it,
+    /// instead of cutting every cell to `…`.
+    #[must_use]
+    pub fn optional_last(mut self) -> Self {
+        self.optional_last = true;
+        self
     }
 
     /// Add one row. Cells may hold ANSI color.
@@ -315,8 +333,20 @@ impl Table {
             }
         }
         // Drop columns that are empty in every row and heading.
-        let keep: Vec<bool> = widths.iter().map(|width| *width > 0).collect();
+        let mut keep: Vec<bool> = widths.iter().map(|width| *width > 0).collect();
         let limit = width(stream);
+        if self.optional_last
+            && let Some(limit) = limit
+            && let Some(last) = keep.iter().rposition(|kept| *kept)
+        {
+            let used: usize = (0..last)
+                .filter(|index| keep[*index])
+                .map(|index| widths[index] + 2)
+                .sum();
+            if limit.saturating_sub(used) < OPTIONAL_LAST_WIDTH.min(widths[last]) {
+                keep[last] = false;
+            }
+        }
         let mut out = String::new();
         let mut line = |cells: &[String], muted: bool| {
             let mut text = String::new();
@@ -407,7 +437,21 @@ fn concise_detail(detail: &str) -> &str {
         .unwrap_or("unknown cause")
 }
 
-/// The short source label: nixpkgs, or owner/repo from a flake reference.
+/// The name of an official search source, such as `Homebrew Casks`.
+#[must_use]
+pub fn source_title(source: &str) -> Option<&'static str> {
+    if source.contains("dir=nix/casks") {
+        Some("Homebrew Casks")
+    } else if source.contains("dir=nix/formulae") {
+        Some("Homebrew Formulae")
+    } else if source.contains("nixpkgs") {
+        Some("Nixpkgs")
+    } else {
+        None
+    }
+}
+
+/// A short form of a source reference, such as `nixpkgs` or `owner/repo`.
 #[must_use]
 pub fn short_source(source: &str) -> String {
     if source.contains("nixpkgs") {

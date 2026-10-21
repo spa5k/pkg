@@ -42,7 +42,7 @@ fn list_rows(
 
 pub fn history(cli: &Cli) -> Result<(), CommandError> {
     let session = session(cli)?;
-    if cli.verbose {
+    if cli.verbose && !cli.json {
         let text = session.nix.profile_history(&session.paths.profile)?;
         // `--no-color` holds for native text pkg passes through, even if
         // the runtime colorized it anyway.
@@ -54,6 +54,19 @@ pub fn history(cli: &Cli) -> Result<(), CommandError> {
         return Ok(());
     }
     let generations = generations(&session.paths.profile);
+    let active = active_generation(&session.paths.profile);
+    if let Some(message) = broken_profile(&session.paths.profile) {
+        eprintln!("Warning: {message}");
+    }
+    let name = |entry: &ProfileEntry| {
+        super::installed::display_name(entry, &session.config, &session.paths.state_home)
+    };
+    if cli.json {
+        return print_json(&output::envelope(
+            "history",
+            history_rows(&generations, active, name),
+        ));
+    }
     if generations.is_empty() {
         println!("No changes yet.");
         println!(
@@ -66,12 +79,43 @@ pub fn history(cli: &Cli) -> Result<(), CommandError> {
         );
         return Ok(());
     }
-    let active = active_generation(&session.paths.profile);
-    let name = |entry: &ProfileEntry| {
-        super::installed::display_name(entry, &session.config, &session.paths.state_home)
-    };
     print!("{}", render_history(&generations, active, name));
     Ok(())
+}
+
+/// History rows for JSON, newest first. `changes` is `null` when a
+/// manifest cannot be read.
+fn history_rows(
+    generations: &[Generation],
+    active: Option<u64>,
+    name: impl Fn(&ProfileEntry) -> String,
+) -> Vec<serde_json::Value> {
+    let empty = BTreeMap::new();
+    let mut previous = Some(&empty);
+    let mut rows: Vec<serde_json::Value> = generations
+        .iter()
+        .map(|generation| {
+            let changes = previous
+                .zip(generation.entries.as_ref())
+                .map(|(before, after)| {
+                    super::summary::diff(before, after, &name)
+                        .iter()
+                        .map(super::summary::Change::compact)
+                        .collect::<Vec<_>>()
+                });
+            previous = generation.entries.as_ref();
+            serde_json::json!({
+                "generation": generation.number,
+                "current": Some(generation.number) == active,
+                "created": generation.created.and_then(|time| {
+                    time.duration_since(std::time::UNIX_EPOCH).ok().map(|age| age.as_secs())
+                }),
+                "changes": changes,
+            })
+        })
+        .collect();
+    rows.reverse();
+    rows
 }
 
 /// One retained profile generation, read from local files.
@@ -180,6 +224,15 @@ fn undo_from(generations: &[Generation], active: u64) -> UndoTarget {
     UndoTarget::Nothing
 }
 
+/// The generation numbers of the profile, oldest first. Empty when the
+/// profile directory cannot be read.
+pub(super) fn generation_numbers(profile: &std::path::Path) -> Vec<u64> {
+    generations(profile)
+        .iter()
+        .map(|generation| generation.number)
+        .collect()
+}
+
 /// Read the active generation from the native profile link when available.
 pub(super) fn active_generation(profile: &std::path::Path) -> Option<u64> {
     let link = std::fs::read_link(profile).ok()?;
@@ -230,7 +283,7 @@ fn render_history(
         table.row(row);
     }
     let mut out = table.render(output::Stream::Out);
-    if active.is_some() {
+    if active.is_some_and(|active| generations.iter().any(|row| row.number == active)) {
         out.push_str("* current generation\n");
     }
     out
@@ -292,9 +345,47 @@ pub fn installed_entries(session: &Session) -> Result<BTreeMap<String, ProfileEn
         .map_or_else(BTreeMap::new, crate::nix::CheckedProfile::into_entries))
 }
 
+/// Why the current generation cannot be read, when its link is broken.
+///
+/// Nix reads a profile link to a missing generation, or to a deleted store
+/// path, as an empty profile. A change would then remove every package, so
+/// pkg stops and names the way back.
+pub fn broken_profile(profile: &std::path::Path) -> Option<String> {
+    let link = std::fs::symlink_metadata(profile).ok()?;
+    if !link.file_type().is_symlink() || std::fs::metadata(profile).is_ok() {
+        return None;
+    }
+    let active = active_generation(profile);
+    let name = profile.file_name()?.to_str()?;
+    let readable = generations(profile)
+        .into_iter()
+        .rev()
+        .map(|generation| generation.number)
+        .find(|number| {
+            Some(*number) != active
+                && std::fs::metadata(profile.with_file_name(format!("{name}-{number}-link")))
+                    .is_ok()
+        });
+    let current = active.map_or_else(String::new, |number| format!(" {number}"));
+    Some(match readable {
+        Some(number) => format!(
+            "the current generation{current} is missing. Run `pkg rollback {number}` to go back to generation {number}."
+        ),
+        None => format!(
+            "the current generation{current} is missing. Run `pkg history` to see the generations."
+        ),
+    })
+}
+
 pub(super) fn installed_state(
     session: &Session,
 ) -> Result<Option<crate::nix::CheckedProfile<'_>>, NixError> {
+    if let Some(message) = broken_profile(&session.paths.profile) {
+        return Err(NixError::Io {
+            what: "the package profile",
+            source: std::io::Error::other(message),
+        });
+    }
     match std::fs::symlink_metadata(&session.paths.profile) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
@@ -350,6 +441,9 @@ pub fn status(
         status: status.to_owned(),
         detail: Some(detail),
     };
+    if let Err(error) = crate::profile_lock::ProfileLock::check(&paths.profile) {
+        return Ok(observed("unreadable", error));
+    }
     match std::fs::symlink_metadata(&paths.profile) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(observed(
             "fresh",
@@ -359,10 +453,22 @@ pub fn status(
             ),
         )),
         Err(error) => Ok(observed("unreadable", error.to_string())),
+        Ok(_) if let Some(message) = broken_profile(&paths.profile) => {
+            Ok(observed("unreadable", message))
+        }
         Ok(_) => match entries(nix, &paths.profile) {
             Ok(entries) => Ok(observed(
                 "ok",
-                format!("{} ({} entries)", paths.profile.display(), entries.len()),
+                format!(
+                    "{} ({} {})",
+                    paths.profile.display(),
+                    entries.len(),
+                    if entries.len() == 1 {
+                        "entry"
+                    } else {
+                        "entries"
+                    }
+                ),
             )),
             Err(error) if error.signal().is_some() => Err(error.into()),
             Err(error) => Ok(observed("unreadable", error.to_string())),

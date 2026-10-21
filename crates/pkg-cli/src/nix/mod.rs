@@ -229,7 +229,15 @@ impl Nix {
         // with the exact argument vector that will run.
         let command_line = Self::argv(args);
         if self.verbose {
-            eprintln!("pkg: nix {}", command_line.join(" "));
+            let words: Vec<String> = command_line.iter().map(|arg| trace_word(arg)).collect();
+            eprintln!(
+                "{}",
+                crate::output::paint(
+                    crate::output::Stream::Err,
+                    crate::output::Tone::Muted,
+                    &format!("$ nix {}", words.join(" "))
+                )
+            );
         }
         let mut command = Command::new(&self.executable);
         command.args(&command_line);
@@ -570,7 +578,25 @@ impl Nix {
         if refresh {
             args.push("--refresh");
         }
-        let value = self.json::<serde_json::Value>("source identity", &args)?;
+        let reaped = self.execute(&args, IoMode::Capture)?;
+        self.finish(&args, &reaped)?;
+        // Offline, Nix warns `unable to download …; using cached version`
+        // and succeeds. A refresh that checked nothing must not say current.
+        let stderr = String::from_utf8_lossy(&reaped.output.stderr);
+        if refresh && stderr.contains("using cached version") {
+            let cause = stderr
+                .lines()
+                .map(str::trim)
+                .find_map(|line| line.strip_prefix("warning: "))
+                .unwrap_or("Nix used its saved copy")
+                .to_string();
+            return Err(NixError::Offline { cause });
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&reaped.output.stdout).map_err(|error| NixError::Json {
+                what: "source identity",
+                source: error,
+            })?;
         Ok(manifest::decode_source_identity(reference, &value))
     }
 
@@ -610,5 +636,18 @@ impl Nix {
         let value = self
             .json::<serde_json::Value>("cask catalog index", &["eval", "--json", &installable])?;
         decode_catalog_index(&value)
+    }
+}
+
+/// One argument of a `--verbose` trace, quoted so the line can run in a shell.
+fn trace_word(arg: &str) -> String {
+    if !arg.is_empty()
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:=@+,#^%".contains(c))
+    {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\\''"))
     }
 }

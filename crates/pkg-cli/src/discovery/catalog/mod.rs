@@ -22,6 +22,7 @@ mod id;
 mod local;
 mod matching;
 mod native;
+mod published;
 mod routing;
 mod search;
 
@@ -34,17 +35,18 @@ pub use cask::{
 pub use choice::{Choice, Kept, Names, Scope, short_id};
 pub use id::{CatalogId, CatalogIdKind, ParsedId, canonical_source, parse_id};
 pub use local::{
-    NOT_READY, missing_report, not_ready_report, prepare_catalog, prepared_system,
+    NOT_READY, missing_report, nixpkgs_summary, not_ready_report, prepare_catalog, prepared_system,
     record_search_system, search_local_casks, search_local_native, search_local_saved,
     search_system,
 };
 pub(crate) use matching::FUZZY_RANK;
 pub use matching::SearchQuery;
 pub use native::NativeRow;
+pub use published::{OTHER_SYSTEMS, channel as published_channel};
 pub use routing::Routing;
 pub use search::{
     ExactMatch, SearchResult, SourceKind, SourceReport, SourceStatus, SupportBadge, catalog_meta,
-    exact_lookup, exposed_attribute, prepare_source, report_for,
+    exact_lookup, exposed_attribute, prepare_nixpkgs, report_for,
 };
 
 /// A catalog routing error.

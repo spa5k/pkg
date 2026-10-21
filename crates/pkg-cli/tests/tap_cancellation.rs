@@ -151,7 +151,7 @@ fn check_probe_cancellation(setup: bool) {
         );
         assert!(!dir.path().join("state/pkg/taps/registry.json").exists());
         if setup {
-            assert!(String::from_utf8_lossy(&output.stderr).contains("tap import refused"));
+            assert!(String::from_utf8_lossy(&output.stderr).contains("one-time Nix sandbox setup"));
             assert!(!String::from_utf8_lossy(&output.stdout).contains("apply now?"));
         }
     }
