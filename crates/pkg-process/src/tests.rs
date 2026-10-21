@@ -1337,6 +1337,48 @@ fn streamed_input_is_delivered_completely_and_closed() {
     }
 }
 
+#[test]
+fn early_exit_input_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("early-exit-input-supervisor") {
+        return;
+    }
+    // pkg ends on SIGPIPE, like other shell tools.
+    assert_ne!(
+        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) },
+        libc::SIG_ERR
+    );
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command.args(["--exact", "tests::argv_child", "--quiet"]);
+    let error = super::run_child(
+        command,
+        IoMode::Capture,
+        None,
+        Some(&vec![b'x'; 5 * 1024 * 1024]),
+    )
+    .err()
+    .expect("the child reads no input");
+    assert_eq!(error.source.kind(), std::io::ErrorKind::BrokenPipe);
+    println!("EARLY_EXIT_REPORTED");
+}
+
+#[test]
+fn a_child_that_ends_before_its_input_gives_an_error_not_sigpipe() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::early_exit_input_supervisor",
+            "--nocapture",
+        ])
+        .env(MODE, "early-exit-input-supervisor")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("EARLY_EXIT_REPORTED"),
+        "{output:?}"
+    );
+}
+
 fn run_metadata_child(command: Command) -> Result<super::Reaped, super::RunError> {
     super::run_child(
         command,

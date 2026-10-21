@@ -110,7 +110,7 @@ fn create_tables(connection: &Connection) -> Result<(), CatalogError> {
 
 /// Open the partial data of a stopped preparation for the same source
 /// revision. Otherwise, start new partial data. Return whether the data
-/// continues.
+/// continues. New data continues only after `mark_resumable`.
 fn open_partial(staging: &Path, header: &Header) -> Result<(Connection, bool), CatalogError> {
     // The file may not follow a link, but the cache folder may be one.
     let real = staging
@@ -154,11 +154,17 @@ fn open_partial(staging: &Path, header: &Header) -> Result<(Connection, bool), C
     }
     let connection = Connection::open(staging)?;
     create_tables(&connection)?;
+    Ok((connection, false))
+}
+
+/// Let a later run continue this partial data. Call it after the roots are
+/// stored, because a run that continues does not evaluate them again.
+fn mark_resumable(connection: &Connection, header: &Header) -> Result<(), CatalogError> {
     connection.execute(
         "INSERT INTO metadata VALUES (?1)",
         [serde_json::to_string(header).map_err(CatalogError::cache_write)?],
     )?;
-    Ok((connection, false))
+    Ok(())
 }
 
 /// Evaluations that run at the same time: at most four, at most one for
@@ -284,6 +290,7 @@ impl Snapshot {
                     Err(error) => return Err(error.into()),
                 }
             }
+            mark_resumable(&connection, &header)?;
         }
         let workers = parallel_evaluations();
         let mut last_progress = Instant::now();
@@ -413,6 +420,13 @@ impl Snapshot {
             // A missing old file is the normal case.
             let _ =
                 std::fs::remove_file(keyed_path(cache_dir, key, &header.source, &header.system));
+        }
+        // The partial data of a stopped preparation is not needed now.
+        let partial = partial_path(&destination);
+        let mut journal = partial.as_os_str().to_owned();
+        journal.push("-journal");
+        for file in [partial.as_path(), Path::new(&journal)] {
+            let _ = std::fs::remove_file(file);
         }
         Self::read(cache_dir, &header.source, &header.system)
             .ok_or_else(|| CatalogError::cache_write("published snapshot could not be read"))
@@ -1014,6 +1028,17 @@ mod tests {
             )
             .unwrap();
         drop(connection);
+        // A stop before the roots are stored starts again.
+        let (connection, resumed) = open_partial(&staging, &partial).unwrap();
+        assert!(!resumed);
+        connection
+            .execute(
+                "INSERT INTO pending VALUES ('[\"legacyPackages\"]', 'legacyPackages')",
+                [],
+            )
+            .unwrap();
+        mark_resumable(&connection, &partial).unwrap();
+        drop(connection);
         let (connection, resumed) = open_partial(&staging, &partial).unwrap();
         assert!(resumed);
         let pending: i64 = connection
@@ -1055,6 +1080,7 @@ mod tests {
             ..header()
         };
         let (connection, _) = open_partial(&partial_path(&destination), &partial).unwrap();
+        mark_resumable(&connection, &partial).unwrap();
         connection
             .execute_batch(&format!(
                 "INSERT INTO packages VALUES ('legacyPackages.{SYSTEM}.earlier', 'earlier', 'earlier', '1', '', NULL, 'earlier', NULL);

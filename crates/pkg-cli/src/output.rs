@@ -237,8 +237,8 @@ pub fn paint(stream: Stream, tone: Tone, text: &str) -> String {
 
 /// The column count of the terminal behind `stream`.
 ///
-/// A numeric `COLUMNS` value wins. Pipes and logs have no width, so their
-/// lines are never cut.
+/// A numeric `COLUMNS` value wins, also for pipes. Without it, pipes and
+/// logs have no width, so their lines are not cut.
 #[must_use]
 pub fn width(stream: Stream) -> Option<usize> {
     if let Some(columns) = std::env::var("COLUMNS")

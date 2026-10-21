@@ -225,12 +225,14 @@ impl Rows<'_, '_> {
 }
 
 /// Why a package cannot install on `system`, in the order of a local
-/// evaluation. The list states the platform support exactly only for its
-/// own system. That includes the 32-bit packages that it builds for
-/// `i686-linux`, because they install on `x86_64-linux` too.
+/// evaluation. The list states the platform support and the `broken` flag
+/// exactly only for its own system. That includes the 32-bit packages that
+/// it builds for `i686-linux`, because they install on `x86_64-linux` too.
+/// On other systems, Nix decides whether a package is broken.
 fn reason(entry: &Entry, system: &str) -> Option<&'static str> {
     let meta = &entry.meta;
-    if system == LIST_SYSTEM {
+    let exact = system == LIST_SYSTEM;
+    if exact {
         if meta.unsupported == Some(true) {
             return Some("unsupported-platform");
         }
@@ -250,7 +252,7 @@ fn reason(entry: &Entry, system: &str) -> Option<&'static str> {
     }
     [
         (meta.unfree, "unfree"),
-        (meta.broken, "broken"),
+        (meta.broken.filter(|_| exact), "broken"),
         (meta.insecure, "insecure"),
     ]
     .into_iter()
@@ -424,11 +426,13 @@ mod tests {
         }));
         let bad_on_darwin = entry(serde_json::json!({"badPlatforms": ["aarch64-darwin"]}));
         let unfree = entry(serde_json::json!({"unfree": true}));
+        let broken = entry(serde_json::json!({"broken": true}));
         for (entry, linux, darwin) in [
             (&i686, None, Some(OTHER_SYSTEMS)),
             (&darwin_only, Some("unsupported-platform"), None),
             (&bad_on_darwin, None, Some(OTHER_SYSTEMS)),
             (&unfree, Some("unfree"), Some("unfree")),
+            (&broken, Some("broken"), None),
         ] {
             assert_eq!(reason(entry, "x86_64-linux"), linux);
             assert_eq!(reason(entry, "aarch64-darwin"), darwin);

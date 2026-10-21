@@ -416,7 +416,6 @@ fn lists_for_other_systems_only_guess_platform_support() {
     for (name, reason) in [
         ("steam", "Nixpkgs lists builds for other systems only"),
         ("wine32", "Nixpkgs lists builds for other systems only"),
-        ("broken-tool", "marked broken in Nixpkgs"),
     ] {
         let (code, stdout, stderr) = context.run(&["search", name, "--source", "nixpkgs"]);
         assert_eq!(code, 0, "{stderr}");
@@ -425,12 +424,15 @@ fn lists_for_other_systems_only_guess_platform_support() {
             "{stdout}"
         );
     }
-    // The list marks `macos-tool` unsupported on Linux only.
-    let (_, stdout, _) = context.run(&["search", "macos-tool", "--source", "nixpkgs"]);
-    assert!(
-        shows(&stdout, "macos-tool") && !stdout.contains("Not available here"),
-        "{stdout}"
-    );
+    // The list marks `macos-tool` unsupported on Linux only. Whether a
+    // package is broken often depends on the system, so Nix decides.
+    for name in ["macos-tool", "broken-tool"] {
+        let (_, stdout, _) = context.run(&["search", name, "--source", "nixpkgs"]);
+        assert!(
+            shows(&stdout, name) && !stdout.contains("Not available here"),
+            "{stdout}"
+        );
+    }
     let (code, stdout, _) = context.run(&["info", "wine32"]);
     assert_eq!(code, 0, "{stdout}");
     assert!(

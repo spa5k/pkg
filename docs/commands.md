@@ -301,9 +301,10 @@ On other systems, pkg reads the platform from the list's platform names. A
 package without this system shows `Nixpkgs lists builds for other systems
 only`, and `pkg info` says `Probably cannot install`. This reason does not
 refuse an install, because a package can have a separate build for this
-system. Nix makes the final check. A package that Nixpkgs marks broken on
-macOS only shows as available; Nix refuses it at install, and pkg shows
-the cause in plain words. A local evaluation records the reasons for
+system. Nix makes the final check. On other systems, pkg also does not use
+the list's `broken` flag, because it often depends on the system. A
+broken package shows as available, Nix refuses it at install, and pkg
+shows the cause in plain words. A local evaluation records the reasons for
 top-level packages only, and they are exact.
 
 Normal Formula search hides unsupported packages and declared libraries.

@@ -48,13 +48,22 @@ where
         args.remove(1);
         args.push(std::ffi::OsString::from("--help"));
     }
-    let cli = match Cli::try_parse_from(args) {
+    let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
-        // `pkg --json` without a command gets the same help as `pkg`. The
-        // clap error would list the hidden commands.
+        // `pkg --json` without a command gets the same help as `pkg`, and
+        // `pkg tap --json` the same help as `pkg tap`. The clap error would
+        // list the hidden commands.
         Err(error) if error.kind() == clap::error::ErrorKind::MissingSubcommand => {
             use clap::CommandFactory as _;
-            let help = Cli::command().render_help();
+            let mut command = Cli::command();
+            command.build();
+            let mut group = &command;
+            for name in args.iter().skip(1).filter_map(|arg| arg.to_str()) {
+                if let Some(subcommand) = group.find_subcommand(name) {
+                    group = subcommand;
+                }
+            }
+            let help = group.clone().render_help();
             if crate::output::color(crate::output::Stream::Err) {
                 eprint!("{}", help.ansi());
             } else {

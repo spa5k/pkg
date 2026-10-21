@@ -151,6 +151,30 @@ mod forward {
         action
     }
 
+    /// Ignore SIGPIPE until the guard drops. A write to a child that ended
+    /// then fails with `BrokenPipe`, also in a program that ends on SIGPIPE.
+    pub fn ignore_pipe() -> std::io::Result<PipeGuard> {
+        // SAFETY: an all-zero `sigaction` is a valid empty action to receive
+        // the old disposition.
+        let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+        // SAFETY: SIG_IGN is a valid disposition.
+        if unsafe { libc::sigaction(libc::SIGPIPE, &empty_action(libc::SIG_IGN), &raw mut old) }
+            != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(PipeGuard(old))
+    }
+
+    pub struct PipeGuard(libc::sigaction);
+
+    impl Drop for PipeGuard {
+        fn drop(&mut self) {
+            // SAFETY: the saved disposition came from `sigaction`.
+            unsafe { libc::sigaction(libc::SIGPIPE, &raw const self.0, std::ptr::null_mut()) };
+        }
+    }
+
     /// Reject dispositions that let the kernel reap children before wait.
     pub fn check_sigchld() -> std::io::Result<()> {
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
@@ -1128,6 +1152,8 @@ pub fn run_child(
                 Stdio::piped()
             })
             .spawn()?;
+        // After the spawn, so that the child keeps its own SIGPIPE action.
+        let _pipe = input.map(|_| forward::ignore_pipe()).transpose()?;
         let owner = ChildOwner::new(child, limits.is_some())?;
         drop(mask);
         owner.run(mode, limits, input)

@@ -582,14 +582,9 @@ impl Nix {
         self.finish(&args, &reaped)?;
         // Offline, Nix warns `unable to download …; using cached version`
         // and succeeds. A refresh that checked nothing must not say current.
-        let stderr = String::from_utf8_lossy(&reaped.output.stderr);
-        if refresh && stderr.contains("using cached version") {
-            let cause = stderr
-                .lines()
-                .map(str::trim)
-                .find_map(|line| line.strip_prefix("warning: "))
-                .unwrap_or("Nix used its saved copy")
-                .to_string();
+        if refresh
+            && let Some(cause) = offline_cause(&String::from_utf8_lossy(&reaped.output.stderr))
+        {
             return Err(NixError::Offline { cause });
         }
         let value: serde_json::Value =
@@ -649,5 +644,33 @@ fn trace_word(arg: &str) -> String {
         arg.to_string()
     } else {
         format!("'{}'", arg.replace('\'', "'\\''"))
+    }
+}
+
+/// The warning that says Nix used its saved copy of a source because the
+/// download failed. Other warnings, such as a dirty Git tree, can come first.
+fn offline_cause(stderr: &str) -> Option<String> {
+    let line = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| line.contains("using cached version"))?;
+    Some(line.strip_prefix("warning: ").unwrap_or(line).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_offline_cause_is_the_download_warning() {
+        let stderr = "warning: Git tree '/src' is dirty\nwarning: unable to download 'https://x/y': Couldn't resolve host name (6); using cached version\n";
+        assert_eq!(
+            super::offline_cause(stderr).as_deref(),
+            Some(
+                "unable to download 'https://x/y': Couldn't resolve host name (6); using cached version"
+            )
+        );
+        assert_eq!(
+            super::offline_cause("warning: Git tree '/src' is dirty\n"),
+            None
+        );
     }
 }

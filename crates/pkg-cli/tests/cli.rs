@@ -49,6 +49,23 @@ fn help_lists_d4_commands_and_no_removed_ones() {
 }
 
 #[test]
+fn a_group_without_its_command_shows_the_help_of_that_group() {
+    for (args, usage) in [
+        (&["--json"][..], "Usage: pkg [OPTIONS] <COMMAND>"),
+        (&["tap", "--json"], "Usage: pkg tap [OPTIONS] <COMMAND>"),
+        (
+            &["self", "--verbose"],
+            "Usage: pkg self [OPTIONS] <COMMAND>",
+        ),
+    ] {
+        let (code, stdout, stderr) = pkg(args, &[]);
+        assert_eq!(code, 2, "{args:?}");
+        assert!(stdout.is_empty(), "{args:?}: {stdout}");
+        assert!(stderr.contains(usage), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
 fn invalid_command_combinations_fail_before_loading_config() {
     let home = tempfile::tempdir().expect("temporary home");
     let config = home.path().join("config/pkg");
