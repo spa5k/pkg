@@ -31,7 +31,7 @@ set -eu
 # The version must agree with the release built by
 # tools/release/package_client.sh, which refuses a mismatch.
 repo="spa5k/pkg"
-version="0.2.0-alpha.17"
+version="0.2.0-alpha.18"
 tag="v${version}"
 nix_installer_url="https://install.determinate.systems/nix"
 nix_command="curl -fsSL ${nix_installer_url} | sh -s -- install"
