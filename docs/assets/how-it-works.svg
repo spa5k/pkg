@@ -5,9 +5,6 @@
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" fill="#4a566b"/>
     </marker>
-    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#d99a4e"/>
-    </marker>
   </defs>
   <rect width="1000" height="532" rx="16" fill="#0f131a"/>
 
@@ -22,24 +19,20 @@
     <!-- Sources -->
     <g>
       <rect x="32" y="80" width="290" height="80" rx="10" fill="#151b25" stroke="#2a3344"/>
-      <circle cx="54" cy="107" r="6" fill="#54a99c"/>
-      <text x="70" y="113" font-size="17" font-weight="600" fill="#ece5d6">Nixpkgs</text>
-      <text x="70" y="140" font-size="14" fill="#c5beae">The main Nix package set</text>
+      <text x="54" y="113" font-size="17" font-weight="600" fill="#ece5d6">Nixpkgs</text>
+      <text x="54" y="140" font-size="14" fill="#c5beae">The main Nix package set</text>
 
       <rect x="32" y="172" width="290" height="80" rx="10" fill="#151b25" stroke="#2a3344"/>
-      <circle cx="54" cy="199" r="6" fill="#d99a4e"/>
-      <text x="70" y="205" font-size="17" font-weight="600" fill="#ece5d6">Homebrew Casks</text>
-      <text x="70" y="232" font-size="14" fill="#c5beae">Signed Homebrew data, built by Nix</text>
+      <text x="54" y="205" font-size="17" font-weight="600" fill="#ece5d6">Homebrew Casks</text>
+      <text x="54" y="232" font-size="14" fill="#c5beae">Signed Homebrew data, built by Nix</text>
 
       <rect x="32" y="264" width="290" height="80" rx="10" fill="#151b25" stroke="#2a3344"/>
-      <circle cx="54" cy="291" r="6" fill="#d99a4e"/>
-      <text x="70" y="297" font-size="17" font-weight="600" fill="#ece5d6">Homebrew Formulae</text>
-      <text x="70" y="324" font-size="14" fill="#c5beae">A Nixpkgs match or a Core bottle</text>
+      <text x="54" y="297" font-size="17" font-weight="600" fill="#ece5d6">Homebrew Formulae</text>
+      <text x="54" y="324" font-size="14" fill="#c5beae">A Nixpkgs match or a Core bottle</text>
 
       <rect x="32" y="356" width="290" height="80" rx="10" fill="#151b25" stroke="#2a3344"/>
-      <circle cx="54" cy="383" r="6" fill="#cf6f50"/>
-      <text x="70" y="389" font-size="17" font-weight="600" fill="#ece5d6">Public taps and flakes</text>
-      <text x="70" y="416" font-size="14" fill="#c5beae">Only after you approve them</text>
+      <text x="54" y="389" font-size="17" font-weight="600" fill="#ece5d6">Public taps and flakes</text>
+      <text x="54" y="416" font-size="14" fill="#c5beae">Only after you approve them</text>
     </g>
 
     <!-- Arrows into pkg -->
@@ -89,8 +82,8 @@
     <rect x="682" y="268" width="286" height="168" rx="10" fill="#151b25" stroke="#2a3344"/>
     <text x="706" y="306" font-size="20" font-weight="600" fill="#ece5d6">Your pkg profile</text>
     <text x="706" y="330" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#8f8a7c">~/.local/state/nix/profiles/pkg</text>
-    <path d="M918 380 C 904 356, 860 356, 846 376" fill="none" stroke="#d99a4e" stroke-width="2" marker-end="url(#arrow-amber)"/>
-    <text x="882" y="351" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#d99a4e">pkg rollback</text>
+    <path d="M918 380 C 904 356, 860 356, 846 376" fill="none" stroke="#54a99c" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="882" y="351" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#54a99c">pkg rollback</text>
     <line x1="740" y1="390" x2="930" y2="390" stroke="#364154" stroke-width="3"/>
     <g stroke-width="3">
       <circle cx="740" cy="390" r="7" fill="#151b25" stroke="#364154"/>
