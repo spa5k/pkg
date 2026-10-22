@@ -291,6 +291,10 @@ fn plain_cause(cause: &str) -> std::borrow::Cow<'_, str> {
     if let Some((_, tried)) = cause.split_once("does not provide attribute ")
         && let Some(name) = tried.rsplit('\'').nth(1)
     {
+        // pkg reads its search data from these attributes, not packages.
+        if matches!(name, "catalogIndex" | "formulaIndex") {
+            return format!("the source has no pkg search data (`{name}`)").into();
+        }
         return format!("the source has no package named `{name}`").into();
     }
     if cause.contains("HTTP error 403") && cause.contains("github.com") {
@@ -367,6 +371,14 @@ mod tests {
             (
                 "error:\n       error: Refusing to evaluate package 'vscode-1.142.0' in /nix/store/x-source/vscode.nix:104 because it has an unfree license (‘unfree’)",
                 "this package has an unfree license, and pkg installs only free Nixpkgs packages",
+            ),
+            (
+                "error: flake 'path:/x' does not provide attribute 'packages.x86_64-linux.hello', 'legacyPackages.x86_64-linux.hello' or 'hello'",
+                "the source has no package named `hello`",
+            ),
+            (
+                "error: flake 'path:/x' does not provide attribute 'packages.x86_64-linux.catalogIndex', 'legacyPackages.x86_64-linux.catalogIndex' or 'catalogIndex'",
+                "the source has no pkg search data (`catalogIndex`)",
             ),
         ] {
             assert_eq!(super::plain_detail(detail), cause);

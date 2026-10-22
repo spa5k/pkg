@@ -854,6 +854,42 @@ fn removed_alias_reports_the_short_cause() {
 }
 
 #[test]
+fn a_nixpkgs_error_comes_before_a_cask_index_error() {
+    let context = SearchContext::ready();
+    std::fs::write(&context.nix, &context.original_runtime).unwrap();
+    // No local data, and the Cask index cannot load.
+    std::fs::remove_dir_all(context.pkg_cache()).unwrap();
+    std::fs::write(context.bin.path().join("index.json"), "{}").unwrap();
+    let (code, _, stderr) = context.run(&["info", "python"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(
+        stderr.contains("python previously pointed to Python 2"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_broken_tap_blocks_bare_names_but_not_nixpkgs_ids() {
+    let context = SearchContext::ready();
+    std::fs::write(&context.nix, &context.original_runtime).unwrap();
+    // A registered tap without saved data.
+    let registry = context.home.path().join("state/pkg/taps/registry.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&registry).unwrap()).unwrap();
+    value["sources"]["fixture/broken"] = serde_json::json!({
+        "origin": "https://github.com/fixture/homebrew-broken",
+        "added_unix": 1,
+    });
+    std::fs::write(&registry, value.to_string()).unwrap();
+    let (code, stdout, stderr) = context.run(&["info", "nixpkgs:ripgrep"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("ID: nixpkgs:ripgrep"), "{stdout}");
+    let (code, _, stderr) = context.run(&["info", "ripgrep"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("fixture/broken"), "{stderr}");
+}
+
+#[test]
 fn main_commands_select_their_package() {
     let context = SearchContext::ready();
     let (code, stdout, stderr) = context.run(&["search", "rg"]);
