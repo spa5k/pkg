@@ -21,8 +21,8 @@ the [signature preservation design](../openspec/changes/archive/2026-10-12-harde
 
 ## What this source is
 
-A maintainer-run Rust generator (`tools/cask-catalog`) reads a pinned
-offline Homebrew Cask JSON snapshot and emits one deterministic catalog file
+A Rust generator (`tools/cask-catalog`) reads a pinned, signed Homebrew Cask
+API snapshot and emits one deterministic catalog file
 (`nix/casks/catalog/catalog.json`, schema `pkg-cask-catalog/4`). The Nix
 flake reads that committed data with plain `builtins.fromJSON` and builds
 generic packages from it. The client converts nothing per install.
@@ -305,22 +305,35 @@ and the
 
 ## Catalog update procedure
 
-This procedure stays the maintainer path for the official catalog and its
-pinned JSON snapshot input. Updates are maintainer-run and reviewed; no
-scheduler exists. Run these commands from the repository root. This
-example reproduces the current pin. For an update, supply the new exact
-revision and its expected SHA-256:
+The `catalog-update` workflow updates the Cask and Formula catalogs every
+day. It downloads `https://formulae.brew.sh/api/cask.jws.json` and
+`formula.jws.json`. `brew` checks the same files. The workflow accepts a
+file only with a PS512 signature by Homebrew's `homebrew-1` key, pinned
+from the `brew` revision in `tools/cask-catalog`. It stores each checked
+payload as a gzip asset of the `catalog-inputs` pre-release, then
+regenerates both catalogs. When a catalog changes, it opens a pull request,
+runs the checks on it, and merges it after every check passes. The pin
+records the asset URL, the payload SHA-256, and the `tap_git_head` revision
+that every record in the payload names. The release keeps an old payload
+for 30 days after a newer pin replaces it.
 
-    cargo run --locked -p cask-catalog -- fetch \
-      --revision 245947c0b920cbe83f4003bb7c6be737352c8314 \
-      --sha256 1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251
+To update the Cask catalog by hand, run these commands from the repository
+root. `TOKEN` is the `catalog-inputs` asset name, `cask-<sha256>.json.gz`:
+
+    cargo run --locked -p cask-catalog -- fetch-signed --name cask --out /tmp/cask.json
+    gzip -9 -n -c /tmp/cask.json > "/tmp/$TOKEN"
+    cargo run --locked -p cask-catalog -- fetch --input "/tmp/$TOKEN" \
+      --url "https://github.com/spa5k/pkg/releases/download/catalog-inputs/$TOKEN" \
+      --sha256 <sha256>
     cargo run --locked -p cask-catalog -- generate
-    # review the diff, then commit input.json and catalog.json together
+    # upload /tmp/$TOKEN to catalog-inputs, then commit input.json and catalog.json
 
-`fetch` refuses to replace the pin when the downloaded bytes do not match
-the expected hash. `generate` is offline and deterministic: the committed
-pin plus the generator version always produce the same catalog bytes. CI
-regenerates from the committed pin and fails on any diff.
+To reproduce the committed catalog, run `fetch` with the pinned URL and
+SHA-256, then `generate`. `fetch` refuses to replace the pin when the bytes
+do not match the expected hash. `generate` is offline and deterministic:
+the committed pin plus the generator version always produce the same
+catalog bytes. CI regenerates from the committed pin and fails on any
+diff.
 
 Verify evaluation and one build before merging (import-from-derivation
 disabled):

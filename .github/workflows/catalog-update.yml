@@ -1,0 +1,169 @@
+# Daily catalog update.
+#
+# Fetches Homebrew's signed Cask and Formula API files and checks their
+# signatures with the pinned Homebrew key. Regenerates both catalogs from
+# the checked payloads. When a catalog changes, stores the payloads as
+# assets of the `catalog-inputs` pre-release, opens one pull request, runs
+# the checks on it, and merges it after every check passes.
+#
+# Pull requests that GITHUB_TOKEN opens start no pull_request workflows, so
+# this job dispatches the checks on the branch and waits for them.
+
+name: catalog-update
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-update
+  cancel-in-progress: false
+
+env:
+  RUSTUP_TOOLCHAIN: "1.99.0"
+  CARGO_TERM_COLOR: always
+  BRANCH: catalog/update
+  INPUTS: https://github.com/spa5k/pkg/releases/download/catalog-inputs
+  # Keep payloads this many days after a newer pin replaces them.
+  KEEP_DAYS: "30"
+
+jobs:
+  update:
+    name: update catalogs
+    if: github.repository == 'spa5k/pkg'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Install Nix for Formula metadata
+        uses: DeterminateSystems/determinate-nix-action@d0c908e6cbe9f89f36ed8205a3ab6f092636916a # v3.23.1
+
+      - name: Fetch and check the signed API files
+        run: |
+          set -eu
+          mkdir -p /tmp/catalog-inputs
+          for name in cask formula; do
+            cargo run --locked -q -p cask-catalog -- fetch-signed --name "$name" \
+              --out "/tmp/catalog-inputs/$name.json" > "/tmp/catalog-inputs/$name.meta"
+            cat "/tmp/catalog-inputs/$name.meta"
+            sha="$(jq -r .sha256 "/tmp/catalog-inputs/$name.meta")"
+            gzip -9 -n -c "/tmp/catalog-inputs/$name.json" > "/tmp/catalog-inputs/$name-$sha.json.gz"
+            echo "$(echo "$name" | tr '[:lower:]' '[:upper:]')_SHA=$sha" >> "$GITHUB_ENV"
+          done
+
+      - name: Regenerate the Cask catalog
+        run: |
+          set -eu
+          cargo run --locked -q -p cask-catalog -- fetch \
+            --url "$INPUTS/cask-$CASK_SHA.json.gz" \
+            --input "/tmp/catalog-inputs/cask-$CASK_SHA.json.gz" --sha256 "$CASK_SHA"
+          cargo run --locked -q -p cask-catalog -- generate
+
+      - name: Regenerate the Formula catalog
+        run: |
+          python3 tools/formula-catalog/generate.py \
+            --input "/tmp/catalog-inputs/formula.json" --sha256 "$FORMULA_SHA" \
+            --pin-url "$INPUTS/formula-$FORMULA_SHA.json.gz"
+
+      - name: Find changes
+        id: changes
+        run: |
+          set -eu
+          git status --short
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Store the payloads
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if ! gh release view catalog-inputs > /dev/null 2>&1; then
+            gh release create catalog-inputs --prerelease --target "$GITHUB_SHA" \
+              --title "Catalog inputs" \
+              --notes "Signed Homebrew API payloads that the committed catalogs pin. The catalog-update workflow adds them. They are not pkg releases."
+          fi
+          assets="$(gh release view catalog-inputs --json assets --jq '.assets[].name')"
+          for asset in "cask-$CASK_SHA.json.gz" "formula-$FORMULA_SHA.json.gz"; do
+            if ! printf '%s\n' "$assets" | grep -qxF "$asset"; then
+              gh release upload catalog-inputs "/tmp/catalog-inputs/$asset"
+            fi
+          done
+
+      - name: Open the pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -q -a -m "chore: update catalogs"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base main --head "$BRANCH" --title "chore: update catalogs" \
+              --body "The catalog-update workflow regenerated the Cask and Formula catalogs from Homebrew's signed API files. It merges this pull request after every check passes."
+          fi
+
+      - name: Run the checks and merge
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sha="$(git rev-parse HEAD)"
+          workflows="ci-fast.yml docs-linkcheck.yml cask-catalog.yml formula-catalog.yml"
+          for workflow in $workflows; do
+            gh workflow run "$workflow" --ref "$BRANCH"
+          done
+          for workflow in $workflows; do
+            id=
+            for _ in $(seq 30); do
+              id="$(gh run list --workflow "$workflow" --commit "$sha" --event workflow_dispatch \
+                --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+              [ -n "$id" ] && break
+              sleep 10
+            done
+            if [ -z "$id" ]; then
+              echo "::error::$workflow did not start on $sha."
+              exit 1
+            fi
+            gh run watch "$id" --exit-status --interval 60 > /dev/null
+          done
+          gh pr merge "$BRANCH" --squash --delete-branch --match-head-commit "$sha"
+
+      - name: Remove old payloads
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          cutoff="$(date -u -d "$KEEP_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)"
+          gh release view catalog-inputs --json assets \
+            --jq ".assets[] | select(.createdAt < \"$cutoff\") | .name" |
+            while read -r asset; do
+              case "$asset" in
+                "cask-$CASK_SHA.json.gz" | "formula-$FORMULA_SHA.json.gz") ;;
+                *) gh release delete-asset catalog-inputs "$asset" --yes ;;
+              esac
+            done

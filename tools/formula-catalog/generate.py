@@ -16,9 +16,10 @@ from collections import Counter
 SYSTEMS = ("aarch64-darwin", "x86_64-linux")
 TOKEN = re.compile(r"[a-z0-9][a-z0-9+._@-]*\Z")
 REVISION = "8edc0c72e3a38faf5434e40d1f19431125fe4b30"
-API = "https://formulae.brew.sh/api/formula.json"
-INPUT = pathlib.Path(__file__).resolve().parent / "inputs/formula.json.gz"
-MAX_INPUT = 64 * 1024 * 1024
+API = "https://formulae.brew.sh/api/formula.jws.json"
+PIN = pathlib.Path(__file__).resolve().parent / "inputs/input.json"
+LICENSE = "BSD-2-Clause (Homebrew Core data)"
+MAX_INPUT = 128 * 1024 * 1024
 
 
 def project(url):
@@ -192,28 +193,55 @@ def generate(formulae, metadata, digest):
     return {"schema": "pkg-formula-catalog/1", "generator": {"name": "formula-catalog", "version": "0.1.0"},
             "nixpkgsRevision": REVISION, "macosBaseline": "14", "targets": list(SYSTEMS),
             "inputs": {"homebrew/core": {"url": API, "revision": formulae[0]["tap_git_head"],
-                                         "sha256": digest, "license": "BSD-2-Clause (Homebrew Core data)", "kind": "official"}},
+                                         "sha256": digest, "license": LICENSE, "kind": "official"}},
             "entries": entries, "aliases": aliases, "executables": executables, "deprecated": deprecated}
+
+
+def read_snapshot(path, sha256):
+    """Return the bytes of a plain or gzip snapshot that match `sha256`."""
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rb") as stream:
+        raw = stream.read(MAX_INPUT + 1)
+    if hashlib.sha256(raw).hexdigest() != sha256 or len(raw) > MAX_INPUT:
+        raise ValueError("input hash or size mismatch")
+    return raw
+
+
+def pinned_input(cache):
+    """Download the pinned snapshot into `cache` once and return its bytes."""
+    pin = json.loads(PIN.read_text())
+    if urllib.parse.urlsplit(pin["url"]).scheme != "https":
+        raise ValueError("the pinned snapshot URL is not https")
+    path = cache / f"formula-{pin['sha256']}.json.gz"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        partial = path.with_suffix(".part")
+        subprocess.run(["curl", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2",
+                        "--fail", "--location", "--silent", "--show-error", "--max-time", "300",
+                        "-o", str(partial), pin["url"]], check=True)
+        partial.replace(path)
+    return read_snapshot(path, pin["sha256"])
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=pathlib.Path, default=INPUT)
-    parser.add_argument("--sha256")
+    parser.add_argument("--input", type=pathlib.Path,
+                        help="checked API payload; the default is the pinned snapshot")
+    parser.add_argument("--sha256", help="SHA-256 of --input")
+    parser.add_argument("--pin-url", help="record --input in inputs/input.json, stored at this URL")
     parser.add_argument("--cache", type=pathlib.Path, default=pathlib.Path(".cache/formula-catalog"))
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("nix/formulae/catalog/catalog.json"))
     parser.add_argument("--nix", default="nix")
     args = parser.parse_args()
-    if args.sha256 is None:
-        if args.input.resolve() != INPUT.resolve():
-            parser.error("--sha256 is required for a new input")
-        args.sha256 = json.loads(INPUT.with_name("input.json").read_text())["sha256"]
-    opener = gzip.open if args.input.suffix == ".gz" else open
-    with opener(args.input, "rb") as stream:
-        raw = stream.read(MAX_INPUT + 1)
+    if args.input is None:
+        if args.sha256 or args.pin_url:
+            parser.error("--sha256 and --pin-url need --input")
+        raw = pinned_input(args.cache)
+    elif args.sha256 is None:
+        parser.error("--sha256 is required with --input")
+    else:
+        raw = read_snapshot(args.input, args.sha256)
     digest = hashlib.sha256(raw).hexdigest()
-    if digest != args.sha256 or len(raw) > MAX_INPUT:
-        raise ValueError("input hash or size mismatch")
     formulae = json.loads(raw)
     metadata = {system: native_metadata(formulae, system, args.nix, args.cache) for system in SYSTEMS}
     catalog = generate(formulae, metadata, digest)
@@ -224,6 +252,10 @@ def main():
     shared = pathlib.Path(__file__).resolve().parents[2] / "nix/casks/lib"
     for filename in ("public-fetch.nix", "safe-fetch.py"):
         shutil.copyfile(shared / filename, assets / filename)
+    if args.pin_url:
+        pin = {"kind": "official", "license": LICENSE, "revision": catalog["inputs"]["homebrew/core"]["revision"],
+               "sha256": digest, "url": args.pin_url}
+        PIN.write_text(json.dumps(pin, indent=2, sort_keys=True) + "\n")
     for system in SYSTEMS:
         print(system, dict(Counter(target["targets"][system]["kind"] or target["targets"][system]["reason"] for target in catalog["entries"].values())))
 

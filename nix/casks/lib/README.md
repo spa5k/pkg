@@ -31,10 +31,9 @@ payload extraction from:
 ## Cask metadata: Homebrew / homebrew-cask (BSD-2-Clause)
 
 The generated catalog (`../catalog/catalog.json`) is derived from Homebrew
-cask data via the `BatteredBunny/brew-api` mirror snapshot pinned in the
-catalog's `input` provenance block. The mirror repository itself carries no
-LICENSE file at the pinned revision; the underlying data license is
-Homebrew's BSD-2-Clause, whose actual text we preserve in
+cask data: the signed `formulae.brew.sh/api/cask.jws.json` payload pinned in
+the catalog's `input` provenance block. The data license is Homebrew's
+BSD-2-Clause, whose actual text we preserve in
 `licenses/homebrew-cask-LICENSE.txt` (fetched from
 <https://github.com/Homebrew/homebrew-cask>, `main` branch, file `LICENSE`,
 sha256 `431d9708f8f5009fe4f5518790e471ad589c23e4350f53404e5620dcc5a5048f`).

@@ -1,6 +1,7 @@
 # cask-catalog generates the pkg Cask catalog and imports public taps.
 #
-# `fetch` and `import-tap` limit network requests and download sizes.
+# `fetch-signed`, `fetch`, and `import-tap` limit network requests and
+# download sizes. `fetch-signed` checks Homebrew's API signature.
 # `import-tap` also runs a local sandboxed Nix build.
 # `generate` reads the pinned input and writes deterministic catalog data.
 
@@ -19,6 +20,9 @@ strum_macros = "=0.28.0"
 pkg-process = { path = "../../crates/pkg-process" }
 libc = "=0.2.191"
 clap = { version = "=4.6.7", features = ["derive"] }
+# Check Homebrew's PS512 API signatures. rustls already builds both crates.
+aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
+base64 = "=0.23.1"
 flate2 = "=1.1.10"
 reqwest = { version = "=0.13.5", default-features = false, features = [
   "blocking",

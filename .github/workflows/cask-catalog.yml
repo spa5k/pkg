@@ -51,17 +51,17 @@ jobs:
       - name: Fetch helpers safety tests (offline, fail fast)
         run: python3 -m unittest discover -s tools/cask-catalog/tests -p test_safe_fetch.py -v
 
+      - name: Homebrew API signature tests
+        run: cargo test --locked -p cask-catalog --lib homebrew_api
+
       - name: Fetch the pinned snapshot
         run: |
           set -eu
-          mkdir -p /tmp/cask-catalog
-          revision="$(python3 -c 'import json;print(json.load(open("nix/casks/catalog/input.json"))["revision"])')"
           sha="$(python3 -c 'import json;print(json.load(open("nix/casks/catalog/input.json"))["sha256"])')"
           url="$(python3 -c 'import json;print(json.load(open("nix/casks/catalog/input.json"))["url"])')"
-          test "$url" = "https://raw.githubusercontent.com/BatteredBunny/brew-api/$revision/cask.json"
-          curl --fail --location --silent --show-error --connect-timeout 20 --max-time 120 \
-            "$url" -o "/tmp/cask-catalog/$revision.json"
-          echo "$sha  /tmp/cask-catalog/$revision.json" | sha256sum --check --strict -
+          test "$url" = "https://github.com/spa5k/pkg/releases/download/catalog-inputs/cask-$sha.json.gz"
+          # `fetch` checks the bytes and rewrites the same pin.
+          cargo run --locked -p cask-catalog -- fetch --url "$url" --sha256 "$sha"
 
       - name: Regenerate the catalog from the pin
         run: cargo run --locked -p cask-catalog -- generate --out-dir nix/casks/catalog
