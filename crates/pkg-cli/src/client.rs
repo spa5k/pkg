@@ -247,6 +247,9 @@ fn run_client(binary: &Path, args: &[&str]) -> Result<u8, Error> {
     }
 }
 
+/// The largest release file, in bytes.
+const MAX_DOWNLOAD_BYTES: &str = "268435456";
+
 fn download(url: &str, destination: &Path) -> Result<(), Error> {
     let destination = destination
         .to_str()
@@ -256,10 +259,14 @@ fn download(url: &str, destination: &Path) -> Result<(), Error> {
         &[
             "--proto",
             "=https",
+            "--proto-redir",
+            "=https",
             "--tlsv1.2",
             "-fsSL",
             "--max-time",
             "300",
+            "--max-filesize",
+            MAX_DOWNLOAD_BYTES,
             "-o",
             destination,
             url,
@@ -328,6 +335,9 @@ fn check(program: &str, outcome: Outcome) -> Result<(), Error> {
 
 /// The version, archive name, and checksum of the client for `system`
 /// in one `SHA256SUMS` file.
+///
+/// The version must be a canonical semantic version and the checksum 64
+/// hex digits, because both become parts of URLs and paths.
 fn published(sums: &str, system: &str) -> Option<(String, String, String)> {
     let suffix = format!("-{system}.tar.gz");
     sums.lines().find_map(|line| {
@@ -335,7 +345,11 @@ fn published(sums: &str, system: &str) -> Option<(String, String, String)> {
         let (checksum, archive) = (fields.next()?, fields.next()?);
         let archive = archive.trim_start_matches('*');
         let version = archive.strip_prefix("pkg-")?.strip_suffix(&suffix)?;
-        (!version.is_empty() && fields.next().is_none()).then(|| {
+        let valid = fields.next().is_none()
+            && checksum.len() == 64
+            && checksum.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && semver::Version::parse(version).is_ok_and(|parsed| parsed.to_string() == version);
+        valid.then(|| {
             (
                 version.to_string(),
                 archive.to_string(),
@@ -450,21 +464,29 @@ mod tests {
 
     #[test]
     fn reads_the_client_for_this_system_from_the_checksum_list() {
-        let sums = "aaa  pkg-0.2.0-alpha.17-x86_64-linux.tar.gz\nbbb  pkg-0.2.0-alpha.17-aarch64-darwin.tar.gz\n";
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        let sums = format!(
+            "{a}  pkg-0.2.0-alpha.17-x86_64-linux.tar.gz\n{b}  pkg-0.2.0-alpha.17-aarch64-darwin.tar.gz\n"
+        );
         assert_eq!(
-            published(sums, "aarch64-darwin"),
+            published(&sums, "aarch64-darwin"),
             Some((
                 String::from("0.2.0-alpha.17"),
                 String::from("pkg-0.2.0-alpha.17-aarch64-darwin.tar.gz"),
-                String::from("bbb"),
+                b,
             ))
         );
-        assert_eq!(published(sums, "x86_64-darwin"), None);
-        assert_eq!(
-            published("ccc  pkg--aarch64-darwin.tar.gz\n", "aarch64-darwin"),
-            None
-        );
-        assert_eq!(published("ccc  other.tar.gz\n", "aarch64-darwin"), None);
+        assert_eq!(published(&sums, "x86_64-darwin"), None);
+        for line in [
+            format!("{a}  pkg--aarch64-darwin.tar.gz"),
+            format!("{a}  other.tar.gz"),
+            format!("{a}  pkg-1.0.0/../../x-aarch64-darwin.tar.gz"),
+            format!("{a}  pkg-01.0.0-aarch64-darwin.tar.gz"),
+            format!("{a}  pkg-1.0.0?x=1-aarch64-darwin.tar.gz"),
+            String::from("bbb  pkg-1.0.0-aarch64-darwin.tar.gz"),
+        ] {
+            assert_eq!(published(&line, "aarch64-darwin"), None, "{line}");
+        }
     }
 
     /// A throwaway key and `ssh-keygen -Y sign` output for these tests.
