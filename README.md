@@ -1,31 +1,43 @@
-# `pkg`
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="pkg: familiar package commands on top of Nix" width="100%">
+</p>
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/spa5k/pkg/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/spa5k/pkg?label=release&color=54a99c"></a>
+  <a href="https://github.com/spa5k/pkg/actions/workflows/ci-fast.yml"><img alt="CI" src="https://github.com/spa5k/pkg/actions/workflows/ci-fast.yml/badge.svg?branch=main"></a>
+  <img alt="Platforms: Linux x86-64 and macOS Apple silicon" src="https://img.shields.io/badge/platform-Linux%20x86--64%20%7C%20macOS%20Apple%20silicon-364154">
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-364154"></a>
+</p>
 
-`pkg` is a small package command line for Linux and macOS. It wraps one
-native Nix profile per user. Nix owns package state, generations, rollback,
-and roots. `pkg` owns names, commands, output, and desktop app launchers.
+<div align="center">
 
-`pkg` needs Nix. When Nix is missing, the installer offers to install
-[Determinate Nix](https://docs.determinate.systems/determinate-nix/).
-`pkg` does not update, repair, or remove Nix.
+[Install](#install) · [Usage](#usage) · [How it works](#how-pkg-uses-nix) · [Security](#security) · [Commands](docs/commands.md) · [Docs](docs/index.md)
 
-The completed Rust quality work follows
-[Enforce Rust quality](openspec/changes/archive/2026-10-12-enforce-rust-quality/proposal.md) and
-[Complete the Rust quality plan](openspec/changes/archive/2026-10-12-complete-rust-quality-plan/proposal.md).
-Completed and superseded plans are listed in the
-[OpenSpec archive](openspec/changes/archive/README.md).
+</div>
+
+`pkg` gives you short, familiar package commands on top of
+[Nix](https://nixos.org). Search, install, upgrade, and roll back packages
+from Nixpkgs, Homebrew Casks, Homebrew Formulae, and GitHub flakes. You do
+not need to know Nix to use it.
 
 > [!WARNING]
-> `pkg` is a technical preview. Breaking changes can occur before v1.
-> [v0.2.0-alpha.3](https://github.com/spa5k/pkg/releases/tag/v0.2.0-alpha.3)
-> starts from a fresh state: old alpha installations are not migrated,
-> adopted, or erased. See
-> [Simplify pkg to native Nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md)
-> and its [verification record](docs/verification/native-nix-2026-09-28.md).
-> The current release gives shorter CLI output and reports partial package
-> changes when macOS app launcher setup fails. See the
-> [command guide](docs/commands.md).
+> `pkg` is alpha software. Commands, files, and output can change before
+> v1. Old alpha installations are not migrated.
+
+## Why pkg
+
+- **One command for many sources.** Nixpkgs, Homebrew Casks, Homebrew
+  Formulae, public Cask taps, and GitHub flakes use the same commands.
+- **You can undo every change.** Each change makes a new Nix profile
+  generation. `pkg rollback` goes back to the previous one.
+- **No Homebrew installation.** Casks and Formulae install as ordinary Nix
+  packages. `pkg` never runs `brew`.
+- **Fast local search.** Search reads catalogs on your disk. It makes no
+  network request.
+- **Small footprint.** One binary in `~/.local/bin`. No daemon, no root
+  helper, and no telemetry.
+- **Signed releases.** `pkg update` installs a new client only when its
+  release has a valid signature.
 
 ## Install
 
@@ -35,18 +47,25 @@ curl -fsSL https://github.com/spa5k/pkg/releases/latest/download/install.sh | sh
 
 Then open a new terminal window.
 
-The installer puts `pkg` in `~/.local/bin` and sets up Bash, Zsh, or Fish.
-When Nix is missing, it asks once whether to install Nix. A daily job
-updates `pkg` and its search data. Run the same command again to repair
-the setup. Run `pkg self uninstall` to remove `pkg`.
+Requirements:
+
+- x86_64 Linux with glibc 2.35 or newer, or macOS on Apple silicon.
+- Nix. When Nix is missing, the installer asks once whether to install
+  [Determinate Nix](https://docs.determinate.systems/determinate-nix/).
+
+The installer puts `pkg` in `~/.local/bin`, verifies the archive checksum,
+and sets up Bash, Zsh, or Fish. It turns on a daily user job that updates
+`pkg` and its search data. It never runs `sudo` itself. Run the same command
+again to repair the setup. Run `pkg self uninstall` to remove `pkg`. Nix and
+your packages stay.
 
 Details are in the [install guide](docs/install.md).
 
-## Use `pkg`
+## Usage
 
 ```sh
 pkg search ripgrep         # Find packages
-pkg info ripgrep           # Show details, commands, and other sources
+pkg info rg                # Show details, commands, and other sources
 pkg install ripgrep        # Install a package
 pkg install rg             # Command names work too
 pkg list                   # List installed packages and versions
@@ -58,60 +77,185 @@ pkg update                 # Update pkg and its search data
 pkg doctor                 # Check the setup
 ```
 
-`pkg add` also installs packages. `pkg uninstall` also removes packages.
+`pkg add` is the same as `pkg install`. `pkg uninstall` is the same as
+`pkg remove`. The [command guide](docs/commands.md) has every command and
+option.
 
-A name that several sources have installs from the first source in this
-order: Nixpkgs, Homebrew Casks, Homebrew Formulae. The result names the
-other sources. To choose one, use its ID, for example
-`pkg install cask:firefox` or `pkg install brew:awscli`.
+### Package sources
 
-Packages install into a dedicated native profile at
-`~/.local/state/nix/profiles/pkg`. Your default Nix profile stays separate.
-Formulae and Casks install through Nix into this profile.
-Use `pkg install brew:awscli` for a Formula. The client does not need Brew.
-Formulae use verified Nixpkgs equivalents or a restricted bottle importer.
-Unsupported recipes are refused with a reason.
+| Source | ID | Example |
+| --- | --- | --- |
+| Nixpkgs | `nixpkgs:<attribute>` | `pkg install nixpkgs:ripgrep` |
+| Homebrew Casks | `cask:<token>` | `pkg install cask:firefox` |
+| Homebrew Formulae | `brew:<name>` | `pkg install brew:awscli` |
+| Public Cask taps | `cask:<owner>/<tap>/<token>` | `pkg tap add goreleaser/tap` |
+| GitHub flakes | `github:<owner>/<repo>#<attribute>` | `pkg install github:owner/repo#tool` |
 
-On macOS, `pkg` exposes app bundles from supported packages as launchers in
-`~/Applications/pkg/`. See [commands](docs/commands.md).
+A bare name such as `ripgrep` checks the sources in this order: Nixpkgs,
+Homebrew Casks, Homebrew Formulae, then saved taps. The first match wins.
+`pkg info` and `pkg install` name the other sources that have the same name.
+A command name also works: `pkg install rg` installs `ripgrep`.
 
-## What `pkg` does not do
+On macOS, app bundles appear as launchers in `~/Applications/pkg/`.
 
-- `pkg` does not update, repair, or remove the Nix runtime.
-- `pkg` uses a daily user job to update itself and its catalogs. It exits after each run.
-  It has no broker, root helper, or privileged service.
-- `pkg` does not sign or host a package channel or central index.
-- `pkg` does not install or invoke Homebrew. Casks come from a generated
-  catalog of ordinary Nix packages. Formulae use the same native profile.
-  Both importers support a restricted subset.
-- `pkg` does not migrate, adopt, or erase old installations.
-- `pkg` does not remove your machine's Nix installation when removed.
+## How pkg uses Nix
 
-Removing the client removes only the client. Your Nix installation and the
-`pkg` package profile stay intact.
+<p align="center">
+  <img src="docs/assets/how-it-works.svg" alt="Sources go through pkg to Nix. Each change adds a generation to the pkg profile." width="100%">
+</p>
 
-## Platform status
+Nix does the package work. `pkg` gives it a simple interface.
+
+- **One profile for your packages.** `pkg` keeps your packages in its own
+  Nix profile, `~/.local/state/nix/profiles/pkg`. Your default Nix profile
+  does not change.
+- **Nix owns the state.** `pkg` reads installed packages, versions, and
+  generations from Nix. It never reads them from a cache.
+- **Every source is a Nix flake.** Nixpkgs comes from
+  `github:NixOS/nixpkgs/nixpkgs-unstable`. Casks and Formulae come from the
+  flakes in [`nix/`](nix), which this repository generates from signed
+  Homebrew data. An upgrade follows the reference that you installed from.
+- **Packages stay separate.** Nix keeps each package in its own path in
+  `/nix/store`. One package cannot overwrite the files of another.
+- **Changes are generations.** Each install, remove, or upgrade adds one
+  generation. `pkg history` shows them. `pkg rollback` goes back.
+- **Search is local.** The daily job downloads the package list that the
+  NixOS channel publishes. Search reads that list on your disk.
+
+`pkg` does not install, update, repair, or remove Nix.
+
+## Security
+
+<p align="center">
+  <img src="docs/assets/security.svg" alt="Release chain, catalog chain, and the checks on your computer" width="100%">
+</p>
+
+### What pkg checks
+
+| What | Check |
+| --- | --- |
+| `pkg` updates | `pkg update` checks the Ed25519 signature of `SHA256SUMS` with the release key in the client. Then it checks the SHA-256 of the archive. It starts the new client once before it replaces the old one. |
+| First install | `install.sh` downloads over HTTPS with TLS 1.2 or newer, and it checks the SHA-256 of the archive. |
+| Homebrew data | The catalog job accepts Homebrew API data only with a valid signature by Homebrew's `homebrew-1` key. `brew` does the same check. The repository pins each payload by SHA-256. |
+| Cask and Formula downloads | Each download has a fixed SHA-256 in its Nix package. Nix refuses other bytes. |
+| Nixpkgs packages | Nix checks the binary cache signatures with the keys that your Nix trusts. |
+| macOS apps | Before `pkg` makes a launcher for a Cask app, it runs `codesign --verify --deep --strict` and `spctl --assess`. A rejected app gets no launcher. |
+| GitHub flakes | `pkg install` asks for approval before Nix evaluates a `github:` flake. |
+| Public taps | `pkg tap add` asks for approval before it fetches a tap. Tap Ruby runs only inside a Nix build sandbox. |
+
+### Least privilege
+
+- `pkg` adds no daemon, broker, or root helper. The daily job is a user job
+  that exits after each run.
+- `pkg` passes `accept-flake-config = false` and
+  `allow-import-from-derivation = false` to every Nix command. A flake
+  cannot change Nix settings, substituters, or keys.
+- Two optional setup steps ask for administrator access, and only after you
+  approve: `pkg apps setup` on macOS, and the sandbox setup for public taps.
+  They call `/usr/bin/sudo` and other programs by absolute path.
+
+### Input and output
+
+- `pkg` checks each argument, package ID, and configuration value before it
+  passes it to Nix. It refuses control characters, values that start with
+  `-`, and plain `http` sources.
+- `pkg` removes terminal control sequences from text that Nix, a flake, or
+  a catalog supplies. Colors and line breaks stay.
+- Downloads by `pkg` use HTTPS only and have size limits. Output from a
+  child process stops at 256 MiB.
+
+### Repository and releases
+
+- Every commit on `main` must be signed. It must pass the build, test,
+  format, clippy, docs, dependency, and link checks, and a client smoke
+  test on Linux and on macOS.
+- Release tags carry the maintainer's SSH signature. The release key signs
+  `SHA256SUMS` outside CI.
+- GitHub Actions are pinned to commit SHAs. Workflow tokens are read-only
+  by default. The Rust toolchain is pinned.
+- `cargo deny` checks licenses, banned crates, and crate sources on every
+  pull request.
+
+### Verify a release yourself
+
+`install.sh` does not check the release signature. A first install trusts
+GitHub and TLS. To check a release by hand:
+
+```sh
+base=https://github.com/spa5k/pkg/releases/latest/download
+curl -fsSLO "$base/SHA256SUMS"
+curl -fsSLO "$base/SHA256SUMS.sig"
+curl -fsSLO "$base/pkg-<version>-aarch64-darwin.tar.gz"   # or x86_64-linux
+echo 'pkg-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOaFZma99iXoZWruu1raDx1IAPNLJPOF/TYfXbAvyehh' > allowed_signers
+ssh-keygen -Y verify -f allowed_signers -I pkg-release -n pkg-release -s SHA256SUMS.sig < SHA256SUMS
+shasum -a 256 --ignore-missing -c SHA256SUMS
+# On Linux: sha256sum --ignore-missing -c SHA256SUMS
+```
+
+The key must match `RELEASE_KEY` in
+[`crates/pkg-cli/src/client.rs`](crates/pkg-cli/src/client.rs).
+
+### Limits
+
+- A checksum proves the bytes. It does not prove that the publisher is
+  trustworthy.
+- On macOS, the Nix build sandbox is off by default. A GitHub flake runs its
+  build code on your computer. Approve only flakes that you trust.
+- The macOS check proves a valid Developer ID signature and Apple's current
+  assessment. It does not scan for malware, and it does not isolate the app
+  when it runs. Command-line tools and Nixpkgs apps are outside this check.
+- Tap approval allows tap Ruby to run during the import. It does not
+  certify the app.
+- `pkg` trusts Nix, the binary caches that your Nix trusts, and GitHub.
+
+### Report a vulnerability
+
+Do not open a public issue. Read [SECURITY.md](SECURITY.md).
+
+## Privacy
+
+`pkg` has no telemetry. It sends no data about your packages. It connects
+to GitHub for releases and flakes, and to the NixOS channel for the search
+list. Nix downloads packages from its binary caches and from vendor URLs.
+See [privacy](docs/privacy.md).
+
+## Platform support
 
 | Platform | Status |
 | --- | --- |
-| Linux x86-64 | In development; cask binary and AppImage journeys verified headless only |
-| macOS Apple silicon | In development; generated cask catalog, macOS baseline 15.7.7 |
-| macOS Intel | Not supported |
-| Linux arm64 | Not supported |
+| Linux x86-64 | Alpha. Needs glibc 2.35 or newer. The daily job needs a systemd user session. |
+| macOS Apple silicon | Alpha. Tested on macOS 15.7.7. |
+| macOS Intel | Not supported. |
+| Linux arm64 | Not supported. |
 
-The cask source covers a broad generated catalog on both target systems.
-Catalog eligibility is a metadata claim, not a verification promise. See
-[casks](docs/casks.md).
+The tested Nix runtimes are Determinate 3.22.1 and 3.22.5 with Nix 2.35.2.
+On Linux, Cask AppImages and binaries were tested without a desktop. A Cask
+in the catalog is eligible by its metadata. This is not a promise that it
+works. See [casks](docs/casks.md) and [support](docs/support.md).
 
-## Contribute
+## Documentation
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain, checks, and the
-OpenSpec workflow. Read the [module map](docs/architecture.md) to find code owners.
-The native Nix design baseline is
-[Simplify pkg to native Nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md);
-the [OpenSpec archive](openspec/changes/archive/README.md) records earlier changes.
-The [plan index](plans/README.md) records the earlier alpha plans.
+- [Install](docs/install.md): setup, files, the daily job, and removal.
+- [Commands](docs/commands.md): every command, package IDs, and output.
+- [Casks](docs/casks.md): the Cask catalog, public taps, and trust limits.
+- [Support](docs/support.md): troubleshooting and supported runtimes.
+- [Privacy](docs/privacy.md): what `pkg` sends and stores.
+- [Architecture](docs/architecture.md): the module map and code owners.
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain, the checks, and
+the OpenSpec workflow. The design baseline is
+[Simplify pkg to native Nix](openspec/changes/archive/2026-10-12-simplify-to-native-nix/proposal.md).
+The [OpenSpec archive](openspec/changes/archive/README.md) records earlier
+changes.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+`pkg` is licensed under the [Apache License 2.0](LICENSE). Homebrew metadata
+is available under the
+[BSD-2-Clause license](tools/formula-catalog/inputs/LICENSE.txt). Each
+package keeps the license of its upstream project.
+
+`pkg` is not affiliated with Homebrew, the NixOS Foundation, or Determinate
+Systems.
