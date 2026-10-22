@@ -645,6 +645,29 @@ pub fn strip_ansi(text: &str) -> String {
     CSI.replace_all(text, "").into_owned()
 }
 
+/// Remove control characters and direction overrides from third-party text.
+///
+/// Catalog and flake text then cannot move the cursor, change the terminal,
+/// or reorder what the user reads. Line breaks and tabs become spaces.
+#[must_use]
+pub fn printable(text: &str) -> std::borrow::Cow<'_, str> {
+    let unsafe_char = |c: char| {
+        c.is_control()
+            || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+    };
+    if !text.chars().any(unsafe_char) {
+        return text.into();
+    }
+    text.chars()
+        .filter_map(|c| match c {
+            '\t' | '\n' | '\r' => Some(' '),
+            c if unsafe_char(c) => None,
+            c => Some(c),
+        })
+        .collect::<String>()
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -674,6 +697,15 @@ mod tests {
         let mut table = Table::new(&[]);
         table.row(vec![String::from("a"), String::from("b")]);
         assert_eq!(table.render(Stream::Out), "a  b\n");
+    }
+
+    #[test]
+    fn printable_removes_terminal_controls() {
+        assert_eq!(printable("ripgrep"), "ripgrep");
+        assert_eq!(
+            printable("a\x1b]8;;https://x\x07link\x1b]8;;\x07\rfake\u{9b}2K\u{202e}txt\tend"),
+            "a]8;;https://xlink]8;; fake2Ktxt end"
+        );
     }
 
     #[test]

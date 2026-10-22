@@ -64,6 +64,20 @@ const CUSTOM_CONF: &str = "/etc/nix/nix.custom.conf";
 const NIX_CONF: &str = "/etc/nix/nix.conf";
 const DETERMINATE_PLIST: &str = "/Library/LaunchDaemons/systems.determinate.nix-daemon.plist";
 
+// Absolute programs, so that a changed PATH cannot replace sudo, which asks
+// for the password, or the commands that sudo runs as root.
+const SUDO: &str = "/usr/bin/sudo";
+const MKDIR: &str = "/bin/mkdir";
+const CHOWN: &str = if cfg!(target_os = "macos") {
+    "/usr/sbin/chown"
+} else {
+    "/bin/chown"
+};
+const CHMOD: &str = "/bin/chmod";
+const TEE: &str = "/usr/bin/tee";
+const PLUTIL: &str = "/usr/bin/plutil";
+const LAUNCHCTL: &str = "/bin/launchctl";
+
 /// One administrator step, printed to the user before anything runs.
 #[derive(Debug, PartialEq, Eq)]
 struct Step {
@@ -221,22 +235,22 @@ fn plan(world: &World) -> PlanOutcome {
     if !world.builds_dir_ready {
         steps.push(step(
             "create the private build temp directory /nix/var/nix/builds",
-            &["sudo", "mkdir", "-p", BUILDS_DIR],
+            &[SUDO, MKDIR, "-p", BUILDS_DIR],
         ));
         steps.push(step(
             "set its owner to root:wheel",
-            &["sudo", "chown", "root:wheel", BUILDS_DIR],
+            &[SUDO, CHOWN, "root:wheel", BUILDS_DIR],
         ));
         steps.push(step(
             "set its mode to 0755",
-            &["sudo", "chmod", "0755", BUILDS_DIR],
+            &[SUDO, CHMOD, "0755", BUILDS_DIR],
         ));
     }
     if !world.sandbox_settings_ready {
         steps.push(
             step(
                 "append sandbox = true and sandbox-fallback = false to /etc/nix/nix.custom.conf",
-                &["sudo", "tee", "-a", CUSTOM_CONF],
+                &[SUDO, TEE, "-a", CUSTOM_CONF],
             )
             .with_input(String::from("sandbox = true\nsandbox-fallback = false\n")),
         );
@@ -245,7 +259,7 @@ fn plan(world: &World) -> PlanOutcome {
         steps.push(
             step(
                 "remove the known global /private/tmp and /private/var/tmp sandbox grants",
-                &["sudo", "tee", "-a", CUSTOM_CONF],
+                &[SUDO, TEE, "-a", CUSTOM_CONF],
             )
             .with_input(settings.clone()),
         );
@@ -255,8 +269,8 @@ fn plan(world: &World) -> PlanOutcome {
             steps.push(step(
                 "create the daemon environment dictionary",
                 &[
-                    "sudo",
-                    "plutil",
+                    SUDO,
+                    PLUTIL,
                     "-insert",
                     "EnvironmentVariables",
                     "-json",
@@ -268,8 +282,8 @@ fn plan(world: &World) -> PlanOutcome {
         steps.push(step(
             "point the daemon TMPDIR at /nix/var/nix/builds (sudo plutil)",
             &[
-                "sudo",
-                "plutil",
+                SUDO,
+                PLUTIL,
                 if world.environment_tmpdir == Some(true) {
                     "-replace"
                 } else {
@@ -284,21 +298,15 @@ fn plan(world: &World) -> PlanOutcome {
         steps.push(step(
             "unload the old daemon service definition",
             &[
-                "sudo",
-                "launchctl",
+                SUDO,
+                LAUNCHCTL,
                 "bootout",
                 "system/systems.determinate.nix-daemon",
             ],
         ));
         steps.push(step(
             "load the changed daemon service definition",
-            &[
-                "sudo",
-                "launchctl",
-                "bootstrap",
-                "system",
-                DETERMINATE_PLIST,
-            ],
+            &[SUDO, LAUNCHCTL, "bootstrap", "system", DETERMINATE_PLIST],
         ));
     }
     PlanOutcome::Steps(steps)
@@ -334,15 +342,7 @@ fn run_step(step: &Step) -> Result<bool, SetupError> {
         })
     };
     let mut reaped = run()?;
-    if step.argv
-        == [
-            "sudo",
-            "launchctl",
-            "bootstrap",
-            "system",
-            DETERMINATE_PLIST,
-        ]
-    {
+    if step.argv == [SUDO, LAUNCHCTL, "bootstrap", "system", DETERMINATE_PLIST] {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         if reaped.output.status.code() == Some(5) {
             eprintln!("Waiting for launchd to finish removing the old daemon…");
@@ -542,12 +542,12 @@ mod tests {
             panic!("an inspectable host plans steps");
         };
         assert_eq!(steps.len(), 7, "3 dir + 1 conf + 3 daemon");
-        assert_eq!(steps[3].argv[1..4], ["tee", "-a", CUSTOM_CONF]);
+        assert_eq!(steps[3].argv[1..4], [TEE, "-a", CUSTOM_CONF]);
         assert_eq!(
             steps[5].argv,
             [
-                "sudo",
-                "launchctl",
+                SUDO,
+                LAUNCHCTL,
                 "bootout",
                 "system/systems.determinate.nix-daemon",
             ]
@@ -573,7 +573,8 @@ mod tests {
             panic!("an inspectable host plans steps");
         };
         for step in steps {
-            assert_eq!(step.argv[0], "sudo", "{}", step.summary);
+            assert_eq!(step.argv[0], SUDO, "{}", step.summary);
+            assert!(step.argv[1].starts_with('/'), "{}", step.summary);
             assert!(
                 !step.argv.iter().any(|arg| arg.contains(' ')),
                 "arguments stay one per element: {:?}",

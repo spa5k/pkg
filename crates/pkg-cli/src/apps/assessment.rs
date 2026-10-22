@@ -1,4 +1,4 @@
-//! Read-only signature and Gatekeeper checks for public tap apps.
+//! Read-only signature and Gatekeeper checks for vendor apps from Casks and taps.
 use super::error::AppError;
 use super::{payload::prepare_bundle, scan::scan_apps};
 use crate::nix::{Outcome, run_direct, run_direct_captured};
@@ -6,46 +6,63 @@ use std::collections::BTreeMap;
 use std::path::Path;
 /// Apple's code-signature verifier, run read-only on vendor bundles.
 const CODESIGN_BIN: &str = "/usr/bin/codesign";
-/// The signature check every public tap vendor bundle must pass.
+/// The signature check every vendor bundle must pass.
 const CODESIGN_CHECK: &str = "codesign --verify --deep --strict";
 /// Apple's Gatekeeper assessor, run read-only on vendor bundles.
 const SPCTL_BIN: &str = "/usr/sbin/spctl";
-/// The Gatekeeper check every public tap vendor bundle must pass.
+/// The Gatekeeper check every vendor bundle must pass.
 const SPCTL_CHECK: &str = "spctl --assess --type execute --verbose=4";
 /// The read-only Gatekeeper status probe run before any assessment.
 const SPCTL_STATUS_CHECK: &str = "spctl --status";
 /// The exact stdout line `spctl --status` prints when assessment is on.
 const ASSESSMENTS_ENABLED: &str = "assessments enabled";
 
-/// Select active entries from this state home's local public tap store.
+/// Select active entries that install vendor apps.
 ///
-/// [`crate::tap::store::source_of_reference`] matches the entry's `original_url`
-/// against `pkg/taps/src/{owner}/{tap}/current`. This also matches entries
-/// whose source is no longer registered. The result borrows the profile entries.
-fn public_tap_entries<'a>(
+/// A Cask package attribute selects official Cask entries, entries from a
+/// fork of the Cask source, and tap entries. [`crate::tap::store::source_of_reference`]
+/// also selects entries from `pkg/taps/src/{owner}/{tap}/current`, including
+/// sources that are no longer registered. Nixpkgs builds its apps from source
+/// without notarization, so its entries are not selected.
+fn vendor_entries<'a>(
     state_home: &'a Path,
     entries: &'a BTreeMap<String, crate::nix::ProfileEntry>,
 ) -> impl Iterator<Item = (&'a String, &'a crate::nix::ProfileEntry)> {
     entries.iter().filter(move |(_, entry)| {
         entry.active
-            && crate::tap::store::source_of_reference(state_home, &entry.original_url).is_some()
+            && (is_cask_attribute(&entry.attr_path)
+                || crate::tap::store::source_of_reference(state_home, &entry.original_url)
+                    .is_some())
     })
 }
 
-/// Check vendor signatures and Gatekeeper approval for local public tap apps.
+/// Whether `attr_path` is `packages.<system>.<owner/tap/token>` for a Cask.
+fn is_cask_attribute(attr_path: &str) -> bool {
+    let mut parts = attr_path.splitn(3, '.');
+    parts.next() == Some("packages")
+        && parts.next().is_some()
+        && parts
+            .next()
+            .and_then(|tail| cask_catalog::decode_package_attribute(tail).ok())
+            .is_some_and(|full| {
+                !full.starts_with("homebrew/core/") && crate::nix::split_entry_id(&full).is_some()
+            })
+}
+
+/// Check vendor signatures and Gatekeeper approval for Cask and tap apps.
 ///
 /// [`scan_apps`] finds the selected entries' `.app` bundles. If it finds any,
 /// [`require_assessments_enabled`] must pass before [`assess_bundle`] checks
 /// each bundle. These checks run before destination checks, helper installation,
 /// or launcher changes. A failure preserves the launchers and source map.
 /// Entries without app bundles and bundles from other sources need no check here.
-pub(super) fn assess_public_tap_apps(
+pub(super) fn assess_vendor_apps(
     state_home: &Path,
     entries: &BTreeMap<String, crate::nix::ProfileEntry>,
 ) -> Result<(), AppError> {
-    let apps = scan_apps(public_tap_entries(state_home, entries))?;
+    let apps = scan_apps(vendor_entries(state_home, entries))?;
     if apps.is_empty() {
-        // CLI-only public outputs carry no vendor bundle to expose.
+        // CLI-only outputs carry no vendor bundle to expose.
         return Ok(());
     }
     // `spctl --assess` cannot confirm approval when Gatekeeper is disabled.
@@ -74,7 +91,7 @@ fn require_assessments_enabled() -> Result<(), AppError> {
         Ok((Outcome::Success, stdout)) => Err(format!(
             "cannot confirm that Gatekeeper assessment is enabled; {SPCTL_STATUS_CHECK} \
              printed {:?} instead of {ASSESSMENTS_ENABLED:?}; pkg will not expose \
-             public tap app bundles; enable assessment in System Settings and \
+             vendor app bundles; enable assessment in System Settings and \
              run `pkg apps sync` again",
             stdout.trim()
         )
@@ -160,7 +177,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn public_tap_selection_takes_only_active_store_entries() {
+    fn vendor_selection_takes_active_cask_and_tap_entries() {
         // The state home deliberately contains spaces and is never
         // registered in any tap registry: selection must use the real
         // store reference shape, not a hardcoded path or registry lookup.
@@ -187,17 +204,45 @@ mod tests {
                 entry(true, "github:NixOS/nixpkgs/nixpkgs-unstable"),
             ),
             ("other-home".to_string(), entry(true, &other_url)),
+            (
+                "cask".to_string(),
+                crate::nix::ProfileEntry {
+                    attr_path: crate::catalog::native_package_attribute(
+                        "aarch64-darwin",
+                        "homebrew/cask/iterm2",
+                    ),
+                    ..entry(true, "github:spa5k/pkg/main?dir=nix/casks")
+                },
+            ),
+            (
+                "formula".to_string(),
+                crate::nix::ProfileEntry {
+                    attr_path: crate::catalog::native_package_attribute(
+                        "aarch64-darwin",
+                        "homebrew/core/ripgrep",
+                    ),
+                    ..entry(true, "github:spa5k/pkg/main?dir=nix/formulae")
+                },
+            ),
+            (
+                "flake".to_string(),
+                crate::nix::ProfileEntry {
+                    attr_path: "packages.aarch64-darwin.default".to_string(),
+                    ..entry(true, "github:example/tool")
+                },
+            ),
         ]);
 
-        let selected: Vec<_> = public_tap_entries(&home, &entries)
+        let selected: Vec<_> = vendor_entries(&home, &entries)
             .map(|(id, _)| id.as_str())
             .collect();
 
-        // Only the active entry below this state home's tap store counts;
-        // the shape is recognized even though the source was never
-        // registered or published, Nixpkgs is not a tap, and a tap-shaped
-        // reference below another state home does not match.
-        assert_eq!(selected, ["public#apps.demo"]);
+        // A Cask attribute counts from any source. Otherwise only the active
+        // entry below this state home's tap store counts; the shape is
+        // recognized even though the source was never registered or
+        // published. Nixpkgs, Formulae, other flakes, and a tap-shaped
+        // reference below another state home do not match.
+        assert_eq!(selected, ["cask", "public#apps.demo"]);
     }
 
     #[test]
@@ -255,7 +300,7 @@ mod tests {
         // itself fails, and the refusal names the exact check. On a
         // system where the tool exists but assessment is disabled, the
         // refusal names `assessments disabled` instead. Both refuse.
-        let error = assess_public_tap_apps(&home, &entries)
+        let error = assess_vendor_apps(&home, &entries)
             .expect_err("the vendor gate must refuse the synthetic unsigned bundle");
         // The status gate runs first, so on a host without a usable
         // `spctl` the refusal names the status check; where the tool
@@ -326,7 +371,7 @@ mod tests {
         ]);
 
         assert!(
-            assess_public_tap_apps(&home, &entries).is_ok(),
+            assess_vendor_apps(&home, &entries).is_ok(),
             "no codesign check must run for a Nixpkgs bundle or a CLI-only public output"
         );
     }

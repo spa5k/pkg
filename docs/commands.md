@@ -40,6 +40,12 @@ Query commands keep JSON output and shell commands keep script-only stdout.
 `pkg add` is an alias of `pkg install`. `pkg uninstall` is an alias of
 `pkg remove`. Help and shell completions include both aliases.
 
+A `github:owner/repo#attribute` ID names a flake that `pkg` does not review.
+Nix runs its build code on this computer, and on macOS the Nix sandbox is off
+by default. `pkg install` lists these IDs and asks for approval before Nix
+evaluates them. Without a terminal, it refuses. Use `--yes` to approve without
+a prompt.
+
 After installation, `Commands` lists up to ten visible executable names that the
 package exposes in the profile. It reads local files and adds no network work.
 For example, `nixpkgs:fff` provides the `fff` command. It does not provide `ff`.
@@ -559,7 +565,7 @@ Supported packages expose their app bundles as launchers in
 `~/Applications/pkg/`. Launchers refresh after install, remove, upgrade, and
 rollback. If a launcher sync fails, the command reports partial completion
 and names `pkg apps sync` as the retry. `pkg apps sync` rebuilds launchers
-only. It does not change package selection. For public-tap vendor `.app`
+only. It does not change package selection. For official Cask and tap `.app`
 bundles, sync requires vendor signatures to assess cleanly, and it
 requires Gatekeeper assessments to be enabled (`spctl --status` reports
 `assessments enabled`) before codesign/spctl assessment; a rejected app

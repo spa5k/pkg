@@ -510,6 +510,24 @@ fn run_pkg_under_home(home: &std::path::Path, args: &[&str], path: &str) -> (i32
 }
 
 #[test]
+fn github_install_without_a_terminal_needs_yes() {
+    // The prompt comes before any Nix call, so no runtime is on PATH.
+    let home = tempfile::tempdir().expect("home");
+    let (code, stdout, stderr) = run_pkg_under_home(
+        home.path(),
+        &["install", "github:owner/repo#tool"],
+        "/nonexistent",
+    );
+    assert_eq!(code, 1, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stderr.contains("  github:owner/repo#tool\n"), "{stderr}");
+    assert!(
+        stderr.contains("run the command again with --yes"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Resolving"), "{stderr}");
+}
+
+#[test]
 fn missing_nix_gives_vendor_guidance_not_a_silent_result() {
     // Doctor is read-only and must fail (nonzero) with guidance when Nix
     // is absent, without starting any installer (spec: external-nix-runtime).
@@ -918,7 +936,7 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
         )
     };
 
-    let (code, stdout, stderr) = run(&["install", "github:helix-editor/helix#helix"]);
+    let (code, stdout, stderr) = run(&["install", "--yes", "github:helix-editor/helix#helix"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(
         stdout.contains("Nothing changed."),
@@ -948,7 +966,12 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
         stderr.contains("do you want to allow configuration setting"),
         "trust prompts must stay visible\nstderr: {stderr}"
     );
-    let (code, _, stderr) = run(&["--verbose", "install", "github:helix-editor/helix#helix"]);
+    let (code, _, stderr) = run(&[
+        "--verbose",
+        "install",
+        "--yes",
+        "github:helix-editor/helix#helix",
+    ]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
         stderr.contains("not writing modified lock file"),
@@ -1094,7 +1117,7 @@ fn failed_install_reports_signal_lines_only() {
     }
     let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
     command
-        .args(["install", "github:owner/repo#tool"])
+        .args(["install", "--yes", "github:owner/repo#tool"])
         .env_remove("XDG_STATE_HOME")
         .env_remove("XDG_CACHE_HOME")
         .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
@@ -1178,7 +1201,7 @@ fn install_reports_partial_state_when_app_setup_fails() {
     .expect("write config");
     let (code, stdout, stderr) = run_pkg_under_home(
         home.path(),
-        &["install", "github:owner/repo#Stats"],
+        &["install", "--yes", "github:owner/repo#Stats"],
         &format!("{}:/usr/bin:/bin", nix.parent().expect("parent").display()),
     );
     assert_eq!(code, 1, "stdout: {stdout}\nstderr: {stderr}");

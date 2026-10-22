@@ -47,6 +47,9 @@ pub enum Command {
         /// Package names or IDs, such as ripgrep or cask:raycast.
         #[arg(required = true, value_name = "PACKAGES")]
         ids: Vec<String>,
+        /// Build `github:` flakes without a confirmation prompt.
+        #[arg(long, short)]
+        yes: bool,
     },
     /// List installed packages.
     List,

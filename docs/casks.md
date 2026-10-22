@@ -285,23 +285,17 @@ and the
 - The Nix build sandbox ends at build time. It does not surround the app
   after launch.
 - Payload checksums prove bytes, not publisher trust.
-- Vendor signatures and Gatekeeper assessment are preserved. `pkg` never
-  removes quarantine flags and never re-signs apps.
-- The public app assessment gate covers public-tap vendor `.app` bundles
-  at the app exposure path. It requires Gatekeeper assessments to be
-  enabled (`spctl --status` reports `assessments enabled`) before any
-  codesign/spctl assessment; the exact-enabled status gate is
-  unit-proven on both hosts, the actual native status was recorded as
-  `assessments enabled` with codesign and spctl assessment of the
-  cached signed app accepted (Notarized Developer ID), and the final
-  native check proved
-  signed-app exposure, unsigned rejection, and launcher preservation.
-  A native globally-disabled-Gatekeeper retest is not claimed (the
-  reject-disabled clause is unit-proven); it stays
-  an explicit limit. CLI binaries and ordinary Nixpkgs apps are
-  outside this gate, and no GUI launch or application runtime isolation
-  is claimed; full GUI/runtime/app malware analysis is out of scope, not
-  pending.
+- Nix downloads carry no quarantine flag, so macOS does not run its
+  first-launch Gatekeeper check on these apps. `pkg` runs that check
+  itself: before it exposes an official Cask or tap `.app` bundle, it
+  requires `spctl --status` to report `assessments enabled`, then runs
+  `codesign --verify --deep --strict` and
+  `spctl --assess --type execute`. A rejected app never changes the
+  existing launchers. `pkg` never re-signs apps.
+- The checks prove a valid Developer ID signature and Apple's current
+  assessment. They do not prove that the app is free of malware, and
+  they do not isolate the app at run time. CLI binaries and ordinary
+  Nixpkgs apps are outside this gate.
 
 ## Catalog update procedure
 

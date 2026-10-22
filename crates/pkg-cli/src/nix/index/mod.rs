@@ -50,8 +50,29 @@ fn decode_index(
             "index schema {schema:?} is not the decoded schema {expected:?}"
         )));
     }
-    let document: IndexDocument = serde_path_to_error::deserialize(raw)
+    let mut document: IndexDocument = serde_path_to_error::deserialize(raw)
         .map_err(|error| gate(format!("invalid index: {error}")))?;
+    // Tap metadata is third-party text. A cleaned version no longer names
+    // its attribute, so such an entry cannot install.
+    for entry in document
+        .systems
+        .values_mut()
+        .flat_map(|section| section.entries.values_mut())
+    {
+        for text in [
+            &mut entry.name,
+            &mut entry.description,
+            &mut entry.version,
+            &mut entry.homepage,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let std::borrow::Cow::Owned(clean) = crate::output::printable(text) {
+                *text = clean;
+            }
+        }
+    }
     let inputs = &document.inputs;
     let targets = &document.targets;
     let systems = &document.systems;

@@ -23,7 +23,7 @@ use crate::nix::{NixError, ProfileEntry};
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-pub fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
+pub fn install(cli: &Cli, ids: &[String], yes: bool) -> Result<(), CommandError> {
     if ids.is_empty() {
         return Err(String::from("install needs at least one ID").into());
     }
@@ -37,6 +37,20 @@ pub fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
         .iter()
         .map(|id| catalog::parse_id(id))
         .collect::<Result<Vec<_>, _>>()?;
+    let flakes: Vec<String> = parsed_ids
+        .iter()
+        .filter_map(|id| match id {
+            catalog::ParsedId::Qualified(id)
+                if matches!(id.kind(), catalog::CatalogIdKind::Explicit { .. }) =>
+            {
+                Some(id.qualified())
+            }
+            _ => None,
+        })
+        .collect();
+    if !flakes.is_empty() && !yes && !approve_flakes(&flakes)? {
+        return Err(CommandError::Reported(ExitCode::from(FAILURE)));
+    }
     eprintln!("Resolving: {}", unique.join(", "));
     let session = session(cli)?;
     let batch = crate::discovery::resolve_install(&session, parsed_ids)?;
@@ -47,6 +61,33 @@ pub fn install(cli: &Cli, ids: &[String]) -> Result<(), CommandError> {
             system: &batch.system,
         }),
     )
+}
+
+/// Ask before Nix evaluates and builds `github:` flakes.
+///
+/// pkg does not review these repositories. Their build code runs on this
+/// computer, and on macOS the Nix sandbox is off by default.
+fn approve_flakes(flakes: &[String]) -> Result<bool, CommandError> {
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    eprintln!("pkg does not review these GitHub repositories:");
+    for flake in flakes {
+        eprintln!("  {flake}");
+    }
+    eprintln!("Nix will run their build code on this computer.");
+    if !std::io::stdin().is_terminal() {
+        eprintln!("Nothing was installed. To approve, run the command again with --yes.");
+        return Ok(false);
+    }
+    eprint!("Install them? [y/N] ");
+    std::io::stderr().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    if matches!(answer.trim(), "y" | "Y" | "yes" | "Yes" | "YES") {
+        Ok(true)
+    } else {
+        eprintln!("Nothing was installed.");
+        Ok(false)
+    }
 }
 
 pub fn remove(cli: &Cli, entries: &[String], exact_entry: bool) -> Result<(), CommandError> {

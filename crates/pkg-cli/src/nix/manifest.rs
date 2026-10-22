@@ -114,12 +114,20 @@ impl ProfileEntry {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SearchMeta {
     /// The package name.
+    #[serde(deserialize_with = "printable")]
     pub pname: String,
     /// The package version.
+    #[serde(deserialize_with = "printable")]
     pub version: String,
     /// The package description.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "printable")]
     pub description: String,
+}
+
+/// Flake metadata is the flake author's text.
+fn printable<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let text = <String as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(crate::output::printable(&text).into_owned())
 }
 
 /// Resolved source identity from `nix flake metadata --json`.
