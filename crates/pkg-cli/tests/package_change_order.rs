@@ -104,7 +104,7 @@ else:
 ";
 
 const ACTIONS: &[&[&str]] = &[
-    &["install", "github:fixture/packages#probe"],
+    &["install", "--yes", "github:fixture/packages#probe"],
     &["remove", "opaque", "--entry"],
     &["upgrade", "opaque", "--entry"],
     &["rollback", "2"],
@@ -462,7 +462,11 @@ fn postflight_cancellation_reports_committed_change_and_stops_refresh() {
 fn an_entry_with_the_same_build_counts_as_installed() {
     let fixture = Fixture::new();
     fs::write(fixture.home.path().join("same-build"), "").expect("flag");
-    let output = fixture.run(&["install", "github:fixture/packages#probe"], "none", "INT");
+    let output = fixture.run(
+        &["install", "--yes", "github:fixture/packages#probe"],
+        "none",
+        "INT",
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "{output:?}");
     assert!(

@@ -203,17 +203,13 @@ impl Rows<'_, '_> {
     fn insert(&mut self, key: &str, entry: &Entry) -> rusqlite::Result<()> {
         let attribute = format!("legacyPackages.{}.{key}", self.system);
         let top_level = !key.contains('.');
+        let printable = crate::output::printable;
         self.insert.execute(params![
             attribute,
             key,
-            entry.pname,
-            entry.version,
-            entry
-                .meta
-                .description
-                .as_deref()
-                .unwrap_or_default()
-                .replace('\n', " "),
+            printable(&entry.pname),
+            printable(&entry.version),
+            printable(entry.meta.description.as_deref().unwrap_or_default()),
             // Main commands come from top-level packages only, as in a
             // local evaluation.
             entry.meta.main_program.as_deref().filter(|_| top_level),

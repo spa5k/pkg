@@ -191,8 +191,8 @@ download_client() {
   archive="pkg-${version}-${system}.tar.gz"
   root="pkg-${version}-${system}"
   base="https://github.com/${repo}/releases/download/${tag}"
-  if ! curl -fsSL -o "$tmp/$archive" "${base}/${archive}" \
-    || ! curl -fsSL -o "$tmp/SHA256SUMS" "${base}/SHA256SUMS"; then
+  if ! curl --proto '=https' --tlsv1.2 -fsSL -o "$tmp/$archive" "${base}/${archive}" \
+    || ! curl --proto '=https' --tlsv1.2 -fsSL -o "$tmp/SHA256SUMS" "${base}/SHA256SUMS"; then
     fail "pkg ${version} could not be downloaded." "Check your internet connection, then run this installer again."
   fi
 

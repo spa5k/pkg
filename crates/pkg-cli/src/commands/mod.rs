@@ -184,7 +184,7 @@ fn dispatch(cli: &Cli) -> Result<(), CommandError> {
     match &cli.command {
         Command::Search(options) => discovery::search(cli, options),
         Command::Info { id } => discovery::info(cli, id),
-        Command::Install { ids } => profile::install(cli, ids),
+        Command::Install { ids, yes } => profile::install(cli, ids, *yes),
         Command::List => profile::list(cli),
         Command::Remove { entries, entry } => profile::remove(cli, entries, *entry),
         Command::Update {
@@ -248,7 +248,10 @@ fn sentence(mut text: String) -> String {
 pub(crate) fn report_cause(detail: &str) {
     let cause = plain_detail(detail);
     if !cause.is_empty() {
-        eprintln!("Cause: {}", sentence(cause));
+        eprintln!(
+            "Cause: {}",
+            sentence(crate::output::printable(&cause).into_owned())
+        );
     }
     if let Some(log) = detail
         .lines()

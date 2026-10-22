@@ -1,6 +1,6 @@
 //! macOS launchers derived from the active native profile.
 //!
-//! Sync scans app bundles, assesses public tap apps, verifies destination
+//! Sync scans app bundles, assesses Cask and tap apps, verifies destination
 //! ownership, and runs the pinned helper. Private payloads use one generated
 //! layout. Status reads the same derived source map without writing.
 mod assessment;
@@ -16,7 +16,7 @@ mod storage;
 
 use crate::config::Paths;
 use crate::nix::Nix;
-use assessment::assess_public_tap_apps;
+use assessment::assess_vendor_apps;
 use destination::{
     DestinationState, clear_launchers, destination_path, ensure_owned_destination,
     inspect_destination, read_source_map, write_marker, write_source_map,
@@ -82,7 +82,7 @@ pub(crate) fn sync_locked(
     let apps = scan_apps(entries.iter())?;
     // Assess vendor bundles under the sync lock before any launcher writes.
     // A private cache copy does not run vendor code or change the profile.
-    assess_public_tap_apps(&paths.state_home, entries)?;
+    assess_vendor_apps(&paths.state_home, entries)?;
     let dest = destination_path()?;
     let state = inspect_destination(&dest)?;
     let before = match state {
