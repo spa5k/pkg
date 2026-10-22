@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title">
-  <title id="title">pkg: familiar package commands on top of Nix</title>
+  <title id="title">pkg: install apps and tools with one simple command</title>
   <rect width="1280" height="640" fill="#0d1117"/>
-  <g transform="translate(323 142) scale(1)">
+  <g transform="translate(348 130) scale(1)">
     <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
       <rect width="256" height="256" fill="#fff"/>
       <path d="M140 48 L200.6 83 L200.6 153 L140 188 L79.4 153 L79.4 83 Z" fill="#000" stroke="#000" stroke-width="23" stroke-linejoin="round"/>
@@ -16,7 +16,6 @@
     </g>
     <circle cx="140" cy="118" r="12" fill="#d99a4e"/>
   </g>
-  <text x="570" y="334" fill="#f0f6fc" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="190" font-weight="700" letter-spacing="-4">pkg</text>
-  <text x="640" y="448" text-anchor="middle" fill="#8b949e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="40">Familiar package commands on top of Nix.</text>
-  <text x="640" y="572" text-anchor="middle" fill="#6e7681" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="22">github.com/spa5k/pkg</text>
+  <text x="586" y="316" fill="#f0f6fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="176" font-weight="700" letter-spacing="4">pkg</text>
+  <text x="640" y="462" text-anchor="middle" fill="#8b949e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="42">Install apps and tools with one simple command.</text>
 </svg>
