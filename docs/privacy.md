@@ -8,7 +8,9 @@ title: Privacy and security
 - `pkg doctor` reads local state and prints a summary. It uploads nothing.
 - `pkg update` and the daily job download the release checksum list from
   GitHub to check for a new client. They send no data about your packages.
-  A new client is installed only when its checksum matches the list.
+  A new client is installed only when the list has a valid signature by
+  the pkg release key, which is built into the client, and the client
+  matches its checksum in the list.
 - `pkg` keeps disposable discovery data under `~/.cache/pkg/`. You can delete
   it at any time. Deleting it does not affect installed packages.
 - `pkg` accepts package names and validated public flake references. It does

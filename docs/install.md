@@ -112,8 +112,10 @@ stale. A failed refresh keeps the last complete catalog.
 search data. The daily job does the same. Installed packages do not
 change. To upgrade packages, run `pkg upgrade --all`.
 
-An update downloads the release checksum list from GitHub. It downloads
-an archive only when a newer release exists. It starts the new client
+An update downloads the release checksum list from GitHub. When a newer
+release exists, it also downloads the list's signature. The client accepts
+the list only with a valid signature by the pkg release key, which is built
+into the client. Then it downloads the archive. It starts the new client
 once before it replaces the old client. A development build never
 replaces the installed client.
 
