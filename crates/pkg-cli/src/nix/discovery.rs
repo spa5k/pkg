@@ -204,7 +204,7 @@ in map inspect paths"#
         // getFlake rather than permitting mutable paths with --impure.
         let metadata: serde_json::Value = self.json(
             "exact source identity",
-            &["flake", "metadata", reference, "--json"],
+            &["flake", "metadata", "--json", "--", reference],
         )?;
         let path = if let Some(path) = metadata.get("path") {
             path.as_str()

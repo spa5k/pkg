@@ -651,10 +651,7 @@ pub fn strip_ansi(text: &str) -> String {
 /// or reorder what the user reads. Line breaks and tabs become spaces.
 #[must_use]
 pub fn printable(text: &str) -> std::borrow::Cow<'_, str> {
-    let unsafe_char = |c: char| {
-        c.is_control()
-            || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-    };
+    let unsafe_char = |c: char| c.is_control() || direction_control(c);
     if !text.chars().any(unsafe_char) {
         return text.into();
     }
@@ -666,6 +663,63 @@ pub fn printable(text: &str) -> std::borrow::Cow<'_, str> {
         })
         .collect::<String>()
         .into()
+}
+
+/// Whether `c` reorders text that a terminal shows.
+pub(crate) const fn direction_control(c: char) -> bool {
+    matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+/// Clean text from Nix or a flake for one terminal write.
+///
+/// Keep line breaks, tabs, and color codes. Remove other escape sequences,
+/// other control characters, and direction overrides, so the text cannot
+/// move the cursor, set the window title, write the clipboard, or hide
+/// part of a line.
+#[must_use]
+pub fn terminal_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text
+        .chars()
+        .any(|c| (c.is_control() && !matches!(c, '\n' | '\t')) || direction_control(c))
+    {
+        return text.into();
+    }
+    let mut clean = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' | '\t' => clean.push(c),
+            '\x1b' => match chars.next() {
+                Some('[') => {
+                    let mut parameters = String::new();
+                    while let Some(next) = chars.next_if(|c| ('\x20'..='\x3f').contains(c)) {
+                        parameters.push(next);
+                    }
+                    if chars.next_if(|c| ('\x40'..='\x7e').contains(c)) == Some('m')
+                        && parameters
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || b == b';' || b == b':')
+                    {
+                        clean.push_str("\x1b[");
+                        clean.push_str(&parameters);
+                        clean.push('m');
+                    }
+                }
+                // Operating system commands and device strings run to BEL or ST.
+                Some(']' | 'P' | 'X' | '^' | '_') => {
+                    while let Some(next) = chars.next() {
+                        if next == '\x07' || (next == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            c if c.is_control() || direction_control(c) => {}
+            c => clean.push(c),
+        }
+    }
+    clean.into()
 }
 
 #[cfg(test)]
@@ -706,6 +760,20 @@ mod tests {
             printable("a\x1b]8;;https://x\x07link\x1b]8;;\x07\rfake\u{9b}2K\u{202e}txt\tend"),
             "a]8;;https://xlink]8;; fake2Ktxt end"
         );
+    }
+
+    #[test]
+    fn terminal_text_keeps_lines_and_colors_only() {
+        assert_eq!(terminal_text("plain\n\ttext"), "plain\n\ttext");
+        assert_eq!(
+            terminal_text("\x1b[1;31merror:\x1b[0m x\x1b]0;title\x07y\x1b]52;c;aGk=\x1b\\z"),
+            "\x1b[1;31merror:\x1b[0m xyz"
+        );
+        assert_eq!(
+            terminal_text("ok\rfake\x1b[2K\x1b[3Aup\x1bcreset\u{9b}31m\u{202e}txt\x1b"),
+            "okfakeupreset31mtxt"
+        );
+        assert_eq!(terminal_text("\x1b]8;;https://x unterminated"), "");
     }
 
     #[test]

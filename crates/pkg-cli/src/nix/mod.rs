@@ -495,7 +495,8 @@ impl Nix {
         reference: &str,
         pattern: &str,
     ) -> Result<BTreeMap<String, SearchMeta>, NixError> {
-        let args = ["search", reference, pattern, "--json"];
+        // `--` keeps the reference and the pattern from being read as flags.
+        let args = ["search", "--json", "--", reference, pattern];
         let results: BTreeMap<String, SearchMeta> =
             match self.discovery_json("search results", &args, "20") {
                 Err(NixError::ResourceLimit(_)) => {
@@ -528,7 +529,7 @@ impl Nix {
         let apply = format!("p: map (n: p.${{n}}.outPath) ({outputs})");
         self.json(
             "installable outputs",
-            &["eval", "--json", installable, "--apply", &apply],
+            &["eval", "--json", "--apply", &apply, "--", installable],
         )
     }
 
@@ -574,10 +575,11 @@ impl Nix {
         reference: &str,
         refresh: bool,
     ) -> Result<SourceIdentity, NixError> {
-        let mut args = vec!["flake", "metadata", reference, "--json"];
+        let mut args = vec!["flake", "metadata", "--json"];
         if refresh {
             args.push("--refresh");
         }
+        args.extend(["--", reference]);
         let reaped = self.execute(&args, IoMode::Capture)?;
         self.finish(&args, &reaped)?;
         // Offline, Nix warns `unable to download …; using cached version`
@@ -612,7 +614,10 @@ impl Nix {
     /// Returns an error if command setup or spawn fails, output reading or child reaping fails, the evaluation fails or is interrupted, or its JSON is invalid.
     pub fn formula_index(&self, reference: &str) -> Result<serde_json::Value, NixError> {
         let installable = format!("{reference}#formulaIndex");
-        self.json("formula catalog index", &["eval", "--json", &installable])
+        self.json(
+            "formula catalog index",
+            &["eval", "--json", "--", &installable],
+        )
     }
 
     /// Evaluate and decode the cask catalog index envelope.
@@ -628,8 +633,10 @@ impl Nix {
     /// Returns an error if command setup or spawn fails, output reading or child reaping fails, the evaluation fails or is interrupted, or the JSON envelope or catalog fields are invalid.
     pub fn catalog_index(&self, reference: &str) -> Result<CatalogIndex, NixError> {
         let installable = format!("{reference}#catalogIndex");
-        let value = self
-            .json::<serde_json::Value>("cask catalog index", &["eval", "--json", &installable])?;
+        let value = self.json::<serde_json::Value>(
+            "cask catalog index",
+            &["eval", "--json", "--", &installable],
+        )?;
         decode_catalog_index(&value)
     }
 }
