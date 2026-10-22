@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title">
+  <title id="title">pkg: install apps and tools with one simple command</title>
+  <rect width="1280" height="640" fill="#0d1117"/>
+  <g transform="translate(348 130) scale(1)">
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+      <rect width="256" height="256" fill="#fff"/>
+      <path d="M140 48 L200.6 83 L200.6 153 L140 188 L79.4 153 L79.4 83 Z" fill="#000" stroke="#000" stroke-width="23" stroke-linejoin="round"/>
+    </mask>
+    <mask id="hub" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+      <rect width="256" height="256" fill="#fff"/>
+      <circle cx="140" cy="118" r="19" fill="#000"/>
+    </mask>
+    <g fill="none" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M116 72 L176.6 107 L176.6 177 L116 212 L55.4 177 L55.4 107 Z" stroke="#484f58" stroke-width="9" mask="url(#cut)"/>
+      <path d="M140 48 L200.6 83 L200.6 153 L140 188 L79.4 153 L79.4 83 Z M79.4 83 L140 118 L200.6 83 M140 118 L140 188" stroke="#54a99c" stroke-width="11" mask="url(#hub)"/>
+    </g>
+    <circle cx="140" cy="118" r="12" fill="#d99a4e"/>
+  </g>
+  <text x="586" y="316" fill="#f0f6fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="176" font-weight="700" letter-spacing="4">pkg</text>
+  <text x="640" y="462" text-anchor="middle" fill="#8b949e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="42">Install apps and tools with one simple command.</text>
+</svg>

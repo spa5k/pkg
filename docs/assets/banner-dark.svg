@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="140" viewBox="0 0 520 140" role="img" aria-labelledby="title">
+  <title id="title">pkg</title>
+  <g transform="translate(84.5 -1.4) scale(0.55)">
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+      <rect width="256" height="256" fill="#fff"/>
+      <path d="M140 48 L200.6 83 L200.6 153 L140 188 L79.4 153 L79.4 83 Z" fill="#000" stroke="#000" stroke-width="23" stroke-linejoin="round"/>
+    </mask>
+    <mask id="hub" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+      <rect width="256" height="256" fill="#fff"/>
+      <circle cx="140" cy="118" r="19" fill="#000"/>
+    </mask>
+    <g fill="none" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M116 72 L176.6 107 L176.6 177 L116 212 L55.4 177 L55.4 107 Z" stroke="#484f58" stroke-width="9" mask="url(#cut)"/>
+      <path d="M140 48 L200.6 83 L200.6 153 L140 188 L79.4 153 L79.4 83 Z M79.4 83 L140 118 L200.6 83 M140 118 L140 188" stroke="#54a99c" stroke-width="11" mask="url(#hub)"/>
+    </g>
+    <circle cx="140" cy="118" r="12" fill="#d99a4e"/>
+  </g>
+  <text x="217" y="104" fill="#f0f6fc" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="104" font-weight="700" letter-spacing="-2">pkg</text>
+</svg>
