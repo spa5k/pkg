@@ -1,24 +1,27 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="pkg: familiar package commands on top of Nix" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+    <img src="docs/assets/banner-light.svg" alt="pkg" width="320">
+  </picture>
 </p>
 
+<p align="center"><strong>Familiar package commands on top of Nix.</strong></p>
+
 <p align="center">
-  <a href="https://github.com/spa5k/pkg/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/spa5k/pkg?label=release&color=54a99c"></a>
+  <a href="https://github.com/spa5k/pkg/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/spa5k/pkg?label=release&color=2f7f73"></a>
   <a href="https://github.com/spa5k/pkg/actions/workflows/ci-fast.yml"><img alt="CI" src="https://github.com/spa5k/pkg/actions/workflows/ci-fast.yml/badge.svg?branch=main"></a>
-  <img alt="Platforms: Linux x86-64 and macOS Apple silicon" src="https://img.shields.io/badge/platform-Linux%20x86--64%20%7C%20macOS%20Apple%20silicon-364154">
-  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-364154"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-59636e"></a>
 </p>
 
 <div align="center">
 
-[Install](#install) · [Usage](#usage) · [How it works](#how-pkg-uses-nix) · [Security](#security) · [Commands](docs/commands.md) · [Docs](docs/index.md)
+[Install](#install) · [Usage](#usage) · [How it works](#how-pkg-uses-nix) · [Security](#security) · [Docs](docs/index.md)
 
 </div>
 
-`pkg` gives you short, familiar package commands on top of
-[Nix](https://nixos.org). Search, install, upgrade, and roll back packages
-from Nixpkgs, Homebrew Casks, Homebrew Formulae, and GitHub flakes. You do
-not need to know Nix to use it.
+`pkg` searches, installs, upgrades, and rolls back packages from Nixpkgs,
+Homebrew Casks, Homebrew Formulae, and GitHub flakes. It uses
+[Nix](https://nixos.org) underneath. You do not need to know Nix to use it.
 
 > [!WARNING]
 > `pkg` is alpha software. Commands, files, and output can change before
@@ -100,9 +103,10 @@ On macOS, app bundles appear as launchers in `~/Applications/pkg/`.
 
 ## How pkg uses Nix
 
-<p align="center">
-  <img src="docs/assets/how-it-works.svg" alt="Sources go through pkg to Nix. Each change adds a generation to the pkg profile." width="100%">
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+  <img src="docs/assets/how-it-works-light.svg" alt="Sources go through pkg to Nix. Each change adds a generation to the pkg profile." width="100%">
+</picture>
 
 Nix does the package work. `pkg` gives it a simple interface.
 
@@ -126,9 +130,10 @@ Nix does the package work. `pkg` gives it a simple interface.
 
 ## Security
 
-<p align="center">
-  <img src="docs/assets/security.svg" alt="Release chain, catalog chain, and the checks on your computer" width="100%">
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/security-dark.svg">
+  <img src="docs/assets/security-light.svg" alt="Release chain, catalog chain, and the checks on your computer" width="100%">
+</picture>
 
 ### What pkg checks
 

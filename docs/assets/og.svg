@@ -1,40 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
-  <title id="title">pkg</title>
-  <desc id="desc">Familiar package commands on top of Nix. Nixpkgs, Homebrew Casks and Formulae, and GitHub flakes in one Nix profile.</desc>
-  <rect width="1280" height="640" fill="#0f131a"/>
-
-  <!-- Mark and wordmark -->
-  <g transform="translate(68 60) scale(0.52)">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title">
+  <title id="title">pkg: familiar package commands on top of Nix</title>
+  <rect width="1280" height="640" fill="#0d1117"/>
+  <g transform="translate(323 142) scale(1)">
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+      <rect width="256" height="256" fill="#fff"/>
+      <path d="M140 48 L200.6 83 L200.6 153 L140 188 L79.4 153 L79.4 83 Z" fill="#000" stroke="#000" stroke-width="23" stroke-linejoin="round"/>
+    </mask>
+    <mask id="hub" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+      <rect width="256" height="256" fill="#fff"/>
+      <circle cx="140" cy="118" r="19" fill="#000"/>
+    </mask>
     <g fill="none" stroke-linejoin="round" stroke-linecap="round">
-      <path d="M116 72 L176.6 107 L176.6 177 L116 212 L55.4 177 L55.4 107 Z" stroke="#364154" stroke-width="9"/>
-      <path d="M140 48 L200.6 83 L200.6 153 L140 188 L79.4 153 L79.4 83 Z" fill="#0f131a" stroke="#54a99c" stroke-width="11"/>
-      <path d="M79.4 83 L140 118 L200.6 83 M140 118 L140 188" stroke="#54a99c" stroke-width="11"/>
+      <path d="M116 72 L176.6 107 L176.6 177 L116 212 L55.4 177 L55.4 107 Z" stroke="#484f58" stroke-width="9" mask="url(#cut)"/>
+      <path d="M140 48 L200.6 83 L200.6 153 L140 188 L79.4 153 L79.4 83 Z M79.4 83 L140 118 L200.6 83 M140 118 L140 188" stroke="#54a99c" stroke-width="11" mask="url(#hub)"/>
     </g>
-    <circle cx="140" cy="118" r="13" fill="#d99a4e" stroke="#0f131a" stroke-width="5"/>
+    <circle cx="140" cy="118" r="12" fill="#d99a4e"/>
   </g>
-  <text x="200" y="156" fill="#ece5d6" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="96" font-weight="700" letter-spacing="-2">pkg</text>
-
-  <!-- Message -->
-  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
-    <text x="80" y="300" fill="#ece5d6" font-size="52" font-weight="600" letter-spacing="-0.5">Familiar package</text>
-    <text x="80" y="362" fill="#ece5d6" font-size="52" font-weight="600" letter-spacing="-0.5">commands on top of Nix.</text>
-    <text x="80" y="432" fill="#c5beae" font-size="26">Nixpkgs, Homebrew Casks and Formulae,</text>
-    <text x="80" y="468" fill="#c5beae" font-size="26">and GitHub flakes in one Nix profile.</text>
-  </g>
-
-  <!-- Terminal -->
-  <g transform="translate(724 196)">
-    <rect width="476" height="272" rx="14" fill="#151b25" stroke="#2a3344"/>
-    <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="20">
-      <text x="32" y="58"><tspan fill="#54a99c">$</tspan><tspan fill="#ece5d6"> pkg install rg</tspan></text>
-      <text x="32" y="98" fill="#8f8a7c">Resolving: rg</text>
-      <text x="32" y="130" fill="#8f8a7c">ripgrep provides the `rg` command.</text>
-      <text x="32" y="162" fill="#8f8a7c">Installing: ripgrep</text>
-      <text x="32" y="200" fill="#ece5d6">Installed ripgrep 15.2.0</text>
-      <text x="32" y="232" fill="#c5beae">Commands: rg</text>
-    </g>
-  </g>
-
-  <!-- Footer -->
-  <text x="80" y="584" fill="#8f8a7c" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="20">github.com/spa5k/pkg</text>
+  <text x="570" y="334" fill="#f0f6fc" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="190" font-weight="700" letter-spacing="-4">pkg</text>
+  <text x="640" y="448" text-anchor="middle" fill="#8b949e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="40">Familiar package commands on top of Nix.</text>
+  <text x="640" y="572" text-anchor="middle" fill="#6e7681" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="22">github.com/spa5k/pkg</text>
 </svg>

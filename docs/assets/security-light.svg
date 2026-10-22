@@ -1,17 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="488" viewBox="0 0 1000 488" role="img" aria-labelledby="title desc">
   <title id="title">How pkg protects releases, catalogs, and your computer</title>
   <desc id="desc">Releases: a signed tag, a CI build with pinned actions, a SHA256SUMS file, a release signature made outside CI, and a pkg update that checks both before it test-runs the new client. Catalogs: signed Homebrew API data, a signature check with Homebrew's key, a payload pinned by SHA-256, a pull request with required checks, and a Nix build with a fixed hash for each download. On your computer: input checks, approval prompts for taps and flakes, no extra daemon or root helper, codesign and Gatekeeper checks for macOS apps, and terminal output without escape codes.</desc>
-  <rect width="1000" height="488" rx="16" fill="#0f131a"/>
 
   <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
-    <g font-size="12" font-weight="600" letter-spacing="1.4" fill="#8f8a7c">
+    <g font-size="12" font-weight="600" letter-spacing="1.4" fill="#59636e">
       <text x="32" y="52">PKG RELEASES</text>
       <text x="32" y="200">HOMEBREW CATALOGS</text>
       <text x="32" y="348">ON YOUR COMPUTER</text>
     </g>
 
     <!-- Cards: 168 wide, 24 apart. -->
-    <g fill="#151b25" stroke="#2a3344">
+    <g fill="#f6f8fa" stroke="#d1d9e0">
       <rect x="32" y="68" width="168" height="92" rx="10"/>
       <rect x="224" y="68" width="168" height="92" rx="10"/>
       <rect x="416" y="68" width="168" height="92" rx="10"/>
@@ -30,13 +29,13 @@
     </g>
 
     <!-- Chain arrows -->
-    <g fill="none" stroke="#4a566b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none" stroke="#8c959f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M208 108 L215 114 L208 120"/><path d="M400 108 L407 114 L400 120"/><path d="M592 108 L599 114 L592 120"/><path d="M784 108 L791 114 L784 120"/>
       <path d="M208 256 L215 262 L208 268"/><path d="M400 256 L407 262 L400 268"/><path d="M592 256 L599 262 L592 268"/><path d="M784 256 L791 262 L784 268"/>
     </g>
 
     <!-- Titles -->
-    <g font-size="15.5" font-weight="600" fill="#ece5d6">
+    <g font-size="15.5" font-weight="600" fill="#1f2328">
       <text x="48" y="100">Signed tag</text>
       <text x="240" y="100">CI build</text>
       <text x="432" y="100">SHA256SUMS</text>
@@ -55,7 +54,7 @@
     </g>
 
     <!-- Captions -->
-    <g font-size="13" fill="#c5beae">
+    <g font-size="13" fill="#424a53">
       <text x="48" y="124">SSH signature by</text><text x="48" y="143">the maintainer</text>
       <text x="240" y="124">Pinned actions and</text><text x="240" y="143">Rust toolchain</text>
       <text x="432" y="124">One SHA-256 for</text><text x="432" y="143">each archive</text>
