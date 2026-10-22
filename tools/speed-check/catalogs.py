@@ -1,6 +1,5 @@
 """Catalog checks: full search preparation, maintainer catalog generation, Formula metadata."""
 
-import gzip
 import hashlib
 import importlib.util
 import json
@@ -245,8 +244,8 @@ def catalog(args):
             [
                 str(binary),
                 "fetch",
-                "--revision",
-                pin["revision"],
+                "--url",
+                pin["url"],
                 "--sha256",
                 pin["sha256"],
                 "--cache-dir",
@@ -321,9 +320,7 @@ def formula_metadata(args):
     spec = importlib.util.spec_from_file_location("formula", generator)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    raw = gzip.decompress(
-        (REPO / "tools/formula-catalog/inputs/formula.json.gz").read_bytes()
-    )
+    raw = module.pinned_input(args.cache)
     input_sha256 = hashlib.sha256(raw).hexdigest()
     pinned = json.loads((REPO / "tools/formula-catalog/inputs/input.json").read_text())
     assert input_sha256 == pinned["sha256"]

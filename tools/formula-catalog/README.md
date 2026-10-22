@@ -3,9 +3,10 @@
 This maintainer tool generates the safe Formula subset for pkg. The client
 uses the generated Nix source. It does not need Brew or the Homebrew API.
 
-The committed gzip snapshot contains the official Core API response.
-`inputs/input.json` records its source revision, SHA-256 digest, and license.
-The generator verifies the decompressed bytes before it uses them.
+`inputs/input.json` pins the official Core API payload: its URL in the
+`catalog-inputs` pre-release, its `tap_git_head` revision, its SHA-256
+digest, and its license. The generator downloads the gzip asset into its
+cache and verifies the decompressed bytes before it uses them.
 It evaluates matching metadata at a fixed Nixpkgs revision for both supported
 systems. It never evaluates Formula Ruby.
 
@@ -27,12 +28,15 @@ An oversized single name fails before Nix starts.
 Use `python3 tools/speed-check formula-metadata` with a new `--cache` path
 to measure a cold run and check the exact committed catalog bytes.
 
-To update Core data, fetch `https://formulae.brew.sh/api/formula.json`.
-Keep the response below 64 MiB. Compute its SHA-256 digest. Pass the file
-and digest to `generate.py --input PATH --sha256 DIGEST`. Review the result.
-Replace the committed gzip snapshot with these exact response bytes.
-Set gzip `mtime` to zero. Update `inputs/input.json` with the response digest
-and `tap_git_head`. Regenerate from the committed snapshot before review.
+The `catalog-update` workflow updates Core data every day. See the
+[Cask catalog update procedure](../../docs/casks.md#catalog-update-procedure).
+To update it by hand, run
+`cargo run --locked -p cask-catalog -- fetch-signed --name formula --out PATH`.
+The command checks Homebrew's signature and prints the payload digest.
+Store `gzip -9 -n` of the payload as `formula-<sha256>.json.gz` in the
+`catalog-inputs` pre-release. Then run
+`generate.py --input PATH --sha256 DIGEST --pin-url URL` to regenerate the
+catalog and rewrite `inputs/input.json`. Keep the payload below 128 MiB.
 The Nixpkgs pin in the generator and `nix/formulae/flake.lock` must agree.
 
 The generator first selects a Nixpkgs equivalent with a matching name or

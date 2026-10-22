@@ -18,7 +18,7 @@ python3 tools/cask-catalog/audit.py \
 ```
 
 The optional `--input`, `--catalog`, and `--analytics` arguments default to
-the paths shown above. They name a raw brew-api snapshot, the generated
+the paths shown above. They name a raw Cask API payload, the generated
 catalog, and 90-day cask-install analytics.
 The report records `--analytics-url` and `--retrieved` as supplied.
 Download each snapshot before the audit.

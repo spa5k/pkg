@@ -2,8 +2,8 @@
 //! per-target eligibility, typed artifact plans, and deterministic output.
 //!
 //! `generate` is offline and deterministic over the pinned input; the
-//! `fetch` and `import-tap` commands do bounded network access (see
-//! main.rs and `tap`).
+//! `fetch-signed`, `fetch`, and `import-tap` commands do bounded network
+//! access (see main.rs, [`homebrew_api`], and `tap`).
 
 #![cfg(unix)]
 // Tests may abort on broken fixtures or failed setup; production code
@@ -23,6 +23,7 @@ pub mod classify;
 pub mod effective;
 pub mod emit;
 mod github;
+pub mod homebrew_api;
 mod net;
 pub mod plan;
 pub mod tap;
@@ -198,7 +199,9 @@ pub fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), String> {
     }
 }
 
-pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+/// The lowercase hex SHA-256 of `bytes`.
+#[must_use]
+pub fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     const HEX: &[u8; 16] = b"0123456789abcdef";
     Sha256::digest(bytes)

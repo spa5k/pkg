@@ -1,4 +1,4 @@
-//! Catalog CLI: fetch pinned snapshots, generate catalogs, and import public taps as Nix flakes.
+//! Catalog CLI: fetch signed snapshots, generate catalogs, and import public taps as Nix flakes.
 
 // Tests may abort on broken fixtures or failed setup; production code
 // denies explicit unwrap/expect/panic (these Clippy lints are denied by
@@ -15,16 +15,15 @@
 
 use cask_catalog::tap::ImportError;
 use cask_catalog::{
-    CACHE_DIR, Pin, emit, load_pin, read_verified_input, valid_repo, valid_revision, valid_sha256,
+    CACHE_DIR, Pin, emit, homebrew_api, load_pin, read_verified_input, valid_sha256, valid_url,
     verify_sha256,
 };
 use clap::{Parser, Subcommand};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-/// Default repository the snapshot is fetched from.
-const DEFAULT_REPO: &str = "BatteredBunny/brew-api";
-/// Default expected snapshot hash: the current pinned revision's bytes.
-const DEFAULT_SHA256: &str = "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251";
+/// The largest snapshot or signed API file a fetch accepts.
+const MAX_SNAPSHOT_BYTES: u64 = 128 * 1024 * 1024;
 /// Upstream data license attribution recorded in the pin.
 const DATA_LICENSE: &str = "BSD-2-Clause (Homebrew Cask data)";
 
@@ -42,17 +41,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Download one exact snapshot revision and write the input pin.
-    Fetch {
-        /// Exact 40-hex-character commit revision of the snapshot.
+    /// Download one signed Homebrew API file and write its checked payload.
+    ///
+    /// Print the payload SHA-256 and its one `tap_git_head` as JSON.
+    FetchSigned {
+        /// The API file: `cask` or `formula`.
+        #[arg(long, value_parser = ["cask", "formula"])]
+        name: String,
+        /// Payload file to write.
         #[arg(long)]
-        revision: String,
-        /// `owner/name` repository hosting `cask.json`.
-        #[arg(long, default_value = DEFAULT_REPO)]
-        repo: String,
-        /// Expected snapshot SHA-256; the download is verified against it
+        out: PathBuf,
+    },
+    /// Download one stored snapshot and write the input pin.
+    Fetch {
+        /// Snapshot URL. A `.gz` URL holds the gzip-compressed payload.
+        #[arg(long)]
+        url: String,
+        /// Read this local payload, such as `fetch-signed` output, instead of
+        /// the URL. The pin still records the URL, so store the payload there.
+        #[arg(long)]
+        input: Option<PathBuf>,
+        /// Expected payload SHA-256; the download is verified against it
         /// before any pin or cache file is replaced.
-        #[arg(long, default_value = DEFAULT_SHA256)]
+        #[arg(long)]
         sha256: String,
         /// Snapshot cache directory (kept outside the repository).
         #[arg(long, default_value = CACHE_DIR)]
@@ -91,13 +102,14 @@ fn main() {
 
 fn run() -> Result<(), ImportError> {
     match Cli::parse().command {
+        Command::FetchSigned { name, out } => fetch_signed(&name, &out).map_err(ImportError::from),
         Command::Fetch {
-            revision,
-            repo,
+            url,
+            input,
             sha256,
             cache_dir,
             pin,
-        } => fetch(&revision, &repo, &sha256, &cache_dir, &pin).map_err(ImportError::from),
+        } => fetch(&url, input.as_deref(), &sha256, &cache_dir, &pin).map_err(ImportError::from),
         Command::Generate {
             pin,
             input,
@@ -108,33 +120,15 @@ fn run() -> Result<(), ImportError> {
     }
 }
 
-fn fetch(
-    revision: &str,
-    repo: &str,
-    sha256: &str,
-    cache_dir: &Path,
-    pin_path: &Path,
-) -> Result<(), String> {
-    if !valid_revision(revision) {
-        return Err(format!(
-            "revision {revision:?} is not an exact 40-hex commit id"
-        ));
-    }
-    if !valid_repo(repo) {
-        return Err(format!("repository {repo:?} is not an owner/name pair"));
-    }
-    if !valid_sha256(sha256) {
-        return Err("expected sha256 is not 64 hex characters".to_string());
-    }
-    let url = format!("https://raw.githubusercontent.com/{repo}/{revision}/cask.json");
-    std::fs::create_dir_all(cache_dir)
-        .map_err(|e| format!("cannot create cache {}: {e}", cache_dir.display()))?;
-    // Download to a temporary file; nothing is replaced until the bytes
-    // verify against the expected hash.
-    let staged = tempfile::NamedTempFile::new_in(cache_dir)
-        .map_err(|e| format!("cannot stage a download in {}: {e}", cache_dir.display()))?;
+/// Download `url` to `destination` with curl over HTTPS only.
+fn download(url: &str, destination: &Path) -> Result<(), String> {
     let status = std::process::Command::new("curl")
         .args([
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--tlsv1.2",
             "--fail",
             "--location",
             "--silent",
@@ -142,31 +136,103 @@ fn fetch(
             "--connect-timeout",
             "20",
             "--max-time",
-            "120",
-            &url,
+            "300",
+            "--max-filesize",
+            &MAX_SNAPSHOT_BYTES.to_string(),
+            url,
             "-o",
         ])
-        .arg(staged.path())
+        .arg(destination)
         .status()
         .map_err(|e| format!("cannot run curl: {e}"))?;
     if !status.success() {
         return Err(format!("curl failed ({status}) fetching {url}"));
     }
-    let bytes = std::fs::read(staged.path())
+    Ok(())
+}
+
+/// Write `bytes` to `path` through a same-directory temporary file.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("cannot stage {}: {e}", path.display()))?;
+    std::io::Write::write_all(staged.as_file_mut(), bytes)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    staged
+        .persist(path)
+        .map_err(|e| format!("cannot publish {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn fetch_signed(name: &str, out: &Path) -> Result<(), String> {
+    let staged =
+        tempfile::NamedTempFile::new().map_err(|e| format!("cannot stage a download: {e}"))?;
+    download(&homebrew_api::url(name), staged.path())?;
+    let document = std::fs::read(staged.path())
         .map_err(|e| format!("cannot read the staged download: {e}"))?;
+    let payload = homebrew_api::verify(&document)?;
+    let revision = homebrew_api::revision(&payload)?;
+    write_atomic(out, &payload)?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "sha256": cask_catalog::sha256_hex(&payload),
+            "revision": revision,
+        })
+    );
+    Ok(())
+}
+
+fn fetch(
+    url: &str,
+    input: Option<&Path>,
+    sha256: &str,
+    cache_dir: &Path,
+    pin_path: &Path,
+) -> Result<(), String> {
+    if !valid_url(url) || !url.starts_with("https://") {
+        return Err(format!("snapshot URL {url:?} is not an https URL"));
+    }
+    if !valid_sha256(sha256) {
+        return Err("expected sha256 is not 64 hex characters".to_string());
+    }
+    // Download to a temporary file; nothing is replaced until the bytes
+    // verify against the expected hash.
+    let staged =
+        tempfile::NamedTempFile::new().map_err(|e| format!("cannot stage a download: {e}"))?;
+    let (source, name) = if let Some(input) = input {
+        (input, input)
+    } else {
+        download(url, staged.path())?;
+        (staged.path(), Path::new(url))
+    };
+    let file = std::fs::File::open(source)
+        .map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+    let mut bytes = Vec::new();
+    let read = if name.extension().is_some_and(|extension| extension == "gz") {
+        flate2::read::GzDecoder::new(file)
+            .take(MAX_SNAPSHOT_BYTES + 1)
+            .read_to_end(&mut bytes)
+    } else {
+        file.take(MAX_SNAPSHOT_BYTES + 1).read_to_end(&mut bytes)
+    };
+    read.map_err(|e| format!("cannot read {}: {e}", name.display()))?;
+    if bytes.len() as u64 > MAX_SNAPSHOT_BYTES {
+        return Err(format!("{url} exceeds {MAX_SNAPSHOT_BYTES} bytes"));
+    }
     if let Err(actual) = verify_sha256(&bytes, sha256) {
         return Err(format!(
             "downloaded snapshot hashes to {actual} but {sha256} was expected; \
              the prior pin and cache are unchanged"
         ));
     }
-    let cached = cache_dir.join(format!("{revision}.json"));
-    staged
-        .persist(&cached)
-        .map_err(|e| format!("cannot publish {}: {e}", cached.display()))?;
+    let revision = homebrew_api::revision(&bytes)?;
+    write_atomic(&cache_dir.join(format!("{revision}.json")), &bytes)?;
     let pin = Pin {
-        url,
-        revision: revision.to_string(),
+        url: url.to_string(),
+        revision,
         sha256: sha256.to_ascii_lowercase(),
         license: DATA_LICENSE.to_string(),
     };
@@ -228,6 +294,7 @@ fn write_pin(path: &Path, pin: &Pin) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cask_catalog::valid_revision;
 
     #[test]
     fn input_validation_is_strict() {
@@ -240,11 +307,9 @@ mod tests {
         ] {
             assert!(!valid_revision(bad), "{bad} must not be a revision");
         }
-        assert!(valid_repo("BatteredBunny/brew-api"));
-        for bad in ["brew-api", "https://x/y", "a/b/c", "/x/", "a/"] {
-            assert!(!valid_repo(bad), "{bad} must not be a repo");
-        }
-        assert!(valid_sha256(DEFAULT_SHA256));
+        assert!(valid_sha256(
+            "1f19ecee6bad49e35d3f96cf295fd728db2ce8f7cdd95efdbcf250e5f4529251"
+        ));
         assert!(!valid_sha256("no_check"));
     }
 }
