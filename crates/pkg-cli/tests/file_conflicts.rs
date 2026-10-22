@@ -287,7 +287,7 @@ fn already_installed_package_skips_profile_add() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
-        "Already installed: nixpkgs:bat"
+        "Already installed: bat"
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).trim(),

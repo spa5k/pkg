@@ -51,22 +51,35 @@ pub const ATTENTION_STATUSES: [&str; 2] = ["off", "not on path"];
 pub fn render_doctor(rows: &[DoctorRow], verbose: bool) -> String {
     let mut out = String::new();
     if !verbose {
-        let issues: Vec<&DoctorRow> = rows
+        let problems: Vec<&DoctorRow> = rows
             .iter()
-            .filter(|row| {
-                let status = row.status.as_str();
-                UNHEALTHY_STATUSES.contains(&status) || ATTENTION_STATUSES.contains(&status)
-            })
+            .filter(|row| UNHEALTHY_STATUSES.contains(&row.status.as_str()))
             .collect();
-        if issues.is_empty() {
-            let _ = writeln!(out, "Everything is working.");
-        } else {
-            let _ = writeln!(out, "Needs attention:");
+        let suggestions: Vec<&DoctorRow> = rows
+            .iter()
+            .filter(|row| ATTENTION_STATUSES.contains(&row.status.as_str()))
+            .collect();
+        if problems.is_empty() && suggestions.is_empty() {
+            let _ = writeln!(
+                out,
+                "{}",
+                paint(Stream::Out, Tone::Success, "Everything is working.")
+            );
+        }
+        // Problems fail the check. Suggestions do not.
+        for (heading, tone, issues) in [
+            ("Problems:", Tone::Error, problems),
+            ("Suggestions:", Tone::Warning, suggestions),
+        ] {
+            if issues.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "{}", paint(Stream::Out, Tone::Strong, heading));
             for row in issues {
                 let _ = writeln!(
                     out,
                     "  {}: {}",
-                    row.component,
+                    paint(Stream::Out, tone, &row.component),
                     concise_detail(row.detail.as_deref().unwrap_or(&row.status))
                 );
             }
@@ -88,6 +101,11 @@ static PLAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 /// Print permanent lines instead of transient status lines.
 pub fn plain(plain: bool) {
     PLAIN.store(plain, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether `--verbose` is on, so errors keep the full native output.
+pub fn verbose() -> bool {
+    PLAIN.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether transient status lines can replace each other on stderr.
@@ -131,6 +149,256 @@ pub fn log(text: &str) {
     }
 }
 
+/// One output stream of the process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stream {
+    /// Standard output: results.
+    Out,
+    /// Standard error: progress, notes, and diagnostics.
+    Err,
+}
+
+impl Stream {
+    fn is_terminal(self) -> bool {
+        use std::io::IsTerminal as _;
+        match self {
+            Self::Out => std::io::stdout().is_terminal(),
+            Self::Err => std::io::stderr().is_terminal(),
+        }
+    }
+
+    const fn fd(self) -> i32 {
+        match self {
+            Self::Out => 1,
+            Self::Err => 2,
+        }
+    }
+}
+
+/// The meaning of a piece of text. Terminals show it as a color or weight;
+/// pipes, logs, and `--no-color` get the plain text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// Names and headings.
+    Strong,
+    /// A completed change.
+    Success,
+    /// A warning or partial result.
+    Warning,
+    /// A failure.
+    Error,
+    /// Secondary detail, such as descriptions and column headings.
+    Muted,
+    /// A command for the user to run.
+    Accent,
+}
+
+impl Tone {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::Strong => "1",
+            Self::Success => "32",
+            Self::Warning => "33",
+            Self::Error => "1;31",
+            Self::Muted => "2",
+            Self::Accent => "36",
+        }
+    }
+}
+
+/// Set by `--no-color` or `display.color = "never"`.
+static COLOR_DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Turn off color for this process.
+pub fn disable_color(disabled: bool) {
+    COLOR_DISABLED.store(disabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether text written to `stream` can use color.
+///
+/// Color needs a terminal. `--no-color`, the configuration, a nonempty
+/// `NO_COLOR`, and `TERM=dumb` turn it off.
+#[must_use]
+pub fn color(stream: Stream) -> bool {
+    !COLOR_DISABLED.load(std::sync::atomic::Ordering::Relaxed)
+        && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+        && std::env::var_os("TERM").is_none_or(|term| term != "dumb")
+        && stream.is_terminal()
+}
+
+/// Show `text` in `tone` when `stream` can use color.
+#[must_use]
+pub fn paint(stream: Stream, tone: Tone, text: &str) -> String {
+    if text.is_empty() || !color(stream) {
+        return text.to_string();
+    }
+    format!("\x1b[{}m{text}\x1b[0m", tone.code())
+}
+
+/// The column count of the terminal behind `stream`.
+///
+/// A numeric `COLUMNS` value wins, also for pipes. Without it, pipes and
+/// logs have no width, so their lines are not cut.
+#[must_use]
+pub fn width(stream: Stream) -> Option<usize> {
+    if let Some(columns) = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|columns| *columns > 0)
+    {
+        return Some(columns);
+    }
+    if !stream.is_terminal() {
+        return None;
+    }
+    let mut size = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // SAFETY: TIOCGWINSZ writes one `winsize` into the valid pointer and
+    // reads nothing else; the descriptor is a standard stream.
+    let status = unsafe { libc::ioctl(stream.fd(), libc::TIOCGWINSZ, &raw mut size) };
+    (status == 0 && size.ws_col > 0).then_some(usize::from(size.ws_col))
+}
+
+/// The visible width of `text`, without ANSI escape sequences.
+#[must_use]
+pub fn visible_width(text: &str) -> usize {
+    strip_ansi(text).chars().count()
+}
+
+/// Rows of text columns for a terminal.
+///
+/// Columns are padded to the widest visible cell. On a terminal, the last
+/// column is cut to fit the line width. Pipes and logs get full lines.
+#[derive(Debug, Default)]
+pub struct Table {
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+    optional_last: bool,
+}
+
+/// The smallest room that an optional last column keeps.
+const OPTIONAL_LAST_WIDTH: usize = 12;
+
+impl Table {
+    /// Start a table with these column headings. Empty headings print no
+    /// heading line.
+    #[must_use]
+    pub fn new(headers: &[&str]) -> Self {
+        Self {
+            headers: headers.iter().map(ToString::to_string).collect(),
+            rows: Vec::new(),
+            optional_last: false,
+        }
+    }
+
+    /// Drop the last column on a terminal that is too narrow to show it,
+    /// instead of cutting every cell to `…`.
+    #[must_use]
+    pub fn optional_last(mut self) -> Self {
+        self.optional_last = true;
+        self
+    }
+
+    /// Add one row. Cells may hold ANSI color.
+    pub fn row(&mut self, cells: Vec<String>) {
+        self.rows.push(cells);
+    }
+
+    /// Whether the table has no rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Render the table for `stream`.
+    #[must_use]
+    pub fn render(&self, stream: Stream) -> String {
+        let columns = self
+            .rows
+            .iter()
+            .map(Vec::len)
+            .chain([self.headers.len()])
+            .max()
+            .unwrap_or(0);
+        let mut widths = vec![0; columns];
+        let show_headers = self.headers.iter().any(|header| !header.is_empty());
+        let header_cells = show_headers.then_some(&self.headers);
+        for cells in header_cells.into_iter().chain(&self.rows) {
+            for (index, cell) in cells.iter().enumerate() {
+                widths[index] = widths[index].max(visible_width(cell));
+            }
+        }
+        // Drop columns that are empty in every row and heading.
+        let mut keep: Vec<bool> = widths.iter().map(|width| *width > 0).collect();
+        let limit = width(stream);
+        if self.optional_last
+            && let Some(limit) = limit
+            && let Some(last) = keep.iter().rposition(|kept| *kept)
+        {
+            let used: usize = (0..last)
+                .filter(|index| keep[*index])
+                .map(|index| widths[index] + 2)
+                .sum();
+            if limit.saturating_sub(used) < OPTIONAL_LAST_WIDTH.min(widths[last]) {
+                keep[last] = false;
+            }
+        }
+        let mut out = String::new();
+        let mut line = |cells: &[String], muted: bool| {
+            let mut text = String::new();
+            let mut used = 0;
+            let last = (0..cells.len()).rev().find(|index| keep[*index]);
+            for (index, cell) in cells.iter().enumerate() {
+                if !keep[index] {
+                    continue;
+                }
+                if !text.is_empty() {
+                    text.push_str("  ");
+                    used += 2;
+                }
+                if Some(index) == last {
+                    let room = limit.map(|limit| limit.saturating_sub(used));
+                    let cell = match room {
+                        Some(room) if visible_width(cell) > room => {
+                            fit(&strip_ansi(cell), room.max(1))
+                        }
+                        _ => cell.clone(),
+                    };
+                    text.push_str(&cell);
+                } else {
+                    text.push_str(cell);
+                    let pad = widths[index].saturating_sub(visible_width(cell));
+                    text.push_str(&" ".repeat(pad));
+                    used += widths[index];
+                }
+            }
+            let text = text.trim_end();
+            if muted {
+                let _ = writeln!(out, "{}", paint(stream, Tone::Muted, text));
+            } else {
+                let _ = writeln!(out, "{text}");
+            }
+        };
+        if let Some(headers) = header_cells {
+            line(headers, true);
+        }
+        for cells in &self.rows {
+            line(cells, false);
+        }
+        out
+    }
+}
+
+/// Cut `text` to at most `max` characters, ending with `…` when cut.
+#[must_use]
+pub fn fit(text: &str, max: usize) -> String {
+    truncate(text, max)
+}
+
 /// Format a count with thousands separators, for example `45,231`.
 #[must_use]
 pub fn count(value: u64) -> String {
@@ -169,7 +437,21 @@ fn concise_detail(detail: &str) -> &str {
         .unwrap_or("unknown cause")
 }
 
-/// The short source label: nixpkgs, or owner/repo from a flake reference.
+/// The name of an official search source, such as `Homebrew Casks`.
+#[must_use]
+pub fn source_title(source: &str) -> Option<&'static str> {
+    if source.contains("dir=nix/casks") {
+        Some("Homebrew Casks")
+    } else if source.contains("dir=nix/formulae") {
+        Some("Homebrew Formulae")
+    } else if source.contains("nixpkgs") {
+        Some("Nixpkgs")
+    } else {
+        None
+    }
+}
+
+/// A short form of a source reference, such as `nixpkgs` or `owner/repo`.
 #[must_use]
 pub fn short_source(source: &str) -> String {
     if source.contains("nixpkgs") {
@@ -183,25 +465,92 @@ pub fn short_source(source: &str) -> String {
     }
     normalized
 }
-/// Render list rows for humans.
+/// The short name that the user types for a package ID.
+///
+/// `nixpkgs:ripgrep` gives `ripgrep`. `cask:homebrew/cask/stats` and
+/// `brew:homebrew/core/jq` give the token. Other IDs stay complete.
 #[must_use]
-pub fn render_list(rows: &[ListRow]) -> String {
+pub fn short_package_name(id: &str) -> String {
+    if let Some(attribute) = id.strip_prefix("nixpkgs:") {
+        return attribute.to_string();
+    }
+    if let Some(full) = id
+        .strip_prefix("cask:")
+        .or_else(|| id.strip_prefix("brew:"))
+    {
+        return full.rsplit('/').next().unwrap_or(full).to_string();
+    }
+    id.to_string()
+}
+
+/// The source label of a package ID: empty for Nixpkgs, `cask` for
+/// official Casks, `brew` for Formulae, `owner/tap` for a saved tap, and
+/// `source` for other IDs.
+fn source_label(id: &str, source: &str) -> String {
+    if id.starts_with("nixpkgs:") {
+        return String::new();
+    }
+    if id.starts_with("brew:") {
+        return String::from("brew");
+    }
+    if let Some(full) = id.strip_prefix("cask:") {
+        return match full.rsplit_once('/') {
+            Some(("homebrew/cask", _)) | None => String::from("cask"),
+            Some((tap, _)) => tap.to_string(),
+        };
+    }
+    source.to_string()
+}
+
+/// The name column of one list row. A flake entry shows its entry name,
+/// because the source column names the flake.
+fn list_name(row: &ListRow) -> String {
+    if row.package_id.contains('#') {
+        row.name.clone()
+    } else {
+        short_package_name(&row.package_id)
+    }
+}
+
+/// Render list rows for humans, sorted by name.
+///
+/// The entry ID column shows only for duplicate packages or with
+/// `--verbose`.
+#[must_use]
+pub fn render_list(rows: &[ListRow], verbose: bool) -> String {
     let mut out = String::new();
     if rows.is_empty() {
         let _ = writeln!(out, "No packages installed.");
-        let _ = writeln!(out, "Next: pkg search QUERY");
+        let _ = writeln!(
+            out,
+            "Next: {}",
+            paint(Stream::Out, Tone::Accent, "pkg search QUERY")
+        );
         return out;
     }
-    let width = rows
-        .iter()
-        .map(|row| row.package_id.len())
-        .max()
-        .unwrap_or(7)
-        .max(7);
-    let _ = writeln!(out, "{:<width$}  ENTRY ID", "PACKAGE");
-    for row in rows {
-        let _ = writeln!(out, "{:<width$}  {}", row.package_id, row.entry_id);
+    let mut ids: Vec<&str> = rows.iter().map(|row| row.package_id.as_str()).collect();
+    ids.sort_unstable();
+    let duplicates = ids.windows(2).any(|pair| pair[0] == pair[1]);
+    let entries = verbose || duplicates;
+    let mut sorted: Vec<&ListRow> = rows.iter().collect();
+    sorted.sort_by_cached_key(|row| (list_name(row), row.entry_id.clone()));
+    let mut table = Table::new(if entries {
+        &["NAME", "VERSION", "SOURCE", "ENTRY ID"]
+    } else {
+        &["NAME", "VERSION", "SOURCE"]
+    });
+    for row in sorted {
+        let mut cells = vec![
+            paint(Stream::Out, Tone::Strong, &list_name(row)),
+            row.version.clone().unwrap_or_default(),
+            source_label(&row.package_id, &row.source),
+        ];
+        if entries {
+            cells.push(row.entry_id.clone());
+        }
+        table.row(cells);
     }
+    out.push_str(&table.render(Stream::Out));
     out
 }
 
@@ -214,47 +563,14 @@ pub struct ListRow {
     pub package_id: String,
     /// The final attribute name.
     pub name: String,
+    /// The version from the store path name, when known.
+    pub version: Option<String>,
     /// The original moving reference the entry was installed from.
     pub source: String,
     /// The locked source reference that Nix resolved.
     pub locked_source: String,
     /// The locked revision, when present.
     pub revision: Option<String>,
-}
-
-/// Render one search row at the shared column width.
-#[must_use]
-pub fn render_search_row(
-    row: &crate::catalog::SearchResult,
-    width: usize,
-    version_width: usize,
-) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::new();
-    let stale = if row.stale { " [cached]" } else { "" };
-    let support = match &row.support {
-        Some(crate::catalog::SupportBadge::Eligible) | None => "",
-        Some(crate::catalog::SupportBadge::Unknown { reason }) => {
-            &format!(" [availability unknown: {reason}]")
-        }
-        Some(crate::catalog::SupportBadge::Excluded { reason, .. }) => {
-            &format!(" [excluded: {reason}]")
-        }
-    };
-    let _ = writeln!(
-        out,
-        "{:<width$}  {:<version_width$}  {}{}{}",
-        row.id,
-        if row.version.is_empty() {
-            "-"
-        } else {
-            &row.version
-        },
-        truncate(&row.description, 80),
-        stale,
-        support
-    );
-    out
 }
 
 /// Render per-source provenance headers for humans.
@@ -327,4 +643,42 @@ static CSI: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
 #[must_use]
 pub fn strip_ansi(text: &str) -> String {
     CSI.replace_all(text, "").into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tables_pad_columns_and_skip_empty_ones() {
+        let mut table = Table::new(&["NAME", "", "VERSION"]);
+        table.row(vec![
+            String::from("ripgrep"),
+            String::new(),
+            String::from("15.2.0"),
+        ]);
+        table.row(vec![
+            String::from("jq"),
+            String::new(),
+            String::from("1.8.2"),
+        ]);
+        // Tests write to a pipe, so no width applies and no color is added.
+        assert_eq!(
+            table.render(Stream::Out),
+            "NAME     VERSION\nripgrep  15.2.0\njq       1.8.2\n"
+        );
+    }
+
+    #[test]
+    fn tables_without_headings_print_rows_only() {
+        let mut table = Table::new(&[]);
+        table.row(vec![String::from("a"), String::from("b")]);
+        assert_eq!(table.render(Stream::Out), "a  b\n");
+    }
+
+    #[test]
+    fn visible_width_ignores_color() {
+        assert_eq!(visible_width("\x1b[1;31mfailed\x1b[0m"), 6);
+        assert_eq!(fit("abcdef", 4), "abc…");
+    }
 }

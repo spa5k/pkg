@@ -25,6 +25,7 @@ impl CaskFixture {
         let home = tempfile::tempdir().expect("tempdir");
         let nix = bin.path().join("nix");
         let formula = formula_index_fixture(bin.path()).display().to_string();
+        support::fake_curl(bin.path(), None);
         let script = format!(
                 "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo 'nix (Nix) 2.35.2';;\n  *'config show system'*) echo 'x86_64-linux';;\n  *'flake metadata'*) echo '{{\"url\":\"github:spa5k/pkg/240304?dir=nix/casks\",\"locked\":{{\"type\":\"github\",\"owner\":\"spa5k\",\"repo\":\"pkg\",\"rev\":\"2403040105060708090a0b0c0d0e0f1011121314\"}}}}';;\n  *'#formulaIndex'*) cat '{formula}';;\n  *'eval --json'*) cat <<'JSON'\n__CATALOG__\nJSON\n;;\n  *'profile list'*) echo '{{\"version\":3,\"elements\":{{}}}}';;\n  *) echo 'unexpected nix call: '$* >&2; exit 9;;\nesac\n",
             )
@@ -92,6 +93,11 @@ fn upgrade_gates_the_installed_cask_source_after_configuration_changes() {
     .unwrap();
     let profile = fixture.profile();
     std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(
+        profile.parent().unwrap(),
+        profile.with_file_name("pkg-1-link"),
+    )
+    .unwrap();
     std::os::unix::fs::symlink("pkg-1-link", &profile).unwrap();
     let installed = serde_json::json!({"version": 3, "elements": {"opaque": {
         "active": true,
@@ -149,6 +155,11 @@ fn upgrade_checks_each_formula_branch_before_mutating_the_profile() {
     }});
     let profile = fixture.profile();
     std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(
+        profile.parent().unwrap(),
+        profile.with_file_name("pkg-1-link"),
+    )
+    .unwrap();
     std::os::unix::fs::symlink("pkg-1-link", &profile).unwrap();
     let calls = fixture.home.path().join("calls");
     fixture.set_nix_script(&format!(
@@ -196,7 +207,10 @@ fn cask_info_reports_recorded_exclusion() {
     let (code, stdout, _) = fixture.run(&["info", "cask:iterm2"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("Cannot install"), "{stdout}");
-    assert!(stdout.contains("unsupported-platform"), "{stdout}");
+    assert!(
+        stdout.contains("Reason: no build for this system"),
+        "{stdout}"
+    );
     let (code, stdout, _) = fixture.run(&["info", "cask:iterm2", "--verbose"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("URL: https://iterm2.com/"), "{stdout}");
@@ -221,7 +235,11 @@ fn cask_preparation_retains_healthy_source_after_native_failure() {
     let fixture = CaskFixture::new();
     let (code, _, stderr) = fixture.run(&["update", "--scheduled"]);
     assert_eq!(code, 1, "native fixture has no package outputs: {stderr}");
-    assert!(stderr.contains("Ready: cask"), "{stderr}");
+    assert!(
+        stderr.contains("Preparing search data: Homebrew Casks…"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Failed: Homebrew Casks"), "{stderr}");
 }
 
 #[test]
@@ -232,21 +250,15 @@ fn cask_search_respects_eligibility_and_unavailable_option() {
     let (code, stdout, _) =
         fixture.run(&["search", "iterm|1password", "--regex", "--source", "cask"]);
     assert_eq!(code, 0, "{stdout}");
-    assert!(
-        stdout.contains("cask:homebrew/cask/1password-cli"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("cask:homebrew/cask/iterm2"), "{stdout}");
+    assert!(stdout.contains("cask:1password-cli"), "{stdout}");
+    assert!(!stdout.contains("iterm2"), "{stdout}");
     assert!(stdout.contains("2.39.0"), "{stdout}");
     let (code, stdout, _) = fixture.run(&["search", "iterm2", "--source", "cask"]);
     assert_eq!(code, 0);
-    assert!(
-        stdout.contains("excluded: unsupported-platform"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("Not available here:"), "{stdout}");
     let (code, stdout, _) = fixture.run(&["search", "iterm", "--source", "cask", "--unavailable"]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("cask:homebrew/cask/iterm2"), "{stdout}");
+    assert!(stdout.contains("cask:iterm2"), "{stdout}");
 }
 
 #[test]
@@ -264,11 +276,12 @@ fn unreadable_profile_reports_unknown_info_and_doctor_state() {
     assert_eq!(code, 1, "{stderr}");
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(value["result"]["installed_state"], "unknown");
+    // The link names a missing generation, so pkg does not read it as empty.
     assert!(
         value["result"]["installed_error"]
             .as_str()
             .unwrap()
-            .contains("unreadable profile")
+            .contains("the current generation is missing")
     );
     let (code, stdout, _) = fixture.run(&["doctor", "--json"]);
     assert_eq!(code, 1);
@@ -307,7 +320,7 @@ fn cask_discovery_cancellation_stops_info_and_install() {
 }
 
 #[test]
-fn bare_cask_stays_ambiguous_when_one_source_excludes_it() {
+fn bare_cask_skips_a_source_that_excludes_it() {
     use pkg_cli::tap::{
         Registry, registry,
         store::{Provenance, SourceStore},
@@ -348,14 +361,9 @@ fn bare_cask_stays_ambiguous_when_one_source_excludes_it() {
     let mut registry = Registry::empty();
     registry.approve(source, origin, 1);
     registry.save(&registry::registry_path(&state)).unwrap();
-    let (code, _, error) = fixture.run(&["install", "cask:iterm2"]);
-    assert_eq!(code, 1, "{error}");
-    assert!(error.contains("ambiguous"), "{error}");
-    assert!(error.contains("cask:homebrew/cask/iterm2"), "{error}");
-    assert!(error.contains("cask:example/tools/iterm2"), "{error}");
-    assert!(!fixture.profile().exists());
-    let (code, output, error) = fixture.run(&["info", "cask:example/tools/iterm2"]);
+    let (code, output, error) = fixture.run(&["info", "cask:iterm2"]);
     assert_eq!(code, 0, "{error}");
     assert!(output.contains("Tap terminal"), "{output}");
-    assert!(output.contains("Status: Available"), "{output}");
+    assert!(output.contains("ID: cask:example/tools/iterm2"), "{output}");
+    assert!(output.contains("Status: Can install"), "{output}");
 }

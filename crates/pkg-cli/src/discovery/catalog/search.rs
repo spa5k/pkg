@@ -9,8 +9,6 @@ use std::path::Path;
 use crate::nix::{CatalogEntry, Nix, SearchMeta};
 
 use super::CatalogError;
-use super::cask::CatalogOnce;
-use super::id::CatalogId;
 
 /// Which supported source a discovery query ran against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::IntoStaticStr)]
@@ -147,9 +145,13 @@ pub struct SearchResult {
     pub stale: bool,
     /// Generated catalog support classification.
     pub support: Option<SupportBadge>,
-    /// Suggested pkg command for an eligible Formula result.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The pkg command that installs this row. `None` when the row cannot
+    /// install on this system.
+    #[serde(default)]
     pub install_command: Option<Vec<String>>,
+    /// The main command of a Nixpkgs package, from `meta.mainProgram`.
+    #[serde(default)]
+    pub command: Option<String>,
 }
 
 impl SearchResult {
@@ -174,6 +176,7 @@ impl SearchResult {
             stale: report.status == SourceStatus::Stale,
             support: None,
             install_command: None,
+            command: None,
         }
     }
 }
@@ -236,136 +239,12 @@ fn claimed_short_forms<'a>(universe: &[&'a str], system: Option<&str>) -> BTreeM
     claimed
 }
 
-fn unique_exposed_forms<'a>(attrs: &[&'a str], system: Option<&str>) -> Vec<&'a str> {
+pub(super) fn unique_exposed_forms<'a>(attrs: &[&'a str], system: Option<&str>) -> Vec<&'a str> {
     let claimed = claimed_short_forms(attrs, system);
     attrs
         .iter()
         .map(|attr| exposed_form(attr, &claimed, system))
         .collect()
-}
-
-/// Resolve a bare name to exactly one supported output.
-///
-/// Nixpkgs resolution probes exact attributes at the current immutable source
-/// revision. Alias lookup may read a complete snapshot of that same revision.
-/// A missing snapshot never starts a full discovery scan.
-/// Cask resolution reads the official index and every registered tap's saved catalog.
-/// Match tokens exactly, including excluded entries. Display names do not match.
-/// An unreadable official index or failed saved source fails resolution because
-/// an omitted source could change which package the name selects.
-/// `catalog` loads the official index once per command.
-///
-/// Sources that do not target this system contribute no choices.
-/// `nixpkgs` supplies the native source reference and cache directory.
-/// `None` selects cask-only resolution.
-///
-/// # Errors
-///
-/// Returns an error when a source fails to load, a bare name is missing or ambiguous, or the catalog handle fails.
-pub fn resolve_bare(
-    nix: &Nix,
-    nixpkgs: Option<(&str, &Path)>,
-    saved: &crate::tap::SavedCatalogs,
-    name: &str,
-    system: &str,
-    catalog: &mut CatalogOnce<'_>,
-) -> Result<CatalogId, CatalogError> {
-    let mut choices = Vec::new();
-    let mut requires_id = false;
-    if let Some((source, cache_dir)) = nixpkgs {
-        let identity = nix.source_identity(source).map_err(CatalogError::from)?;
-        let reference = identity.locked_url.as_deref().unwrap_or(source);
-        let mut exact = BTreeMap::new();
-        let mut paths = Vec::new();
-        for root in ["packages", "legacyPackages"] {
-            let mut path = vec![root.to_string(), system.to_string()];
-            path.extend(name.split('.').map(str::to_string));
-            if name.starts_with("packages.") || name.starts_with("legacyPackages.") {
-                path = name.split('.').map(str::to_string).collect();
-                if path.first().is_none_or(|prefix| prefix != root)
-                    || path.get(1).is_none_or(|target| target != system)
-                {
-                    continue;
-                }
-            }
-            paths.push(path);
-        }
-        for node in nix.exact_metadata(reference, &paths)? {
-            if let crate::nix::MetadataValue::Package { meta } = node.value {
-                exact.insert(node.path.join("."), meta);
-            }
-        }
-        if exact.is_empty() {
-            if let Some(snapshot) =
-                super::native::Snapshot::prepared(cache_dir, source, system, &identity)
-            {
-                let query = super::SearchQuery::new(name, false, false)
-                    .map_err(|error| CatalogError::Source(error.to_string()))?
-                    .fuzzy(false);
-                snapshot.visit(|package| {
-                    if package.attribute.rsplit('.').next() == Some(name) || package.name == name {
-                        let row = SearchResult {
-                            id: format!("nixpkgs:{}", package.exposed),
-                            attribute: package.attribute.to_string(),
-                            name: package.name.to_string(),
-                            version: package.version.to_string(),
-                            description: package.description.to_string(),
-                            source: String::from("nixpkgs"),
-                            reference: Some(reference.to_string()),
-                            revision: identity.revision.clone(),
-                            system: system.to_string(),
-                            stale: false,
-                            support: None,
-                            install_command: None,
-                        };
-                        requires_id |= query.rank(&row).is_none();
-                        choices.push(
-                            CatalogId::nixpkgs(package.exposed).map_err(CatalogError::Source)?,
-                        );
-                    }
-                    Ok(())
-                })?;
-            }
-        } else {
-            let attrs: Vec<&str> = exact.keys().map(String::as_str).collect();
-            for attr in unique_exposed_forms(&attrs, Some(system)) {
-                choices.push(CatalogId::nixpkgs(attr).map_err(CatalogError::Source)?);
-            }
-        }
-    }
-    // The cask lane: the official index is evaluated (fail closed) and
-    // every saved tap catalog counts, including excluded entries.
-    let view = catalog.load()?;
-    let mut sources = view.index.sources_with_token(system, name);
-    sources.extend(saved.sources_with_token(system, name));
-    sources.sort();
-    sources.dedup();
-    match sources.len() {
-        0 => {}
-        1 => choices
-            .push(CatalogId::cask(&sources.swap_remove(0), name).map_err(CatalogError::Source)?),
-        _ => {
-            return Err(CatalogError::Ambiguous {
-                name: name.to_string(),
-                choices: sources
-                    .iter()
-                    .map(|source| format!("cask:{source}/{name}"))
-                    .collect(),
-            });
-        }
-    }
-    match choices.len() {
-        1 if requires_id => Err(CatalogError::RequiresId {
-            name: name.to_string(),
-            choices: choices.iter().map(CatalogId::qualified).collect(),
-        }),
-        1 => Ok(choices.swap_remove(0)),
-        0 => Err(CatalogError::NotFound(name.to_string())),
-        _ => Err(CatalogError::Ambiguous {
-            name: name.to_string(),
-            choices: choices.iter().map(CatalogId::qualified).collect(),
-        }),
-    }
 }
 
 /// Exact attribute matching inside native search results.
@@ -401,11 +280,32 @@ fn exact_attribute_matches(
         .collect()
 }
 
-/// Prepare a complete current snapshot before reporting update success.
+/// Prepare complete current Nixpkgs search data before reporting success.
+///
+/// A NixOS channel source reads the list that the channel publishes.
+/// Other sources, and a channel without a list, are evaluated on this
+/// computer.
 /// # Errors
 ///
-/// Returns an error when the source lacks immutable provenance, the native snapshot cannot be built, or the cache cannot be written.
-pub fn prepare_source(
+/// Returns an error when the download or evaluation fails or is stopped,
+/// the source lacks immutable provenance, or the cache cannot be written.
+pub fn prepare_nixpkgs(
+    nix: &Nix,
+    cache_dir: &Path,
+    source: &str,
+    system: &str,
+) -> Result<(), CatalogError> {
+    if let Some(channel) = super::published::channel(source)
+        && super::published::prepare(cache_dir, source, system, channel)?
+    {
+        return Ok(());
+    }
+    let identity = nix.refresh_source_identity(source)?;
+    prepare_source(nix, cache_dir, source, system, &identity)
+}
+
+/// Prepare a complete current snapshot with a local evaluation.
+fn prepare_source(
     nix: &Nix,
     cache_dir: &Path,
     source: &str,
@@ -479,9 +379,17 @@ pub fn exact_lookup(
         .clone()
         .unwrap_or_else(|| moving_source.to_string());
     let selected_output = format!("{search_ref}#{attribute}");
-    let results = nix
-        .search(&selected_output, ".")
-        .map_err(CatalogError::from)?;
+    let results = nix.search(&selected_output, ".").map_err(|error| {
+        match super::choice::unusable(attribute, error) {
+            // The source has no such attribute: that is a missing package.
+            CatalogError::Unusable { cause, .. }
+                if cause.contains("does not provide attribute") =>
+            {
+                CatalogError::NotFound(selected_output.clone())
+            }
+            error => error,
+        }
+    })?;
     let report = report_for(moving_source, &identity);
     let exact_matches = exact_attribute_matches(&results, attribute);
     if exact_matches.len() > 1 {
@@ -536,44 +444,6 @@ mod tests {
                 format!("\"{expected}\"")
             );
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn bare_resolution_preserves_native_attribute_evaluation_failures() {
-        use std::os::unix::fs::PermissionsExt as _;
-        let temp = tempfile::tempdir().expect("tempdir");
-        let executable = temp.path().join("nix");
-        std::fs::write(
-            &executable,
-            "#!/bin/sh\ncase \"$*\" in\n*--version*) echo 'nix (Nix) 2.35.2';;\n*'flake metadata'*) echo '{\"url\":\"github:example/packages/1111111111111111111111111111111111111111\"}';;\n*'#catalogIndex'*) echo '{}';;\n*) echo 'existing package is missing an attribute dependency' >&2; exit 1;;\nesac\n",
-        )
-        .expect("write runtime");
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod runtime");
-        let nix = crate::nix::discover(executable.to_str()).expect("discover runtime");
-        let routing = super::super::Routing {
-            sources: crate::config::Sources {
-                nixpkgs: String::from("github:example/packages"),
-                casks: String::from("github:example/casks"),
-                formulae: String::from("github:example/formulae"),
-            },
-            taps: BTreeMap::new(),
-        };
-        let mut catalog = CatalogOnce::new(&nix, &routing.sources.casks);
-        let error = resolve_bare(
-            &nix,
-            Some((&routing.sources.nixpkgs, temp.path())),
-            &crate::tap::SavedCatalogs::default(),
-            "probe",
-            "x86_64-linux",
-            &mut catalog,
-        )
-        .expect_err("a failed evaluation must abort name resolution");
-        assert!(
-            matches!(error, CatalogError::Native(crate::nix::NixError::Failed { ref stderr, .. }) if stderr.contains("attribute dependency")),
-            "native evaluation failure must remain visible: {error}"
-        );
     }
 
     #[test]

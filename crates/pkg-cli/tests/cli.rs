@@ -49,6 +49,23 @@ fn help_lists_d4_commands_and_no_removed_ones() {
 }
 
 #[test]
+fn a_group_without_its_command_shows_the_help_of_that_group() {
+    for (args, usage) in [
+        (&["--json"][..], "Usage: pkg [OPTIONS] <COMMAND>"),
+        (&["tap", "--json"], "Usage: pkg tap [OPTIONS] <COMMAND>"),
+        (
+            &["self", "--verbose"],
+            "Usage: pkg self [OPTIONS] <COMMAND>",
+        ),
+    ] {
+        let (code, stdout, stderr) = pkg(args, &[]);
+        assert_eq!(code, 2, "{args:?}");
+        assert!(stdout.is_empty(), "{args:?}: {stdout}");
+        assert!(stderr.contains(usage), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
 fn invalid_command_combinations_fail_before_loading_config() {
     let home = tempfile::tempdir().expect("temporary home");
     let config = home.path().join("config/pkg");
@@ -68,7 +85,6 @@ fn invalid_command_combinations_fail_before_loading_config() {
         &["add"],
         &["remove"],
         &["uninstall"],
-        &["upgrade"],
         &["upgrade", "--all", "ripgrep"],
         &["upgrade", "--all", "--entry"],
     ] {
@@ -133,13 +149,53 @@ fn relative_xdg_bases_are_rejected() {
 }
 
 #[test]
+fn a_mistyped_command_suggests_the_closest_command_first() {
+    let (code, _, stderr) = pkg(&["instal", "jq"], &[]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("similar subcommands exist: 'install'"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn file_bases_and_a_missing_home_are_rejected_with_their_path() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let file = directory.path().join("file");
+    std::fs::write(&file, "").expect("write");
+    let file = file.to_str().expect("utf-8 path");
+    for variable in ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"] {
+        let (code, _, stderr) = pkg(&["list"], &[(variable, file)]);
+        assert_eq!(code, 1, "{variable}: {stderr}");
+        assert!(
+            stderr.contains(file) && stderr.contains("not a folder") && stderr.contains(variable),
+            "{stderr}"
+        );
+    }
+    let missing = directory.path().join("missing");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pkg"));
+    for variable in ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"] {
+        command.env_remove(variable);
+    }
+    let output = command
+        .args(["list"])
+        .env("HOME", &missing)
+        .output()
+        .expect("spawn pkg");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("does not exist"), "{stderr}");
+    assert!(!missing.exists(), "a missing HOME is not created");
+}
+
+#[test]
 fn prune_requires_an_explicit_positive_age() {
     for (age, diagnostic) in [
-        ("0d", "positive"),
+        ("0d", "at least 1 day"),
         ("30", "end in `d`"),
         ("-1d", "number of days"),
         ("", "end in `d`"),
-        ("18446744073709551616d", "number of days"),
+        ("+30d", "number of days"),
     ] {
         let (code, stdout, stderr) = pkg(&["prune", &format!("--older-than={age}")], &[]);
         assert_eq!(code, 1, "{age:?}: {stderr}");
@@ -170,10 +226,14 @@ fn invalid_config_is_reported_without_replacing_the_file() {
         "[runtime]\nnix_path = '/usr/bin/nix'",
     ] {
         std::fs::write(&file, text).unwrap();
+        // Doctor still runs and reports the settings file as one problem.
         let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["doctor"], "/nonexistent");
         assert_eq!(code, 1, "{text}: {stderr}");
-        assert!(stdout.is_empty(), "{text}: {stdout}");
-        assert!(stderr.contains("invalid config"), "{text}: {stderr}");
+        assert!(stdout.contains("invalid config in"), "{text}: {stdout}");
+        assert!(stdout.contains("config.toml"), "{text}: {stdout}");
+        let (code, _, stderr) = run_pkg_under_home(home.path(), &["list"], "/nonexistent");
+        assert_eq!(code, 1, "{text}: {stderr}");
+        assert!(stderr.contains("invalid config in"), "{text}: {stderr}");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
     }
     assert!(!home.path().join("state").exists());
@@ -235,7 +295,14 @@ fn profile_queries_preserve_native_state_without_creating_a_lock() {
 
     let (code, stdout, stderr) = run_pkg_under_home(home.path(), &["history"], &path);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("3  2026-10-18  current"), "{stdout}");
+    // History reads the local generation manifest; no native call is needed.
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("*  3 ") && line.ends_with("+hello")),
+        "{stdout}"
+    );
+    assert!(stdout.contains("* current generation"), "{stdout}");
     assert_eq!(
         std::fs::read_link(&profile).expect("profile link"),
         std::path::Path::new("pkg-3-link")
@@ -285,7 +352,7 @@ fn invalid_search_pattern_is_a_usage_error_before_runtime_discovery() {
     assert_eq!(code, 2, "stderr: {stderr}");
     assert!(stdout.is_empty(), "stdout: {stdout}");
     assert!(
-        stderr.contains("Invalid search pattern"),
+        stderr.contains("pkg: invalid search pattern"),
         "stderr: {stderr}"
     );
     assert!(!stderr.contains("Nix executable"), "stderr: {stderr}");
@@ -646,14 +713,11 @@ fn doctor_forwards_verbose_and_no_color_to_native_children() {
     // `--verbose` traces every native probe doctor runs.
     let (code, stdout, stderr) = run(&["doctor", "--verbose"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
-    assert!(stderr.contains("pkg: nix "), "verbose trace: {stderr}");
+    assert!(stderr.contains("$ nix "), "verbose trace: {stderr}");
     // Without the flag no trace appears.
     let (code, stdout, stderr) = run(&["doctor"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
-    assert!(
-        !stderr.contains("pkg: nix "),
-        "no trace by default: {stderr}"
-    );
+    assert!(!stderr.contains("$ nix "), "no trace by default: {stderr}");
     // `--no-color` forwards NO_COLOR=1 to the native children.
     let (code, stdout, stderr) = run(&["doctor", "--verbose", "--no-color"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
@@ -791,8 +855,10 @@ fn upgrade_refuses_removed_taps_for_explicit_and_bulk_targets() {
     // remaining entry IDs explicitly without `--all`.
     let (code, stdout, stderr) = run(&["upgrade", "--all"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
-    assert!(stdout.contains("tap-entry"), "skip note: {stdout}");
-    assert!(stdout.contains("keeping locked outputs"), "{stdout}");
+    assert!(
+        stdout.contains("(tap somebody/apps was removed; the installed version stays)."),
+        "skip note: {stdout}"
+    );
     let recorded = std::fs::read_to_string(&args_file).expect("upgrade args recorded");
     assert!(recorded.contains("github-entry"), "{recorded}");
     assert!(!recorded.contains("tap-entry"), "{recorded}");
@@ -855,7 +921,7 @@ fn install_filters_native_chatter_and_keeps_warnings_and_prompts() {
     let (code, stdout, stderr) = run(&["install", "github:helix-editor/helix#helix"]);
     assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
     assert!(
-        stdout.contains("Unchanged: profile did not change."),
+        stdout.contains("Nothing changed."),
         "the fake runtime leaves the profile unchanged: {stdout}"
     );
     for hidden in [
@@ -961,8 +1027,8 @@ esac
     };
     let (code, stdout, stderr) = run(&["uninstall", "fff"]);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(stdout.trim(), "Removed: nixpkgs:fff");
-    assert!(stderr.contains("Removing: nixpkgs:fff"), "{stderr}");
+    assert_eq!(stdout.trim(), "Removed fff");
+    assert!(stderr.contains("Removing: fff"), "{stderr}");
     assert!(
         stderr.contains("fixture warning") && stderr.contains("do you want to continue"),
         "{stderr}"
@@ -1190,11 +1256,11 @@ esac
         "stdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
-        stderr.contains("not proven sandboxed"),
+        stderr.contains("taps need a one-time Nix sandbox setup"),
         "the concise cause must lead: {stderr}"
     );
     assert!(
-        all.contains("one-time sandbox setup"),
+        all.contains("Run this command in a terminal"),
         "the setup offer must be named: {all}"
     );
     assert!(
@@ -1291,10 +1357,12 @@ os.kill(os.getpid(),sig)
                 1,
                 "no later control command: {output:?}"
             );
+            // `enable` checks the user manager before it writes job files.
             for unit in ["pkg-catalog-refresh.service", "pkg-catalog-refresh.timer"] {
-                assert!(
+                assert_eq!(
                     units.join(unit).exists(),
-                    "job files remain after cancelled control"
+                    action != "enable",
+                    "{action}: cancelled control changes no job files"
                 );
             }
         }
@@ -1314,11 +1382,8 @@ esac",
     let config = home.path().join("config/pkg");
     std::fs::create_dir_all(&config).unwrap();
     for (color, flags, expected) in [
-        (
-            "auto",
-            &[][..],
-            "\x1b[31mVersion 3 (2026-10-17)\x1b[0m\n\x1b[1;32mgen 3\x1b[m plain\x1bb\x1b[",
-        ),
+        // Pipes get plain text even when the configuration allows color.
+        ("auto", &[][..], "Version 3 (2026-10-17)\ngen 3 plain\x1bb"),
         (
             "auto",
             &["--no-color"][..],

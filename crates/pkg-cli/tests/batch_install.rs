@@ -34,6 +34,37 @@ fn malformed_batch_results_and_cancellation_stop_before_mutation() {
     }
 }
 
+/// A source that moved since the install gives new output paths. The
+/// installed entry still counts, so no second entry is added.
+#[test]
+fn moved_source_install_keeps_one_entry() {
+    let root = fixture(2);
+    let calls = root.path().join("calls");
+    let output = Command::new(env!("CARGO_BIN_EXE_pkg"))
+        .args(["install", "nixpkgs:probe-000", "nixpkgs:probe-001"])
+        .env("PKG_TEST_BATCH_MODE", "moved")
+        .env("HOME", root.path().join("home"))
+        .env("XDG_CONFIG_HOME", root.path().join("config"))
+        .env("XDG_STATE_HOME", root.path().join("state"))
+        .env("XDG_CACHE_HOME", root.path().join("cache"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    for name in ["probe-000", "probe-001"] {
+        assert!(
+            stdout.contains(&format!("Already installed: {name}\n")),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(&format!("run `pkg upgrade {name}`")),
+            "{stdout}"
+        );
+    }
+    let calls = std::fs::read_to_string(calls).unwrap();
+    assert!(!calls.contains("profile add"), "{calls}");
+}
+
 fn fixture(count: usize) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     let profile = root.path().join("state/nix/profiles/pkg");
@@ -90,6 +121,7 @@ case "$*" in
       short) echo '[]';;
       malformed) echo '[{{"attribute":7}}]';;
       INT|TERM|HUP) kill -"$PKG_TEST_BATCH_MODE" "$$";;
+      moved) sed 's/old-/new-/g' '{}';;
       *) cat '{}';;
     esac;;
   *'search '*|*'eval --json github:example/packages#'*)
@@ -108,6 +140,7 @@ esac
 "#,
             calls.display(),
             manifest.display(),
+            outputs.display(),
             outputs.display()
         ),
     )
@@ -147,9 +180,9 @@ fn repeated_install(count: usize, mode: &str, code: i32, fallback: bool) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     if code == 0 {
         assert_eq!(stdout.lines().count(), count, "{stdout}");
-        for package in &packages {
+        for index in 0..count {
             assert!(
-                stdout.contains(&format!("Already installed: {package}\n")),
+                stdout.contains(&format!("Already installed: probe-{index:03}\n")),
                 "{stdout}"
             );
         }

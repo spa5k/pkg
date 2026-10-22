@@ -1,11 +1,13 @@
 //! Local discovery without runtime probes or implicit source refresh.
 
 use std::path::Path;
+use std::rc::Rc;
 
 use crate::nix::{CatalogIndex, SourceIdentity};
 
 use super::{
-    CaskHost, CatalogError, SearchQuery, SearchResult, SourceReport, SourceStatus, cache, native,
+    CaskHost, CatalogError, Kept, SearchQuery, SearchResult, SourceReport, SourceStatus, cache,
+    native,
 };
 
 pub(super) fn report(
@@ -32,12 +34,22 @@ pub(super) fn report(
             String::from("catalog age is unknown; run `pkg update`")
         } else {
             format!(
-                "catalog checked {} hour(s) ago{}",
-                age / 3600,
+                "catalog checked {}{}",
+                age_text(age),
                 if stale { "; run `pkg update`" } else { "" }
             )
         }),
     }
+}
+
+/// A data age such as `3 hours ago` or `2 days ago`.
+fn age_text(age: u64) -> String {
+    let (count, unit) = match age {
+        0..3_600 => return String::from("less than 1 hour ago"),
+        3_600..172_800 => (age / 3_600, "hour"),
+        _ => (age / 86_400, "day"),
+    };
+    format!("{count} {unit}{} ago", if count == 1 { "" } else { "s" })
 }
 
 /// Data age in seconds after which search marks a source as stale.
@@ -74,6 +86,7 @@ pub fn search_local_native(
     source: &str,
     system: &str,
     query: &SearchQuery,
+    kept: &mut Kept,
     mut sink: impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
 ) -> Result<SourceReport, CatalogError> {
     let Some(snapshot) = native::Snapshot::read(cache_dir, source, system) else {
@@ -107,8 +120,24 @@ pub fn search_local_native(
             description: package.description,
             source: "nixpkgs",
             system,
+            command: package.command,
         };
         if let Some(rank) = query.rank_fields(&fields) {
+            // Like Formulae, a package that cannot install here shows only
+            // for its exact name or with `--unavailable`.
+            let support = match package.unavailable {
+                None => None,
+                Some(_)
+                    if !query.unavailable
+                        && !query.exact(&[package.exposed, package.name, &id]) =>
+                {
+                    return Ok(());
+                }
+                Some(reason) => Some(super::SupportBadge::Excluded {
+                    reason: reason.to_string(),
+                    detail: None,
+                }),
+            };
             sink(
                 SearchResult {
                     id: std::mem::take(&mut id),
@@ -121,14 +150,16 @@ pub fn search_local_native(
                     revision: snapshot.header.revision.clone(),
                     system: system.to_string(),
                     stale: report.status == SourceStatus::Stale,
-                    support: None,
+                    support,
                     install_command: None,
+                    command: package.command.map(str::to_string),
                 },
                 rank,
             )?;
         }
         Ok(())
     })?;
+    kept.native = Some(snapshot);
     Ok(report)
 }
 
@@ -142,6 +173,7 @@ pub fn search_local_casks(
     system: &str,
     query: &SearchQuery,
     host: &CaskHost,
+    kept: &mut Kept,
     sink: impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
 ) -> Result<SourceReport, CatalogError> {
     let Some(snapshot) = cache::read_index_snapshot(cache_dir, source, system, None) else {
@@ -156,6 +188,7 @@ pub fn search_local_casks(
     );
     report = platform_report(report, snapshot.payload.targets(), system);
     visit_casks(&snapshot.payload, system, query, host, &report, sink)?;
+    kept.casks = Some(Rc::new(snapshot.payload));
     Ok(report)
 }
 
@@ -227,6 +260,33 @@ fn visit_casks(
         sink(row, rank)?;
     }
     Ok(())
+}
+
+/// One line about the Nixpkgs search data, for `doctor`. Return `None`
+/// when the data is not ready.
+#[must_use]
+pub fn nixpkgs_summary(cache_dir: &Path, source: &str, system: &str) -> Option<String> {
+    let snapshot = native::Snapshot::read(cache_dir, source, system)?;
+    let (packages, origin) = snapshot.summary().ok()?;
+    let checked = checked_at(
+        cache_dir,
+        source,
+        system,
+        &snapshot.header.reference,
+        snapshot.header.revision.as_ref(),
+        snapshot.header.saved_unix,
+    );
+    let revision = snapshot.header.revision.as_deref().unwrap_or_default();
+    Some(format!(
+        "Nixpkgs: {} packages from {}, revision {}, checked {}",
+        crate::output::count(packages),
+        match origin {
+            native::Origin::Published => "the NixOS channel list",
+            native::Origin::Local => "an evaluation on this computer",
+        },
+        revision.get(..7).unwrap_or(revision),
+        age_text(cache::now_unix().saturating_sub(checked))
+    ))
 }
 
 pub(super) fn mark_checked(
@@ -316,19 +376,26 @@ pub fn record_search_system(cache_dir: &Path, system: &str) -> Result<(), Catalo
     )
 }
 
-/// Read the prepared system, or use the platform name for a first search.
+/// The system that Nix selected when search data was last prepared on this
+/// platform.
 #[must_use]
-pub fn search_system(cache_dir: &Path) -> String {
-    if let Ok(text) = std::fs::read_to_string(cache_dir.join("search-host.json"))
-        && let Ok(host) = serde_json::from_str::<PreparedHost>(&text)
-        && host.platform == platform()
+pub fn prepared_system(cache_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(cache_dir.join("search-host.json")).ok()?;
+    let host = serde_json::from_str::<PreparedHost>(&text).ok()?;
+    (host.platform == platform()
         && !host.system.is_empty()
         && host
             .system
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
-        return host.system;
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
+    .then_some(host.system)
+}
+
+/// Read the prepared system, or use the platform name for a first search.
+#[must_use]
+pub fn search_system(cache_dir: &Path) -> String {
+    if let Some(system) = prepared_system(cache_dir) {
+        return system;
     }
     let os = if cfg!(target_os = "macos") {
         "darwin"
@@ -368,6 +435,7 @@ mod tests {
             &snapshot.system,
             &query,
             &CaskHost::default(),
+            &mut Kept::default(),
             |row, _rank| {
                 rows.push(row);
                 Ok(())
@@ -387,6 +455,7 @@ mod tests {
             &snapshot.system,
             &query,
             &CaskHost::default(),
+            &mut Kept::default(),
             |_, _| panic!("untargeted platform has no rows"),
         )
         .unwrap();
@@ -400,6 +469,7 @@ mod tests {
             &snapshot.system,
             &query,
             &CaskHost::default(),
+            &mut Kept::default(),
             |_, _| panic!("untargeted platform has no rows"),
         )
         .unwrap();

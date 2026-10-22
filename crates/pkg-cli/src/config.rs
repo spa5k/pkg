@@ -30,6 +30,17 @@ pub enum ConfigError {
     /// The home directory is unset or relative.
     #[error("HOME is unset or relative; cannot derive pkg paths")]
     NoHome,
+    /// The home directory does not exist, which is often a typo.
+    #[error("HOME is {}, but that folder does not exist", .0.display())]
+    MissingHome(PathBuf),
+    /// A base directory exists, but it is a file.
+    #[error("{} is not a folder. Check {variable}, or remove the file", path.display())]
+    NotFolder {
+        /// The variable that selects the base, for example `XDG_CACHE_HOME`.
+        variable: &'static str,
+        /// The base path.
+        path: PathBuf,
+    },
     /// An XDG base variable is set to a relative path.
     #[error("{variable} must be an absolute path when set (got {value:?})")]
     RelativeBase {
@@ -39,22 +50,41 @@ pub enum ConfigError {
         value: String,
     },
     /// The config file could not be read.
-    #[error("cannot read config file: {0}")]
-    ReadFailed(#[source] std::io::Error),
+    #[error("cannot read the settings file {}: {source}", path.display())]
+    ReadFailed {
+        /// The config file.
+        path: PathBuf,
+        /// The filesystem cause.
+        #[source]
+        source: std::io::Error,
+    },
     /// The config file is not valid TOML or has invalid values.
-    #[error("invalid config: {0}")]
-    Invalid(#[source] toml::de::Error),
+    #[error("invalid config in {}. Fix or delete the file. {source}", path.display())]
+    Invalid {
+        /// The config file.
+        path: PathBuf,
+        /// The decode cause.
+        #[source]
+        source: toml::de::Error,
+    },
 }
 
 fn home_dir() -> Result<PathBuf, ConfigError> {
     match std::env::var_os("HOME") {
-        Some(home) if !home.is_empty() && Path::new(&home).is_absolute() => Ok(PathBuf::from(home)),
+        Some(home) if !home.is_empty() && Path::new(&home).is_absolute() => {
+            let home = PathBuf::from(home);
+            if home.is_dir() {
+                Ok(home)
+            } else {
+                Err(ConfigError::MissingHome(home))
+            }
+        }
         _ => Err(ConfigError::NoHome),
     }
 }
 
 fn xdg_base(variable: &'static str, fallback: &str) -> Result<PathBuf, ConfigError> {
-    match std::env::var_os(variable) {
+    let path = match std::env::var_os(variable) {
         Some(value) if !value.is_empty() => {
             let path = PathBuf::from(&value);
             if !path.is_absolute() {
@@ -63,10 +93,15 @@ fn xdg_base(variable: &'static str, fallback: &str) -> Result<PathBuf, ConfigErr
                     value: value.to_string_lossy().into_owned(),
                 });
             }
-            Ok(path)
+            path
         }
-        _ => Ok(home_dir()?.join(fallback)),
+        _ => home_dir()?.join(fallback),
+    };
+    // A missing base is created later. A file in its place is an error.
+    if path.exists() && !path.is_dir() {
+        return Err(ConfigError::NotFolder { variable, path });
     }
+    Ok(path)
 }
 
 /// Compute the validated path set from the environment (design D3).
@@ -171,9 +206,15 @@ impl Config {
     /// Returns an error if the configuration cannot be read, decoded, or validated.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).map_err(ConfigError::Invalid),
+            Ok(text) => toml::from_str(&text).map_err(|source| ConfigError::Invalid {
+                path: path.to_path_buf(),
+                source,
+            }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(ConfigError::ReadFailed(error)),
+            Err(source) => Err(ConfigError::ReadFailed {
+                path: path.to_path_buf(),
+                source,
+            }),
         }
     }
 

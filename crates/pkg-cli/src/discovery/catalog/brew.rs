@@ -6,8 +6,8 @@ use std::path::Path;
 use crate::nix::{Nix, SourceIdentity};
 
 use super::{
-    Availability, CaskHost, CatalogError, CatalogView, SearchQuery, SearchResult, SourceReport,
-    SupportBadge, cache, local,
+    Availability, CaskHost, CatalogError, CatalogView, Kept, SearchQuery, SearchResult,
+    SourceReport, SupportBadge, cache, local,
 };
 
 const KIND: &str = "formula-index";
@@ -61,6 +61,53 @@ impl FormulaView {
             aliases,
             executables,
         })
+    }
+
+    /// Read the Formula index that search prepared, if it is present.
+    #[must_use]
+    pub fn local(cache_dir: &Path, source: &str, system: &str) -> Option<Self> {
+        let snapshot =
+            cache::read_snapshot::<serde_json::Value>(cache_dir, KIND, source, system, None)?;
+        Self::decode(snapshot.identity("Homebrew Formulae"), &snapshot.payload).ok()
+    }
+
+    /// Read the local Formula index, or evaluate it when it is missing.
+    /// # Errors
+    /// Returns an error when the evaluation or decoding fails.
+    pub fn local_or_load(
+        nix: &Nix,
+        cache_dir: &Path,
+        source: &str,
+        system: &str,
+    ) -> Result<Self, CatalogError> {
+        match Self::local(cache_dir, source, system) {
+            Some(view) => Ok(view),
+            None => Self::load(nix, source),
+        }
+    }
+
+    /// Formula names on `system` whose executables include `command`.
+    #[must_use]
+    pub fn providing(&self, system: &str, command: &str) -> Vec<String> {
+        self.executables
+            .iter()
+            .filter(|(name, executables)| {
+                executables
+                    .as_ref()
+                    .is_some_and(|executables| executables.iter().any(|item| item == command))
+                    && self.catalog.index.record(system, SOURCE, name).is_some()
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// The executables of one Formula, when the index declares them.
+    #[must_use]
+    pub fn executables(&self, name: &str) -> &[String] {
+        self.executables
+            .get(name)
+            .and_then(Option::as_deref)
+            .unwrap_or_default()
     }
 
     pub fn load(nix: &Nix, source: &str) -> Result<Self, CatalogError> {
@@ -138,6 +185,7 @@ pub(crate) fn search(
     source: &str,
     system: &str,
     query: &SearchQuery,
+    kept: &mut Kept,
     mut sink: impl FnMut(SearchResult, u32) -> Result<(), CatalogError>,
 ) -> Result<SourceReport, CatalogError> {
     let Some(snapshot) =
@@ -158,13 +206,13 @@ pub(crate) fn search(
     let view = FormulaView::decode(identity, &snapshot.payload)?;
     report.display = Some(String::from("Homebrew Formulae"));
     if !view.catalog.index.targeted(system) {
-        return Ok(super::SourceReport::skipped_platform(
-            source,
-            view.catalog.index.targets(),
-        ));
+        let report = super::SourceReport::skipped_platform(source, view.catalog.index.targets());
+        kept.formulae = Some(view);
+        return Ok(report);
     }
     let host = CaskHost::default();
     visit_formula_entries(&view, &host, system, query, &report, &mut sink)?;
+    kept.formulae = Some(view);
     Ok(report)
 }
 
@@ -219,6 +267,7 @@ fn visit_formula_entries(
                 alternative.id = format!("brew:{SOURCE}/{alias}");
                 alternative.name = (*alias).to_string();
                 if let Some(alias_rank) = query.rank(&alternative) {
+                    let alias_rank = alias_rank.max(super::matching::ALIAS_RANK);
                     rank = Some(rank.map_or(alias_rank, |rank| rank.min(alias_rank)));
                 }
             }

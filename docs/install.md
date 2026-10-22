@@ -38,6 +38,9 @@ settings. It does not remove or migrate old installations.
 - `~/.local/state/nix/profiles/pkg`: the packages that you install. When
   `XDG_STATE_HOME` is set, the profile is under that directory.
 
+`pkg` refuses to start when `HOME` names a folder that does not exist, or
+when an XDG base directory is a file. The message names the path.
+
 ### Shell setup
 
 The installer adds three directories to `PATH`, in this order: the
@@ -90,9 +93,14 @@ curl -fsSL https://install.determinate.systems/nix | sh -s -- install
 
 ## Search data
 
-The first search prepares missing search data. This takes a few minutes
-one time. The daily job usually prepares the data before your first
-search.
+The first search prepares missing search data. For the default Nixpkgs
+source, pkg downloads the package list that the NixOS channel publishes
+(about 10 MB). This takes a few seconds. The daily job usually prepares
+the data before your first search.
+
+A source that has no published list, such as a fork or a pinned commit, is
+evaluated on this computer. This takes a few minutes one time. To stop it,
+press Ctrl-C. The next search continues the work.
 
 Normal search reads complete local catalogs. It runs no Nix command and
 makes no network request. Search marks data older than three days as

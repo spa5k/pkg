@@ -1337,6 +1337,48 @@ fn streamed_input_is_delivered_completely_and_closed() {
     }
 }
 
+#[test]
+fn early_exit_input_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("early-exit-input-supervisor") {
+        return;
+    }
+    // pkg ends on SIGPIPE, like other shell tools.
+    assert_ne!(
+        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) },
+        libc::SIG_ERR
+    );
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command.args(["--exact", "tests::argv_child", "--quiet"]);
+    let error = super::run_child(
+        command,
+        IoMode::Capture,
+        None,
+        Some(&vec![b'x'; 5 * 1024 * 1024]),
+    )
+    .err()
+    .expect("the child reads no input");
+    assert_eq!(error.source.kind(), std::io::ErrorKind::BrokenPipe);
+    println!("EARLY_EXIT_REPORTED");
+}
+
+#[test]
+fn a_child_that_ends_before_its_input_gives_an_error_not_sigpipe() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::early_exit_input_supervisor",
+            "--nocapture",
+        ])
+        .env(MODE, "early-exit-input-supervisor")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("EARLY_EXIT_REPORTED"),
+        "{output:?}"
+    );
+}
+
 fn run_metadata_child(command: Command) -> Result<super::Reaped, super::RunError> {
     super::run_child(
         command,
@@ -1348,4 +1390,116 @@ fn run_metadata_child(command: Command) -> Result<super::Reaped, super::RunError
         }),
         None,
     )
+}
+
+#[test]
+fn parallel_echo_child() {
+    if std::env::var(MODE).as_deref() != Ok("parallel-echo") {
+        return;
+    }
+    let word = std::env::var(SIGNAL).unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    println!("{word}");
+    eprintln!("{word}-err");
+}
+
+#[test]
+fn parallel_children_run_together_and_keep_their_order() {
+    let commands = ["first", "second", "third"]
+        .into_iter()
+        .map(|word| {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "tests::parallel_echo_child",
+                    "--nocapture",
+                    "--quiet",
+                ])
+                .env(MODE, "parallel-echo")
+                .env(SIGNAL, word);
+            command
+        })
+        .collect();
+    let started = Instant::now();
+    let results = super::run_children(commands, None).expect("run parallel children");
+    assert!(
+        started.elapsed() < Duration::from_millis(1100),
+        "children must run at the same time: {:?}",
+        started.elapsed()
+    );
+    for (result, word) in results.into_iter().zip(["first", "second", "third"]) {
+        let reaped = result.expect("each child runs");
+        assert_eq!(reaped.classify(), Outcome::Success);
+        let stdout = String::from_utf8(reaped.output.stdout).unwrap();
+        let stderr = String::from_utf8(reaped.output.stderr).unwrap();
+        assert!(stdout.lines().any(|line| line == word), "{stdout}");
+        assert!(stderr.contains(&format!("{word}-err")), "{stderr}");
+        for other in ["first", "second", "third"]
+            .into_iter()
+            .filter(|other| *other != word)
+        {
+            assert!(!stdout.lines().any(|line| line == other), "{stdout}");
+        }
+    }
+}
+
+#[test]
+fn parallel_cancellation_supervisor() {
+    if std::env::var(MODE).as_deref() != Ok("parallel-cancellation") {
+        return;
+    }
+    let commands = (0..3)
+        .map(|_| {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "tests::reap_failure_child", "--nocapture"])
+                .env(MODE, "reap-failure-child");
+            command
+        })
+        .collect();
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_millis(300));
+        // SAFETY: raising a signal has no memory-safety requirements.
+        unsafe { libc::raise(libc::SIGINT) };
+    });
+    let started = Instant::now();
+    let results = super::run_children(
+        commands,
+        Some(ChildLimits {
+            resident_bytes: Some(u64::MAX),
+            output_bytes: 1024,
+            wall_time: Duration::from_secs(20),
+        }),
+    )
+    .expect("run parallel children");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    for result in results {
+        let reaped = result.expect("each child is reaped");
+        assert_eq!(
+            reaped.classify(),
+            Outcome::Interrupted {
+                signal: libc::SIGINT
+            }
+        );
+    }
+}
+
+#[test]
+fn a_signal_stops_every_parallel_child() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::parallel_cancellation_supervisor",
+            "--nocapture",
+        ])
+        .env(MODE, "parallel-cancellation")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn available_memory_is_reported() {
+    assert!(super::available_memory().is_some_and(|bytes| bytes > 0));
 }

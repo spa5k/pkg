@@ -151,6 +151,30 @@ mod forward {
         action
     }
 
+    /// Ignore SIGPIPE until the guard drops. A write to a child that ended
+    /// then fails with `BrokenPipe`, also in a program that ends on SIGPIPE.
+    pub fn ignore_pipe() -> std::io::Result<PipeGuard> {
+        // SAFETY: an all-zero `sigaction` is a valid empty action to receive
+        // the old disposition.
+        let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+        // SAFETY: SIG_IGN is a valid disposition.
+        if unsafe { libc::sigaction(libc::SIGPIPE, &empty_action(libc::SIG_IGN), &raw mut old) }
+            != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(PipeGuard(old))
+    }
+
+    pub struct PipeGuard(libc::sigaction);
+
+    impl Drop for PipeGuard {
+        fn drop(&mut self) {
+            // SAFETY: the saved disposition came from `sigaction`.
+            unsafe { libc::sigaction(libc::SIGPIPE, &raw const self.0, std::ptr::null_mut()) };
+        }
+    }
+
     /// Reject dispositions that let the kernel reap children before wait.
     pub fn check_sigchld() -> std::io::Result<()> {
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
@@ -1128,6 +1152,8 @@ pub fn run_child(
                 Stdio::piped()
             })
             .spawn()?;
+        // After the spawn, so that the child keeps its own SIGPIPE action.
+        let _pipe = input.map(|_| forward::ignore_pipe()).transpose()?;
         let owner = ChildOwner::new(child, limits.is_some())?;
         drop(mask);
         owner.run(mode, limits, input)
@@ -1145,6 +1171,129 @@ pub fn run_child(
         cancelled,
         resource_limit,
     })
+}
+
+/// Run several captured children at the same time, with the same limits.
+///
+/// Each child gets the supervision of [`run_child`]. A termination signal
+/// reaches every child, and every child is reaped. The results keep the
+/// order of `commands`.
+/// # Errors
+///
+/// Returns an error if signal setup or signal restoration fails. A child
+/// that cannot start or be supervised gets an error in its own result.
+pub fn run_children(
+    commands: Vec<Command>,
+    limits: Option<ChildLimits>,
+) -> Result<Vec<Result<Reaped, RunError>>, RunError> {
+    use std::os::unix::process::CommandExt as _;
+    let _run = forward::lock();
+    let mask = forward::block()?;
+    let guard = forward::install().map_err(|source| RunError {
+        cancelled: forward::received(),
+        source,
+    })?;
+    let owners: Vec<Result<ChildOwner, RunError>> = commands
+        .into_iter()
+        .map(|mut command| {
+            mask.prepare_child(&mut command);
+            if limits.is_some() {
+                command.process_group(0);
+            }
+            forward::check_sigchld()?;
+            let child = command
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
+            Ok(ChildOwner::new(child, limits.is_some())?)
+        })
+        .collect();
+    drop(mask);
+    let results: Vec<_> = std::thread::scope(|scope| {
+        #[expect(
+            clippy::needless_collect,
+            reason = "every supervisor starts before the first join"
+        )]
+        let handles: Vec<_> = owners
+            .into_iter()
+            .map(|owner| {
+                scope
+                    .spawn(move || owner.and_then(|owner| owner.run(IoMode::Capture, limits, None)))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    let restored = guard.restore();
+    let cancelled = forward::received();
+    restored.map_err(|source| RunError { cancelled, source })?;
+    Ok(results
+        .into_iter()
+        .map(|result| {
+            let (output, resource_limit) = result.map_err(|mut error| {
+                error.cancelled = cancelled.or(error.cancelled);
+                error
+            })?;
+            Ok(Reaped {
+                output,
+                cancelled,
+                resource_limit,
+            })
+        })
+        .collect())
+}
+
+/// Memory that new processes can use, in bytes, when the system reports it.
+///
+/// Linux reports available memory. macOS reports only the installed
+/// memory, so this returns half of it.
+#[must_use]
+pub fn available_memory() -> Option<u64> {
+    available_memory_bytes()
+}
+
+#[cfg(target_os = "linux")]
+fn available_memory_bytes() -> Option<u64> {
+    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+    info.lines()
+        .find_map(|line| {
+            line.strip_prefix("MemAvailable:")?
+                .split_whitespace()
+                .next()?
+                .parse::<u64>()
+                .ok()
+        })
+        .map(|kib| kib * 1024)
+}
+
+#[cfg(target_os = "macos")]
+fn available_memory_bytes() -> Option<u64> {
+    let mut bytes: u64 = 0;
+    let mut size = std::mem::size_of_val(&bytes);
+    // SAFETY: the name is a NUL-terminated string, and the output buffer
+    // and its size describe one initialized u64.
+    let status = unsafe {
+        libc::sysctlbyname(
+            c"hw.memsize".as_ptr(),
+            std::ptr::from_mut(&mut bytes).cast(),
+            &raw mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (status == 0 && size == std::mem::size_of_val(&bytes)).then_some(bytes / 2)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn available_memory_bytes() -> Option<u64> {
+    None
 }
 
 #[cfg(target_os = "linux")]

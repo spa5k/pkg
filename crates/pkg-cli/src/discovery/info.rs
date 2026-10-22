@@ -13,18 +13,20 @@ pub fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
     // refused identically with or without Nix present.
     let parsed = catalog::parse_id(id)?;
     let session = session(cli)?;
+    let package = Resolution::local(&session)?.inspect(parsed)?;
     let ResolvedPackage {
         resolved,
         data,
         reference,
-        installable,
         system,
-    } = Resolution::new(&session)?.inspect(parsed)?;
+        alternatives,
+        ..
+    } = &package;
     // A cask identity is compared against the normalized
     // native form: `nix profile` records the attribute without quotes.
     let identity_attribute = match resolved.kind() {
         catalog::CatalogIdKind::Cask { source, token } => {
-            catalog::native_package_attribute(&system, &nix::full_entry_id(source, token))
+            catalog::native_package_attribute(system, &nix::full_entry_id(source, token))
         }
         _ => data
             .matched_attribute
@@ -36,16 +38,31 @@ pub fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
         result => result,
     };
     let installed_error = installed_result.as_ref().err().map(ToString::to_string);
-    let installed = installed_result.ok().and_then(|entries| {
-        entries.into_iter().find(|(_, entry)| {
+    let entries = installed_result.unwrap_or_default();
+    let installed = entries
+        .iter()
+        .find(|(_, entry)| {
             entry.active
                 && entry.attr_path == identity_attribute
                 && catalog::canonical_source(&entry.original_url)
-                    == catalog::canonical_source(&reference)
+                    == catalog::canonical_source(reference)
         })
-    });
+        .map(|(entry_id, entry)| (entry_id.clone(), entry.clone()));
+    // Another source of the same name, such as `brew:figlet`, can be the
+    // installed one.
+    let installed_alternative = entries
+        .values()
+        .filter(|entry| entry.active)
+        .filter_map(|entry| {
+            let id = crate::profile::package_id(entry, &session.config, &session.paths.state_home);
+            match catalog::parse_id(&id) {
+                Ok(catalog::ParsedId::Qualified(id)) => Some(catalog::short_id(&id)),
+                _ => None,
+            }
+        })
+        .find(|id| alternatives.contains(id));
     if cli.json {
-        let mut result = info_json(&resolved, &data, &reference, &system, installed.as_ref());
+        let mut result = info_json(resolved, data, reference, system, installed.as_ref());
         result["installed_state"] = serde_json::json!(if installed_error.is_some() {
             "unknown"
         } else if installed.is_some() {
@@ -54,22 +71,30 @@ pub fn run(cli: &Cli, id: &str) -> Result<(), CommandError> {
             "absent"
         });
         result["installed_error"] = serde_json::json!(installed_error);
+        result["commands"] = serde_json::json!(data.commands);
+        result["alternatives"] = serde_json::json!(alternatives);
+        result["installed_alternative"] = serde_json::json!(installed_alternative);
         print_json(&output::envelope("info", &result))?;
     } else {
         print!(
             "{}",
             info_text(
-                &resolved,
-                &data,
-                &reference,
+                &package,
                 installed.as_ref(),
-                &installable,
+                installed_alternative.as_deref(),
                 cli.verbose,
                 installed_error.as_deref(),
             )
         );
     }
     if let Some(error) = installed_error {
+        if cli.json {
+            // The JSON result already reports the unknown state.
+            eprintln!("pkg: installed state is unknown: {error}");
+            return Err(CommandError::Reported(std::process::ExitCode::from(
+                crate::commands::FAILURE,
+            )));
+        }
         return Err(format!("installed state is unknown: {error}").into());
     }
     Ok(())
@@ -119,66 +144,76 @@ fn info_json(
 
 /// Build the human rendering for one collected info outcome.
 fn info_text(
-    resolved: &catalog::CatalogId,
-    data: &PackageMetadata,
-    reference: &str,
+    package: &ResolvedPackage,
     installed: Option<&(String, ProfileEntry)>,
-    installable: &str,
+    installed_alternative: Option<&str>,
     verbose: bool,
     installed_error: Option<&str>,
 ) -> String {
+    use crate::output::{Stream, Tone, paint};
     use std::fmt::Write as _;
+    let ResolvedPackage {
+        resolved,
+        data,
+        reference,
+        installable,
+        alternatives,
+        ..
+    } = package;
     let mut out = String::new();
     let (name, version) = metadata_name(resolved, data);
-    let _ = writeln!(out, "{name}  {}", version.unwrap_or("version unknown"));
+    let _ = writeln!(
+        out,
+        "{}  {}",
+        paint(Stream::Out, Tone::Strong, name),
+        version.unwrap_or("version unknown")
+    );
     if let Some(meta) = &data.meta
         && !meta.description.is_empty()
     {
         let _ = writeln!(out, "{}", meta.description);
     }
     let _ = writeln!(out, "ID: {}", resolved.qualified());
+    if !data.commands.is_empty() {
+        let _ = writeln!(out, "Commands: {}", data.commands.join(", "));
+    }
     if let Some(kind) = &data.formula_kind {
         let _ = writeln!(
             out,
-            "Package: {}",
+            "Built from: {}",
             if kind == "nixpkgs-equivalent" {
-                "Nixpkgs equivalent"
+                "the Nixpkgs package"
             } else {
-                "Homebrew bottle through Nix"
+                "the Homebrew bottle"
             }
         );
     }
-    let _ = writeln!(
-        out,
-        "Installed: {}",
-        if installed_error.is_some() {
-            "Unknown (profile could not be read)"
-        } else if installed.is_some() {
-            "Yes"
-        } else {
-            "No"
-        }
-    );
-    if let Some(availability) = &data.availability {
-        match availability {
-            catalog::Availability::Available => {
-                let _ = writeln!(out, "Status: Available on this system");
-            }
-            catalog::Availability::Unavailable { reason } => {
-                let _ = writeln!(out, "Status: Cannot install on this system");
-                let _ = writeln!(out, "Reason: {reason}");
-            }
-            catalog::Availability::Unknown { reason } => {
-                let _ = writeln!(out, "Status: Unknown");
-                let _ = writeln!(out, "Reason: {reason}");
-            }
-        }
+    let state = match (installed_error, installed, installed_alternative) {
+        (Some(_), ..) => String::from("Unknown (profile could not be read)"),
+        (None, Some(_), _) => String::from("Yes"),
+        (None, None, Some(other)) => format!("No ({other} is installed)"),
+        (None, None, None) => String::from("No"),
+    };
+    let _ = writeln!(out, "Installed: {state}");
+    if let Some(availability) = &data.availability
+        && !(installed.is_some() && matches!(availability, catalog::Availability::Available))
+    {
+        write_availability(&mut out, availability, verbose);
     }
-    let _ = writeln!(
-        out,
-        "Source: {}",
-        crate::output::short_source(data.report.display.as_deref().unwrap_or(reference))
-    );
+    let source = match resolved.kind() {
+        catalog::CatalogIdKind::Cask { source, .. }
+            if source == crate::nix::OFFICIAL_CASK_SOURCE =>
+        {
+            String::from("Homebrew Casks")
+        }
+        catalog::CatalogIdKind::Cask { source, .. } => source.clone(),
+        catalog::CatalogIdKind::Formula(_) => String::from("Homebrew formulae"),
+        _ => crate::output::short_source(data.report.display.as_deref().unwrap_or(reference)),
+    };
+    let _ = writeln!(out, "Source: {source}");
+    if !alternatives.is_empty() {
+        let _ = writeln!(out, "Also available: {}", alternatives.join(", "));
+    }
     if verbose {
         let _ = writeln!(out, "Source reference: {reference}");
         let _ = writeln!(out, "Attribute: {}", data.attribute);
@@ -201,6 +236,37 @@ fn info_text(
         }
     }
     out
+}
+
+/// Write whether the package can install on this computer, and why not.
+fn write_availability(out: &mut String, availability: &catalog::Availability, verbose: bool) {
+    use std::fmt::Write as _;
+    match availability {
+        catalog::Availability::Available => {
+            let _ = writeln!(out, "Status: Can install on this computer");
+        }
+        catalog::Availability::Unavailable { reason } => {
+            let status = if reason == catalog::OTHER_SYSTEMS {
+                "Probably cannot install on this computer"
+            } else {
+                "Cannot install on this computer"
+            };
+            let _ = writeln!(out, "Status: {status}");
+            let _ = writeln!(
+                out,
+                "Reason: {}",
+                if verbose {
+                    reason.as_str()
+                } else {
+                    catalog::plain_reason(reason)
+                }
+            );
+        }
+        catalog::Availability::Unknown { reason } => {
+            let _ = writeln!(out, "Status: Unknown");
+            let _ = writeln!(out, "Reason: {reason}");
+        }
+    }
 }
 
 fn metadata_name<'a>(

@@ -23,6 +23,8 @@ pub(super) struct PackageMetadata {
     pub(super) cask: Option<CaskDetails>,
     pub(super) availability: Option<catalog::Availability>,
     pub(super) formula_kind: Option<String>,
+    /// Commands the package provides, when the catalog declares them.
+    pub(super) commands: Vec<String>,
 }
 
 pub(super) struct ResolvedPackage {
@@ -31,6 +33,8 @@ pub(super) struct ResolvedPackage {
     pub(super) reference: String,
     pub(super) installable: String,
     pub(super) system: String,
+    /// Other installable packages with the requested bare name.
+    pub(super) alternatives: Vec<String>,
 }
 
 pub(super) struct Resolution<'a> {
@@ -41,19 +45,56 @@ pub(super) struct Resolution<'a> {
     casks: catalog::CatalogOnce<'a>,
     formulae: Option<catalog::brew::FormulaView>,
     host: catalog::CaskHost,
+    names: Option<catalog::Names>,
 }
 
 impl<'a> Resolution<'a> {
     pub(super) fn new(session: &'a Session) -> Result<Self, CommandError> {
-        Ok(Self {
+        Ok(Self::with_system(session, session.nix.system()?))
+    }
+
+    /// A resolution that reads the system recorded with the search data.
+    /// Only a host without prepared data asks Nix.
+    pub(super) fn local(session: &'a Session) -> Result<Self, CommandError> {
+        let system = match catalog::prepared_system(&session.paths.cache_dir) {
+            Some(system) => system,
+            None => session.nix.system()?,
+        };
+        Ok(Self::with_system(session, system))
+    }
+
+    fn with_system(session: &'a Session, system: String) -> Self {
+        Self {
             session,
-            system: session.nix.system()?,
             routing: catalog::Routing::new(&session.config.sources, BTreeMap::new()),
             taps: None,
-            casks: catalog::CatalogOnce::new(&session.nix, &session.config.sources.casks),
+            casks: catalog::CatalogOnce::local_first(
+                &session.nix,
+                &session.config.sources.casks,
+                &session.paths.cache_dir,
+                &system,
+            ),
             formulae: None,
             host: catalog::CaskHost::default(),
-        })
+            names: None,
+            system,
+        }
+    }
+
+    /// Local name data with every saved tap. Callers put it back in
+    /// `self.names`, so one command opens the data once.
+    fn take_names(&mut self) -> Result<catalog::Names, CommandError> {
+        if let Some(names) = self.names.take() {
+            return Ok(names);
+        }
+        let saved = self.taps()?.saved_all()?;
+        Ok(catalog::Names::local(
+            &self.session.paths.cache_dir,
+            &self.session.config.sources,
+            &self.system,
+            saved,
+            catalog::Kept::default(),
+        ))
     }
 
     fn taps(&mut self) -> Result<&mut Catalogs, CommandError> {
@@ -71,43 +112,58 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    fn resolve(&mut self, parsed: ParsedId, installing: bool) -> Result<CatalogId, CommandError> {
+    fn resolve(
+        &mut self,
+        parsed: ParsedId,
+        installing: bool,
+    ) -> Result<(CatalogId, Vec<String>), CommandError> {
         let cask_only = matches!(parsed, ParsedId::BareCask(_));
+        let mut alternatives = Vec::new();
         let mut id = match parsed {
             ParsedId::Qualified(id) => id,
             ParsedId::Bare(name) | ParsedId::BareCask(name) => {
-                let saved = self.taps()?.saved_all()?;
-                let result = catalog::resolve_bare(
-                    &self.session.nix,
-                    (!cask_only).then_some((
-                        self.routing.sources.nixpkgs.as_str(),
-                        self.session.paths.cache_dir.as_path(),
-                    )),
-                    &saved,
-                    &name,
-                    &self.system,
+                let scope = if cask_only {
+                    catalog::Scope::Casks
+                } else {
+                    catalog::Scope::All
+                };
+                let session = self.session;
+                let mut names = self.take_names()?;
+                let choice = names.choose(
+                    &session.nix,
+                    &session.config.sources,
                     &mut self.casks,
+                    &name,
+                    scope,
                 );
-                result.map_err(|error| {
-                    if installing {
-                        super::search::install_resolution_error(
-                            self.session,
-                            &name,
-                            cask_only.then_some("cask"),
-                            error,
-                        )
-                    } else {
-                        error.into()
-                    }
-                })?
+                self.names = Some(names);
+                let choice = choice.map_err(|error| match error {
+                    _ if installing => super::search::install_resolution_error(
+                        session,
+                        &name,
+                        cask_only.then_some("cask"),
+                        error,
+                    ),
+                    catalog::CatalogError::NotFound(_) => CommandError::Message(format!(
+                        "no package named `{name}`. Search with `pkg search {name}`."
+                    )),
+                    error => error.into(),
+                })?;
+                if installing {
+                    note_choice(&name, &choice);
+                }
+                alternatives = choice.alternatives;
+                choice.id
             }
         };
         if let CatalogIdKind::Formula(name) = id.kind() {
             let view = match &mut self.formulae {
                 Some(view) => view,
-                empty @ None => empty.insert(catalog::brew::FormulaView::load(
+                empty @ None => empty.insert(catalog::brew::FormulaView::local_or_load(
                     &self.session.nix,
+                    &self.session.paths.cache_dir,
                     &self.session.config.sources.formulae,
+                    &self.system,
                 )?),
             };
             id = CatalogId::formula(&view.resolve(&self.system, name)?)?;
@@ -116,7 +172,7 @@ impl<'a> Resolution<'a> {
         {
             self.taps()?;
         }
-        Ok(id)
+        Ok((id, alternatives))
     }
 
     fn catalog_data(
@@ -148,6 +204,7 @@ impl<'a> Resolution<'a> {
                     cask: None,
                     availability: Some(view.availability(&self.host, &self.system, name)?),
                     formula_kind: record.and_then(|entry| entry.kind.clone()),
+                    commands: view.executables(name).to_vec(),
                 }))
             }
             CatalogIdKind::Cask { source, token } => {
@@ -169,18 +226,83 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    /// Package data for a Nixpkgs ID from the local search data.
+    fn local_native(
+        &mut self,
+        id: &CatalogId,
+        reference: &str,
+        attribute: &str,
+    ) -> Result<Option<PackageMetadata>, CommandError> {
+        if !matches!(id.kind(), CatalogIdKind::Nixpkgs(_))
+            || reference != self.session.config.sources.nixpkgs
+        {
+            return Ok(None);
+        }
+        let row = match &self.names {
+            Some(names) => names.native_row(reference, attribute),
+            // A Nixpkgs ID needs no tap data, so a broken tap does not
+            // block it. Bare names still load every tap.
+            None => catalog::Names::local(
+                &self.session.paths.cache_dir,
+                &self.session.config.sources,
+                &self.system,
+                crate::tap::SavedCatalogs::default(),
+                catalog::Kept::default(),
+            )
+            .native_row(reference, attribute),
+        };
+        let Some((row, report)) = row? else {
+            return Ok(None);
+        };
+        Ok(Some(PackageMetadata {
+            attribute: attribute.to_owned(),
+            matched_attribute: Some(row.attribute),
+            meta: Some(nix::SearchMeta {
+                pname: row.name,
+                version: row.version,
+                description: row.description,
+            }),
+            report,
+            cask: None,
+            availability: Some(
+                row.unavailable
+                    .map_or(catalog::Availability::Available, |reason| {
+                        catalog::Availability::Unavailable { reason }
+                    }),
+            ),
+            formula_kind: None,
+            commands: row.command.into_iter().collect(),
+        }))
+    }
+
     pub(super) fn inspect(&mut self, parsed: ParsedId) -> Result<ResolvedPackage, CommandError> {
-        let resolved = self.resolve(parsed, false)?;
+        let (resolved, alternatives) = self.resolve(parsed, false)?;
         let (reference, attribute) = resolved.source_and_attribute(&self.routing, &self.system)?;
         let installable = format!("{reference}#{attribute}");
         let data = if let Some(data) = self.catalog_data(&resolved, &reference, &attribute)? {
             data
+        } else if let Some(data) = self.local_native(&resolved, &reference, &attribute)? {
+            data
         } else {
-            let (exact, report) = catalog::exact_lookup(&self.session.nix, &reference, &attribute).map_err(|error| match error {
-                catalog::CatalogError::NotFound(_) => CommandError::Message(format!("`{}` has no exact match in `{reference}`; pkg does not report package identities it cannot evaluate", resolved.qualified())),
-                catalog::CatalogError::Ambiguous { name, choices } => CommandError::Message(format!("`{name}` is ambiguous in `{reference}`; choose one of: {}", choices.iter().map(|choice| request_qualified(&resolved, choice)).collect::<Vec<_>>().join(", "))),
-                error => error.into(),
-            })?;
+            let (exact, report) = catalog::exact_lookup(&self.session.nix, &reference, &attribute)
+                .map_err(|error| match error {
+                    catalog::CatalogError::NotFound(_) => CommandError::Message(format!(
+                        "no package named `{}`. Search with `pkg search {}`.",
+                        resolved.qualified(),
+                        crate::output::short_package_name(&resolved.qualified())
+                    )),
+                    catalog::CatalogError::Ambiguous { name, choices } => {
+                        CommandError::Message(format!(
+                            "`{name}` is ambiguous in `{reference}`; choose one of: {}",
+                            choices
+                                .iter()
+                                .map(|choice| request_qualified(&resolved, choice))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                    }
+                    error => error.into(),
+                })?;
             PackageMetadata {
                 attribute,
                 matched_attribute: Some(exact.attribute),
@@ -189,6 +311,7 @@ impl<'a> Resolution<'a> {
                 cask: None,
                 availability: None,
                 formula_kind: None,
+                commands: Vec::new(),
             }
         };
         Ok(ResolvedPackage {
@@ -197,6 +320,7 @@ impl<'a> Resolution<'a> {
             reference,
             installable,
             system: self.system.clone(),
+            alternatives,
         })
     }
 
@@ -206,14 +330,16 @@ impl<'a> Resolution<'a> {
     ) -> Result<IndexMap<String, String>, CommandError> {
         let mut installables = IndexMap::new();
         for request in parsed {
-            let id = self.resolve(request, true)?;
+            let (id, _) = self.resolve(request, true)?;
             let (reference, attribute) = id.source_and_attribute(&self.routing, &self.system)?;
-            if let Some(data) = self.catalog_data(&id, &reference, &attribute)?
-                && let Some(availability) = data.availability
-            {
-                availability
-                    .require()
-                    .map_err(|reason| format!("{}: {reason}", id.qualified()))?;
+            // Local data refuses a package that cannot install here before
+            // Nix runs, and names it.
+            let data = match self.catalog_data(&id, &reference, &attribute)? {
+                Some(data) => Some(data),
+                None => self.local_native(&id, &reference, &attribute)?,
+            };
+            if let Some(availability) = data.and_then(|data| data.availability) {
+                availability.require(&id.qualified(), "Nothing was installed.")?;
             }
             let installable = format!("{reference}#{attribute}");
             installables.insert(installable, id.qualified());
@@ -290,7 +416,31 @@ fn cask_info(
         availability: Some(host.availability(&view.index, system, source, token)?),
         formula_kind: None,
         cask: Some(cask),
+        commands: Vec::new(),
     })
+}
+
+/// Tell the user how a bare name was chosen.
+///
+/// Install names other sources only when they are Casks: a Formula with
+/// the same name is usually the same package. `pkg info` names them all.
+fn note_choice(name: &str, choice: &catalog::Choice) {
+    if choice.by_command {
+        let id = catalog::short_id(&choice.id);
+        crate::output::note(&format!(
+            "{} provides the `{name}` command.",
+            id.strip_prefix("nixpkgs:").unwrap_or(&id)
+        ));
+    }
+    let casks: Vec<&str> = choice
+        .alternatives
+        .iter()
+        .map(String::as_str)
+        .filter(|alternative| alternative.starts_with("cask:"))
+        .collect();
+    if !casks.is_empty() {
+        crate::output::note(&format!("Also available: {}", casks.join(", ")));
+    }
 }
 
 /// The recorded cask state for text and JSON output.
@@ -362,8 +512,7 @@ pub fn gate_upgrade(
         resolver
             .host
             .availability(&view.index, &system, &source, &token)?
-            .require()
-            .map_err(|reason| format!("{prefix}:{source}/{token}: {reason}"))?;
+            .require(&format!("{prefix}:{source}/{token}"), "Nothing changed.")?;
     }
     Ok(())
 }

@@ -29,6 +29,10 @@ impl Fixture {
         .expect("runtime config");
         let profiles = home.path().join("state/nix/profiles");
         fs::create_dir_all(&profiles).expect("profile directory");
+        for number in [1, 2] {
+            symlink(home.path(), profiles.join(format!("pkg-{number}-link")))
+                .expect("generation link");
+        }
         symlink("pkg-1-link", profiles.join("pkg")).expect("native generation link");
         Self { home }
     }
@@ -93,6 +97,7 @@ elif action in ('add','remove','upgrade','rollback','wipe-history'):
   profile.symlink_to('pkg-2-link')
  if os.environ['PKG_ORDER_STOP']=='mutation': interrupt()
 elif 'flake metadata' in text: print(json.dumps({'url':'github:fixture/packages/1111111111111111111111111111111111111111'}))
+elif 'eval' in args and '--apply' in args and (home/'same-build').exists(): print('[]')
 else:
  print('unexpected native call: '+text,file=sys.stderr)
  sys.exit(9)
@@ -102,7 +107,7 @@ const ACTIONS: &[&[&str]] = &[
     &["install", "github:fixture/packages#probe"],
     &["remove", "opaque", "--entry"],
     &["upgrade", "opaque", "--entry"],
-    &["rollback", "1"],
+    &["rollback", "2"],
     &["prune", "--older-than", "30d"],
 ];
 
@@ -258,11 +263,7 @@ fn failed_mutation_reports_observed_profile_state_and_original_cause() {
         assert!(output.stdout.is_empty(), "no completion: {output:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains(evidence), "{state}: {stderr}");
-        let cause = if args[0] == "prune" {
-            "Cause: native command `nix profile wipe-history"
-        } else {
-            "Cause: fixture mutation failed"
-        };
+        let cause = "Cause: fixture mutation failed";
         assert!(
             stderr.contains(cause) && stderr.contains("fixture mutation failed"),
             "original mutation cause: {stderr}"
@@ -291,12 +292,9 @@ fn fixed_only_upgrades_keep_the_profile_without_native_mutation() {
     for (args, message) in [
         (
             &["upgrade", "opaque", "--entry"][..],
-            "Unchanged: selected entries use fixed source references.",
+            "Nothing to upgrade. The selected packages use a fixed source revision.",
         ),
-        (
-            &["upgrade", "--all"][..],
-            "Unchanged: no movable entries to upgrade.",
-        ),
+        (&["upgrade", "--all"][..], "Nothing to upgrade."),
     ] {
         let fixture = Fixture::new();
         let pinned = RUNTIME.replace(
@@ -311,7 +309,10 @@ fn fixed_only_upgrades_keep_the_profile_without_native_mutation() {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("Skipped: opaque (fixed source reference)."));
+        assert!(
+            stdout.contains("Skipped: probe (fixed source revision)."),
+            "{stdout}"
+        );
         assert!(stdout.contains(message), "{stdout}");
         assert!(!fixture.home.path().join("changed").exists());
         let calls = fixture.calls();
@@ -455,6 +456,23 @@ fn postflight_cancellation_reports_committed_change_and_stops_refresh() {
         );
         assert!(calls.iter().all(|call| call["locked"] == true), "{calls:?}");
     }
+}
+
+#[test]
+fn an_entry_with_the_same_build_counts_as_installed() {
+    let fixture = Fixture::new();
+    fs::write(fixture.home.path().join("same-build"), "").expect("flag");
+    let output = fixture.run(&["install", "github:fixture/packages#probe"], "none", "INT");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        stdout.contains("Already installed: probe") && stdout.contains("(the same build)"),
+        "{stdout}"
+    );
+    assert!(
+        fixture.calls().iter().all(|call| call["call"] != "add"),
+        "no second entry is added"
+    );
 }
 
 #[test]

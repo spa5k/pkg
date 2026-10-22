@@ -67,10 +67,12 @@ impl SearchSource {
 pub(super) fn search_input(
     options: &SearchOptions,
 ) -> Result<(String, SearchSource), CommandError> {
+    // Several words without quotes form one query: `pkg search json tool`.
+    let query = options.query.join(" ");
     let text = if options.matching.regex {
-        options.query.as_str()
+        query.as_str()
     } else {
-        options.query.trim()
+        query.trim()
     };
     let explicit = SearchSource::parse(options.source.as_deref());
     let (text, implied) = match text.split_once(':').filter(|_| !options.matching.regex) {

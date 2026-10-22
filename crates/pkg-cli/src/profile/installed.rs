@@ -45,6 +45,27 @@ pub fn commands(entry: &ProfileEntry, profile: &std::path::Path) -> Vec<String> 
     names.into_iter().collect()
 }
 
+/// Whether an active entry has an executable `bin/COMMAND`.
+fn provides(entry: &ProfileEntry, command: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    !command.is_empty()
+        && !command.starts_with('.')
+        && command
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-.+".contains(c))
+        && entry.store_paths.iter().any(|output| {
+            std::fs::metadata(std::path::Path::new(output).join("bin").join(command)).is_ok_and(
+                |metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0,
+            )
+        })
+}
+
+/// The short name that the user types for this entry, such as `ripgrep`
+/// or `stats`.
+pub fn display_name(entry: &ProfileEntry, config: &Config, state_home: &std::path::Path) -> String {
+    crate::output::short_package_name(&package_id(entry, config, state_home))
+}
+
 pub fn package_id(entry: &ProfileEntry, config: &Config, state_home: &std::path::Path) -> String {
     let mut parts = entry.attr_path.splitn(3, '.');
     let root = parts.next().unwrap_or_default();
@@ -116,14 +137,38 @@ pub fn select(
                     })
             })
             .collect();
+        // A command name selects the one installed package that provides
+        // it, so `pkg remove rg` removes ripgrep.
+        let matches = if matches.is_empty() && !exact_entry {
+            entries
+                .iter()
+                .filter(|(_, entry)| entry.active && provides(entry, request))
+                .collect()
+        } else {
+            matches
+        };
         match matches.as_slice() {
+            [] if exact_entry => {
+                return Err(format!(
+                    "`{request}` is not an entry ID. Nothing changed. Run `pkg list --verbose` to see the entry IDs."
+                ));
+            }
             [] => {
                 return Err(format!(
-                    "`{request}` is not installed. Run `pkg list` for package IDs."
+                    "`{request}` is not installed. Nothing changed. Run `pkg list` to see installed packages."
                 ));
             }
             [(key, _)] => {
                 selected.insert((*key).clone());
+            }
+            // Several entries of the same package from the same source are
+            // one package for the user. Select all of them.
+            [(_, first), rest @ ..]
+                if rest.iter().all(|(_, entry)| {
+                    entry.original_url == first.original_url && entry.attr_path == first.attr_path
+                }) =>
+            {
+                selected.extend(matches.iter().map(|(key, _)| (*key).clone()));
             }
             many => {
                 let choices = many
@@ -161,6 +206,41 @@ mod tests {
             ),
             store_paths: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_command_name_selects_the_one_package_that_provides_it() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let config = Config::default();
+        let state = Path::new("/tmp/pkg-selector-test-state");
+        let store = tempfile::tempdir().unwrap();
+        let output = store.path().join("ripgrep-15.2.0");
+        std::fs::create_dir_all(output.join("bin")).unwrap();
+        std::fs::write(output.join("bin/rg"), "").unwrap();
+        std::fs::set_permissions(
+            output.join("bin/rg"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let mut ripgrep = entry(
+            "legacyPackages.aarch64-darwin.ripgrep",
+            &config.sources.nixpkgs,
+        );
+        ripgrep.store_paths = vec![output.display().to_string()];
+        let entries = BTreeMap::from([
+            (String::from("ripgrep"), ripgrep),
+            (
+                String::from("jq"),
+                entry("legacyPackages.aarch64-darwin.jq", &config.sources.nixpkgs),
+            ),
+        ]);
+        assert_eq!(
+            select(&entries, &config, state, &[String::from("rg")], false).unwrap(),
+            ["ripgrep"]
+        );
+        // An exact entry ID never falls back to a command name.
+        assert!(select(&entries, &config, state, &[String::from("rg")], true).is_err());
+        assert!(select(&entries, &config, state, &[String::from("fd")], false).is_err());
     }
 
     #[test]
@@ -242,39 +322,6 @@ mod tests {
             .unwrap(),
             ["python"]
         );
-        entries.insert(String::from("nix/casks-1"), entries["nix/casks"].clone());
-        let error = select(
-            &entries,
-            &config,
-            state,
-            &[String::from("rectangle")],
-            false,
-        )
-        .unwrap_err();
-        assert!(error.contains("--entry nix/casks-1"), "{error}");
-        assert_eq!(
-            select(
-                &entries,
-                &config,
-                state,
-                &[String::from("nix/casks-1")],
-                true
-            )
-            .unwrap(),
-            ["nix/casks-1"]
-        );
-        entries.get_mut("nix/casks-1").unwrap().active = false;
-        assert_eq!(
-            select(
-                &entries,
-                &config,
-                state,
-                &[String::from("rectangle")],
-                false
-            )
-            .unwrap(),
-            ["nix/casks"]
-        );
         let foreign = entry(
             "packages.aarch64-darwin.homebrew/cask/rectangle",
             "github:other/project",
@@ -299,5 +346,68 @@ mod tests {
         }
         let foreign = entry(&attribute, "github:other/project");
         assert!(package_id(&foreign, &config, state).starts_with("github:other/project#"));
+    }
+
+    #[test]
+    fn duplicate_entries_of_one_package_select_together() {
+        let config = Config::default();
+        let state = Path::new("/tmp/pkg-selector-test-state");
+        let rectangle = entry(
+            "packages.aarch64-darwin.homebrew/cask/rectangle",
+            &config.sources.casks,
+        );
+        let mut entries = BTreeMap::from([(String::from("nix/casks"), rectangle)]);
+        // Two entries of one package from one source are one package.
+        entries.insert(String::from("nix/casks-1"), entries["nix/casks"].clone());
+        assert_eq!(
+            select(
+                &entries,
+                &config,
+                state,
+                &[String::from("rectangle")],
+                false
+            )
+            .unwrap(),
+            ["nix/casks", "nix/casks-1"]
+        );
+        // The same name from another source needs an exact entry.
+        entries.insert(
+            String::from("rectangle"),
+            entry("packages.aarch64-darwin.rectangle", "github:other/project"),
+        );
+        let error = select(
+            &entries,
+            &config,
+            state,
+            &[String::from("rectangle")],
+            false,
+        )
+        .unwrap_err();
+        assert!(error.contains("--entry nix/casks-1"), "{error}");
+        assert!(error.contains("--entry rectangle"), "{error}");
+        entries.remove("rectangle");
+        assert_eq!(
+            select(
+                &entries,
+                &config,
+                state,
+                &[String::from("nix/casks-1")],
+                true
+            )
+            .unwrap(),
+            ["nix/casks-1"]
+        );
+        entries.get_mut("nix/casks-1").unwrap().active = false;
+        assert_eq!(
+            select(
+                &entries,
+                &config,
+                state,
+                &[String::from("rectangle")],
+                false
+            )
+            .unwrap(),
+            ["nix/casks"]
+        );
     }
 }

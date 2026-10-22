@@ -30,22 +30,23 @@ pub(super) fn report(
         .map(|(key, entry)| {
             (
                 key,
-                package_label(&super::installed::package_id(
-                    entry,
-                    &session.config,
-                    &session.paths.state_home,
-                )),
+                super::installed::package_id(entry, &session.config, &session.paths.state_home),
             )
         })
         .collect();
     let file = conflict.file.display();
     match owners.as_slice() {
-        [(_, id)] => eprintln!("Cause: {id} is already installed and provides {file}."),
+        [(_, id)] => {
+            eprintln!(
+                "Cause: {} is already installed and provides {file}.",
+                package_label(id)
+            );
+        }
         [] => eprintln!("Cause: two packages provide {file}."),
         many => {
             eprintln!("Cause: installed packages already provide {file}:");
             for (key, id) in many {
-                eprintln!("  {id} (entry: {key})");
+                eprintln!("  {} (entry: {key})", package_label(id));
             }
         }
     }

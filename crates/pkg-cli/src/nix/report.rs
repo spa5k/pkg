@@ -45,8 +45,21 @@ const HIDDEN_PREFIXES: &[&str] = &[
     "warning: redirecting to ",
     "evaluating derivation ",
     "these ",
+    "this path ",
+    "this derivation ",
     "/nix/store/",
+    "switching profile from version ",
+    "removing profile version ",
+    "shutting down",
 ];
+
+/// Whether `line` is a native summary that pkg reports itself, such as
+/// `removed 1 packages, kept 3 packages` or `upgrading 'hello' from flake
+/// '…' to '…'`.
+fn native_summary(line: &str) -> bool {
+    line.starts_with("removed ") && line.contains(" packages, kept ")
+        || line.starts_with("upgrading '") && line.contains("' from flake '")
+}
 
 /// The compact name of one repository URL or store path: its final path
 /// segment, without a ".git" suffix.
@@ -73,6 +86,7 @@ fn classify(line: &str) -> Kind {
         || HIDDEN_PREFIXES
             .iter()
             .any(|prefix| line.starts_with(prefix))
+        || native_summary(line)
         || line.starts_with("removing '") && line.ends_with('\'')
         || line.starts_with("Last ") && line.contains(" log lines:")
         || line.starts_with("unpacking '") && line.ends_with(" into the Git cache...")
@@ -129,6 +143,38 @@ struct DisplayState {
 struct FilterState {
     lock_diff: bool,
     file_conflict: bool,
+    hidden: Hidden,
+}
+
+/// Native text that the filter hides until it ends.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Hidden {
+    #[default]
+    Nothing,
+    /// A download warning continues with its response body.
+    DownloadBody,
+    /// An `error:` line started the native error trace. pkg reports the
+    /// cause after the profile check, so the trace stays hidden.
+    ErrorTrace,
+}
+
+/// One short line for `warning: unable to download 'URL': …`. Nix then
+/// uses its saved copy; the full warning can hold a JSON response body.
+fn download_note(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("warning: unable to download '")?;
+    let host = rest
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or("the network");
+    let host = if host.ends_with("github.com") {
+        "GitHub"
+    } else {
+        host
+    };
+    Some(format!(
+        "Note: could not download from {host}, so pkg used saved data."
+    ))
 }
 
 impl MutationReporter {
@@ -200,6 +246,30 @@ impl MutationReporter {
                 return;
             }
             self.filtering.file_conflict = false;
+        }
+        if self.filtering.hidden == Hidden::ErrorTrace {
+            return;
+        }
+        if line.starts_with("error:") {
+            self.filtering.hidden = Hidden::ErrorTrace;
+            return;
+        }
+        if self.filtering.hidden == Hidden::DownloadBody {
+            if line.contains("using cached version") {
+                self.filtering.hidden = Hidden::Nothing;
+                return;
+            }
+            if !line.starts_with("warning:") {
+                return;
+            }
+            self.filtering.hidden = Hidden::Nothing;
+        }
+        if let Some(note) = download_note(line) {
+            if !line.contains("using cached version") {
+                self.filtering.hidden = Hidden::DownloadBody;
+            }
+            self.show(&note);
+            return;
         }
         if let Some(scoped) = scoped_hint(line, &self.profile) {
             self.show(&scoped);
@@ -331,6 +401,13 @@ mod tests {
             "unpacking 'github:numtide/flake-utils/11707dc2' into the Git cache...",
             "error (ignored): opening file \"/etc/nix/sentry-endpoint\": Permission denied",
             "removing 'github:NixOS/nixpkgs#legacyPackages.aarch64-darwin.fff'",
+            "this path will be fetched (1.8 MiB download, 5.8 MiB unpacked):",
+            "this derivation will be built:",
+            "removed 1 packages, kept 3 packages",
+            "switching profile from version 4 to 3",
+            "upgrading 'legacyPackages.aarch64-darwin.jq' from flake \
+             'github:NixOS/nixpkgs/682ba80136e2c8dacd6b8900f578a72329458901' to \
+             'github:NixOS/nixpkgs/682ba80136e2c8dacd6b8900f578a72329458901'",
         ] {
             assert_eq!(classify(line), Kind::Hide, "{line}");
         }

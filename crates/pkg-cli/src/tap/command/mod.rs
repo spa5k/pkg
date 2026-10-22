@@ -32,9 +32,10 @@ fn validate_revision(revision: Option<&str>) -> Result<Option<String>, CommandEr
     match revision {
         None => Ok(None),
         Some(value) if crate::nix::is_full_commit_id(value) => Ok(Some(value.to_string())),
-        Some(value) => {
-            Err(format!("`{value}` is not an exact revision; pass a full 40-hex commit id").into())
-        }
+        Some(value) => Err(format!(
+            "`{value}` is not a commit. Use the full commit ID: 40 characters, 0-9 and a-f."
+        )
+        .into()),
     }
 }
 
@@ -67,7 +68,7 @@ fn targets<'a>(
             let source = canonical_source(name)?;
             let Some((source, entry)) = registry.sources.get_key_value(&source) else {
                 return Err(format!(
-                    "`{source}` is not a registered tap; add it with `pkg tap add {source}`"
+                    "`{source}` is not a saved tap. Add it with `pkg tap add {source}`."
                 )
                 .into());
             };
@@ -114,7 +115,14 @@ pub(super) fn add(
         match consent::ask(&source, &origin, trusted) {
             consent::Decision::Approved => approved_now = true,
             consent::Decision::Refused => {
-                return Err(String::from("tap add was not approved").into());
+                return Err(String::from("the tap was not approved. Nothing changed.").into());
+            }
+            consent::Decision::NoTerminal => {
+                return Err(format!(
+                    "the tap runs code from {origin}, so it needs your approval. \
+                     Run this command in a terminal, or add `--trust`."
+                )
+                .into());
             }
         }
     }
@@ -237,7 +245,7 @@ pub(super) fn update(
     let revision = validate_revision(revision)?;
     if revision.is_some() && source.is_none() {
         return Err(String::from(
-            "pin a revision for one named tap: `pkg tap update SOURCE --revision SHA`",
+            "name one tap to use a revision: `pkg tap update OWNER/TAP --revision SHA`",
         )
         .into());
     }
@@ -251,7 +259,7 @@ pub(super) fn update(
     let registry = registry::Registry::load(&registry_path)?;
     let targets = targets(&registry, source)?;
     if targets.is_empty() {
-        println!("No saved taps to update.\nNext: pkg tap add SOURCE");
+        println!("No saved taps to update.\nNext: pkg tap add OWNER/TAP");
         return Ok(());
     }
     // The global lock covers this registry snapshot and all publications.
@@ -304,7 +312,7 @@ pub(super) fn list(cli: &Cli) -> Result<(), CommandError> {
     if cli.json {
         print_json(&crate::output::envelope("tap-list", &rows))?;
     } else if rows.is_empty() {
-        println!("No saved taps.\nNext: pkg tap add SOURCE");
+        println!("No saved taps.\nNext: pkg tap add OWNER/TAP");
     } else {
         let width = rows
             .iter()
@@ -349,7 +357,7 @@ pub(super) fn remove(_cli: &Cli, source: &str) -> Result<(), CommandError> {
     let mut registry = registry::Registry::load(&path)?;
     if !registry.remove(&source) {
         return Err(
-            format!("`{source}` is not a registered tap; `pkg tap list` shows the taps").into(),
+            format!("`{source}` is not a saved tap. Run `pkg tap list` to see the taps.").into(),
         );
     }
     registry.save(&path)?;

@@ -43,7 +43,9 @@ impl CatalogId {
     /// Returns an error when `name` is not a valid Homebrew Formula name.
     pub fn formula(name: &str) -> Result<Self, String> {
         if !super::brew::valid_formula_name(name) {
-            return Err(String::from("brew: needs a valid Homebrew formula name"));
+            return Err(String::from(
+                "enter a Homebrew formula name after brew:, for example brew:jq",
+            ));
         }
         Ok(Self(CatalogIdKind::Formula(name.to_string())))
     }
@@ -196,7 +198,7 @@ pub enum ParsedId {
 pub fn parse_id(input: &str) -> Result<ParsedId, String> {
     let input = input.trim();
     if input.is_empty() {
-        return Err(String::from("ID must not be empty"));
+        return Err(String::from("enter a package name, for example ripgrep"));
     }
     if let Some(name) = input.strip_prefix("brew:") {
         let name = name.strip_prefix("homebrew/core/").unwrap_or(name);
@@ -237,8 +239,8 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
         return match split_entry_id(entry) {
             Some((source, token)) => CatalogId::cask(source, token).map(ParsedId::Qualified),
             None => Err(format!(
-                "`{input}` is not a valid cask entry ID; \
-                 the full form is owner/tap/token, for example somebody/apps/tool"
+                "`{input}` is not a package name. A name with `/` must be \
+                 owner/tap/app, for example somebody/apps/tool"
             )),
         };
     }
@@ -251,7 +253,9 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
 /// components. This accepts tokens such as `1password-cli@beta` and `xournal++`.
 fn validate_cask_token(token: &str, prefix: &str) -> Result<(), String> {
     if token.is_empty() {
-        return Err(format!("{prefix} needs a nonempty token"));
+        return Err(format!(
+            "enter an app name after {prefix}, for example {prefix}raycast"
+        ));
     }
     if !nix::valid_catalog_token(token) {
         return Err(format!(
@@ -264,7 +268,11 @@ fn validate_cask_token(token: &str, prefix: &str) -> Result<(), String> {
 
 fn validate_attr_path(attr: &str, prefix: &str) -> Result<(), String> {
     if attr.is_empty() {
-        return Err(format!("{prefix} needs a nonempty attribute"));
+        return Err(if prefix.ends_with(':') {
+            format!("enter a package name after {prefix}, for example {prefix}ripgrep")
+        } else {
+            format!("{prefix}need a package name after `#`")
+        });
     }
     for segment in attr.split('.') {
         if segment.is_empty() {

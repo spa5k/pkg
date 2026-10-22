@@ -461,7 +461,7 @@ fn doctor_reports_launcher_drift_and_health_without_writing() {
     assert_eq!(
         drift["detail"],
         format!(
-            "unhealthy: app launcher drift in {} (missing: [Stats.app]; stale: [Old.app]; changed source: []); run `pkg apps sync`",
+            "app launcher drift in {} (missing: [Stats.app]; stale: [Old.app]; changed source: []); run `pkg apps sync`",
             fixture.launchers().display()
         )
     );
@@ -481,7 +481,7 @@ fn doctor_reports_launcher_drift_and_health_without_writing() {
     assert_eq!(
         changed["detail"],
         format!(
-            "unhealthy: app launcher drift in {} (missing: []; stale: []; changed source: [Stats.app]); run `pkg apps sync`",
+            "app launcher drift in {} (missing: []; stale: []; changed source: [Stats.app]); run `pkg apps sync`",
             fixture.launchers().display()
         )
     );
@@ -501,10 +501,7 @@ fn doctor_reports_launcher_drift_and_health_without_writing() {
     assert_eq!(healthy["status"], "healthy");
     assert_eq!(
         healthy["detail"],
-        format!(
-            "healthy: 1 launcher(s) in sync (folder {})",
-            fixture.launchers().display()
-        )
+        format!("1 launcher in {}", fixture.launchers().display())
     );
     assert_eq!(
         fs::read_to_string(fixture.launchers().join(".pkg-launcher-sources")).unwrap(),

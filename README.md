@@ -45,28 +45,25 @@ Details are in the [install guide](docs/install.md).
 ## Use `pkg`
 
 ```sh
-pkg search ripgrep         # Search local catalogs
-pkg search aws             # Rank tools before helpers; hide library noise
-pkg search aws --source homebrew # Show Homebrew Formulae and Casks
-pkg search brew:aws        # Search official Homebrew Formulae
-pkg search cask:aws         # Search Homebrew Casks and registered cask taps
-pkg search ripgrpe          # Show similar names when no literal result exists
-pkg info nixpkgs:ripgrep   # Show source, attribute, and revision
-pkg install nixpkgs:ripgrep # Install one exact package ID
-pkg list                   # List installed entries
+pkg search ripgrep         # Find packages
+pkg info ripgrep           # Show details, commands, and other sources
+pkg install ripgrep        # Install a package
+pkg install rg             # Command names work too
+pkg list                   # List installed packages and versions
+pkg upgrade                # Upgrade all packages
+pkg remove ripgrep         # Remove a package
+pkg history                # Show past changes
+pkg rollback               # Undo the last change
 pkg update                 # Update pkg and its search data
-pkg upgrade --all          # Follow each entry's original reference
-pkg history                # Show native profile generations
-pkg rollback               # Return to the previous generation
-pkg prune --older-than 30d # Remove old generations
-pkg remove ripgrep         # Remove an installed entry
 pkg doctor                 # Check the setup
-pkg apps sync              # Rebuild macOS app launchers
 ```
 
 `pkg add` also installs packages. `pkg uninstall` also removes packages.
-Install and remove show the full package ID. Install also shows the commands
-that the package exposes in the profile.
+
+A name that several sources have installs from the first source in this
+order: Nixpkgs, Homebrew Casks, Homebrew Formulae. The result names the
+other sources. To choose one, use its ID, for example
+`pkg install cask:firefox` or `pkg install brew:awscli`.
 
 Packages install into a dedicated native profile at
 `~/.local/state/nix/profiles/pkg`. Your default Nix profile stays separate.

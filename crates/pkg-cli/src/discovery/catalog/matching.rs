@@ -16,7 +16,19 @@ pub(super) struct SearchFields<'a> {
     pub description: &'a str,
     pub source: &'a str,
     pub system: &'a str,
+    /// The main command, when the source declares one.
+    pub command: Option<&'a str>,
 }
+
+/// Rank added to nested Nixpkgs package sets, so a top-level package of the
+/// same match quality comes first.
+const NESTED_RANK: u32 = 450_000;
+
+/// The best rank for a match through a Formula alias. It comes after every
+/// exact name and every name that starts with the query, so `postgresql`
+/// lists Nixpkgs `postgresql` before `postgresql@17`, and `python` lists
+/// `python3` before `python@3.15`.
+pub(super) const ALIAS_RANK: u32 = 1_400_000;
 
 /// A validated discovery query with conservative name matching.
 pub struct SearchQuery {
@@ -134,7 +146,21 @@ impl SearchQuery {
             description: &row.description,
             source: &row.source,
             system: &row.system,
+            command: row.command.as_deref(),
         })
+    }
+
+    /// Whether normal search shows a row of this kind at all.
+    ///
+    /// Hidden rows are internal package sets, development variants, and
+    /// libraries. The query words do not matter here.
+    pub(super) fn visible(&self, row: &SearchFields<'_>) -> bool {
+        let name = row_name(row);
+        self.visible_name(row.source, name)
+            && (self.broad
+                || !matches!(row.source, "nixpkgs" | "brew")
+                || self.library_query()
+                || !declared_library(&lowercase(row.description)))
     }
 
     pub(super) fn rank_fields(&self, row: &SearchFields<'_>) -> Option<u32> {
@@ -145,14 +171,13 @@ impl SearchQuery {
                 .then_some(0);
         }
         let identity = row.id.split_once(':').map_or(row.id, |(_, name)| name);
-        let name = if row.source == "nixpkgs" {
-            exposed_attribute(row.attribute, row.system)
-        } else {
-            identity.rsplit('/').next().unwrap_or(identity)
-        };
+        let name = row_name(row);
         if self.exact(&[row.id, identity, name]) {
             return Some(0);
         }
+        let query = self.literal.as_deref().unwrap_or("");
+        let nested = row.source == "nixpkgs" && name.contains('.') && !query.contains('.');
+        let penalty = if nested { NESTED_RANK } else { 0 };
         if !self.visible_name(row.source, name) {
             return None;
         }
@@ -165,7 +190,13 @@ impl SearchQuery {
             return None;
         }
         let names = [lowercase(name), lowercase(row.name)];
-        if self.exact(&[row.name]) {
+        // An exact package name or main command ranks just after exact IDs.
+        // A nested package set does not get this rank: `python` must not
+        // put a bootstrap or TeX package before `python3`.
+        if !nested
+            && (self.exact(&[row.name])
+                || row.command.is_some_and(|command| self.exact(&[command])))
+        {
             return Some(100_000 + preference(row, &names[0], &description, &self.terms));
         }
         let mut worst = 0;
@@ -202,7 +233,8 @@ impl SearchQuery {
             worst * 1_000_000
                 + preference(row, &names[0], &description, &self.terms)
                 + sum.min(99) * 1024
-                + length,
+                + length
+                + penalty,
         )
     }
 
@@ -300,11 +332,40 @@ fn preference(row: &SearchFields<'_>, name: &str, description: &str, terms: &[St
     }
 }
 
+/// The short name of a row: the exposed Nixpkgs attribute, or the token.
+fn row_name<'a>(row: &SearchFields<'a>) -> &'a str {
+    let identity = row.id.split_once(':').map_or(row.id, |(_, name)| name);
+    if row.source == "nixpkgs" {
+        exposed_attribute(row.attribute, row.system)
+    } else {
+        identity.rsplit('/').next().unwrap_or(identity)
+    }
+}
+
+/// Nested Nixpkgs package sets that normal search and bare names skip.
+///
+/// These sets hold language packages, plugins, editor extensions, tests,
+/// bootstrap tools, and packages for other programs. Application sets,
+/// such as `kdePackages`, stay visible.
 fn development_namespace(attribute: &str) -> bool {
     let Some((namespace, _)) = attribute.split_once('.') else {
         return false;
     };
     let namespace = namespace.to_ascii_lowercase();
+    if (namespace.ends_with("packages")
+        && !matches!(namespace.as_str(), "kdepackages" | "plasma5packages"))
+        || ["plugins", "extensions", "grammars", "modules", "scripts"]
+            .iter()
+            .any(|suffix| namespace.ends_with(suffix))
+        || namespace.contains("bootstrap")
+        || namespace.starts_with("pkgs")
+        || matches!(
+            namespace.as_str(),
+            "tests" | "darwin" | "texlive" | "nur" | "linuxkernel" | "windows" | "androidenv"
+        )
+    {
+        return true;
+    }
     [
         "python",
         "pypy",
@@ -440,7 +501,51 @@ mod tests {
             stale: false,
             support: None,
             install_command: None,
+            command: None,
         }
+    }
+
+    #[test]
+    fn nested_package_sets_follow_top_level_packages() {
+        let query = SearchQuery::new("python", false, false).unwrap();
+        let python3 = row("nixpkgs:python3", "python3", "High-level language");
+        let bootstrap = row(
+            "nixpkgs:minimal-bootstrap.python",
+            "python",
+            "High-level language",
+        );
+        let tex = row("nixpkgs:texlivePackages.python", "python", "Embed Python");
+        let buildbot = row(
+            "nixpkgs:buildbotPackages.python",
+            "python",
+            "High-level language",
+        );
+        assert!(query.rank(&python3).is_some());
+        assert_eq!(query.rank(&bootstrap), None);
+        assert_eq!(query.rank(&tex), None);
+        assert_eq!(query.rank(&buildbot), None);
+        let broad = SearchQuery::new("python", false, false)
+            .unwrap()
+            .broad(true);
+        assert!(broad.rank(&python3) < broad.rank(&bootstrap));
+        // Application sets stay visible.
+        let kate = row("nixpkgs:kdePackages.kate", "kate", "Text editor");
+        assert!(
+            SearchQuery::new("kate", false, false)
+                .unwrap()
+                .rank(&kate)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_main_command_ranks_like_an_exact_name() {
+        let query = SearchQuery::new("rg", false, false).unwrap();
+        let mut ripgrep = row("nixpkgs:ripgrep", "ripgrep", "Line-oriented search tool");
+        assert_eq!(query.rank(&ripgrep), None);
+        ripgrep.command = Some(String::from("rg"));
+        let prefix = row("nixpkgs:rgx", "rgx", "Regex tester");
+        assert!(query.rank(&ripgrep) < query.rank(&prefix));
     }
 
     #[test]

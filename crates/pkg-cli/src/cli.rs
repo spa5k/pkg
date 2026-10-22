@@ -8,20 +8,21 @@ use clap::{Parser, Subcommand, ValueEnum};
     name = "pkg",
     version,
     about = "Find and manage packages.",
-    help_template = "{about}\n\nFind:     search, info, list\nChange:   install/add, remove/uninstall, upgrade, rollback\nMaintain: update, history, prune, doctor, apps, self uninstall\nSources:  tap add, tap list, tap update, tap remove\n\nUsage: {usage}\n\nCommands:\n{subcommands}\n\nOptions:\n{options}",
-    disable_help_subcommand = true
+    help_template = "{about}\n\nUsage: {usage}\n\n{all-args}",
+    disable_help_subcommand = true,
+    arg_required_else_help = true
 )]
 pub struct Cli {
-    /// Emit JSON for search, info, list, doctor, and tap list.
-    #[arg(long, global = true)]
+    /// Print JSON. Works with search, info, list, history, doctor, and tap list.
+    #[arg(long, global = true, help_heading = "Global options")]
     pub json: bool,
 
-    /// Disable colored output.
-    #[arg(long, global = true)]
+    /// Print no color.
+    #[arg(long, global = true, help_heading = "Global options")]
     pub no_color: bool,
 
-    /// Show native commands and detailed output.
-    #[arg(long, global = true)]
+    /// Show the Nix commands and their full output.
+    #[arg(long, global = true, help_heading = "Global options")]
     pub verbose: bool,
 
     /// The command to run.
@@ -32,83 +33,96 @@ pub struct Cli {
 /// Supported commands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Search local package catalogs.
+    /// Find packages.
     Search(SearchOptions),
-    /// Show source, attribute, revision, and limits for one ID.
+    /// Show details about one package.
     Info {
-        /// Catalog ID such as nixpkgs:ripgrep, cask:raycast, or a bare name.
+        /// Package name or ID, such as ripgrep or cask:raycast.
+        #[arg(value_name = "PACKAGE")]
         id: String,
     },
-    /// Resolve all IDs, then add them in one native profile operation.
+    /// Install packages.
     #[command(visible_alias = "add")]
     Install {
-        /// Catalog IDs or supported public GitHub flake installables.
-        #[arg(required = true)]
+        /// Package names or IDs, such as ripgrep or cask:raycast.
+        #[arg(required = true, value_name = "PACKAGES")]
         ids: Vec<String>,
     },
-    /// List installed entries from the dedicated native profile.
+    /// List installed packages.
     List,
-    /// Remove installed packages in one native operation.
+    /// Remove packages.
     #[command(visible_alias = "uninstall")]
     Remove {
-        /// Package IDs, unique names, or native entry IDs from `pkg list`.
-        #[arg(required = true)]
+        /// Installed package names or IDs.
+        #[arg(required = true, value_name = "NAMES")]
         entries: Vec<String>,
-        /// Select exact native entry IDs instead of package names.
+        /// Treat the names as entry IDs from `pkg list --verbose`.
         #[arg(long)]
         entry: bool,
     },
-    /// Update pkg and its search data. Does not change installed packages.
+    /// Upgrade installed packages.
+    ///
+    /// Without names, upgrades all packages.
+    Upgrade {
+        /// Installed package names or IDs. Leave empty to upgrade all packages.
+        #[arg(value_name = "NAMES")]
+        entries: Vec<String>,
+        /// Treat the names as entry IDs from `pkg list --verbose`.
+        #[arg(long, requires = "entries", conflicts_with = "all")]
+        entry: bool,
+        /// Upgrade all packages. This is the default.
+        #[arg(long, conflicts_with = "entries", hide = true)]
+        all: bool,
+    },
+    /// Update pkg and its search data.
+    ///
+    /// Installed packages do not change. To upgrade them, run `pkg upgrade`.
     Update {
         /// Skip saved taps. Used by the scheduled user job.
         #[arg(long, hide = true)]
         scheduled: bool,
+        /// Skip the client check. Used by a client that just replaced itself.
+        #[arg(long, hide = true)]
+        skip_client: bool,
     },
-    /// Control the daily user job for updates and search data.
+    /// Turn daily updates of pkg and its search data on or off.
     #[command(subcommand, hide = true)]
     Background(BackgroundCommand),
-    /// Upgrade installed entries following their original references.
-    Upgrade {
-        /// Package IDs, unique names, or native entry IDs to upgrade.
-        #[arg(required_unless_present = "all")]
-        entries: Vec<String>,
-        /// Select exact native entry IDs instead of package names.
-        #[arg(long, conflicts_with = "all")]
-        entry: bool,
-        /// Upgrade every installed entry, reporting fixed ones explicitly.
-        #[arg(long, conflicts_with = "entries")]
-        all: bool,
-    },
-    /// Display native profile generations.
+    /// Show past changes to your packages.
     History,
-    /// Switch to the previous or a selected native generation.
+    /// Undo the last change.
+    ///
+    /// Without a number, go back to the last generation with other packages.
     Rollback {
-        /// Generation number to select. Defaults to the previous generation.
+        /// Go to this generation from `pkg history`.
+        #[arg(value_parser = parse_generation, allow_negative_numbers = true)]
         generation: Option<u64>,
     },
-    /// Delete non-current profile generations older than an explicit age.
-    Prune {
-        /// Retention age such as `30d`. Required and strictly positive.
-        #[arg(long, value_name = "AGE")]
-        older_than: String,
-    },
-    /// Read runtime, profile, and launcher status. Never repairs.
+    /// Check your setup.
+    ///
+    /// Reports problems and how to fix them. Changes nothing.
     Doctor,
-    /// Print idempotent Bash/Zsh path settings for this profile.
+    /// Print the PATH settings for Bash and Zsh.
     #[command(hide = true)]
     Shellenv,
-    /// Generate shell completion for supported commands.
+    /// Print shell completion code.
     #[command(hide = true)]
     Completion {
-        /// Target shell.
+        /// The shell.
         shell: Shell,
     },
-    /// Derived macOS app launcher operations.
+    /// Manage macOS app launchers.
     #[command(subcommand)]
     Apps(AppsCommand),
-    /// Manage local public Homebrew Cask taps.
+    /// Add packages from other Homebrew Cask taps.
     #[command(subcommand)]
     Tap(TapCommand),
+    /// Delete history older than an age.
+    Prune {
+        /// Age such as `30d`.
+        #[arg(long, value_name = "AGE", allow_hyphen_values = true)]
+        older_than: String,
+    },
     /// Manage pkg itself.
     #[command(name = "self", subcommand)]
     Client(ClientCommand),
@@ -128,12 +142,13 @@ pub enum ClientCommand {
 /// Local search inputs and output controls.
 #[derive(Debug, clap::Args)]
 pub struct SearchOptions {
-    /// Package names or search words. Also accepts nixpkgs:, brew:, or cask: queries.
-    pub query: String,
+    /// Package names or words. Also accepts nixpkgs:, brew:, or cask: queries.
+    #[arg(required = true, value_name = "QUERY")]
+    pub query: Vec<String>,
     /// Search matching controls.
     #[command(flatten)]
     pub matching: SearchMatchingOptions,
-    /// Maximum total results. Human sections share 20 by default; JSON defaults to all.
+    /// Show at most this many results. The default is 20, or all with `--json`.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "all")]
     pub limit: Option<u32>,
     /// Result filtering and output controls.
@@ -153,7 +168,7 @@ pub struct SearchMatchingOptions {
     /// Include libraries, development packages, variants, and substring matches.
     #[arg(long)]
     pub broad: bool,
-    /// Disable name typo alternatives when literal results are absent.
+    /// Do not show similar names when nothing matches.
     #[arg(long, conflicts_with = "regex")]
     pub no_fuzzy: bool,
 }
@@ -172,52 +187,53 @@ pub struct SearchResultOptions {
 /// Controls for the scheduled user job.
 #[derive(Debug, Subcommand)]
 pub enum BackgroundCommand {
-    /// Enable the daily job for the current user and start it now.
+    /// Turn on daily updates, and update now.
     Enable,
-    /// Disable the daily job and remove pkg-owned job files.
+    /// Turn off daily updates.
     Disable,
-    /// Show whether the user job is enabled.
+    /// Show whether daily updates are on.
     Status,
 }
 
 /// Launcher subcommands. Execution is supplied by the apps module.
 #[derive(Debug, Subcommand)]
 pub enum AppsCommand {
-    /// Set up private app storage that shares file data with the Nix store.
+    /// Prepare storage for apps that must keep their original signature.
     Setup,
-    /// Rebuild pkg-owned launchers from the active profile.
+    /// Rebuild the app launchers in ~/Applications/pkg.
     Sync,
 }
 
 /// Local public tap subcommands.
 #[derive(Debug, Subcommand)]
 pub enum TapCommand {
-    /// Approve and import a public Homebrew Cask tap. Asks for consent
-    /// before any tap code runs; `--trust` approves without a prompt.
+    /// Add a public tap. Asks for your approval first.
     Add {
-        /// Tap source: `owner/tap` or `https://github.com/owner/homebrew-tap`.
+        /// The tap, such as `owner/tap` or its GitHub URL.
+        #[arg(value_name = "OWNER/TAP")]
         source: String,
-        /// Exact 40-hex commit id to import instead of the default branch.
+        /// Use this commit (40 hex characters) instead of the newest one.
         #[arg(long, value_name = "SHA")]
         revision: Option<String>,
-        /// Approve the tap origin without an interactive prompt.
+        /// Approve the tap without a prompt.
         #[arg(long)]
         trust: bool,
     },
-    /// List registered taps and their published revisions.
+    /// List saved taps.
     List,
-    /// Re-import one tap or every registered tap at a newer revision.
-    /// Runs tap code again; recorded consent covers it.
+    /// Update one saved tap, or all of them.
     Update {
-        /// Tap source to update. Updates every tap when omitted.
+        /// The tap to update. Leave empty to update all taps.
+        #[arg(value_name = "OWNER/TAP")]
         source: Option<String>,
-        /// Exact 40-hex commit id to import instead of the default branch.
+        /// Use this commit (40 hex characters) instead of the newest one.
         #[arg(long, value_name = "SHA")]
         revision: Option<String>,
     },
-    /// Unregister a tap. Keeps installed packages and old generations.
+    /// Remove a saved tap. Installed apps stay.
     Remove {
-        /// Tap source to remove.
+        /// The tap to remove.
+        #[arg(value_name = "OWNER/TAP")]
         source: String,
     },
 }
@@ -238,20 +254,53 @@ pub enum Shell {
 /// The design requires an explicit strictly positive age expressed in days.
 /// # Errors
 ///
-/// Returns an error unless `value` is a positive integer followed by `d` or `D`, or if the integer exceeds `u64`.
+/// Returns an error unless `value` is a positive integer followed by `d` or `D`.
+/// An age above [`MAX_PRUNE_DAYS`] becomes that limit.
 pub fn parse_prune_age(value: &str) -> Result<u64, String> {
-    let Some(digits) = value.strip_suffix(['d', 'D']) else {
+    let Some(digits) = value.trim().strip_suffix(['d', 'D']) else {
         return Err(String::from("age must end in `d`, for example `30d`"));
     };
-    let Ok(days) = digits.parse::<u64>() else {
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(String::from(
             "age must be a number of days, for example `30d`",
         ));
-    };
+    }
+    // Only digits remain, so a parse failure means a very large age.
+    let days = digits.parse::<u64>().unwrap_or(u64::MAX);
     if days == 0 {
         return Err(String::from(
-            "age must be strictly positive, for example `30d`",
+            "age must be at least 1 day, for example `30d`",
         ));
     }
-    Ok(days)
+    Ok(days.min(MAX_PRUNE_DAYS))
+}
+
+/// The largest age that Nix accepts safely.
+///
+/// Nix converts days to seconds in a 32-bit number, so a longer age wraps
+/// around and deletes every older generation. No generation is that old, so
+/// the limit changes nothing.
+pub const MAX_PRUNE_DAYS: u64 = 24_855;
+
+/// Read a generation number for `pkg rollback`.
+fn parse_generation(value: &str) -> Result<u64, String> {
+    value
+        .trim()
+        .parse()
+        .map_err(|_| String::from("use a generation number from `pkg history`"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prune_ages_above_the_nix_limit_use_the_limit() {
+        assert_eq!(parse_prune_age("30d"), Ok(30));
+        assert_eq!(parse_prune_age("24856d"), Ok(MAX_PRUNE_DAYS));
+        assert_eq!(
+            parse_prune_age("99999999999999999999999d"),
+            Ok(MAX_PRUNE_DAYS)
+        );
+    }
 }

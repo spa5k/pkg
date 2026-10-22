@@ -19,7 +19,12 @@ pub enum Error {
     Interrupted { program: String, signal: i32 },
     #[error("job files exist, but the schedule is not active: {0}. Run `pkg background enable`.")]
     Schedule(#[source] Box<Self>),
+    #[error("daily updates need a systemd user session, and this system has none. {MANUAL}")]
+    NoScheduler,
 }
+
+/// What to do on a system that cannot run the daily job.
+const MANUAL: &str = "Run `pkg update` to update by hand.";
 
 impl From<String> for Error {
     fn from(message: String) -> Self {
@@ -39,7 +44,7 @@ impl Error {
             Self::Process(error) => error.cancelled,
             Self::Interrupted { signal, .. } => Some(*signal),
             Self::Schedule(error) => error.signal(),
-            Self::Message(_) | Self::Io(_) | Self::Publish(_) => None,
+            Self::Message(_) | Self::Io(_) | Self::Publish(_) | Self::NoScheduler => None,
         }
     }
 }
@@ -220,7 +225,28 @@ fn domain() -> String {
     format!("gui/{}", unsafe { libc::geteuid() })
 }
 
+/// Whether the system can run the job. Linux needs a running systemd user
+/// manager; containers, WSL, and some SSH sessions have none.
+fn scheduler_ready() -> Result<bool, Error> {
+    if cfg!(target_os = "macos") {
+        return Ok(true);
+    }
+    match crate::nix::run_direct(Path::new("systemctl"), &["--user", "show-environment"]) {
+        Ok(crate::nix::Outcome::Success) => Ok(true),
+        Ok(crate::nix::Outcome::Interrupted { signal }) => Err(Error::Interrupted {
+            program: String::from("systemctl"),
+            signal,
+        }),
+        Err(error) if error.cancelled.is_some() => Err(error.into()),
+        // No user manager runs, or systemctl is not installed.
+        Ok(crate::nix::Outcome::Failed { .. }) | Err(_) => Ok(false),
+    }
+}
+
 pub fn enable(paths: &Paths, nix: &Path) -> Result<(), Error> {
+    if !scheduler_ready()? {
+        return Err(Error::NoScheduler);
+    }
     let executable = std::env::current_exe()?;
     let job = job(
         paths,
@@ -287,11 +313,13 @@ pub fn disable(paths: &Paths) -> Result<(), Error> {
     if !present.iter().any(|present| *present) {
         return Ok(());
     }
+    // Without a user manager no schedule runs, so only the files remain.
+    let scheduler = scheduler_ready()?;
     if cfg!(target_os = "macos") {
         let target = format!("{}/{LABEL}", domain());
         control("/bin/launchctl", &["disable", &target])?;
         optional_control("/bin/launchctl", &["bootout", &target])?;
-    } else {
+    } else if scheduler {
         control(
             "systemctl",
             &["--user", "disable", "--now", "pkg-catalog-refresh.timer"],
@@ -302,7 +330,7 @@ pub fn disable(paths: &Paths) -> Result<(), Error> {
             std::fs::remove_file(path)?;
         }
     }
-    if !cfg!(target_os = "macos") {
+    if !cfg!(target_os = "macos") && scheduler {
         control("systemctl", &["--user", "daemon-reload"])?;
     }
     Ok(())
@@ -315,6 +343,8 @@ pub enum State {
     On,
     /// No pkg-owned job files exist.
     Off,
+    /// The system cannot run the job.
+    Unavailable,
 }
 
 /// Read the job state without changing it.
@@ -328,7 +358,11 @@ pub fn state(paths: &Paths) -> Result<State, Error> {
         .iter()
         .all(|present| *present)
     {
-        return Ok(State::Off);
+        return Ok(if scheduler_ready()? {
+            State::Off
+        } else {
+            State::Unavailable
+        });
     }
     let result = if cfg!(target_os = "macos") {
         control(
@@ -346,6 +380,12 @@ pub fn state(paths: &Paths) -> Result<State, Error> {
         .map_err(|error| Error::Schedule(Box::new(error)))
 }
 
+/// Why the job cannot run here, and what to do instead.
+#[must_use]
+pub fn unavailable_detail() -> String {
+    format!("this system has no systemd user session. {MANUAL}")
+}
+
 pub fn status(paths: &Paths) -> Result<String, Error> {
     let log = if cfg!(target_os = "macos") {
         configured_job(paths)?.log.display().to_string()
@@ -355,6 +395,7 @@ pub fn status(paths: &Paths) -> Result<String, Error> {
     Ok(match state(paths)? {
         State::On => format!("On: pkg and its search data update daily.\nLog: {log}"),
         State::Off => String::from("Off: pkg and its search data do not update."),
+        State::Unavailable => format!("Off: {}", unavailable_detail()),
     })
 }
 

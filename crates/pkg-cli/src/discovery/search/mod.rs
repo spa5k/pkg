@@ -4,9 +4,9 @@ mod source;
 
 use crate::catalog;
 use crate::cli::Cli;
-use crate::commands::{CommandError, FAILURE, USAGE, concise_cause};
+use crate::commands::{CommandError, FAILURE, USAGE};
 use crate::output;
-use results::SearchSpool;
+use results::{Display, SearchSpool};
 use source::{SearchSource, search_input};
 use std::process::ExitCode;
 
@@ -15,7 +15,18 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
     let query =
         catalog::SearchQuery::new(&text, options.matching.regex, options.results.unavailable)
             .map_err(|error| {
-                eprintln!("Invalid search pattern `{text}`: {error}");
+                if text.trim().is_empty() {
+                    eprintln!("pkg: {error}.");
+                } else {
+                    // A regex error has a caret drawing; keep its last line.
+                    let error = error.to_string();
+                    let reason = error
+                        .lines()
+                        .rev()
+                        .find_map(|line| line.strip_prefix("error: "))
+                        .unwrap_or(&error);
+                    eprintln!("pkg: invalid search pattern `{text}`: {reason}.");
+                }
                 CommandError::Reported(ExitCode::from(USAGE))
             })?
             .broad(options.matching.broad)
@@ -27,7 +38,8 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
     } else {
         Some(options.limit.unwrap_or(20))
     };
-    let (mut system, mut reports, mut rows) =
+    let mut refreshed = false;
+    let (mut system, mut reports, mut rows, mut kept) =
         local_search(&paths, &config, &query, &source, limit, !cli.json)?;
     if reports.iter().any(catalog::SourceReport::is_not_ready) {
         // First use: prepare the missing official data, then search again.
@@ -38,11 +50,28 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
             &session.paths.cache_dir.join("refresh"),
             "Waiting for search data that pkg prepares in the background…",
         )?;
-        (system, reports, rows) = local_search(&paths, &config, &query, &source, limit, !cli.json)?;
+        (system, reports, rows, kept) =
+            local_search(&paths, &config, &query, &source, limit, !cli.json)?;
         if reports.iter().any(catalog::SourceReport::is_not_ready) {
-            output::note("Preparing search for first use. This takes a few minutes.");
+            let nixpkgs = &config.sources.nixpkgs;
+            if catalog::published_channel(nixpkgs).is_none()
+                && reports
+                    .iter()
+                    .any(|report| report.is_not_ready() && report.source == *nixpkgs)
+            {
+                exact_hint(&session, nixpkgs, &text)?;
+                output::note(
+                    "Preparing search data on this computer. This takes a few minutes one time.\n\
+                     To stop, press Ctrl-C. The next search continues the work.",
+                );
+            } else {
+                output::note("Downloading search data. This takes less than a minute.");
+            }
+            // The refresh prints each failure, so the warnings below skip
+            // the sources that are still not ready.
+            refreshed = true;
             crate::discovery::refresh(&session)?;
-            (system, reports, rows) =
+            (system, reports, rows, kept) =
                 local_search(&paths, &config, &query, &source, limit, !cli.json)?;
         }
     }
@@ -53,21 +82,32 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
         rows.json(&system, &reports, limit)?;
     } else {
         if rows.count > 0 || !failed {
-            rows.text(&text, limit)?;
+            let names = (rows.count > 0).then(|| local_names(&paths, &config, &system, kept));
+            let installed = installed_attributes(&paths.profile);
+            rows.text(
+                &text,
+                limit,
+                &Display {
+                    names: names.as_ref(),
+                    installed: &installed,
+                },
+            )?;
         }
         eprint!("{}", output::render_source_reports(&reports, cli.verbose));
     }
-    for report in reports
-        .iter()
-        .filter(|report| report.status == catalog::SourceStatus::Failed)
-    {
+    for report in reports.iter().filter(|report| {
+        report.status == catalog::SourceStatus::Failed && !(refreshed && report.is_not_ready())
+    }) {
         eprintln!(
             "Warning: {}: {}",
-            report
-                .display
-                .clone()
-                .unwrap_or_else(|| output::short_source(&report.source)),
-            concise_cause(report.detail.as_deref().unwrap_or("unknown cause"))
+            output::source_title(&report.source).map_or_else(
+                || report
+                    .display
+                    .clone()
+                    .unwrap_or_else(|| output::short_source(&report.source)),
+                String::from
+            ),
+            crate::commands::plain_detail(report.detail.as_deref().unwrap_or("unknown cause"))
         );
     }
     if failed {
@@ -79,14 +119,102 @@ pub fn run(cli: &Cli, options: &crate::cli::SearchOptions) -> Result<(), Command
     Ok(())
 }
 
+/// Before a local preparation starts, show the Nixpkgs package whose name
+/// is the query. One Nix check finds it.
+fn exact_hint(
+    session: &crate::commands::Session,
+    source: &str,
+    text: &str,
+) -> Result<(), CommandError> {
+    let name = text.trim();
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.+".contains(&byte))
+    {
+        return Ok(());
+    }
+    let system = session.nix.system()?;
+    let mut path = vec![String::from("legacyPackages"), system];
+    path.extend(name.split('.').map(str::to_string));
+    match session.nix.exact_metadata(source, &[path]) {
+        Ok(nodes) => {
+            if let [
+                crate::nix::MetadataNode {
+                    value: crate::nix::MetadataValue::Package { meta, .. },
+                    ..
+                },
+            ] = nodes.as_slice()
+            {
+                output::note(&format!(
+                    "Found by exact name: nixpkgs:{name} {}. To install it now, run `pkg install nixpkgs:{name}`.",
+                    meta.version
+                ));
+            }
+            Ok(())
+        }
+        Err(error) if error.signal().is_some() => Err(error.into()),
+        // The hint is optional. The full search follows.
+        Err(_) => Ok(()),
+    }
+}
+
+/// Local name data for display names. It reuses the data that search read.
+/// Unreadable taps count as none.
+fn local_names(
+    paths: &crate::config::Paths,
+    config: &crate::config::Config,
+    system: &str,
+    kept: catalog::Kept,
+) -> catalog::Names {
+    let saved = crate::tap::Catalogs::load(&paths.state_home)
+        .ok()
+        .and_then(|mut taps| taps.saved_all().ok())
+        .unwrap_or_default();
+    catalog::Names::local(&paths.cache_dir, &config.sources, system, saved, kept)
+}
+
+/// The native attributes of active entries in the profile manifest.
+///
+/// Search reads the manifest file directly. It runs no Nix command, and an
+/// unreadable profile marks nothing as installed.
+fn installed_attributes(profile: &std::path::Path) -> std::collections::BTreeSet<String> {
+    let Ok(text) = std::fs::read_to_string(profile.join("manifest.json")) else {
+        return std::collections::BTreeSet::new();
+    };
+    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return std::collections::BTreeSet::new();
+    };
+    let elements: Vec<&serde_json::Value> = match manifest.get("elements") {
+        Some(serde_json::Value::Object(elements)) => elements.values().collect(),
+        Some(serde_json::Value::Array(elements)) => elements.iter().collect(),
+        _ => Vec::new(),
+    };
+    elements
+        .into_iter()
+        .filter(|element| element.get("active").and_then(serde_json::Value::as_bool) != Some(false))
+        .filter_map(|element| element.get("attrPath").and_then(serde_json::Value::as_str))
+        .map(|attribute| attribute.replace('"', ""))
+        .collect()
+}
+
 fn local_search(
     paths: &crate::config::Paths,
     config: &crate::config::Config,
     query: &catalog::SearchQuery,
     source: &SearchSource,
     limit: Option<u32>,
-    grouped: bool,
-) -> Result<(String, Vec<catalog::SourceReport>, SearchSpool), CommandError> {
+    merged: bool,
+) -> Result<
+    (
+        String,
+        Vec<catalog::SourceReport>,
+        SearchSpool,
+        catalog::Kept,
+    ),
+    CommandError,
+> {
+    let mut kept = catalog::Kept::default();
     let system = catalog::search_system(&paths.cache_dir);
     let mut reports = Vec::new();
     let mut taps = if source.needs_registry() {
@@ -112,7 +240,7 @@ fn local_search(
         return Err(format!("unknown search source `{source}`. Use nixpkgs, brew, homebrew, cask, homebrew/core, homebrew/cask, or a source from `pkg tap list`.").into());
     }
     let host = catalog::CaskHost::default();
-    let mut rows = SearchSpool::new(limit, grouped)?;
+    let mut rows = SearchSpool::new(limit, merged)?;
     for (kind, moving) in super::configured_sources(config) {
         let identity = match kind {
             catalog::SourceKind::Nixpkgs => "nixpkgs",
@@ -127,6 +255,7 @@ fn local_search(
                 moving,
                 &system,
                 query,
+                &mut kept,
                 |row, rank| rows.push(&row, rank),
             ),
             catalog::SourceKind::Cask => catalog::search_local_casks(
@@ -135,6 +264,7 @@ fn local_search(
                 &system,
                 query,
                 &host,
+                &mut kept,
                 |row, rank| {
                     if !source.official_cask_only() || row.id.starts_with("cask:homebrew/cask/") {
                         rows.push(&row, rank)?;
@@ -151,6 +281,7 @@ fn local_search(
             &config.sources.formulae,
             &system,
             query,
+            &mut kept,
             |row, rank| rows.push(&row, rank),
         );
         reports.push(source_report(&config.sources.formulae, result)?);
@@ -170,7 +301,7 @@ fn local_search(
             });
         reports.push(source_report(tap_source, result)?);
     }
-    Ok((system, reports, rows))
+    Ok((system, reports, rows, kept))
 }
 
 fn source_report(
@@ -190,10 +321,7 @@ pub(super) fn install_resolution_error(
     source: Option<&str>,
     error: catalog::CatalogError,
 ) -> CommandError {
-    if !matches!(
-        error,
-        catalog::CatalogError::NotFound(_) | catalog::CatalogError::RequiresId { .. }
-    ) {
+    if !matches!(error, catalog::CatalogError::NotFound(_)) {
         return error.into();
     }
     let suggestions = match catalog::SearchQuery::new(name, false, false) {
@@ -203,40 +331,40 @@ pub(super) fn install_resolution_error(
             &query,
             &SearchSource::parse(source),
             Some(5),
-            false,
+            true,
         ) {
-            Ok((_, _, rows)) => Some(rows),
+            Ok((_, _, rows, kept)) => Some((rows, kept)),
             Err(error) if error.signal().is_some() => return error,
             Err(_) => None,
         },
         Err(_) => None,
     }
-    .filter(|rows| rows.count > 0);
-    eprintln!("pkg: {error}");
-    if let Some(rows) = suggestions {
+    .filter(|(rows, _)| rows.count > 0);
+    if let Some((rows, kept)) = suggestions {
+        eprintln!("pkg: no package named `{name}`. Nothing was installed.");
         eprintln!(
             "{}",
             if rows.fuzzy {
-                "Similar package names:"
+                "Similar names:"
             } else {
                 "Related packages:"
             }
         );
-        let _ = rows.visit(Some(5), |body| {
-            let row: catalog::SearchResult =
-                serde_json::from_str(body).map_err(std::io::Error::other)?;
-            eprint!(
-                "  {}",
-                output::render_search_row(&row, row.id.len(), row.version.len().max(1))
-            );
-            Ok(())
-        });
-        eprintln!("Choose a package ID, then run `pkg install ID`.");
-    }
-    if matches!(error, catalog::CatalogError::RequiresId { .. }) {
-        eprintln!("Use `pkg search {name} --broad` to inspect other package IDs.");
+        let system = catalog::search_system(&session.paths.cache_dir);
+        let names = local_names(&session.paths, &session.config, &system, kept);
+        let installed = std::collections::BTreeSet::new();
+        let _ = rows.suggestions(
+            5,
+            &Display {
+                names: Some(&names),
+                installed: &installed,
+            },
+        );
+        eprintln!("Install one with `pkg install NAME`.");
     } else {
-        eprintln!("Use `pkg search {name}` to find packages.");
+        eprintln!(
+            "pkg: no package named `{name}`. Nothing was installed. Search with `pkg search {name}`."
+        );
     }
     CommandError::Reported(ExitCode::from(FAILURE))
 }

@@ -40,11 +40,20 @@ esac
         format!("[runtime]\nnix = '{}'\n", nix.display()),
     )
     .expect("write config");
+    let profile = home.path().join("state/nix/profiles/pkg");
+    std::fs::create_dir_all(profile.parent().expect("profile parent")).expect("profile directory");
     if failure == "info" {
-        let profile = home.path().join("state/nix/profiles/pkg");
-        std::fs::create_dir_all(profile.parent().expect("profile parent"))
-            .expect("profile directory");
         std::fs::write(profile, "fixture").expect("existing profile");
+    } else {
+        // Two generations, so rollback has a generation to go back to.
+        for number in [1, 2] {
+            std::os::unix::fs::symlink(
+                home.path(),
+                profile.with_file_name(format!("pkg-{number}-link")),
+            )
+            .expect("generation link");
+        }
+        std::os::unix::fs::symlink("pkg-2-link", &profile).expect("active generation");
     }
     let output = Command::new(env!("CARGO_BIN_EXE_pkg"))
         .args(args)

@@ -46,13 +46,33 @@ impl Availability {
     }
 
     /// Refuse unavailable or unknown records before a profile mutation.
+    ///
+    /// `id` names the package. `unchanged` ends the message, for example
+    /// `Nothing was installed.`
     /// # Errors
     ///
-    /// Returns the recorded reason when the record is unavailable or its status is unknown.
-    pub fn require(&self) -> Result<(), String> {
+    /// Returns a message with the reason when the record is unavailable or
+    /// its status is unknown.
+    pub fn require(&self, id: &str, unchanged: &str) -> Result<(), String> {
         match self {
             Self::Available => Ok(()),
-            Self::Unavailable { reason } | Self::Unknown { reason } => Err(reason.clone()),
+            // The list for another system can be wrong here, so Nix
+            // makes the final check.
+            Self::Unavailable { reason } if reason == super::OTHER_SYSTEMS => Ok(()),
+            Self::Unavailable { reason } => {
+                let plain = plain_reason(reason);
+                let reason = if plain == reason {
+                    String::from(plain)
+                } else {
+                    format!("{plain} ({reason})")
+                };
+                Err(format!(
+                    "`{id}` cannot install on this computer: {reason}. {unchanged}"
+                ))
+            }
+            Self::Unknown { reason } => Err(format!(
+                "pkg cannot check whether `{id}` can install on this computer: {reason}. {unchanged}"
+            )),
         }
     }
 }
@@ -136,6 +156,33 @@ fn macos_range(host: &str, min: Option<&str>, max: Option<&str>) -> Availability
     };
     Availability::Unavailable {
         reason: format!("requires {range}; this host runs macOS {host}"),
+    }
+}
+
+/// Plain words for an exclusion code such as `formula-dependency:
+/// dependencies`. JSON and `pkg info --verbose` keep the code.
+#[must_use]
+pub fn plain_reason(reason: &str) -> &str {
+    let code = reason.split_once(':').map_or(reason, |(code, _)| code);
+    match code {
+        "unsupported-platform"
+        | "no-compatible-bottle"
+        | "unsupported-bottle-platform"
+        | "unsupported-bottle-origin" => "no build for this system",
+        "formula-dependency" | "cask-dependency-integration" => "needs other Homebrew packages",
+        "deprecated" => "deprecated by Homebrew",
+        "disabled" => "disabled by Homebrew",
+        "homebrew-relocation" => "needs the Homebrew install path",
+        "install-hook" | "installer-script" => "needs an install script",
+        "missing-checksum" => "the download has no checksum",
+        "unsupported-download-spec" => "the download needs special steps",
+        "unsupported-artifact" => "pkg cannot install this type of item",
+        "malformed-record" => "the package data is not valid",
+        "unfree" => "unfree license",
+        "broken" => "marked broken in Nixpkgs",
+        "insecure" => "has known security problems",
+        "other-systems" => "Nixpkgs lists builds for other systems only",
+        _ => reason,
     }
 }
 
