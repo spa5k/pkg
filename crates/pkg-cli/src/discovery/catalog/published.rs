@@ -17,6 +17,12 @@ use super::{CatalogError, native::Snapshot};
 
 const CHANNELS: &str = "https://channels.nixos.org";
 
+/// The largest download, in bytes. The compressed list is about 30 MB.
+const MAX_DOWNLOAD_BYTES: &str = "268435456";
+
+/// The largest decompressed list, in bytes.
+const MAX_LIST_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 /// The system that the NixOS build service writes the lists on.
 const LIST_SYSTEM: &str = "x86_64-linux";
 
@@ -129,6 +135,8 @@ fn fetch(url: &str, destination: &Path, seconds: u32) -> Result<Option<String>, 
             "-sSL",
             "--max-time",
             &seconds,
+            "--max-filesize",
+            MAX_DOWNLOAD_BYTES,
             "-o",
             destination,
             "-w",
@@ -155,7 +163,12 @@ fn fetch(url: &str, destination: &Path, seconds: u32) -> Result<Option<String>, 
         .split_once(' ')
         .unwrap_or_else(|| (stdout.trim(), url));
     match code {
-        "200" => Ok(Some(location.to_string())),
+        "200" if location.starts_with("https://") && !location.contains(char::is_control) => {
+            Ok(Some(location.to_string()))
+        }
+        "200" => Err(CatalogError::Source(format!(
+            "unable to download {url}: the server named no secure address"
+        ))),
         "403" | "404" => Ok(None),
         code => Err(CatalogError::Source(format!(
             "unable to download {url}: HTTP error {code}"
@@ -166,7 +179,10 @@ fn fetch(url: &str, destination: &Path, seconds: u32) -> Result<Option<String>, 
 /// Read a Brotli-compressed package list into the snapshot tables.
 fn read(list: &Path, connection: &mut Connection, system: &str) -> Result<(), CatalogError> {
     let file = std::fs::File::open(list).map_err(CatalogError::cache_write)?;
-    let decoder = brotli_decompressor::Decompressor::new(file, 1 << 16);
+    let decoder = std::io::Read::take(
+        brotli_decompressor::Decompressor::new(file, 1 << 16),
+        MAX_LIST_BYTES,
+    );
     let mut deserializer =
         serde_json::Deserializer::from_reader(BufReader::with_capacity(1 << 16, decoder));
     let transaction = connection.transaction()?;

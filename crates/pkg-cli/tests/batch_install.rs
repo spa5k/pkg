@@ -124,7 +124,7 @@ case "$*" in
       moved) sed 's/old-/new-/g' '{}';;
       *) cat '{}';;
     esac;;
-  *'search '*|*'eval --json github:example/packages#'*)
+  *'search '*|*'eval --json '*' -- github:example/packages#'*)
     name=
     for argument in "$@"; do
       case "$argument" in

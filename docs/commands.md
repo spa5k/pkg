@@ -9,7 +9,12 @@ Global options: `--help`, `--version`, `--no-color`, `--verbose`.
 
 On a terminal, results use color. Pipes, logs, `--no-color`,
 `display.color = "never"` in the configuration, and a nonempty `NO_COLOR`
-get plain text. Tables fit the terminal width. Pipes get full lines.
+get plain text. `display.color` accepts `auto` (the default) and `never`.
+Tables fit the terminal width. Pipes get full lines.
+
+`pkg` removes terminal control sequences from text that Nix, a flake, or a
+catalog supplies. Color codes stay. Arguments with control characters are
+refused. Configured sources must not start with `-` or use plain `http`.
 
 Human output shows work stages and a verified result. Install first shows
 `Resolving`, then the package name in `Installing`. When a command name

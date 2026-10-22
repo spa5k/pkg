@@ -575,6 +575,40 @@ fn wait_for_unobserved_exit(pid: libc::pid_t) {
 }
 
 #[test]
+fn a_hit_limit_fails_even_after_a_successful_exit() {
+    use std::os::unix::process::ExitStatusExt as _;
+    let reaped = super::Reaped {
+        output: std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: b"partial".to_vec(),
+            stderr: Vec::new(),
+        },
+        cancelled: None,
+        resource_limit: Some("child exceeded log cap"),
+    };
+    assert!(matches!(
+        reaped.classify(),
+        Outcome::Failed { status, .. } if status == "child exceeded log cap"
+    ));
+}
+
+#[test]
+fn filtered_stderr_keeps_its_last_lines() {
+    let line = b"warning: repeated line\n";
+    let mut bytes: Vec<u8> = line
+        .iter()
+        .copied()
+        .cycle()
+        .take(2 * super::FILTERED_STDERR_BYTES + line.len() * 3)
+        .collect();
+    bytes.extend_from_slice(b"error: the cause\n");
+    super::keep_tail(&mut bytes);
+    assert!(bytes.len() <= super::FILTERED_STDERR_BYTES);
+    assert!(bytes.starts_with(b"warning: "));
+    assert!(bytes.ends_with(b"error: the cause\n"));
+}
+
+#[test]
 fn output_limit_child() {
     if std::env::var(MODE).as_deref() != Ok("output-limit-child") {
         return;

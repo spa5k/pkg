@@ -23,7 +23,7 @@ pub enum MetadataValue {
         /// The main command, from `meta.mainProgram`, when declared. Search
         /// data reads it only for top-level packages: in some nested sets,
         /// such as NixOS tests, it evaluates a whole system.
-        #[serde(default, rename = "mainProgram")]
+        #[serde(default, rename = "mainProgram", deserialize_with = "command_name")]
         command: Option<String>,
         /// Why Nixpkgs cannot install the package on this system:
         /// `unsupported-platform`, `unfree`, `broken`, or `insecure`. Search
@@ -34,6 +34,7 @@ pub enum MetadataValue {
     /// A recursive set to visit.
     Children {
         /// Attribute names under this set.
+        #[serde(deserialize_with = "shown_names")]
         children: Vec<String>,
     },
     /// A value outside the package traversal.
@@ -42,6 +43,28 @@ pub enum MetadataValue {
     Absent,
     /// A legacy attribute whose evaluation failed.
     Error,
+}
+
+/// Whether pkg can show `text` without terminal controls.
+fn shown(text: &str) -> bool {
+    !text
+        .chars()
+        .any(|c| c.is_control() || crate::output::direction_control(c))
+}
+
+/// A declared main command that is one plain file name, or `None`.
+fn command_name<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let command = <Option<String> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(command
+        .filter(|name| !name.is_empty() && name.len() <= 255 && !name.contains('/') && shown(name)))
+}
+
+/// Attribute names that pkg can show. The traversal skips other names.
+fn shown_names<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    let names = <Vec<String> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(names.into_iter().filter(|name| shown(name)).collect())
 }
 
 /// A unique derivation whose output paths were evaluated.
@@ -204,7 +227,7 @@ in map inspect paths"#
         // getFlake rather than permitting mutable paths with --impure.
         let metadata: serde_json::Value = self.json(
             "exact source identity",
-            &["flake", "metadata", reference, "--json"],
+            &["flake", "metadata", "--json", "--", reference],
         )?;
         let path = if let Some(path) = metadata.get("path") {
             path.as_str()
@@ -417,6 +440,31 @@ const DISCOVERY_LIMITS: process::ChildLimits = process::ChildLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flake_names_with_terminal_controls_are_not_shown() {
+        let nodes: Vec<MetadataNode> = serde_json::from_str(
+            r#"[
+              {"path":["packages","x"],"kind":"children","children":["ok","bad\u001b]0;t\u0007","rtl\u202e"]},
+              {"path":["packages","x","a"],"kind":"package","meta":{"pname":"a","version":"1"},"mainProgram":"../bin/sh"},
+              {"path":["packages","x","b"],"kind":"package","meta":{"pname":"b","version":"1"},"mainProgram":"b\u001b[2J"},
+              {"path":["packages","x","c"],"kind":"package","meta":{"pname":"c","version":"1"},"mainProgram":"c"}
+            ]"#,
+        )
+        .expect("decodes");
+        let MetadataValue::Children { children } = &nodes[0].value else {
+            panic!("children");
+        };
+        assert_eq!(children, &["ok"]);
+        let commands: Vec<Option<&str>> = nodes[1..]
+            .iter()
+            .map(|node| match &node.value {
+                MetadataValue::Package { command, .. } => command.as_deref(),
+                _ => Some("?"),
+            })
+            .collect();
+        assert_eq!(commands, [None, None, Some("c")]);
+    }
 
     #[cfg(unix)]
     fn fake_runtime(cases: &str) -> (tempfile::TempDir, Nix) {

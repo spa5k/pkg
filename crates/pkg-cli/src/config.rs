@@ -67,6 +67,16 @@ pub enum ConfigError {
         #[source]
         source: toml::de::Error,
     },
+    /// A config value has the correct type but is not accepted.
+    #[error("invalid config in {}. Fix or delete the file. `{key}` {reason}", path.display())]
+    Value {
+        /// The config file.
+        path: PathBuf,
+        /// The setting, for example `sources.nixpkgs`.
+        key: &'static str,
+        /// Why the value is refused.
+        reason: &'static str,
+    },
 }
 
 fn home_dir() -> Result<PathBuf, ConfigError> {
@@ -173,20 +183,22 @@ impl Default for Sources {
 }
 
 /// Output preferences.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Display {
-    /// `never` disables color, including in text from Nix.
-    /// Other values leave color handling unchanged.
-    pub color: String,
+    /// When to color output.
+    pub color: Color,
 }
 
-impl Default for Display {
-    fn default() -> Self {
-        Self {
-            color: String::from("auto"),
-        }
-    }
+/// When to color output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Color {
+    /// Color terminals only, unless `NO_COLOR` or `--no-color` is set.
+    #[default]
+    Auto,
+    /// Never color output, including text from Nix.
+    Never,
 }
 
 /// Runtime selection.
@@ -205,24 +217,72 @@ impl Config {
     ///
     /// Returns an error if the configuration cannot be read, decoded, or validated.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        match std::fs::read_to_string(path) {
+        let config: Self = match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).map_err(|source| ConfigError::Invalid {
                 path: path.to_path_buf(),
                 source,
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(source) => Err(ConfigError::ReadFailed {
-                path: path.to_path_buf(),
-                source,
-            }),
+            })?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(source) => {
+                return Err(ConfigError::ReadFailed {
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        config.check().map_err(|(key, reason)| ConfigError::Value {
+            path: path.to_path_buf(),
+            key,
+            reason,
+        })?;
+        Ok(config)
+    }
+
+    /// Check the values that pkg passes to Nix as arguments.
+    fn check(&self) -> Result<(), (&'static str, &'static str)> {
+        for (key, reference) in [
+            ("sources.nixpkgs", &self.sources.nixpkgs),
+            ("sources.casks", &self.sources.casks),
+            ("sources.formulae", &self.sources.formulae),
+        ] {
+            check_argument(reference).map_err(|reason| (key, reason))?;
+            let plain_http = ["http://", "git+http://", "tarball+http://", "file+http://"]
+                .iter()
+                .any(|scheme| reference.to_ascii_lowercase().starts_with(scheme));
+            if plain_http || reference.chars().any(char::is_whitespace) {
+                return Err((key, "must be a flake reference with a secure transport"));
+            }
         }
+        if let Some(nix) = &self.runtime.nix {
+            check_argument(nix).map_err(|reason| ("runtime.nix", reason))?;
+        }
+        Ok(())
     }
 
     /// Whether colored output is forced off.
     #[must_use]
     pub fn color_disabled(&self, cli_no_color: bool) -> bool {
-        cli_no_color || self.display.color == "never"
+        cli_no_color || self.display.color == Color::Never
     }
+}
+
+/// Check one value that becomes a native command argument.
+fn check_argument(value: &str) -> Result<(), &'static str> {
+    if value.is_empty() || value.len() > 4096 {
+        return Err("must have 1 to 4096 bytes");
+    }
+    if value.starts_with('-') {
+        return Err("must not start with `-`");
+    }
+    if value
+        .chars()
+        .any(|c| c.is_control() || crate::output::direction_control(c))
+    {
+        return Err("must not have control characters");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -237,5 +297,40 @@ mod tests {
         std::fs::write(&file, "sources = 3").expect("write");
         let error = Config::load(&file).expect_err("invalid config must fail");
         assert!(error.source().unwrap().is::<toml::de::Error>());
+    }
+
+    #[test]
+    fn config_values_that_become_arguments_are_checked() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("config.toml");
+        for (text, key) in [
+            ("[sources]\nnixpkgs = '--impure'\n", "sources.nixpkgs"),
+            (
+                "[sources]\ncasks = 'http://example.com/casks.tar.gz'\n",
+                "sources.casks",
+            ),
+            (
+                "[sources]\nformulae = \"github:a/b\\u001b]0;x\"\n",
+                "sources.formulae",
+            ),
+            ("[sources]\nnixpkgs = ''\n", "sources.nixpkgs"),
+            ("[runtime]\nnix = '-x'\n", "runtime.nix"),
+        ] {
+            std::fs::write(&file, text).expect("write");
+            let error = Config::load(&file).expect_err(text);
+            assert!(error.to_string().contains(key), "{error}");
+        }
+        std::fs::write(&file, "[display]\ncolor = 'blue'\n").expect("write");
+        assert!(matches!(
+            Config::load(&file),
+            Err(ConfigError::Invalid { .. })
+        ));
+        std::fs::write(
+            &file,
+            "[sources]\nnixpkgs = 'path:/src/nixpkgs'\n[display]\ncolor = 'never'\n",
+        )
+        .expect("write");
+        let config = Config::load(&file).expect("valid config");
+        assert!(config.color_disabled(false));
     }
 }

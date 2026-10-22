@@ -38,14 +38,14 @@ pub enum Command {
     /// Show details about one package.
     Info {
         /// Package name or ID, such as ripgrep or cask:raycast.
-        #[arg(value_name = "PACKAGE")]
+        #[arg(value_name = "PACKAGE", value_parser = text_argument)]
         id: String,
     },
     /// Install packages.
     #[command(visible_alias = "add")]
     Install {
         /// Package names or IDs, such as ripgrep or cask:raycast.
-        #[arg(required = true, value_name = "PACKAGES")]
+        #[arg(required = true, value_name = "PACKAGES", value_parser = text_argument)]
         ids: Vec<String>,
         /// Build `github:` flakes without a confirmation prompt.
         #[arg(long, short)]
@@ -57,7 +57,7 @@ pub enum Command {
     #[command(visible_alias = "uninstall")]
     Remove {
         /// Installed package names or IDs.
-        #[arg(required = true, value_name = "NAMES")]
+        #[arg(required = true, value_name = "NAMES", value_parser = text_argument)]
         entries: Vec<String>,
         /// Treat the names as entry IDs from `pkg list --verbose`.
         #[arg(long)]
@@ -68,7 +68,7 @@ pub enum Command {
     /// Without names, upgrades all packages.
     Upgrade {
         /// Installed package names or IDs. Leave empty to upgrade all packages.
-        #[arg(value_name = "NAMES")]
+        #[arg(value_name = "NAMES", value_parser = text_argument)]
         entries: Vec<String>,
         /// Treat the names as entry IDs from `pkg list --verbose`.
         #[arg(long, requires = "entries", conflicts_with = "all")]
@@ -123,7 +123,7 @@ pub enum Command {
     /// Delete history older than an age.
     Prune {
         /// Age such as `30d`.
-        #[arg(long, value_name = "AGE", allow_hyphen_values = true)]
+        #[arg(long, value_name = "AGE", allow_hyphen_values = true, value_parser = text_argument)]
         older_than: String,
     },
     /// Manage pkg itself.
@@ -146,7 +146,7 @@ pub enum ClientCommand {
 #[derive(Debug, clap::Args)]
 pub struct SearchOptions {
     /// Package names or words. Also accepts nixpkgs:, brew:, or cask: queries.
-    #[arg(required = true, value_name = "QUERY")]
+    #[arg(required = true, value_name = "QUERY", value_parser = text_argument)]
     pub query: Vec<String>,
     /// Search matching controls.
     #[command(flatten)]
@@ -158,7 +158,7 @@ pub struct SearchOptions {
     #[command(flatten)]
     pub results: SearchResultOptions,
     /// Search nixpkgs, brew formulae, homebrew, cask, homebrew/core, homebrew/cask, or a saved tap.
-    #[arg(long)]
+    #[arg(long, value_parser = text_argument)]
     pub source: Option<String>,
 }
 
@@ -213,10 +213,10 @@ pub enum TapCommand {
     /// Add a public tap. Asks for your approval first.
     Add {
         /// The tap, such as `owner/tap` or its GitHub URL.
-        #[arg(value_name = "OWNER/TAP")]
+        #[arg(value_name = "OWNER/TAP", value_parser = text_argument)]
         source: String,
         /// Use this commit (40 hex characters) instead of the newest one.
-        #[arg(long, value_name = "SHA")]
+        #[arg(long, value_name = "SHA", value_parser = text_argument)]
         revision: Option<String>,
         /// Approve the tap without a prompt.
         #[arg(long)]
@@ -227,16 +227,16 @@ pub enum TapCommand {
     /// Update one saved tap, or all of them.
     Update {
         /// The tap to update. Leave empty to update all taps.
-        #[arg(value_name = "OWNER/TAP")]
+        #[arg(value_name = "OWNER/TAP", value_parser = text_argument)]
         source: Option<String>,
         /// Use this commit (40 hex characters) instead of the newest one.
-        #[arg(long, value_name = "SHA")]
+        #[arg(long, value_name = "SHA", value_parser = text_argument)]
         revision: Option<String>,
     },
     /// Remove a saved tap. Installed apps stay.
     Remove {
         /// The tap to remove.
-        #[arg(value_name = "OWNER/TAP")]
+        #[arg(value_name = "OWNER/TAP", value_parser = text_argument)]
         source: String,
     },
 }
@@ -284,6 +284,30 @@ pub fn parse_prune_age(value: &str) -> Result<u64, String> {
 /// around and deletes every older generation. No generation is that old, so
 /// the limit changes nothing.
 pub const MAX_PRUNE_DAYS: u64 = 24_855;
+
+/// The longest accepted text argument, in bytes.
+const MAX_ARGUMENT_BYTES: usize = 4096;
+
+/// Accept one text argument without terminal controls.
+///
+/// Arguments reach error messages and native commands. A control
+/// character or direction override is never part of a valid name.
+fn text_argument(value: &str) -> Result<String, String> {
+    if value
+        .chars()
+        .any(|c| c.is_control() || crate::output::direction_control(c))
+    {
+        return Err(String::from(
+            "the value has a control character; type the name again",
+        ));
+    }
+    if value.len() > MAX_ARGUMENT_BYTES {
+        return Err(format!(
+            "the value is longer than {MAX_ARGUMENT_BYTES} bytes"
+        ));
+    }
+    Ok(value.to_string())
+}
 
 /// Read a generation number for `pkg rollback`.
 fn parse_generation(value: &str) -> Result<u64, String> {

@@ -47,9 +47,9 @@ pub fn history(cli: &Cli) -> Result<(), CommandError> {
         // `--no-color` holds for native text pkg passes through, even if
         // the runtime colorized it anyway.
         if output::color(output::Stream::Out) {
-            print!("{text}");
+            print!("{}", output::terminal_text(&text));
         } else {
-            print!("{}", output::strip_ansi(&text));
+            print!("{}", output::strip_ansi(&output::terminal_text(&text)));
         }
         return Ok(());
     }

@@ -82,7 +82,19 @@ where
                     ContextValue::Strings(names.into_iter().rev().collect()),
                 );
             }
-            error.exit()
+            if !error.use_stderr() {
+                // Help and version text.
+                error.exit()
+            }
+            // Clap repeats a refused value, which can hold terminal controls.
+            let rendered = error.render();
+            let text = if crate::output::color(crate::output::Stream::Err) {
+                rendered.ansi().to_string()
+            } else {
+                rendered.to_string()
+            };
+            eprint!("{}", crate::output::terminal_text(&text));
+            return ExitCode::from(u8::try_from(error.exit_code()).unwrap_or(USAGE));
         }
     };
     let outcome = dispatch(&cli);
@@ -152,7 +164,7 @@ pub(crate) fn finish(outcome: Result<(), CommandError>) -> ExitCode {
                     crate::output::Tone::Error,
                     "pkg:"
                 ),
-                error_text(&error)
+                crate::output::terminal_text(&error_text(&error))
             );
             if native_report(&error.to_string()) && !crate::output::verbose() {
                 eprintln!("Run the command again with --verbose to see the Nix output.");
@@ -258,7 +270,7 @@ pub(crate) fn report_cause(detail: &str) {
         .map(str::trim)
         .find(|line| line.starts_with("nix log "))
     {
-        eprintln!("Details: {log}");
+        eprintln!("Details: {}", crate::output::printable(log));
     }
 }
 
