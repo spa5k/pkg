@@ -48,6 +48,10 @@ rusqlite = { version = "=0.40.2", features = ["bundled"] }
 brotli-decompressor = "=6.1.0"
 # Compare the client version with the newest published release.
 semver = "=1.0.28"
+# Check the release signature before a self-update replaces the client.
+# rustls already builds both crates with these features.
+aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
+base64 = "=0.23.1"
 # `cask_catalog::tap` fetches public taps, runs sandboxed Ruby, and generates
 # catalogs and flakes. The client handles consent, registration, and publication.
 cask-catalog = { path = "../../tools/cask-catalog" }
