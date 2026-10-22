@@ -1406,13 +1406,14 @@ esac",
     std::fs::create_dir_all(&config).unwrap();
     for (color, flags, expected) in [
         // Pipes get plain text even when the configuration allows color.
-        ("auto", &[][..], "Version 3 (2026-10-17)\ngen 3 plain\x1bb"),
+        // Escape sequences other than colors never reach the terminal.
+        ("auto", &[][..], "Version 3 (2026-10-17)\ngen 3 plain"),
         (
             "auto",
             &["--no-color"][..],
-            "Version 3 (2026-10-17)\ngen 3 plain\x1bb",
+            "Version 3 (2026-10-17)\ngen 3 plain",
         ),
-        ("never", &[][..], "Version 3 (2026-10-17)\ngen 3 plain\x1bb"),
+        ("never", &[][..], "Version 3 (2026-10-17)\ngen 3 plain"),
     ] {
         std::fs::write(
             config.join("config.toml"),
@@ -1427,5 +1428,39 @@ esac",
         let (code, stdout, stderr) = run_pkg_under_home(home.path(), &args, "/usr/bin:/bin");
         assert_eq!(code, 0, "{color}, {flags:?}: {stderr}");
         assert_eq!(stdout, expected, "{color}, {flags:?}: {stderr}");
+    }
+}
+
+#[test]
+fn arguments_with_controls_or_flag_forms_are_refused_before_nix() {
+    for args in [
+        &["info", "a\x1b]0;title\x07"][..],
+        &["install", "--yes", "rip\u{202e}grep"][..],
+        &["search", "x\ry"][..],
+        &["tap", "add", "owner/tap\x1b[2K"][..],
+    ] {
+        let (code, _, stderr) = pkg(args, &[("PATH", "/nonexistent")]);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        assert!(stderr.contains("control character"), "{args:?}: {stderr}");
+        assert!(!stderr.contains('\x1b'), "{args:?}: {stderr:?}");
+    }
+    for (args, refusal) in [
+        (&["info", "--", "--impure"][..], "is not a package name"),
+        (
+            &["info", "github:owner/repo?host=example.com#default"][..],
+            "dir, ref, or rev",
+        ),
+        (
+            &["info", "github:owner/repo#packages.x.--all"][..],
+            "do not start with `-`",
+        ),
+    ] {
+        let (code, _, stderr) = pkg(args, &[("PATH", "/nonexistent")]);
+        assert_ne!(code, 0, "{args:?}: {stderr}");
+        assert!(stderr.contains(refusal), "{args:?}: {stderr}");
+        assert!(
+            !stderr.contains("native"),
+            "{args:?}: no native call: {stderr}"
+        );
     }
 }

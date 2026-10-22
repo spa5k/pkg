@@ -200,12 +200,12 @@ impl MutationReporter {
     /// Print one line, clearing any active status line first.
     fn show(&mut self, line: &str) {
         self.clear_status();
-        eprintln!("{line}");
+        eprintln!("{}", crate::output::terminal_text(line));
     }
 
     /// Replace the compact status line.
     fn status(&mut self, text: &str) {
-        self.work = text.chars().take(64).collect();
+        self.work = crate::output::printable(text).chars().take(64).collect();
         self.tick();
     }
 
@@ -218,10 +218,13 @@ impl MutationReporter {
         }
     }
 
-    /// Write bytes the user must see unfiltered.
+    /// Write prompt bytes the user must see as they arrive.
+    ///
+    /// A prompt can quote flake text, so terminal controls are removed.
     fn write_raw(bytes: &[u8]) {
+        let text = String::from_utf8_lossy(bytes);
         let mut stderr = std::io::stderr().lock();
-        let _ = stderr.write_all(bytes);
+        let _ = stderr.write_all(crate::output::terminal_text(&text).as_bytes());
         let _ = stderr.flush();
     }
 

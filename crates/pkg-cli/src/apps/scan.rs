@@ -1,5 +1,5 @@
 //! App bundles in active native profile outputs.
-use super::payload::scan_restorable_apps;
+use super::payload::{launcher_name, scan_restorable_apps};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -58,6 +58,12 @@ pub(super) fn scan_apps<'a>(
                 if !is_bundle_dir {
                     continue;
                 }
+                if !launcher_name(&name) {
+                    return Err(format!(
+                        "profile entry {entry_id} provides an app with an unsafe name: {}",
+                        crate::output::printable(&name)
+                    ));
+                }
                 if let Some(existing) = apps.get(&name) {
                     if existing != &path {
                         return Err(format!(
@@ -80,6 +86,25 @@ pub(super) fn scan_apps<'a>(
 mod tests {
     use super::*;
     const APP_MANIFEST: &str = "apps.json";
+
+    #[test]
+    fn launcher_names_are_one_safe_bundle_name() {
+        for name in ["Raycast.app", "Visual Studio Code.app", "Ä.app"] {
+            assert!(launcher_name(name), "{name}");
+        }
+        for name in [
+            ".app",
+            ".Hidden.app",
+            "a/b.app",
+            "tool",
+            "x\u{1b}]0;t\u{7}.app",
+            "evil\u{202e}ppa.exe.app",
+            "line\nbreak.app",
+        ] {
+            assert!(!launcher_name(name), "{name:?}");
+        }
+        assert!(!launcher_name(&format!("{}.app", "a".repeat(252))));
+    }
 
     #[test]
     fn private_cask_payload_is_discovered_without_executing_its_helper() {

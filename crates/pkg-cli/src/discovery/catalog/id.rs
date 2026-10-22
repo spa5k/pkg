@@ -244,7 +244,26 @@ pub fn parse_id(input: &str) -> Result<ParsedId, String> {
             )),
         };
     }
+    if !valid_bare_name(input) {
+        return Err(format!(
+            "`{input}` is not a package name. Names start with a letter, digit, \
+             or `_` and use letters, digits, `.`, `_`, `+`, `@`, and `-`"
+        ));
+    }
     Ok(ParsedId::Bare(input.to_string()))
+}
+
+/// Whether `name` can be a bare package, app, or command name.
+fn valid_bare_name(name: &str) -> bool {
+    name.len() <= 255
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphanumeric() || first == b'_')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._+@-".contains(&byte))
+        && !name.contains("..")
 }
 
 /// Validate a cask token.
@@ -281,32 +300,94 @@ fn validate_attr_path(attr: &str, prefix: &str) -> Result<(), String> {
                  empty segment between dots"
             ));
         }
-        if !segment
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        // A leading `-` would make the native entry name read as a flag.
+        if segment.starts_with('-')
+            || !segment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
         {
             return Err(format!(
                 "`{attr}` is not a valid attribute path; \
-                 segments may use letters, digits, `_`, and `-`"
+                 segments may use letters, digits, `_`, and `-`, \
+                 and do not start with `-`"
             ));
         }
     }
     Ok(())
 }
 
+/// Check `owner/repo[/ref][?parameters]` after `github:`.
+///
+/// Owner, repository, and ref use the GitHub and Git name rules. Only the
+/// `dir`, `ref`, and `rev` parameters are accepted. Others, such as
+/// `host`, would fetch from a different server.
 fn validate_github_reference(reference: &str) -> Result<(), String> {
-    let segments: Vec<&str> = reference.split('/').collect();
-    if segments.len() < 2
-        || segments.len() > 3
-        || segments.iter().any(|segment| segment.is_empty())
-        || reference.contains('#')
-        || reference.chars().any(char::is_whitespace)
-    {
+    let (path, parameters) = reference
+        .split_once('?')
+        .map_or((reference, None), |(path, parameters)| {
+            (path, Some(parameters))
+        });
+    let valid_path = match path.split('/').collect::<Vec<_>>().as_slice() {
+        [owner, repository] => github_owner(owner) && github_repository(repository),
+        [owner, repository, name] => {
+            github_owner(owner) && github_repository(repository) && ref_segment(name)
+        }
+        _ => false,
+    };
+    if !valid_path {
         return Err(String::from(
             "use github:owner/repo or github:owner/repo/ref",
         ));
     }
+    let valid_parameters = parameters.is_none_or(|parameters| {
+        parameters
+            .split('&')
+            .all(|parameter| match parameter.split_once('=') {
+                Some(("dir", dir)) => dir.len() <= 1024 && dir.split('/').all(path_segment),
+                Some(("ref", name)) => name.len() <= 255 && name.split('/').all(ref_segment),
+                Some(("rev", revision)) => nix::is_full_commit_id(revision),
+                _ => false,
+            })
+    });
+    if !valid_parameters {
+        return Err(String::from(
+            "use only the dir, ref, or rev parameter, for example github:owner/repo?dir=nix",
+        ));
+    }
     Ok(())
+}
+
+/// A GitHub user or organization name.
+fn github_owner(owner: &str) -> bool {
+    (1..=39).contains(&owner.len())
+        && owner
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+/// A GitHub repository name.
+fn github_repository(repository: &str) -> bool {
+    (1..=100).contains(&repository.len())
+        && repository != "."
+        && repository != ".."
+        && repository
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+}
+
+/// One part of a branch or tag name.
+fn ref_segment(name: &str) -> bool {
+    path_segment(name) && !name.starts_with(['.', '-']) && !name.contains("..")
+}
+
+/// One relative path part without `.` or `..`.
+fn path_segment(segment: &str) -> bool {
+    (1..=255).contains(&segment.len())
+        && segment != "."
+        && segment != ".."
+        && segment
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._+-".contains(&byte))
 }
 
 /// Canonical source identity of a reference, for installed matching.
@@ -404,6 +485,17 @@ mod tests {
             "github:/repo#x",
             "github:owner/repo/sub/dir#x",
             "github:owner/repo",
+            "github:owner/repo?host=example.com#x",
+            "github:owner/repo?dir=../x#x",
+            "github:owner/repo/..#x",
+            "github:own\u{1b}er/repo#x",
+            "github:owner/repo#packages.x.--all",
+            "nixpkgs:-all",
+            "--impure",
+            "-x",
+            "rip grep",
+            "a\u{1b}]0;x\u{7}",
+            "..",
             "path:/tmp/foo#default",
             "git+https://example.com/repo#default",
             "https://example.com/repo#default",
@@ -423,6 +515,18 @@ mod tests {
         assert!(CatalogId::explicit("https://example.com/repo", "default").is_err());
         assert!(CatalogId::explicit("github:owner/repo#rev", "default").is_err());
         assert!(CatalogId::explicit("github:owner /repo", "default").is_err());
+        assert!(
+            CatalogId::explicit("github:owner/repo?dir=nix/casks&ref=release/1", "default").is_ok()
+        );
+        assert!(
+            CatalogId::explicit(
+                "github:owner/.github?rev=0a56ceb53d693f3e0eaea0f9f4d5b8cf5b9b9d1a",
+                "default"
+            )
+            .is_ok()
+        );
+        assert!(CatalogId::explicit("github:owner/repo?narHash=x", "default").is_err());
+        assert!(CatalogId::explicit("github:owner/repo/-x", "default").is_err());
 
         for text in [
             "brew:homebrew/core/ripgrep",

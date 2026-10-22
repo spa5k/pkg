@@ -45,13 +45,11 @@ pub(super) fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, Pat
     );
     let mut apps = BTreeMap::new();
     for (name, entry) in data.apps {
-        if Path::new(&name)
-            .extension()
-            .is_none_or(|extension| extension != "app")
-            || name.contains(['/', '\0', '\n', '\r'])
-            || entry.source != format!("{source_dir}/{name}")
-        {
-            return Err(format!("invalid cask app payload: {name}"));
+        if !launcher_name(&name) || entry.source != format!("{source_dir}/{name}") {
+            return Err(format!(
+                "invalid cask app payload: {}",
+                crate::output::printable(&name)
+            ));
         }
         let source = output.join(entry.source);
         if !fs::symlink_metadata(&source).is_ok_and(|m| m.is_dir())
@@ -62,6 +60,21 @@ pub(super) fn scan_restorable_apps(output: &Path) -> Result<BTreeMap<String, Pat
         apps.insert(name, source);
     }
     Ok(apps)
+}
+
+/// Whether `name` can name one launcher in the apps folder.
+///
+/// The name is one `.app` file name without a hidden-file dot, a path
+/// separator, a control character, or a direction override.
+pub(super) fn launcher_name(name: &str) -> bool {
+    name.len() <= 255
+        && !name.starts_with('.')
+        && Path::new(name)
+            .extension()
+            .is_some_and(|extension| extension == "app")
+        && !name
+            .chars()
+            .any(|c| c == '/' || c.is_control() || crate::output::direction_control(c))
 }
 
 /// Locate the shared materializer only for the generated private layout.

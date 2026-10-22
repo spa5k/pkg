@@ -70,8 +70,10 @@ impl Reaped {
     /// Classify this run by cancellation and exit status.
     ///
     /// Cancellation takes priority over the exit status. Without a resource-limit
-    /// failure, exit code 130 also counts as interrupted. Callers must read native
-    /// state again because the child may have applied part of the operation.
+    /// failure, exit code 130 also counts as interrupted. A resource-limit
+    /// failure is a failure even after a successful exit, because the
+    /// captured output is incomplete. Callers must read native state again
+    /// because the child may have applied part of the operation.
     #[must_use]
     pub fn classify(&self) -> Outcome {
         if let Some(signal) = self.cancelled.or_else(|| {
@@ -81,6 +83,12 @@ impl Reaped {
                 .flatten()
         }) {
             return Outcome::Interrupted { signal };
+        }
+        if let Some(limit) = self.resource_limit {
+            return Outcome::Failed {
+                status: limit.to_string(),
+                stderr: String::from_utf8_lossy(&self.output.stderr).into_owned(),
+            };
         }
         if self.output.status.success() {
             return Outcome::Success;
@@ -357,6 +365,10 @@ pub struct ChildLimits {
 }
 
 const READ_BUDGET: usize = 64 * 1024;
+/// The captured bytes of each stream when the caller sets no limits.
+const DEFAULT_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
+/// The end of filtered stderr that stays for the failure report.
+const FILTERED_STDERR_BYTES: usize = 4 * 1024 * 1024;
 const CANCELLATION_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 const POST_EXIT_DRAIN: std::time::Duration = std::time::Duration::from_millis(250);
 const MONITOR_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
@@ -686,7 +698,8 @@ impl<'sink, 'input> OutputPipes<'sink, 'input> {
             stderr,
             stdout_bytes: Vec::new(),
             stderr_bytes: Vec::new(),
-            output_limit: output_limit.filter(|_| matches!(mode, IoMode::Capture)),
+            output_limit: matches!(mode, IoMode::Capture)
+                .then(|| output_limit.unwrap_or(DEFAULT_OUTPUT_BYTES)),
             overflow: false,
             mode,
             last_tick: std::time::Instant::now(),
@@ -841,6 +854,7 @@ fn read_pipe<T: std::io::Read>(
                 append_output(bytes, &buffer[..count], limit, overflow);
                 if let IoMode::Filtered(sink) = mode {
                     sink.chunk(&buffer[..count]);
+                    keep_tail(bytes);
                 }
                 if *overflow {
                     break;
@@ -1052,6 +1066,21 @@ fn append_output(
     }
 }
 
+/// Keep the end of filtered stderr from its last line boundaries.
+///
+/// The sink already showed the stream, and failure reports read its last
+/// lines, so a long log does not grow without a limit.
+fn keep_tail(bytes: &mut Vec<u8>) {
+    if bytes.len() > 2 * FILTERED_STDERR_BYTES {
+        let cut = bytes.len() - FILTERED_STDERR_BYTES;
+        let start = bytes[cut..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .map_or(cut, |line| cut + line + 1);
+        bytes.drain(..start);
+    }
+}
+
 fn set_nonblocking(fd: impl std::os::fd::AsFd) -> std::io::Result<()> {
     let flags = rustix::fs::fcntl_getfl(&fd)?;
     rustix::fs::fcntl_setfl(fd, flags | rustix::fs::OFlags::NONBLOCK)?;
@@ -1109,7 +1138,9 @@ impl ChildOwner {
 /// nonblocking pipe instead of inherited or null stdin. The complete input
 /// must be delivered; otherwise the child is stopped and reaped.
 /// Limits create a child process group and bound elapsed time and captured
-/// output. Memory checks require `resident_bytes`.
+/// output. Memory checks require `resident_bytes`. Without limits, each
+/// captured stream stops the child at 256 MiB, and filtered stderr keeps
+/// its last 4 MiB.
 /// Filtered mode delivers captured stderr to its borrowed sink while the child runs.
 /// # Errors
 /// Returns an error if signal registration, spawn, input delivery, stream reads,
