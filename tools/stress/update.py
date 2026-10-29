@@ -11,12 +11,18 @@ checks that the installed client always starts after these events:
 - a full disk in the install, completion, or temporary folder
 - parallel updates
 - hostile release servers and broken new clients
+- slow, late, and failing responses from the release server
+- a power cut, which loses every write that was not synced
 
 `test` changes /etc/hosts, the system CA store, and mounts. Run it only on a
 throwaway machine, for example an E2B sandbox:
 
     python3 tools/stress/update.py build
     sudo PKG_STRESS_THROWAWAY=1 python3 tools/stress/update.py test
+
+The `power` part is not in the default parts. It needs FUSE and LazyFS
+(https://github.com/dsrhaslab/lazyfs). Set PKG_STRESS_LAZYFS to the lazyfs
+binary when it is not on PATH.
 """
 
 import argparse
@@ -58,6 +64,7 @@ COMPLETION_NAMES = {"pkg.bash", "_pkg", "pkg.fish"}
 SUMS = "/spa5k/pkg/releases/latest/download/SHA256SUMS"
 HOSTS = ("github.com", "channels.nixos.org")
 HOSTS_MARK = "# pkg-stress"
+LAZYFS = os.environ.get("PKG_STRESS_LAZYFS", "lazyfs")
 ENV = {
     "HOME": str(HOME),
     "PATH": f"{BIN_DIR}:{WORK}/stub:/usr/bin:/bin",
@@ -219,6 +226,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.head(Content_Length=100)
         self.stop.wait(600)
 
+    def serve_late(self, body_and_delay):
+        body, delay = body_and_delay
+        self.stop.wait(delay)
+        self.serve_ok(body)
+
+    def serve_throttle(self, body_and_rate):
+        """Send the body at `rate` bytes per second."""
+        body, rate = body_and_rate
+        self.head(Content_Length=len(body))
+        step = max(1, rate // 10)
+        for start in range(0, len(body), step):
+            self.wfile.write(body[start : start + step])
+            time.sleep(0.1)
+
+    def serve_truncate(self, body):
+        """Announce the body, send half, and close the connection normally."""
+        self.head(Content_Length=len(body))
+        self.wfile.write(body[: len(body) // 2])
+        self.close_connection = True
+
+    def serve_status(self, status):
+        self.head(status, Content_Length=0)
+
     def serve_reset(self, body):
         self.head(Content_Length=len(body))
         self.wfile.write(body[: len(body) // 2])
@@ -248,6 +278,8 @@ def serve():
     context.load_cert_chain(tls / "server.pem", tls / "server.key")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 443), Handler)
     server.daemon_threads = True
+    # A stopped client breaks its connection. Do not print each traceback.
+    server.handle_error = lambda *_: None
     server.socket = context.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -340,10 +372,15 @@ def inspect(result):
     lines = [line for line in err.splitlines() if line.strip()]
     message = next((line for line in lines if line.startswith(("Could not", "error"))),
                    lines[-1] if lines else "")
+    # A completion file must not be empty. A power cut empties a file whose
+    # data was not synced before the rename.
+    damaged = sorted(f"completions/{p.name}" for p in COMPLETIONS.glob("*")
+                     if p.name in COMPLETION_NAMES and p.stat().st_size == 0)
     return {
         "code": code,
         "state": state,
         "leftovers": sorted(set(leftovers)),
+        "damaged": damaged,
         "panic": "panicked" in err or "RUST_BACKTRACE" in err,
         "escape": "\x1b" in out + err,
         "updated": "Updated pkg" in out,
@@ -354,9 +391,10 @@ def inspect(result):
 
 def bad(trial):
     """Whether one trial broke an invariant."""
-    return bool(trial["state"] == "broken" or trial["panic"]
+    expect = trial.get("expect")
+    return bool(trial["state"] == "broken" or trial["panic"] or trial.get("damaged")
                 or (trial["updated"] and trial["state"] != "new")
-                or (trial.get("clean") and (trial["state"] != "new" or trial["leftovers"])))
+                or (expect and (trial["state"] != expect or trial["leftovers"])))
 
 
 def update(**kwargs):
@@ -397,13 +435,16 @@ def kills(report, duration, rounds):
         for _ in range(max(1, int(rounds * share))):
             reset()
             process = start(["update"])
-            time.sleep(random.uniform(0, duration * 1.1))
+            delay = random.uniform(0, duration * 1.1)
+            time.sleep(delay)
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, number)
-            report(f"kill {name}", inspect(finish(process, 60)))
+            trial = inspect(finish(process, 60))
+            trial["delay"] = round(delay, 3)
+            report(f"kill {name}", trial)
             # The next update must finish the job and remove every leftover.
             after = inspect(finish(start(["update"]), 120))
-            after["clean"] = True
+            after["expect"] = "new"
             report(f"kill {name}: next update", after)
 
 
@@ -542,6 +583,94 @@ def hostile(report):
         report(f"hostile: {label}", trial)
 
 
+def network(report):
+    """Slow, late, and failing responses. A slow but working server must not
+    stop the update. A failure must leave the old client and no files."""
+    normal = normal_release()
+    path = next(path for path in normal if path.endswith(".tar.gz"))
+    archive = normal[path][1]
+    cases = {
+        "SHA256SUMS: 45 s before the response": ({**normal, SUMS: ("late", (normal[SUMS][1], 45))}, "new"),
+        "archive: 64 KiB/s": ({**normal, path: ("throttle", (archive, 64 << 10))}, "new"),
+        "archive: 400 s at a constant rate": ({**normal, path: ("throttle", (archive, len(archive) // 400))}, "old"),
+        "archive: connection closes early": ({**normal, path: ("truncate", archive)}, "old"),
+        "SHA256SUMS: HTTP 429": ({**normal, SUMS: ("status", 429)}, "old"),
+        "archive: HTTP 503": ({**normal, path: ("status", 503)}, "old"),
+    }
+    for label, (routes, expect) in cases.items():
+        Handler.routes = routes
+        began = time.monotonic()
+        trial = update(timeout=420)
+        trial["seconds"] = round(time.monotonic() - began, 1)
+        trial["archive_kib"] = len(archive) >> 10
+        trial["expect"] = expect
+        report(f"network: {label}", trial)
+
+
+@contextlib.contextmanager
+def lazyfs(path):
+    """Mount LazyFS on `path`. LazyFS keeps written data in memory until an
+    fsync. The yielded function drops that data, like a power cut. Renames,
+    new files, and other metadata changes stay."""
+    root, fifo, log = WORK / "lazyfs-root", WORK / "lazyfs.fifo", WORK / "lazyfs.log"
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True)
+    log.unlink(missing_ok=True)
+    path.mkdir(parents=True, exist_ok=True)
+    config = WORK / "lazyfs.toml"
+    config.write_text(f'[faults]\nfifo_path="{fifo}"\n[cache]\napply_eviction=false\n'
+                      '[cache.simple]\ncustom_size="1gb"\nblocks_per_page=1\n'
+                      f'[filesystem]\nlog_all_operations=false\nlogfile="{log}"\n')
+    process = subprocess.Popen([LAZYFS, path, "--config-path", config, "-o", "allow_other",
+                                "-o", "modules=subdir", "-o", f"subdir={root}", "-f"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 10
+    while not os.path.ismount(path):
+        assert process.poll() is None and time.monotonic() < deadline, "LazyFS did not mount"
+        time.sleep(0.1)
+
+    def cut():
+        # LazyFS logs one line when the cache is clear.
+        done = log.read_text().count("cache is cleared") + 1
+        fifo.write_text("lazyfs::clear-cache\n")
+        while log.read_text().count("cache is cleared") < done:
+            time.sleep(0.05)
+
+    try:
+        yield cut
+    finally:
+        sh("umount", "-l", path, check=False)
+        process.kill()
+        process.wait()
+
+
+def power(report, duration, rounds):
+    """Cut the power during an update, or just after it. Then the next
+    update must finish the job."""
+    Handler.routes = normal_release()
+    with lazyfs(HOME / ".local") as cut:
+        for index in range(rounds):
+            reset()
+            fd = os.open(BINARY, os.O_RDONLY)
+            os.fsync(fd)
+            os.close(fd)
+            process = start(["update"])
+            label, delay = "power cut after update", None
+            if index % 3:
+                label, delay = "power cut", random.uniform(0, duration * 1.1)
+                time.sleep(delay)
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+            result = finish(process, 120)
+            cut()
+            trial = inspect(result)
+            trial["delay"] = delay and round(delay, 3)
+            report(label, trial)
+            after = inspect(finish(start(["update"]), 120))
+            after["expect"] = "new"
+            report(f"{label}: next update", after)
+
+
 def symlink_archive():
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w:gz") as archive:
@@ -593,6 +722,10 @@ def test(arguments):
                 parallel(report, 5)
             elif part == "hostile":
                 hostile(report)
+            elif part == "network":
+                network(report)
+            elif part == "power":
+                power(report, duration, arguments.rounds)
     summary(results)
     sys.exit(1 if any(bad(trial) for trial in results) else 0)
 
@@ -612,8 +745,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("build")
     run = commands.add_parser("test")
-    run.add_argument("parts", nargs="*", default=["kill", "fault", "disk", "parallel", "hostile"])
-    run.add_argument("--rounds", type=int, default=300, help="SIGKILL trials")
+    run.add_argument("parts", nargs="*",
+                     default=["kill", "fault", "disk", "parallel", "hostile", "network"])
+    run.add_argument("--rounds", type=int, default=300, help="SIGKILL and power cut trials")
     run.add_argument("--positions", type=int, default=24, help="fault positions per call")
     run.add_argument("--calls", nargs="*", default=[], help="inject faults only into these calls")
     run.add_argument("--seed", type=int, default=1)

@@ -33,4 +33,9 @@ the musl target. `cargo fuzz` sets `cfg(fuzzing)`, which adds the entry points
 in `pkg-cli` and `cask-catalog`. A normal build does not contain them.
 
 `seeds/` holds a small valid input for each target. `corpus/` and `artifacts/`
-are local and ignored. CI only compiles the targets. It does not fuzz.
+are local and ignored.
+
+CI compiles the targets on each pull request. `.github/workflows/fuzz.yml`
+runs each target for 20 minutes every night. It keeps each corpus in the
+Actions cache, and it uploads the input of a crash. A pull request that
+changes `fuzz/` runs each target for 1 minute.
