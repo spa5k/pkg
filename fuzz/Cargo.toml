@@ -1,0 +1,85 @@
+# Fuzz targets for the parsers that read data from outside pkg.
+#
+# `cargo fuzz` builds them with `cfg(fuzzing)`, which adds the entry points in
+# `pkg-cli` and `cask-catalog`. See README.md.
+
+[package]
+name = "pkg-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+pkg-cli = { path = "../crates/pkg-cli" }
+cask-catalog = { path = "../tools/cask-catalog" }
+# Compress raw tar inputs, so the fuzzer can reach the tar parsers.
+flate2 = "=1.1.10"
+tempfile = "=3.27.0"
+
+# Keep this crate out of the root workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "release_signature"
+path = "fuzz_targets/release_signature.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "release_sums"
+path = "fuzz_targets/release_sums.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "release_archive"
+path = "fuzz_targets/release_archive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "channel_list"
+path = "fuzz_targets/channel_list.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "catalog_id"
+path = "fuzz_targets/catalog_id.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "path_reference"
+path = "fuzz_targets/path_reference.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tap_archive"
+path = "fuzz_targets/tap_archive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tap_export"
+path = "fuzz_targets/tap_export.rs"
+test = false
+doc = false
+bench = false

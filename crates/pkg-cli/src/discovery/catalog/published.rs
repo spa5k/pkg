@@ -133,6 +133,14 @@ fn fetch(url: &str, destination: &Path, seconds: u32) -> Result<Option<String>, 
             "=https",
             "--tlsv1.2",
             "-sSL",
+            // Stop a connection after 30 s, and a download that stays below
+            // 1 byte per second for 60 s.
+            "--connect-timeout",
+            "30",
+            "--speed-limit",
+            "1",
+            "--speed-time",
+            "60",
             "--max-time",
             &seconds,
             "--max-filesize",
@@ -394,6 +402,38 @@ impl<'de> Visitor<'de> for PackagesSeed<'_, '_, '_> {
                 .map_err(serde::de::Error::custom)?;
         }
         Ok(())
+    }
+}
+
+/// Entry points for the fuzz targets in `fuzz/`.
+#[cfg(fuzzing)]
+pub mod fuzz {
+    /// One stored package: name, package name, version, description, and command.
+    pub type Row = (String, String, String, String, Option<String>);
+
+    /// Read a Brotli-compressed package list into a new catalog in memory.
+    /// # Errors
+    ///
+    /// Returns why the list is not valid.
+    pub fn read_list(list: &std::path::Path, system: &str) -> Result<Vec<Row>, String> {
+        let text = |error: rusqlite::Error| error.to_string();
+        let mut connection = rusqlite::Connection::open_in_memory().map_err(text)?;
+        super::super::native::create_tables(&connection).map_err(|error| error.to_string())?;
+        super::read(list, &mut connection, system).map_err(|error| error.to_string())?;
+        let mut rows = connection
+            .prepare("SELECT exposed, pname, version, description, command FROM packages")
+            .map_err(text)?;
+        rows.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .and_then(Iterator::collect)
+        .map_err(text)
     }
 }
 

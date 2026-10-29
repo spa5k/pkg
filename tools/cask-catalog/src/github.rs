@@ -70,6 +70,29 @@ fn license_from(repo_json: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// The lowercase 40-hex commit id of a commit response. With `revision`,
+/// the response must name that exact commit.
+fn exact_commit(
+    commit_json: &Value,
+    revision: Option<&str>,
+    context: &str,
+) -> Result<String, String> {
+    let sha = commit_json
+        .get("sha")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("commit response for {context} has no sha"))?
+        .to_ascii_lowercase();
+    match revision {
+        Some(rev) if sha != rev.to_ascii_lowercase() || !crate::valid_revision(&sha) => Err(
+            format!("commit response for {context} is not the exact requested 40-hex commit id"),
+        ),
+        None if !crate::valid_revision(&sha) => Err(format!(
+            "commit response for {context} is not an exact 40-hex commit id: {sha:?}"
+        )),
+        _ => Ok(sha),
+    }
+}
+
 /// Verified repository identity: the exact revision plus license.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoIdentity {
@@ -118,27 +141,7 @@ pub fn verify_repo(
     )
     .map_err(|e| short(&e, 400))?
     .ok_or_else(|| format!("GitHub has no commit {branch_ref} in {owner}/{repo}"))?;
-    let sha = commit_json
-        .get("sha")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("commit response for {context} has no sha"))?
-        .to_ascii_lowercase();
-    match revision {
-        Some(rev) if sha != rev.to_ascii_lowercase() || !crate::valid_revision(&sha) => {
-            return Err(format!(
-                "commit response for {context} is not the exact requested \
-                 40-hex commit id"
-            ));
-        }
-        None if !crate::valid_revision(&sha) => {
-            return Err(format!(
-                "commit response for {context} is not an exact \
-                 40-hex commit id: {sha:?}"
-            ));
-        }
-        _ => {}
-    }
-    let revision = sha;
+    let revision = exact_commit(&commit_json, revision, &context)?;
     Ok(RepoIdentity {
         revision,
         license_spdx,
@@ -196,6 +199,31 @@ mod tests {
         assert_eq!(license_from(&json!({})), None);
         assert_eq!(license_from(&json!({"license": {"spdx_id": ""}})), None);
         assert_eq!(license_from(&json!({"license": null})), None);
+        // The longest allowed branch name.
+        let longest = json!({"default_branch": "x".repeat(244)});
+        assert!(validated_default_branch(&longest, "o", "r").is_ok());
+    }
+
+    #[test]
+    fn commit_responses_must_name_the_exact_commit() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let upper = sha.to_ascii_uppercase();
+        let response = json!({ "sha": upper });
+        // A branch head and a requested revision, in either case.
+        assert_eq!(exact_commit(&response, None, "c").unwrap(), sha);
+        assert_eq!(exact_commit(&response, Some(sha), "c").unwrap(), sha);
+        assert_eq!(
+            exact_commit(&json!({ "sha": sha }), Some(&upper), "c").unwrap(),
+            sha
+        );
+        // Another commit, a short id, or no id is refused.
+        let other = sha.replace('0', "1");
+        assert!(exact_commit(&response, Some(&other), "c").is_err());
+        for bad in [json!({"sha": "0123456"}), json!({"sha": 1}), json!({})] {
+            assert!(exact_commit(&bad, None, "c").is_err(), "{bad}");
+        }
+        // The requested revision is not trusted as a commit id either.
+        assert!(exact_commit(&json!({"sha": "0123456"}), Some("0123456"), "c").is_err());
     }
 
     #[test]

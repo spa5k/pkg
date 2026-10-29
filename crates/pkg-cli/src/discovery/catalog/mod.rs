@@ -42,6 +42,8 @@ pub use local::{
 pub(crate) use matching::FUZZY_RANK;
 pub use matching::SearchQuery;
 pub use native::NativeRow;
+#[cfg(fuzzing)]
+pub use published::fuzz;
 pub use published::{OTHER_SYSTEMS, channel as published_channel};
 pub use routing::Routing;
 pub use search::{
