@@ -3,7 +3,7 @@
 # NN-07/NN-08: the old ambient-time audits, quality ratchets, index
 # determinism, proof-repeat, and machine install matrices are deleted with
 # their subjects. What remains: build, test, format, clippy, docs, dependency
-# checks on the pinned toolchain, and one smoke job that runs the built
+# checks on the latest stable toolchain, and one smoke job that runs the built
 # client without any pkg service or privileged helper.
 
 name: ci
@@ -22,9 +22,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Overrides any ambient RUSTUP_TOOLCHAIN so the pinned channel in
-  # rust-toolchain.toml is what actually compiles.
-  RUSTUP_TOOLCHAIN: "1.99.0"
+  # Overrides any ambient RUSTUP_TOOLCHAIN so CI compiles with the latest
+  # stable Rust, the channel in rust-toolchain.toml.
+  RUSTUP_TOOLCHAIN: stable
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
 
       # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml, so rustup does not
       # auto-install the file's components; fmt and clippy must be explicit.
-      - name: Install pinned Rust toolchain (fmt + clippy components)
+      - name: Install the latest stable Rust toolchain (fmt + clippy components)
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
 
       - name: Build (all targets, locked)
@@ -98,7 +98,7 @@ jobs:
       # auto-install the file's components. The Linux `rust` job already
       # lints; the macOS Clippy step below needs the component, so only
       # that matrix leg installs it.
-      - name: Install pinned Rust toolchain (clippy on macOS)
+      - name: Install the latest stable Rust toolchain (clippy on macOS)
         run: |
           components=""
           if [ "${{ runner.os }}" = "macOS" ]; then

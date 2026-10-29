@@ -145,7 +145,7 @@ Nix does the package work. `pkg` gives it a simple interface.
 | Cask and Formula downloads | Each download has a fixed SHA-256 in its Nix package. Nix refuses other bytes. |
 | Nixpkgs packages | Nix checks the binary cache signatures with the keys that your Nix trusts. |
 | macOS apps | Before `pkg` makes a launcher for a Cask app, it runs `codesign --verify --deep --strict` and `spctl --assess`. A rejected app gets no launcher. |
-| GitHub flakes | `pkg install` asks for approval before Nix evaluates a `github:` flake. |
+| GitHub flakes | `pkg install` asks for approval before Nix evaluates a `github:` flake. `pkg info` evaluates the flake without a prompt, but it does not build or run it. |
 | Public taps | `pkg tap add` asks for approval before it fetches a tap. Tap Ruby runs only inside a Nix build sandbox. |
 
 ### Least privilege
@@ -197,7 +197,7 @@ shasum -a 256 --ignore-missing -c SHA256SUMS
 # On Linux: sha256sum --ignore-missing -c SHA256SUMS
 ```
 
-The key must match `RELEASE_KEY` in
+The key must be in `RELEASE_KEYS` in
 [`crates/pkg-cli/src/client.rs`](crates/pkg-cli/src/client.rs).
 
 ### Limits

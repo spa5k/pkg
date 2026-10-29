@@ -15,8 +15,14 @@ use crate::nix::Outcome;
 /// The published releases of the client.
 const RELEASES: &str = "https://github.com/spa5k/pkg/releases";
 
-/// The OpenSSH Ed25519 public key that signs `SHA256SUMS` for each release.
-const RELEASE_KEY: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIOaFZma99iXoZWruu1raDx1IAPNLJPOF/TYfXbAvyehh";
+/// The OpenSSH Ed25519 public keys that can sign `SHA256SUMS` for a release.
+///
+/// Add a second key and keep it offline. Then that key can sign a release
+/// that removes a lost or stolen key.
+const RELEASE_KEYS: &[&str] = &[
+    // SHA256:bnH/S3tr+6oBsV5Yrfufi2IJSVS7X1YcKeLw6zcvX4M
+    "AAAAC3NzaC1lZDI1NTE5AAAAIOaFZma99iXoZWruu1raDx1IAPNLJPOF/TYfXbAvyehh",
+];
 
 /// The `ssh-keygen -Y sign -n` namespace of release signatures.
 const RELEASE_NAMESPACE: &str = "pkg-release";
@@ -61,6 +67,15 @@ impl Error {
             Self::Process(error) => error.cancelled,
             Self::Interrupted { signal, .. } => Some(*signal),
             Self::Message(_) | Self::Io(_) => None,
+        }
+    }
+
+    /// Name the step that failed. A cancellation stays a cancellation.
+    fn context(self, step: &str) -> Self {
+        if self.signal().is_some() {
+            self
+        } else {
+            Self::Message(format!("{step}: {self}"))
         }
     }
 }
@@ -171,9 +186,13 @@ pub fn update() -> Result<Update, Error> {
     if !layout.runs_here() {
         return Ok(Update::NotInstalled);
     }
-    let directory = tempfile::Builder::new().prefix("pkg-update-").tempdir()?;
+    let directory = tempfile::Builder::new()
+        .prefix("pkg-update-")
+        .tempdir()
+        .map_err(|error| Error::from(error).context("cannot create a temporary folder"))?;
     let sums = directory.path().join("SHA256SUMS");
-    download(&format!("{RELEASES}/latest/download/SHA256SUMS"), &sums)?;
+    download(&format!("{RELEASES}/latest/download/SHA256SUMS"), &sums)
+        .map_err(|error| error.context("cannot check for a new release"))?;
     let sums = std::fs::read(&sums)?;
     let (latest, archive, checksum) = std::str::from_utf8(&sums)
         .ok()
@@ -187,29 +206,25 @@ pub fn update() -> Result<Update, Error> {
     download(
         &format!("{RELEASES}/download/v{latest}/SHA256SUMS.sig"),
         &signature,
-    )?;
+    )
+    .map_err(|error| error.context(&format!("cannot download the signature of pkg {latest}")))?;
     verify_signature(
         &sums,
-        &std::fs::read_to_string(&signature)?,
-        RELEASE_KEY,
+        &std::fs::read_to_string(&signature).unwrap_or_default(),
+        RELEASE_KEYS,
         RELEASE_NAMESPACE,
     )?;
     let archive_path = directory.path().join(&archive);
     download(
         &format!("{RELEASES}/download/v{latest}/{archive}"),
         &archive_path,
-    )?;
+    )
+    .map_err(|error| error.context(&format!("cannot download pkg {latest}")))?;
     cask_catalog::verify_sha256(&std::fs::read(&archive_path)?, &checksum)
         .map_err(|_| "the downloaded client does not match its published checksum")?;
-    let member = format!("pkg-{latest}-{system}/bin/pkg");
-    let mut tar = std::process::Command::new("tar");
-    tar.arg("-xOzf").arg(&archive_path).arg(&member);
-    let reaped = pkg_process::run_child(tar, pkg_process::IoMode::Capture, None, None)?;
-    check("tar", reaped.classify())?;
-    if reaped.output.stdout.is_empty() {
-        return Err("the downloaded archive has no client".into());
-    }
-    install(&layout, &reaped.output.stdout, &latest)?;
+    let client = read_member(&archive_path, &format!("pkg-{latest}-{system}/bin/pkg"))
+        .map_err(|error| error.context("cannot read the downloaded archive"))?;
+    install(&layout, &client, &latest)?;
     Ok(Update::Updated {
         from: VERSION.to_string(),
         to: latest,
@@ -250,10 +265,14 @@ fn run_client(binary: &Path, args: &[&str]) -> Result<u8, Error> {
 /// The largest release file, in bytes.
 const MAX_DOWNLOAD_BYTES: &str = "268435456";
 
+/// The largest client executable, in bytes.
+const MAX_CLIENT_BYTES: u64 = 256 * 1024 * 1024;
+
 fn download(url: &str, destination: &Path) -> Result<(), Error> {
     let destination = destination
         .to_str()
         .ok_or("temporary paths must be UTF-8")?;
+    // The caller checks the bytes, so the curl on PATH is enough here.
     let outcome = crate::nix::run_direct(
         Path::new("curl"),
         &[
@@ -271,8 +290,35 @@ fn download(url: &str, destination: &Path) -> Result<(), Error> {
             destination,
             url,
         ],
-    )?;
+    )
+    .map_err(|error| Error::from(error).context("cannot start curl"))?;
     check("curl", outcome)
+}
+
+/// Read `member`, a regular file, from a verified `.tar.gz` archive.
+///
+/// The archive is read in this process, so no program on `PATH` handles
+/// the bytes after their checksum check.
+fn read_member(archive: &Path, member: &str) -> Result<Vec<u8>, Error> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(archive)?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    for entry in archive.entries()? {
+        let entry = entry?;
+        if !entry.header().entry_type().is_file() || entry.path()? != Path::new(member) {
+            continue;
+        }
+        let mut client = Vec::new();
+        entry.take(MAX_CLIENT_BYTES + 1).read_to_end(&mut client)?;
+        if !u64::try_from(client.len()).is_ok_and(|length| length <= MAX_CLIENT_BYTES) {
+            return Err(format!("{member} is larger than {MAX_CLIENT_BYTES} bytes").into());
+        }
+        if client.is_empty() {
+            return Err(format!("{member} is empty").into());
+        }
+        return Ok(client);
+    }
+    Err(format!("the archive has no {member}").into())
 }
 
 /// Start the new client from the install directory, then replace the old
@@ -282,35 +328,58 @@ fn install(layout: &Layout, client: &[u8], version: &str) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt as _;
     let binary = layout.binary();
     let directory = binary.parent().ok_or("the client path has no directory")?;
+    let stage = |error: std::io::Error| {
+        Error::from(error).context(&format!(
+            "cannot write the new client to {}",
+            directory.display()
+        ))
+    };
     let mut file = tempfile::Builder::new()
         .prefix(".pkg-new-")
-        .tempfile_in(directory)?;
-    file.write_all(client)?;
+        .tempfile_in(directory)
+        .map_err(stage)?;
+    file.write_all(client).map_err(stage)?;
     file.as_file()
-        .set_permissions(std::fs::Permissions::from_mode(0o755))?;
-    file.as_file().sync_all()?;
+        .set_permissions(std::fs::Permissions::from_mode(0o755))
+        .map_err(stage)?;
+    file.as_file().sync_all().map_err(stage)?;
     // Close the file before it runs: Linux refuses to run an open file.
     let candidate = file.into_temp_path();
-    let (outcome, stdout) = crate::nix::run_direct_captured(&candidate, &["--version"])?;
+    let run = |args: &[&str]| {
+        crate::nix::run_direct_captured(&candidate, args)
+            .map_err(|error| Error::from(error).context("cannot start the new client"))
+    };
+    let (outcome, stdout) = run(&["--version"])?;
     check("the new client", outcome)?;
     if stdout.trim() != format!("pkg {version}") {
-        return Err(format!("the new client reports {}", stdout.trim()).into());
+        return Err(format!(
+            "the new client reports {}",
+            crate::output::printable(stdout.trim())
+        )
+        .into());
     }
     let completions = layout.data_dir().join("completions");
-    std::fs::create_dir_all(&completions)?;
+    let completion_error = |error: std::io::Error| {
+        Error::from(error).context(&format!(
+            "cannot write shell completions to {}",
+            completions.display()
+        ))
+    };
+    std::fs::create_dir_all(&completions).map_err(completion_error)?;
     for (shell, name) in [("bash", "pkg.bash"), ("zsh", "_pkg"), ("fish", "pkg.fish")] {
-        let (outcome, text) = crate::nix::run_direct_captured(&candidate, &["completion", shell])?;
+        let (outcome, text) = run(&["completion", shell])?;
         check("the new client", outcome)?;
-        let mut file = tempfile::NamedTempFile::new_in(&completions)?;
-        file.write_all(text.as_bytes())?;
+        let mut file = tempfile::NamedTempFile::new_in(&completions).map_err(completion_error)?;
+        file.write_all(text.as_bytes()).map_err(completion_error)?;
         file.as_file()
-            .set_permissions(std::fs::Permissions::from_mode(0o644))?;
+            .set_permissions(std::fs::Permissions::from_mode(0o644))
+            .map_err(completion_error)?;
         file.persist(completions.join(name))
-            .map_err(|error| error.error)?;
+            .map_err(|error| completion_error(error.error))?;
     }
-    candidate
-        .persist(&binary)
-        .map_err(|error| Error::Io(error.error))?;
+    candidate.persist(&binary).map_err(|error| {
+        Error::from(error.error).context(&format!("cannot replace {}", binary.display()))
+    })?;
     Ok(())
 }
 
@@ -361,13 +430,13 @@ fn published(sums: &str, system: &str) -> Option<(String, String, String)> {
 
 /// Check an armored `ssh-keygen -Y sign` signature of `message`.
 ///
-/// Accept only an Ed25519 signature by `key`, a base64 OpenSSH public key
-/// blob, in `namespace` over a SHA-512 hash. This is the `ssh-keygen`
+/// Accept only an Ed25519 signature by one of `keys`, base64 OpenSSH public
+/// key blobs, in `namespace` over a SHA-512 hash. This is the `ssh-keygen`
 /// default for Ed25519 keys. The format is OpenSSH `PROTOCOL.sshsig`.
 fn verify_signature(
     message: &[u8],
     armored: &str,
-    key: &str,
+    keys: &[&str],
     namespace: &str,
 ) -> Result<(), String> {
     use base64::Engine as _;
@@ -381,9 +450,6 @@ fn verify_signature(
     let blob = base64
         .decode(body.split_whitespace().collect::<String>())
         .map_err(|_| malformed())?;
-    let key = base64
-        .decode(key)
-        .map_err(|_| String::from("the release key is not base64"))?;
     let mut reader = Wire(&blob);
     if reader.take(6) != Some(b"SSHSIG".as_slice()) || reader.number() != Some(1) {
         return Err(malformed());
@@ -400,11 +466,16 @@ fn verify_signature(
     if !reader.0.is_empty() {
         return Err(malformed());
     }
-    if signer != key.as_slice() {
-        return Err(String::from(
-            "the release is not signed by the pkg release key",
-        ));
+    let mut key = None;
+    for candidate in keys {
+        let candidate = base64
+            .decode(candidate)
+            .map_err(|_| String::from("a release key is not base64"))?;
+        if candidate == signer {
+            key = Some(candidate);
+        }
     }
+    let key = key.ok_or_else(|| String::from("the release is not signed by a pkg release key"))?;
     if signed_namespace != namespace.as_bytes() || hash != b"sha512" {
         return Err(malformed());
     }
@@ -510,24 +581,74 @@ QTWColmNDGwS36DVU1Tgs=
 
     #[test]
     fn accepts_only_a_release_signature_by_the_release_key() {
-        let check = |message: &str, signature: &str, key: &str| {
-            verify_signature(message.as_bytes(), signature, key, RELEASE_NAMESPACE)
+        let check = |message: &str, signature: &str, keys: &[&str]| {
+            verify_signature(message.as_bytes(), signature, keys, RELEASE_NAMESPACE)
         };
-        assert_eq!(check(TEST_SUMS, TEST_SIGNATURE, TEST_KEY), Ok(()));
+        assert_eq!(check(TEST_SUMS, TEST_SIGNATURE, &[TEST_KEY]), Ok(()));
+        // Any key in the list can sign.
+        let keys = [RELEASE_KEYS, &[TEST_KEY]].concat();
+        assert_eq!(check(TEST_SUMS, TEST_SIGNATURE, &keys), Ok(()));
         // A changed checksum list fails.
         let changed = TEST_SUMS.replace("bbb", "ccc");
-        assert!(check(&changed, TEST_SIGNATURE, TEST_KEY).is_err());
-        // Another key fails, so the test key cannot sign a release.
+        assert!(check(&changed, TEST_SIGNATURE, &[TEST_KEY]).is_err());
+        // Other keys fail, so the test key cannot sign a release.
         assert_eq!(
-            check(TEST_SUMS, TEST_SIGNATURE, RELEASE_KEY),
+            check(TEST_SUMS, TEST_SIGNATURE, RELEASE_KEYS),
             Err(String::from(
-                "the release is not signed by the pkg release key"
+                "the release is not signed by a pkg release key"
             ))
         );
+        assert!(check(TEST_SUMS, TEST_SIGNATURE, &[]).is_err());
         // A signature for Git commits or tags is not a release signature.
-        assert!(check(TEST_SUMS, GIT_SIGNATURE, TEST_KEY).is_err());
-        assert!(check(TEST_SUMS, "", TEST_KEY).is_err());
-        assert!(check(TEST_SUMS, &TEST_SIGNATURE.replace('U', "V"), TEST_KEY).is_err());
+        assert!(check(TEST_SUMS, GIT_SIGNATURE, &[TEST_KEY]).is_err());
+        assert!(check(TEST_SUMS, "", &[TEST_KEY]).is_err());
+        assert!(check(TEST_SUMS, &TEST_SIGNATURE.replace('U', "V"), &[TEST_KEY]).is_err());
+    }
+
+    #[test]
+    fn reads_only_the_client_file_from_the_release_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, entries: &[(&str, tar::EntryType, &[u8])]| {
+            let path = dir.path().join(name);
+            let file = std::fs::File::create(&path).unwrap();
+            let gzip = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+            let mut builder = tar::Builder::new(gzip);
+            for (member, kind, data) in entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(*kind);
+                header.set_size(data.len().try_into().unwrap());
+                header.set_mode(0o755);
+                if *kind == tar::EntryType::Symlink {
+                    header.set_link_name("/bin/sh").unwrap();
+                }
+                header.set_cksum();
+                builder.append_data(&mut header, member, *data).unwrap();
+            }
+            builder.into_inner().unwrap().finish().unwrap();
+            path
+        };
+        let member = "pkg-1.0.0-x86_64-linux/bin/pkg";
+        let good = write(
+            "good.tar.gz",
+            &[
+                (
+                    "pkg-1.0.0-x86_64-linux/README.md",
+                    tar::EntryType::Regular,
+                    b"read me",
+                ),
+                (member, tar::EntryType::Regular, b"client"),
+            ],
+        );
+        assert_eq!(read_member(&good, member).unwrap(), b"client");
+        assert!(read_member(&good, "pkg-1.0.0-x86_64-linux/bin/other").is_err());
+        // A link at the client path is not the client.
+        let link = write("link.tar.gz", &[(member, tar::EntryType::Symlink, b"")]);
+        assert!(read_member(&link, member).is_err());
+        let empty = write("empty.tar.gz", &[(member, tar::EntryType::Regular, b"")]);
+        assert!(read_member(&empty, member).is_err());
+        let broken = dir.path().join("broken.tar.gz");
+        std::fs::write(&broken, b"not gzip").unwrap();
+        assert!(read_member(&broken, member).is_err());
     }
 
     #[test]

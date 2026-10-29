@@ -46,10 +46,15 @@ pub enum MetadataValue {
 }
 
 /// Whether pkg can show `text` without terminal controls.
-fn shown(text: &str) -> bool {
+pub fn shown(text: &str) -> bool {
     !text
         .chars()
         .any(|c| c.is_control() || crate::output::direction_control(c))
+}
+
+/// Whether a declared main command is one plain file name.
+pub fn plain_command(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 255 && !name.contains('/') && shown(name)
 }
 
 /// A declared main command that is one plain file name, or `None`.
@@ -57,8 +62,7 @@ fn command_name<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
     let command = <Option<String> as serde::Deserialize>::deserialize(deserializer)?;
-    Ok(command
-        .filter(|name| !name.is_empty() && name.len() <= 255 && !name.contains('/') && shown(name)))
+    Ok(command.filter(|name| plain_command(name)))
 }
 
 /// Attribute names that pkg can show. The traversal skips other names.

@@ -227,8 +227,12 @@ impl Rows<'_, '_> {
             printable(&entry.version),
             printable(entry.meta.description.as_deref().unwrap_or_default()),
             // Main commands come from top-level packages only, as in a
-            // local evaluation.
-            entry.meta.main_program.as_deref().filter(|_| top_level),
+            // local evaluation, and follow the same name rule.
+            entry
+                .meta
+                .main_program
+                .as_deref()
+                .filter(|name| top_level && crate::nix::plain_command(name)),
             key.rsplit('.').next().unwrap_or(key),
             reason(entry, self.system),
         ])?;
@@ -379,6 +383,11 @@ impl<'de> Visitor<'de> for PackagesSeed<'_, '_, '_> {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
         while let Some(key) = map.next_key::<String>()? {
+            // A local evaluation skips the same attribute names.
+            if !crate::nix::shown(&key) {
+                map.next_value::<IgnoredAny>()?;
+                continue;
+            }
             let entry: Entry = map.next_value()?;
             self.0
                 .insert(&key, &entry)
@@ -412,6 +421,55 @@ mod tests {
         ] {
             assert_eq!(channel(source), expected, "{source}");
         }
+    }
+
+    #[test]
+    fn names_with_terminal_controls_or_paths_are_not_stored() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE packages(attribute TEXT PRIMARY KEY, exposed TEXT, pname TEXT, version TEXT, description TEXT, command TEXT, leaf TEXT, unavailable TEXT)",
+            )
+            .unwrap();
+        let list = serde_json::json!({
+            "version": "2",
+            "packages": {
+                "ok": {"pname": "ok", "version": "1", "meta": {"mainProgram": "ok"}},
+                "bad\u{1b}]0;title\u{7}": {"pname": "bad", "version": "1"},
+                "slash": {"pname": "slash", "version": "1", "meta": {"mainProgram": "../x"}},
+                "escape": {"pname": "escape", "version": "1", "meta": {"mainProgram": "e\u{1b}[2J"}},
+            },
+        })
+        .to_string();
+        {
+            let mut insert = connection
+                .prepare("INSERT INTO packages VALUES (?1,?2,?3,?4,?5,?6,?7,?8)")
+                .unwrap();
+            let mut rows = Rows {
+                insert: &mut insert,
+                system: "x86_64-linux",
+                version: None,
+            };
+            serde_json::Deserializer::from_str(&list)
+                .deserialize_map(ListVisitor(&mut rows))
+                .unwrap();
+            assert_eq!(rows.version, Some(2));
+        }
+        let stored: Vec<(String, Option<String>)> = connection
+            .prepare("SELECT exposed, command FROM packages ORDER BY exposed")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            stored,
+            [
+                (String::from("escape"), None),
+                (String::from("ok"), Some(String::from("ok"))),
+                (String::from("slash"), None),
+            ]
+        );
     }
 
     #[test]

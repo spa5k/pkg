@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RUSTUP_TOOLCHAIN: "1.99.0"
+  RUSTUP_TOOLCHAIN: stable
 
 jobs:
   package:
@@ -47,7 +47,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned Rust toolchain
+      - name: Install the latest stable Rust toolchain
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
       - name: Check tag matches pkg-cli version

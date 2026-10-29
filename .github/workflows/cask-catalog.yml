@@ -31,7 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUSTUP_TOOLCHAIN: "1.99.0"
+  RUSTUP_TOOLCHAIN: stable
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -45,7 +45,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned Rust toolchain
+      - name: Install the latest stable Rust toolchain
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
       - name: Fetch helpers safety tests (offline, fail fast)

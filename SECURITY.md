@@ -42,6 +42,6 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOaFZma99iXoZWruu1raDx1IAPNLJPOF/TYfXbAvyehh
 SHA256:bnH/S3tr+6oBsV5Yrfufi2IJSVS7X1YcKeLw6zcvX4M
 ```
 
-`RELEASE_KEY` in [`crates/pkg-cli/src/client.rs`](crates/pkg-cli/src/client.rs)
-holds the same key. The README shows how to
+`RELEASE_KEYS` in [`crates/pkg-cli/src/client.rs`](crates/pkg-cli/src/client.rs)
+holds the same key. `pkg update` accepts a signature by any key in that list. The README shows how to
 [verify a release](README.md#verify-a-release-yourself).
