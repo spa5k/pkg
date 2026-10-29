@@ -18,7 +18,7 @@ use super::{CatalogError, native::Snapshot};
 const CHANNELS: &str = "https://channels.nixos.org";
 
 /// The largest download, in bytes. The compressed list is about 30 MB.
-const MAX_DOWNLOAD_BYTES: &str = "268435456";
+const MAX_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
 
 /// The largest decompressed list, in bytes.
 const MAX_LIST_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -124,7 +124,10 @@ fn fetch(url: &str, destination: &Path, seconds: u32) -> Result<Option<String>, 
         .to_str()
         .ok_or_else(|| CatalogError::cache_write("cache paths must be UTF-8"))?;
     let seconds = seconds.to_string();
-    let (outcome, stdout) = crate::nix::run_direct_captured(
+    let max_bytes = MAX_DOWNLOAD_BYTES.to_string();
+    // Before 8.4, curl applies --max-filesize only to a declared length.
+    // The file size limit then stops curl before it fills the disk.
+    let (outcome, stdout) = crate::nix::run_direct_limited(
         Path::new("curl"),
         &[
             "--proto",
@@ -144,13 +147,14 @@ fn fetch(url: &str, destination: &Path, seconds: u32) -> Result<Option<String>, 
             "--max-time",
             &seconds,
             "--max-filesize",
-            MAX_DOWNLOAD_BYTES,
+            &max_bytes,
             "-o",
             destination,
             "-w",
             "%{http_code} %{url_effective}",
             url,
         ],
+        MAX_DOWNLOAD_BYTES,
     )
     .map_err(|error| match error.cancelled {
         Some(signal) => CatalogError::Interrupted(signal),
@@ -159,10 +163,13 @@ fn fetch(url: &str, destination: &Path, seconds: u32) -> Result<Option<String>, 
     match outcome {
         Outcome::Success => {}
         Outcome::Interrupted { signal } => return Err(CatalogError::Interrupted(signal)),
-        Outcome::Failed { stderr, .. } => {
+        Outcome::Failed { status, stderr } => {
+            let cause = match stderr.trim() {
+                "" => status.as_str(),
+                stderr => stderr,
+            };
             return Err(CatalogError::Source(format!(
-                "unable to download {url}: {}",
-                stderr.trim()
+                "unable to download {url}: {cause}"
             )));
         }
     }

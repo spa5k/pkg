@@ -135,6 +135,31 @@ fn shellenv_is_idempotent_and_uses_the_dedicated_profile() {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_failed_output_write_is_an_error_not_a_panic() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("open /dev/full");
+    let output = Command::new(env!("CARGO_BIN_EXE_pkg"))
+        .arg("shellenv")
+        .env("HOME", home.path())
+        .env("XDG_STATE_HOME", home.path().join("state"))
+        .env("XDG_CACHE_HOME", home.path().join("cache"))
+        .env("XDG_CONFIG_HOME", home.path().join("config"))
+        .stdout(full)
+        .output()
+        .expect("spawn pkg");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert_eq!(
+        stderr,
+        "pkg: cannot write the output: No space left on device (os error 28)\n"
+    );
+}
+
 #[test]
 fn relative_xdg_bases_are_rejected() {
     for variable in ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"] {

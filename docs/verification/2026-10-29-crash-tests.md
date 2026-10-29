@@ -109,6 +109,7 @@ The archive was 6,592 KiB.
 ## Open findings
 
 These findings need a decision. This branch does not change them.
+[A later change fixes them](2026-10-30-open-findings.md).
 
 1. A failed write to stdout or stderr panics with status 101. This report
    adds 11 cases in `install` and `remove`. In one case, the install was

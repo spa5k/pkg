@@ -112,6 +112,7 @@ No target found a crash, a wrong accept, or a timeout.
 ## Open findings
 
 These findings need a decision. This branch does not change them.
+[A later change fixes them](2026-10-30-open-findings.md).
 
 1. A failed write to stdout or stderr that is not `EPIPE` makes pkg panic
    with "failed printing to stderr" and exit with status 101. All 9 bad

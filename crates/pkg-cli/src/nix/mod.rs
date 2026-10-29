@@ -36,7 +36,7 @@ pub use index::{
 };
 pub use manifest::{ProfileEntry, SearchMeta, SourceIdentity};
 use process::{IoMode, Reaped, run_child};
-pub use process::{Outcome, run_direct, run_direct_captured};
+pub use process::{Outcome, run_direct, run_direct_captured, run_direct_limited};
 pub use reference::{
     decode_path_reference, encode_path_reference, is_fixed_reference, is_full_commit_id,
 };

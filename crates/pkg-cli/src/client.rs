@@ -267,6 +267,10 @@ fn run_client(binary: &Path, args: &[&str]) -> Result<u8, Error> {
             program: String::from("pkg"),
             signal,
         }),
+        // A crash has no exit code to pass on.
+        Outcome::Failed { status, .. } if reaped.output.status.code().is_none() => {
+            Err(format!("pkg failed: {status}").into())
+        }
         Outcome::Failed { .. } => Ok(reaped
             .output
             .status
@@ -288,14 +292,16 @@ const MAX_CLIENT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Download `url` to `destination`, but refuse more than `max_bytes`.
 fn download(url: &str, destination: &Path, max_bytes: u64) -> Result<(), Error> {
-    let path = destination;
     let destination = destination
         .to_str()
         .ok_or("temporary paths must be UTF-8")?;
     // The caller checks the bytes, so the curl on PATH is enough here.
-    // curl stops after 30 s without a connection, and when a download stays
-    // below 1 byte per second for 60 s.
-    let outcome = crate::nix::run_direct(
+    // curl stops after 30 s without a connection, when a download stays
+    // below 1 byte per second for 60 s, and after one hour. A slow link
+    // needs the hour: the archive is about 6.5 MiB.
+    // Before 8.4, curl applies --max-filesize only to a declared length.
+    // The file size limit then stops curl before it fills the disk.
+    let (outcome, _) = crate::nix::run_direct_limited(
         Path::new("curl"),
         &[
             "--proto",
@@ -311,21 +317,17 @@ fn download(url: &str, destination: &Path, max_bytes: u64) -> Result<(), Error> 
             "--speed-time",
             "60",
             "--max-time",
-            "300",
+            "3600",
             "--max-filesize",
             &max_bytes.to_string(),
             "-o",
             destination,
             url,
         ],
+        max_bytes,
     )
     .map_err(|error| Error::from(error).context("cannot start curl"))?;
-    check("curl", outcome)?;
-    // Before 8.4, curl applies --max-filesize only to a declared length.
-    if std::fs::metadata(path)?.len() > max_bytes {
-        return Err(format!("the download is larger than {max_bytes} bytes").into());
-    }
-    Ok(())
+    check("curl", outcome)
 }
 
 /// Read `member`, a regular file, from a verified `.tar.gz` archive.

@@ -901,6 +901,44 @@ fn direct_commands_preserve_arguments_without_shell_interpretation() {
 }
 
 #[test]
+fn a_crash_or_kill_is_a_failure_not_a_cancellation() {
+    for signal in [libc::SIGSEGV, libc::SIGKILL] {
+        let script = format!("ulimit -c 0; kill -{signal} $$");
+        let outcome = super::run_direct(Path::new("/bin/sh"), &["-c", &script]).expect("run shell");
+        assert!(
+            matches!(&outcome, Outcome::Failed { status, .. }
+                if status.starts_with(&format!("terminated by signal: {signal}"))),
+            "{outcome:?}"
+        );
+    }
+}
+
+#[test]
+fn a_file_limit_stops_a_larger_write() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file = temp.path().join("download");
+    let script = format!("exec head -c 5000 /dev/zero > '{}'", file.display());
+    let (outcome, _) =
+        super::run_direct_limited(Path::new("/bin/sh"), &["-c", &script], 1000).expect("run shell");
+    assert!(
+        matches!(&outcome, Outcome::Failed { status, .. }
+            if status == "a file is larger than 1000 bytes"),
+        "{outcome:?}"
+    );
+    assert!(fs::metadata(&file).expect("file").len() <= 1000);
+    let (outcome, _) = super::run_direct_limited(
+        Path::new("/bin/sh"),
+        &[
+            "-c",
+            &format!("head -c 1000 /dev/zero > '{}'", file.display()),
+        ],
+        1000,
+    )
+    .expect("run shell");
+    assert_eq!(outcome, Outcome::Success);
+}
+
+#[test]
 fn spawn_failure_restores_the_callers_signal_mask() {
     std::thread::spawn(|| {
         let mut previous: libc::sigset_t = unsafe { std::mem::zeroed() };
