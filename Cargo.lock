@@ -961,7 +961,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pkg-cli"
-version = "0.2.0-alpha.18"
+version = "0.2.0-alpha.19"
 dependencies = [
  "aws-lc-rs",
  "base64",
@@ -997,7 +997,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "pkg-process"
-version = "0.2.0-alpha.18"
+version = "0.2.0-alpha.19"
 dependencies = [
  "libc",
  "rustix",
