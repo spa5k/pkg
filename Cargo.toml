@@ -17,6 +17,8 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.lints.rust]
+# `cargo fuzz` sets `cfg(fuzzing)` for the entry points of the targets in `fuzz/`.
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(fuzzing)"] }
 unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "deny"
 unused_must_use = "deny"

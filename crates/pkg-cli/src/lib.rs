@@ -30,3 +30,11 @@ pub mod output;
 mod profile;
 mod profile_lock;
 pub mod tap;
+
+/// Entry points for the fuzz targets in `fuzz/`. Only `cargo fuzz` builds them.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzz {
+    pub use crate::client::fuzz::{newer, release_archive, release_signature, release_sums};
+    pub use crate::discovery::catalog::fuzz::{Row, read_list};
+}

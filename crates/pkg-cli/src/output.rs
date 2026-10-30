@@ -667,7 +667,10 @@ pub fn printable(text: &str) -> std::borrow::Cow<'_, str> {
 
 /// Whether `c` reorders text that a terminal shows.
 pub(crate) const fn direction_control(c: char) -> bool {
-    matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+    matches!(
+        c,
+        '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 /// Clean text from Nix or a flake for one terminal write.
@@ -760,6 +763,7 @@ mod tests {
             printable("a\x1b]8;;https://x\x07link\x1b]8;;\x07\rfake\u{9b}2K\u{202e}txt\tend"),
             "a]8;;https://xlink]8;; fake2Ktxt end"
         );
+        assert_eq!(printable("\u{061c}abc\u{2067}"), "abc");
     }
 
     #[test]

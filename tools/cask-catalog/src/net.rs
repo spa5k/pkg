@@ -230,7 +230,7 @@ impl SafeClient {
         if let Some(accept) = accept {
             request = request.header("Accept", accept);
         }
-        let mut response = request
+        let response = request
             .send()
             .map_err(|e| format!("request failed: {}", causes(&e)))?;
         let status = response.status();
@@ -243,24 +243,21 @@ impl SafeClient {
                 .map_or(0, |elapsed| elapsed.as_secs());
             return Err(status_error(status, response.headers(), url, now));
         }
-        let mut body = Vec::new();
-        let mut chunk = vec![0u8; 64 * 1024].into_boxed_slice();
-        loop {
-            let read = response
-                .read(&mut chunk)
-                .map_err(|e| format!("body read failed: {}", causes(&e)))?;
-            if read == 0 {
-                break;
-            }
-            if body.len() + read > MAX_BODY_BYTES {
-                return Err(format!(
-                    "body exceeds the {MAX_BODY_BYTES} byte limit: {url}"
-                ));
-            }
-            body.extend_from_slice(&chunk[..read]);
-        }
-        Ok(Some(body))
+        read_limited(response, MAX_BODY_BYTES, url).map(Some)
     }
+}
+
+/// Read `body` to its end, but refuse more than `limit` bytes.
+fn read_limited(body: impl std::io::Read, limit: usize, url: &str) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let most = u64::try_from(limit).map_or(u64::MAX, |limit| limit.saturating_add(1));
+    body.take(most)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("body read failed: {}", causes(&e)))?;
+    if bytes.len() > limit {
+        return Err(format!("body exceeds the {limit} byte limit: {url}"));
+    }
+    Ok(bytes)
 }
 
 /// `error` and each cause below it, for example the DNS or TLS failure
@@ -406,6 +403,59 @@ mod tests {
         let reason = redirect_refusal(&url("https://github.com/other/repo"));
         assert!(reason.contains("refused"));
         assert!(reason.contains("https://github.com/other/repo"));
+    }
+
+    #[test]
+    fn ipv4_special_ranges_are_refused() {
+        for bad in [
+            "0.1.2.3",
+            "10.0.0.1",
+            "100.64.0.1",
+            "100.127.255.255",
+            "127.0.0.1",
+            "169.254.1.1",
+            "172.16.0.1",
+            "192.0.0.8",
+            "192.0.2.1",
+            "192.168.1.1",
+            "198.18.0.1",
+            "198.19.255.255",
+            "198.51.100.1",
+            "203.0.113.1",
+            "224.0.0.1",
+            "240.0.0.1",
+            "255.255.255.255",
+        ] {
+            assert!(
+                !ipv4_public(bad.parse().unwrap()),
+                "{bad} must not be public"
+            );
+        }
+        // The first public addresses next to each refused range.
+        for good in [
+            "1.1.1.1",
+            "100.63.255.255",
+            "100.128.0.1",
+            "192.1.0.1",
+            "198.17.255.255",
+            "198.20.0.1",
+            "223.255.255.254",
+            "140.82.112.3",
+        ] {
+            assert!(ipv4_public(good.parse().unwrap()), "{good} must be public");
+        }
+    }
+
+    #[test]
+    fn bodies_over_the_limit_are_refused() {
+        let body = |length: u64| std::io::Read::take(std::io::repeat(7), length);
+        assert_eq!(read_limited(body(0), 4, "u").unwrap(), b"");
+        assert_eq!(read_limited(body(4), 4, "u").unwrap(), [7; 4]);
+        assert_eq!(
+            read_limited(body(5), 4, "u").unwrap_err(),
+            "body exceeds the 4 byte limit: u"
+        );
+        assert!(read_limited(std::io::repeat(0), 1 << 20, "u").is_err());
     }
 
     #[test]

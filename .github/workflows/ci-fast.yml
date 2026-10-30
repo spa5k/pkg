@@ -60,6 +60,13 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --workspace --all-features --no-deps --document-private-items
 
+      # The fuzz entry points exist only with cfg(fuzzing). Check them here,
+      # so a change in pkg-cli or cask-catalog cannot break them unseen.
+      - name: Fuzz targets compile
+        env:
+          RUSTFLAGS: --cfg fuzzing
+        run: cargo check --locked --manifest-path fuzz/Cargo.toml --bins
+
       - name: Install cargo-deny (0.20.2, locked)
         run: cargo install --locked cargo-deny@0.20.2
 

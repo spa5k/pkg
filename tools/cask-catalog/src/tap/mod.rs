@@ -48,6 +48,72 @@ use url::Url;
 /// Envelope schema of the raw-export runtime output we consume.
 pub const EXPORT_SCHEMA: &str = "pkg-tap-raw-export/1";
 
+/// Entry points for the fuzz targets in `fuzz/`. Only `cargo fuzz` builds them.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzz {
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    /// Unpack a tap `.tar.gz` archive into `dest`.
+    /// # Errors
+    ///
+    /// Returns why the archive is refused.
+    pub fn extract(bytes: &[u8], dest: &Path) -> Result<usize, String> {
+        super::extract_tar_gz(bytes, dest)
+    }
+
+    /// The SHA-256 inventory of an unpacked tree.
+    /// # Errors
+    ///
+    /// Returns an error when the tree cannot be read.
+    pub fn inventory(tree: &Path) -> Result<BTreeMap<String, String>, String> {
+        super::tree_inventory(tree)
+    }
+
+    /// Validate one raw export and convert it into `output_dir/flake/`.
+    ///
+    /// The tap tree holds exactly the origins that the export names, so every
+    /// export that passes validation reaches the conversion.
+    /// # Errors
+    ///
+    /// Returns why the export or its conversion is refused.
+    pub fn convert(bytes: &[u8], output_dir: &Path) -> Result<(), String> {
+        const SOURCE: &str = "example/foo";
+        const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+        const SYSTEM: &str = "aarch64-darwin";
+        let (casks, metadata_sha256) = super::validate_export(bytes, SOURCE, REVISION, SYSTEM)?;
+        let tree = casks
+            .iter()
+            .filter_map(|cask| {
+                let origin = cask.get("pkg_origin")?;
+                Some((
+                    origin.get("path")?.as_str()?.to_string(),
+                    origin.get("sha256")?.as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        super::convert_capture(
+            &super::Capture {
+                source: SOURCE.to_string(),
+                origin: String::from("https://github.com/example/homebrew-foo"),
+                revision: REVISION.to_string(),
+                system: SYSTEM.to_string(),
+                casks,
+                metadata_sha256,
+                archive_url: format!(
+                    "https://codeload.github.com/example/homebrew-foo/tar.gz/{REVISION}"
+                ),
+                archive_sha256: "c".repeat(64),
+                license: String::from("NOASSERTION"),
+                tree,
+            },
+            output_dir,
+        )
+        .map(|_| ())
+    }
+}
+
 /// The typed failure of one raw tap import.
 ///
 /// The local settings check constructs sandbox refusals as typed errors.

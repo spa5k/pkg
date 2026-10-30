@@ -98,7 +98,7 @@ fn partial_path(destination: &Path) -> PathBuf {
 /// Paths in one evaluation.
 const BATCH: usize = 512;
 
-fn create_tables(connection: &Connection) -> Result<(), CatalogError> {
+pub(super) fn create_tables(connection: &Connection) -> Result<(), CatalogError> {
     Ok(connection.execute_batch(&format!("{SETTINGS}
         PRAGMA journal_mode=DELETE;
         CREATE TABLE metadata(value TEXT NOT NULL);

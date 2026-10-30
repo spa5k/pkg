@@ -107,6 +107,11 @@ impl Layout {
         self.home.join(".local/share/pkg")
     }
 
+    /// The folder for the downloads of one update.
+    fn download_dir(&self) -> PathBuf {
+        self.data_dir().join("update")
+    }
+
     /// Bash and Zsh startup files that can hold the managed block.
     #[must_use]
     pub fn startup_files(&self) -> Vec<PathBuf> {
@@ -186,13 +191,21 @@ pub fn update() -> Result<Update, Error> {
     if !layout.runs_here() {
         return Ok(Update::NotInstalled);
     }
-    let directory = tempfile::Builder::new()
-        .prefix("pkg-update-")
-        .tempdir()
+    remove_stopped_update(&layout);
+    let directory = std::fs::create_dir_all(layout.download_dir())
+        .and_then(|()| {
+            tempfile::Builder::new()
+                .prefix("pkg-update-")
+                .tempdir_in(layout.download_dir())
+        })
         .map_err(|error| Error::from(error).context("cannot create a temporary folder"))?;
     let sums = directory.path().join("SHA256SUMS");
-    download(&format!("{RELEASES}/latest/download/SHA256SUMS"), &sums)
-        .map_err(|error| error.context("cannot check for a new release"))?;
+    download(
+        &format!("{RELEASES}/latest/download/SHA256SUMS"),
+        &sums,
+        MAX_LIST_BYTES,
+    )
+    .map_err(|error| error.context("cannot check for a new release"))?;
     let sums = std::fs::read(&sums)?;
     let (latest, archive, checksum) = std::str::from_utf8(&sums)
         .ok()
@@ -206,11 +219,12 @@ pub fn update() -> Result<Update, Error> {
     download(
         &format!("{RELEASES}/download/v{latest}/SHA256SUMS.sig"),
         &signature,
+        MAX_LIST_BYTES,
     )
     .map_err(|error| error.context(&format!("cannot download the signature of pkg {latest}")))?;
     verify_signature(
         &sums,
-        &std::fs::read_to_string(&signature).unwrap_or_default(),
+        &String::from_utf8_lossy(&std::fs::read(&signature)?),
         RELEASE_KEYS,
         RELEASE_NAMESPACE,
     )?;
@@ -218,6 +232,7 @@ pub fn update() -> Result<Update, Error> {
     download(
         &format!("{RELEASES}/download/v{latest}/{archive}"),
         &archive_path,
+        MAX_ARCHIVE_BYTES,
     )
     .map_err(|error| error.context(&format!("cannot download pkg {latest}")))?;
     cask_catalog::verify_sha256(&std::fs::read(&archive_path)?, &checksum)
@@ -262,17 +277,24 @@ fn run_client(binary: &Path, args: &[&str]) -> Result<u8, Error> {
     }
 }
 
-/// The largest release file, in bytes.
-const MAX_DOWNLOAD_BYTES: &str = "268435456";
+/// The largest checksum list or signature, in bytes.
+const MAX_LIST_BYTES: u64 = 64 * 1024;
+
+/// The largest release archive, in bytes.
+const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// The largest client executable, in bytes.
 const MAX_CLIENT_BYTES: u64 = 256 * 1024 * 1024;
 
-fn download(url: &str, destination: &Path) -> Result<(), Error> {
+/// Download `url` to `destination`, but refuse more than `max_bytes`.
+fn download(url: &str, destination: &Path, max_bytes: u64) -> Result<(), Error> {
+    let path = destination;
     let destination = destination
         .to_str()
         .ok_or("temporary paths must be UTF-8")?;
     // The caller checks the bytes, so the curl on PATH is enough here.
+    // curl stops after 30 s without a connection, and when a download stays
+    // below 1 byte per second for 60 s.
     let outcome = crate::nix::run_direct(
         Path::new("curl"),
         &[
@@ -282,17 +304,28 @@ fn download(url: &str, destination: &Path) -> Result<(), Error> {
             "=https",
             "--tlsv1.2",
             "-fsSL",
+            "--connect-timeout",
+            "30",
+            "--speed-limit",
+            "1",
+            "--speed-time",
+            "60",
             "--max-time",
             "300",
             "--max-filesize",
-            MAX_DOWNLOAD_BYTES,
+            &max_bytes.to_string(),
             "-o",
             destination,
             url,
         ],
     )
     .map_err(|error| Error::from(error).context("cannot start curl"))?;
-    check("curl", outcome)
+    check("curl", outcome)?;
+    // Before 8.4, curl applies --max-filesize only to a declared length.
+    if std::fs::metadata(path)?.len() > max_bytes {
+        return Err(format!("the download is larger than {max_bytes} bytes").into());
+    }
+    Ok(())
 }
 
 /// Read `member`, a regular file, from a verified `.tar.gz` archive.
@@ -321,6 +354,35 @@ fn read_member(archive: &Path, member: &str) -> Result<Vec<u8>, Error> {
     Err(format!("the archive has no {member}").into())
 }
 
+/// Remove the files of an update that a signal or a crash stopped.
+///
+/// `pkg update` holds the refresh lock, so no other update uses them.
+fn remove_stopped_update(layout: &Layout) {
+    let _ = std::fs::remove_dir_all(layout.download_dir());
+    let binary = layout.binary();
+    let Some(Ok(entries)) = binary.parent().map(std::fs::read_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry
+            .file_name()
+            .as_encoded_bytes()
+            .starts_with(b".pkg-new-")
+            && entry.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// The limits of each run of the new client before it replaces the old one.
+/// A new client that hangs fails the update and the old client stays.
+const CANDIDATE_LIMITS: pkg_process::ChildLimits = pkg_process::ChildLimits {
+    resident_bytes: None,
+    wall_time: std::time::Duration::from_secs(60),
+    output_bytes: 16 * 1024 * 1024,
+};
+
 /// Start the new client from the install directory, then replace the old
 /// client and its completions.
 fn install(layout: &Layout, client: &[u8], version: &str) -> Result<(), Error> {
@@ -346,8 +408,19 @@ fn install(layout: &Layout, client: &[u8], version: &str) -> Result<(), Error> {
     // Close the file before it runs: Linux refuses to run an open file.
     let candidate = file.into_temp_path();
     let run = |args: &[&str]| {
-        crate::nix::run_direct_captured(&candidate, args)
-            .map_err(|error| Error::from(error).context("cannot start the new client"))
+        let mut command = std::process::Command::new(&*candidate);
+        command.args(args);
+        pkg_process::run_child(
+            command,
+            pkg_process::IoMode::Capture,
+            Some(CANDIDATE_LIMITS),
+            None,
+        )
+        .map(|reaped| {
+            let stdout = String::from_utf8_lossy(&reaped.output.stdout).into_owned();
+            (reaped.classify(), stdout)
+        })
+        .map_err(|error| Error::from(error).context("cannot start the new client"))
     };
     let (outcome, stdout) = run(&["--version"])?;
     check("the new client", outcome)?;
@@ -529,6 +602,42 @@ fn newer(candidate: &str, current: &str) -> Result<bool, Error> {
     Ok(parse(candidate)? > parse(current)?)
 }
 
+/// Entry points for the fuzz targets in `fuzz/`.
+#[cfg(fuzzing)]
+pub mod fuzz {
+    use std::path::Path;
+
+    /// Check `armored` as a release signature of `message` by one of `keys`.
+    /// # Errors
+    ///
+    /// Returns why the signature is not valid.
+    pub fn release_signature(message: &[u8], armored: &str, keys: &[&str]) -> Result<(), String> {
+        super::verify_signature(message, armored, keys, super::RELEASE_NAMESPACE)
+    }
+
+    /// The version, archive name, and checksum of the client for `system`.
+    #[must_use]
+    pub fn release_sums(sums: &str, system: &str) -> Option<(String, String, String)> {
+        super::published(sums, system)
+    }
+
+    /// Whether `candidate` is a newer version than `current`.
+    /// # Errors
+    ///
+    /// Returns an error when a version is not valid.
+    pub fn newer(candidate: &str, current: &str) -> Result<bool, String> {
+        super::newer(candidate, current).map_err(|error| error.to_string())
+    }
+
+    /// Read `member` from the `.tar.gz` archive at `archive`.
+    /// # Errors
+    ///
+    /// Returns an error when the archive has no usable `member`.
+    pub fn release_archive(archive: &Path, member: &str) -> Result<Vec<u8>, String> {
+        super::read_member(archive, member).map_err(|error| error.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,7 +709,10 @@ QTWColmNDGwS36DVU1Tgs=
         );
         assert!(check(TEST_SUMS, TEST_SIGNATURE, &[]).is_err());
         // A signature for Git commits or tags is not a release signature.
-        assert!(check(TEST_SUMS, GIT_SIGNATURE, &[TEST_KEY]).is_err());
+        assert_eq!(
+            check(TEST_SUMS, GIT_SIGNATURE, &[TEST_KEY]),
+            Err(String::from("the release signature is malformed"))
+        );
         assert!(check(TEST_SUMS, "", &[TEST_KEY]).is_err());
         assert!(check(TEST_SUMS, &TEST_SIGNATURE.replace('U', "V"), &[TEST_KEY]).is_err());
     }
@@ -690,5 +802,38 @@ QTWColmNDGwS36DVU1Tgs=
             layout.binary(),
             Path::new("/nonexistent-pkg-home/.local/bin/pkg")
         );
+    }
+
+    #[test]
+    fn an_update_removes_the_files_of_a_stopped_update() {
+        let home = tempfile::tempdir().unwrap();
+        let layout = Layout {
+            home: home.path().to_path_buf(),
+        };
+        let bin = layout.binary().parent().unwrap().to_path_buf();
+        let download = layout.download_dir().join("pkg-update-x");
+        for folder in [&bin, &bin.join(".pkg-new-folder"), &download] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        for file in [
+            layout.binary(),
+            bin.join(".pkg-new-x"),
+            bin.join("other"),
+            download.join("a"),
+        ] {
+            std::fs::write(file, "x").unwrap();
+        }
+        remove_stopped_update(&layout);
+        let mut left: Vec<_> = std::fs::read_dir(&bin)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        left.sort();
+        assert_eq!(left, [".pkg-new-folder", "other", "pkg"]);
+        assert!(!layout.download_dir().exists());
+        // Nothing to remove is not an error.
+        remove_stopped_update(&Layout {
+            home: PathBuf::from("/nonexistent-pkg-home"),
+        });
     }
 }
