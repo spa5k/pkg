@@ -316,7 +316,14 @@ fn plain_cause(cause: &str) -> std::borrow::Cow<'_, str> {
         return "GitHub refused the download (HTTP error 403). This is often a rate limit. Try again later".into();
     }
     // Nix and the client update both download with curl.
-    if (cause.contains("unable to download") || cause.contains("curl"))
+    let download = cause.contains("unable to download") || cause.contains("curl");
+    // curl stops a running download at its time or speed limit. The
+    // connection worked, so the network message below does not apply.
+    if download && (cause.contains("bytes received") || cause.contains("Operation too slow")) {
+        return "the download was too slow and stopped. Check the connection, then try again"
+            .into();
+    }
+    if download
         && [
             "Couldn't connect",
             "Failed to connect",
@@ -397,6 +404,32 @@ mod tests {
             ),
         ] {
             assert_eq!(super::plain_detail(detail), cause);
+        }
+    }
+
+    #[test]
+    fn stopped_downloads_are_not_connection_failures() {
+        let slow = "the download was too slow and stopped. Check the connection, then try again";
+        let offline = "could not connect to the network. Check the connection, then try again";
+        for (cause, plain) in [
+            (
+                "cannot download pkg 1.0.0: curl failed: curl: (28) Operation timed out after 300000 milliseconds with 3375000 out of 6750538 bytes received",
+                slow,
+            ),
+            (
+                "cannot check for a new release: curl failed: curl: (28) Operation too slow. Less than 1 bytes/sec transferred the last 60 seconds",
+                slow,
+            ),
+            (
+                "cannot check for a new release: curl failed: curl: (28) Failed to connect to github.com port 443 after 30001 ms: Timeout was reached",
+                offline,
+            ),
+            (
+                "cannot check for a new release: curl failed: curl: (6) Could not resolve host: github.com",
+                offline,
+            ),
+        ] {
+            assert_eq!(super::plain_cause(cause), plain);
         }
     }
 }

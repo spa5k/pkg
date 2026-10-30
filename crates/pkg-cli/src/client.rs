@@ -447,6 +447,9 @@ fn install(layout: &Layout, client: &[u8], version: &str) -> Result<(), Error> {
         file.as_file()
             .set_permissions(std::fs::Permissions::from_mode(0o644))
             .map_err(completion_error)?;
+        // Without the sync, a power cut after the rename can leave an empty
+        // file, and the next update does not write it again.
+        file.as_file().sync_all().map_err(completion_error)?;
         file.persist(completions.join(name))
             .map_err(|error| completion_error(error.error))?;
     }

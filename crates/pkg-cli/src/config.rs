@@ -107,8 +107,9 @@ fn xdg_base(variable: &'static str, fallback: &str) -> Result<PathBuf, ConfigErr
         }
         _ => home_dir()?.join(fallback),
     };
-    // A missing base is created later. A file in its place is an error.
-    if path.exists() && !path.is_dir() {
+    // A missing base is created later. A file in its place is an error. One
+    // stat only: a failed second stat made a folder look like a file.
+    if std::fs::metadata(&path).is_ok_and(|metadata| !metadata.is_dir()) {
         return Err(ConfigError::NotFolder { variable, path });
     }
     Ok(path)

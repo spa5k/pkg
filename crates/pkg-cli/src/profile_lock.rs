@@ -22,17 +22,18 @@ impl ProfileLock {
     /// holds the lock.
     pub fn acquire_waiting(profile: &Path, waiting: &str) -> Result<Self, String> {
         let path = lock_path(profile)?;
+        let failed = |error: std::io::Error| format!("cannot lock {}: {error}", path.display());
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            std::fs::create_dir_all(parent).map_err(failed)?;
         }
         let file = open(&path, true)?;
         match file.try_lock() {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
                 crate::output::note(waiting);
-                file.lock().map_err(|error| error.to_string())?;
+                file.lock().map_err(failed)?;
             }
-            Err(std::fs::TryLockError::Error(error)) => return Err(error.to_string()),
+            Err(std::fs::TryLockError::Error(error)) => return Err(failed(error)),
         }
         Ok(Self { _file: file })
     }
@@ -73,7 +74,9 @@ fn open(path: &Path, create: bool) -> Result<File, String> {
                 path.display()
             )
         })?;
-    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("cannot read the lock file {}: {error}", path.display()))?;
     // SAFETY: geteuid has no arguments or memory effects.
     let uid = unsafe { libc::geteuid() };
     if !metadata.is_file() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
