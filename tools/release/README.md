@@ -31,11 +31,12 @@ tools/release/sign.sh v<version>
 
 `sign.sh` downloads the draft archives and `SHA256SUMS`, checks the
 checksums, signs `SHA256SUMS` with `ssh-keygen -Y sign -n pkg-release`,
-verifies the signature, and attaches `SHA256SUMS.sig`. The key must be
-`RELEASE_KEY` in `crates/pkg-cli/src/client.rs`. `pkg update` refuses a
+verifies the signature, and attaches `SHA256SUMS.sig`. The key must be in
+`RELEASE_KEYS` in `crates/pkg-cli/src/client.rs`. `pkg update` refuses a
 release without a valid signature, so do not publish an unsigned draft.
-To change the key, ship a client with the new `RELEASE_KEY`, signed by the
-old key, before you sign with the new key.
+To add a key, ship a client with the new key in `RELEASE_KEYS`, signed by
+a current key, before you sign with the new key. To remove a lost or
+stolen key, sign a release that removes it with another key in the list.
 
 Publish the draft as the latest release. Do not mark it as a pre-release.
 The stable install URL `releases/latest/download/install.sh` and

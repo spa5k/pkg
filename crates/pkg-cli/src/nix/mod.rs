@@ -25,6 +25,7 @@ use std::process::Command;
 
 pub use conflict::ProfileConflict;
 pub use discovery::{MetadataNode, MetadataValue};
+pub(crate) use discovery::{plain_command, shown};
 pub use error::NixError;
 pub use host::{HostVersionError, in_range, macos_product_version};
 pub use index::OFFICIAL_CASK_SOURCE;

@@ -1,13 +1,12 @@
-# Exact, immutable toolchain for the `pkg` workspace.
+# Toolchain for the `pkg` workspace.
 #
-# Pinned to channel "1.99.0" (NOT a mutable "stable") so every contributor and
-# CI run uses the same compiler. The minimum supported Rust version remains
+# Follows the latest stable channel. The minimum supported Rust version remains
 # [workspace.package] rust-version = "1.96" (see Cargo.toml). rustfmt is
 # required by the ci workflow's `rust` job; clippy is required by that job
 # and by the macOS smoke Clippy step (.github/workflows/ci-fast.yml). No
 # cross compilation targets are installed here.
 
 [toolchain]
-channel = "1.99.0"
+channel = "stable"
 profile = "minimal"
 components = ["rustfmt", "clippy"]

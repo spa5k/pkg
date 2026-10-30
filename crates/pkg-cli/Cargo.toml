@@ -52,6 +52,9 @@ semver = "=1.0.28"
 # rustls already builds both crates with these features.
 aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
 base64 = "=0.23.1"
+# Read the verified release archive in this process, not with `tar` on PATH.
+flate2 = "=1.1.10"
+tar = "=0.4.46"
 # `cask_catalog::tap` fetches public taps, runs sandboxed Ruby, and generates
 # catalogs and flakes. The client handles consent, registration, and publication.
 cask-catalog = { path = "../../tools/cask-catalog" }

@@ -11,11 +11,14 @@ fn short(text: &str, limit: usize) -> String {
     text[..text.floor_char_boundary(limit)].to_string()
 }
 
-/// One bounded JSON GET against api.github.com.
-fn api_get(client: &SafeClient, path: &str) -> Result<Value, String> {
+/// One bounded JSON GET against api.github.com. `None` is 404 Not Found.
+fn api_get(client: &SafeClient, path: &str) -> Result<Option<Value>, String> {
     let url = format!("https://api.github.com{path}");
-    let body = client.get(&url, Some("application/vnd.github+json"))?;
+    let Some(body) = client.get_optional(&url, Some("application/vnd.github+json"))? else {
+        return Ok(None);
+    };
     serde_json::from_slice(&body)
+        .map(Some)
         .map_err(|e| format!("api.github.com{path} returned malformed JSON: {e}"))
 }
 
@@ -91,8 +94,10 @@ pub fn verify_repo(
     revision: Option<&str>,
 ) -> Result<RepoIdentity, String> {
     // Use one validated response for repository identity, branch, and license.
-    let repo_json =
-        api_get(client, &format!("/repos/{owner}/{repo}")).map_err(|e| short(&e, 400))?;
+    // GitHub answers 404 for a private repository too.
+    let repo_json = api_get(client, &format!("/repos/{owner}/{repo}"))
+        .map_err(|e| short(&e, 400))?
+        .ok_or_else(|| format!("GitHub has no public repository {owner}/{repo}"))?;
     expect_full_name(&repo_json, owner, repo)?;
     let default_branch = validated_default_branch(&repo_json, owner, repo)?;
     let license_spdx = license_from(&repo_json);
@@ -111,7 +116,8 @@ pub fn verify_repo(
         client,
         &format!("/repos/{owner}/{repo}/commits/{branch_ref}"),
     )
-    .map_err(|e| short(&e, 400))?;
+    .map_err(|e| short(&e, 400))?
+    .ok_or_else(|| format!("GitHub has no commit {branch_ref} in {owner}/{repo}"))?;
     let sha = commit_json
         .get("sha")
         .and_then(Value::as_str)

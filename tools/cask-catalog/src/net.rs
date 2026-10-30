@@ -12,12 +12,10 @@ use std::time::Duration;
 use url::Url;
 
 /// Hosts the source fetcher may contact (HTTPS only).
-pub const GITHUB_HOSTS: [&str; 4] = [
-    "github.com",
-    "api.github.com",
-    "codeload.github.com",
-    "raw.githubusercontent.com",
-];
+///
+/// `SafeClient::new` resolves every host, so list only hosts that a tap
+/// import contacts.
+pub const GITHUB_HOSTS: [&str; 2] = ["api.github.com", "codeload.github.com"];
 
 /// Default body size limit for source material (tap tarballs, API JSON).
 pub const MAX_BODY_BYTES: usize = 96 * 1024 * 1024;
@@ -220,23 +218,37 @@ impl SafeClient {
     /// GET one URL (re-checked against policy) and return its body,
     /// enforcing the body size limit while streaming.
     pub fn get(&self, url: &str, accept: Option<&str>) -> Result<Vec<u8>, String> {
+        self.get_optional(url, accept)?
+            .ok_or_else(|| format!("HTTP 404 Not Found fetching {url}"))
+    }
+
+    /// GET one URL like [`Self::get`], but return `None` for 404 Not Found.
+    pub fn get_optional(&self, url: &str, accept: Option<&str>) -> Result<Option<Vec<u8>>, String> {
         let parsed = Url::parse(url).map_err(|e| format!("malformed URL {url:?}: {e}"))?;
         check_url(&parsed, self.allowed)?;
         let mut request = self.inner.get(parsed);
         if let Some(accept) = accept {
             request = request.header("Accept", accept);
         }
-        let mut response = request.send().map_err(|e| format!("request failed: {e}"))?;
+        let mut response = request
+            .send()
+            .map_err(|e| format!("request failed: {}", causes(&e)))?;
         let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !status.is_success() {
-            return Err(format!("HTTP {status} fetching {url}"));
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs());
+            return Err(status_error(status, response.headers(), url, now));
         }
         let mut body = Vec::new();
         let mut chunk = vec![0u8; 64 * 1024].into_boxed_slice();
         loop {
             let read = response
                 .read(&mut chunk)
-                .map_err(|e| format!("body read failed: {e}"))?;
+                .map_err(|e| format!("body read failed: {}", causes(&e)))?;
             if read == 0 {
                 break;
             }
@@ -247,8 +259,57 @@ impl SafeClient {
             }
             body.extend_from_slice(&chunk[..read]);
         }
-        Ok(body)
+        Ok(Some(body))
     }
+}
+
+/// `error` and each cause below it, for example the DNS or TLS failure
+/// under a reqwest "error sending request".
+fn causes(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !text.contains(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
+}
+
+/// The error for an unsuccessful `status`. GitHub reports a used-up rate
+/// limit as 403 or 429 with `x-ratelimit-remaining: 0`, and `now` (Unix
+/// seconds) gives the wait until `x-ratelimit-reset`.
+fn status_error(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+    url: &str,
+    now: u64,
+) -> String {
+    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    let limited = matches!(status.as_u16(), 403 | 429)
+        && (header("x-ratelimit-remaining") == Some("0") || header("retry-after").is_some());
+    if !limited {
+        return format!("HTTP {status} fetching {url}");
+    }
+    let wait = header("retry-after")
+        .and_then(|value| value.parse::<u64>().ok())
+        .or_else(|| {
+            header("x-ratelimit-reset")
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(|reset| reset.saturating_sub(now))
+        })
+        .map(|seconds| seconds.div_ceil(60).max(1))
+        .map_or_else(
+            || String::from("later"),
+            |minutes| format!("in {minutes} minute{}", if minutes == 1 { "" } else { "s" }),
+        );
+    format!(
+        "GitHub refused {url} because of its rate limit for requests without sign-in \
+         (HTTP {status}). Try again {wait}."
+    )
 }
 
 #[cfg(test)]
@@ -283,6 +344,49 @@ mod tests {
                 "{bad} must be refused"
             );
         }
+    }
+
+    #[test]
+    fn errors_name_the_rate_limit() {
+        use reqwest::StatusCode;
+        use reqwest::header::{HeaderMap, HeaderValue};
+        let url = "https://api.github.com/repos/a/b";
+        let mut headers = HeaderMap::new();
+        assert_eq!(
+            status_error(StatusCode::FORBIDDEN, &headers, url, 0),
+            format!("HTTP 403 Forbidden fetching {url}")
+        );
+        headers.insert("x-ratelimit-remaining", HeaderValue::from_static("0"));
+        headers.insert("x-ratelimit-reset", HeaderValue::from_static("1000"));
+        let error = status_error(StatusCode::FORBIDDEN, &headers, url, 100);
+        assert!(error.contains("rate limit"), "{error}");
+        assert!(error.ends_with("Try again in 15 minutes."), "{error}");
+        let mut headers = HeaderMap::new();
+        headers.insert("retry-after", HeaderValue::from_static("30"));
+        let error = status_error(StatusCode::TOO_MANY_REQUESTS, &headers, url, 0);
+        assert!(error.ends_with("Try again in 1 minute."), "{error}");
+    }
+
+    /// A reqwest-like error whose text omits its cause.
+    #[derive(Debug)]
+    struct Send(std::io::Error);
+
+    impl std::fmt::Display for Send {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("error sending request")
+        }
+    }
+
+    impl std::error::Error for Send {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn request_errors_include_their_causes() {
+        let error = Send(std::io::Error::other("dns error"));
+        assert_eq!(causes(&error), "error sending request: dns error");
     }
 
     #[test]

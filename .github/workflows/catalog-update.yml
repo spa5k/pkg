@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RUSTUP_TOOLCHAIN: "1.99.0"
+  RUSTUP_TOOLCHAIN: stable
   CARGO_TERM_COLOR: always
   BRANCH: catalog/update
   INPUTS: https://github.com/spa5k/pkg/releases/download/catalog-inputs
@@ -47,7 +47,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned Rust toolchain
+      - name: Install the latest stable Rust toolchain
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
       - name: Install Nix for Formula metadata
@@ -85,6 +85,17 @@ jobs:
         run: |
           set -eu
           git status --short
+          # The job commits with `git commit -a`, which merges without review.
+          # Refuse a change to any file other than the generated catalogs.
+          allowed="nix/casks/catalog/catalog.json
+          nix/casks/catalog/input.json
+          nix/formulae/catalog/catalog.json
+          tools/formula-catalog/inputs/input.json"
+          unexpected="$(git diff --name-only | grep -vxF "$allowed" || true)"
+          if [ -n "$unexpected" ]; then
+            echo "::error::The generators changed files outside the catalogs: $(printf '%s' "$unexpected" | tr '\n' ' ')"
+            exit 1
+          fi
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else

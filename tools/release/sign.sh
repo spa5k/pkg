@@ -4,8 +4,8 @@
 # Usage: tools/release/sign.sh TAG [PUBLIC_KEY]
 #
 # PUBLIC_KEY defaults to ~/.ssh/id_ed25519.pub. Its private key must be in
-# ssh-agent or beside it. The key must be RELEASE_KEY in
-# crates/pkg-cli/src/client.rs, because `pkg update` accepts only that key.
+# ssh-agent or beside it. The key must be in RELEASE_KEYS in
+# crates/pkg-cli/src/client.rs, because `pkg update` accepts only those keys.
 set -eu
 
 tag=${1:?usage: tools/release/sign.sh TAG [PUBLIC_KEY]}
@@ -13,9 +13,11 @@ key=${2:-$HOME/.ssh/id_ed25519.pub}
 repo=spa5k/pkg
 root=$(git rev-parse --show-toplevel)
 
-expected=$(sed -n 's/^const RELEASE_KEY: &str = "\(.*\)";$/\1/p' "$root/crates/pkg-cli/src/client.rs")
-if [ -z "$expected" ] || [ "$(awk '{print $2}' "$key")" != "$expected" ]; then
-  echo "sign.sh: $key is not RELEASE_KEY in crates/pkg-cli/src/client.rs." >&2
+# The quoted base64 lines between `const RELEASE_KEYS` and `];`.
+expected=$(awk '/^const RELEASE_KEYS/ { on = 1; next } on && /^];/ { exit } on' \
+  "$root/crates/pkg-cli/src/client.rs" | sed -n 's/^ *"\([A-Za-z0-9+\/=]*\)",$/\1/p')
+if [ -z "$expected" ] || ! printf '%s\n' "$expected" | grep -qxF "$(awk '{print $2}' "$key")"; then
+  echo "sign.sh: $key is not in RELEASE_KEYS in crates/pkg-cli/src/client.rs." >&2
   exit 1
 fi
 
