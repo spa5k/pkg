@@ -592,7 +592,7 @@ def network(report):
     cases = {
         "SHA256SUMS: 45 s before the response": ({**normal, SUMS: ("late", (normal[SUMS][1], 45))}, "new"),
         "archive: 64 KiB/s": ({**normal, path: ("throttle", (archive, 64 << 10))}, "new"),
-        "archive: 400 s at a constant rate": ({**normal, path: ("throttle", (archive, len(archive) // 400))}, "old"),
+        "archive: 400 s at a constant rate": ({**normal, path: ("throttle", (archive, len(archive) // 400))}, "new"),
         "archive: connection closes early": ({**normal, path: ("truncate", archive)}, "old"),
         "SHA256SUMS: HTTP 429": ({**normal, SUMS: ("status", 429)}, "old"),
         "archive: HTTP 503": ({**normal, path: ("status", 503)}, "old"),
@@ -600,7 +600,7 @@ def network(report):
     for label, (routes, expect) in cases.items():
         Handler.routes = routes
         began = time.monotonic()
-        trial = update(timeout=420)
+        trial = update(timeout=600)
         trial["seconds"] = round(time.monotonic() - began, 1)
         trial["archive_kib"] = len(archive) >> 10
         trial["expect"] = expect

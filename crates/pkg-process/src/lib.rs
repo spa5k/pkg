@@ -70,7 +70,9 @@ impl Reaped {
     /// Classify this run by cancellation and exit status.
     ///
     /// Cancellation takes priority over the exit status. Without a resource-limit
-    /// failure, exit code 130 also counts as interrupted. A resource-limit
+    /// failure, an end by a termination signal or exit code 130 also counts as
+    /// interrupted. Another signal, such as SIGSEGV from a crash or SIGKILL
+    /// from the kernel for low memory, is a failure. A resource-limit
     /// failure is a failure even after a successful exit, because the
     /// captured output is incomplete. Callers must read native state again
     /// because the child may have applied part of the operation.
@@ -1116,8 +1118,7 @@ impl ChildOwner {
         pipes.finish(status.success() && monitor.io_error.is_none());
         if let Some(error) = monitor.io_error {
             return Err(RunError {
-                cancelled: unix_signal(status)
-                    .filter(|signal| !monitor.stop_sent || forward::TERMINATION.contains(signal)),
+                cancelled: unix_signal(status),
                 source: error,
             });
         }
@@ -1388,6 +1389,58 @@ pub fn run_direct_captured(
     })
 }
 
+/// Run like [`run_direct_captured`], but stop the child when it makes a
+/// file larger than `max_file_bytes`.
+///
+/// The kernel stops the child with SIGXFSZ. The outcome is then
+/// [`Outcome::Failed`] with a status that names the limit.
+/// # Errors
+///
+/// Returns the errors of [`run_direct_captured`].
+pub fn run_direct_limited(
+    executable: &std::path::Path,
+    args: &[&str],
+    max_file_bytes: u64,
+) -> Result<(Outcome, String), RunError> {
+    use std::os::unix::process::CommandExt as _;
+    let mut command = Command::new(executable);
+    command.args(args);
+    // SAFETY: the hook calls only the async-signal-safe getrlimit and
+    // setrlimit. It does not allocate or lock.
+    unsafe {
+        command.pre_exec(move || {
+            let mut limit: libc::rlimit = std::mem::zeroed();
+            if libc::getrlimit(libc::RLIMIT_FSIZE, &raw mut limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // Only root can raise the hard limit, so a lower one stays.
+            limit.rlim_cur = limit.rlim_max.min(max_file_bytes);
+            if libc::setrlimit(libc::RLIMIT_FSIZE, &raw const limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    run_child(command, IoMode::Capture, None, None).map(|reaped| {
+        let outcome = match reaped.classify() {
+            Outcome::Failed { .. }
+                if std::os::unix::process::ExitStatusExt::signal(&reaped.output.status)
+                    == Some(libc::SIGXFSZ) =>
+            {
+                Outcome::Failed {
+                    status: format!("a file is larger than {max_file_bytes} bytes"),
+                    stderr: String::new(),
+                }
+            }
+            outcome => outcome,
+        };
+        (
+            outcome,
+            String::from_utf8_lossy(&reaped.output.stdout).into_owned(),
+        )
+    })
+}
+
 /// Run an external command and discard its captured stdout.
 ///
 /// This calls [`run_direct_captured`]. Use that function when the caller
@@ -1401,11 +1454,12 @@ pub fn run_direct(executable: &std::path::Path, args: &[&str]) -> Result<Outcome
     run_direct_captured(executable, args).map(|(outcome, _)| outcome)
 }
 
-/// Read the terminating signal from the exit status.
-/// Treat exit code 130 as a handled SIGINT.
+/// Read the cancellation signal from the exit status.
+/// Treat exit code 130 as a handled SIGINT. Only a termination signal is a
+/// cancellation: a crash or SIGKILL is not.
 fn unix_signal(status: ExitStatus) -> Option<i32> {
     if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
-        return Some(signal);
+        return forward::TERMINATION.contains(&signal).then_some(signal);
     }
     // A child that exits with status 130 reports a handled SIGINT; treat it
     // as interruption so native state is still re-read.
@@ -1415,6 +1469,6 @@ fn unix_signal(status: ExitStatus) -> Option<i32> {
 fn exit_status_text(status: ExitStatus) -> String {
     match status.code() {
         Some(code) => format!("exit code {code}"),
-        None => format!("terminated by signal: {status}"),
+        None => format!("terminated by {status}"),
     }
 }
